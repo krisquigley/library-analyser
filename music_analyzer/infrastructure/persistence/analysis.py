@@ -1,4 +1,4 @@
-"""Dedicated analysis database, with transactional v0 -> v1 -> v2 migrations.
+"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 migrations.
 
 Existing unrelated schemas are rejected before any persistent pragma or DDL.
 Exact-file catalogue identity; each explicit analysis request is still a new run.
@@ -43,7 +43,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if db.execute('PRAGMA user_version').fetchone()[0] == 1:
                 self._validate(db, 1)
@@ -51,17 +51,26 @@ class SQLiteAnalysisRepository:
                 db.execute('CREATE TABLE locations(path TEXT PRIMARY KEY, track_id TEXT NOT NULL REFERENCES tracks(id), mtime_ns INTEGER NOT NULL, format TEXT NOT NULL, available INTEGER NOT NULL CHECK(available IN (0,1)))')
                 db.execute('CREATE TABLE scan_roots(root TEXT NOT NULL, path TEXT NOT NULL REFERENCES locations(path), PRIMARY KEY(root,path))')
                 db.execute('PRAGMA user_version=2')
+            if db.execute('PRAGMA user_version').fetchone()[0] == 2:
+                self._validate(db, 2)
+                db.execute("""CREATE TABLE batch_jobs(
+                    track_id TEXT PRIMARY KEY REFERENCES tracks(id), fingerprint TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')),
+                    attempts INTEGER NOT NULL CHECK(attempts >= 0), run_id TEXT, detail TEXT NOT NULL)""")
+                db.execute('PRAGMA user_version=3')
             self._validate(db)
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
             raise AnalysisError('Refusing Mixxx-named or symlink database path')
 
-    def _validate(self, db, version=2):
+    def _validate(self, db, version=3):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
                 or db.execute('PRAGMA user_version').fetchone()[0] != version):
             raise AnalysisError('Analysis database identity/version changed')
         columns_by_table = _COLUMNS if version == 1 else {**_COLUMNS, **_CATALOGUE_COLUMNS}
+        if version == 3:
+            columns_by_table = {**columns_by_table, 'batch_jobs': ('track_id', 'fingerprint', 'state', 'attempts', 'run_id', 'detail')}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         if objects != {(name, 'table') for name in columns_by_table}:
             raise AnalysisError('Unexpected analysis database schema')
