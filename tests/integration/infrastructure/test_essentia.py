@@ -84,3 +84,36 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(reads), 3)
         self.engine.analyze('mood', DecodedAudio('other', 120, 44100))
         self.assertEqual(len(reads), 6)
+
+    def test_pcm_reader_reads_requested_section_and_resamples_once(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import Mock
+        from music_analyzer.infrastructure.analysis.essentia import PCMReader
+        numpy, library = Mock(), Mock()
+        numpy.fromfile.return_value = [1.0]
+        library.Resample.return_value.return_value = [2.0]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'pcm'
+            path.write_bytes(b'\0' * 16)
+            audio = DecodedAudio(str(path), 1, 44100)
+            reader = PCMReader(numpy, library)
+            self.assertEqual(reader(audio, 0, 1, 16000), [2.0])
+            library.Resample.assert_called_once_with(inputSampleRate=44100, outputSampleRate=16000, quality=1)
+            self.assertEqual(numpy.fromfile.call_args.kwargs, {'dtype': '<f4', 'count': 44100})
+
+    def test_missing_dependency_is_actionable(self):
+        from unittest.mock import patch
+        from music_analyzer.infrastructure.analysis.essentia import load_backend
+        with patch.dict('sys.modules', {'essentia': None}):
+            with self.assertRaisesRegex(AnalysisError, 'compatible isolated Python'):
+                load_backend()
+
+    def test_classifier_row_count_must_match_embeddings(self):
+        original = self.engine._predictor
+        def predictor(model, purpose):
+            native = original(model, purpose)
+            return (lambda signal: native(signal) * 2) if purpose == 'predictions' else native
+        self.engine._predictor = predictor
+        with self.assertRaisesRegex(AnalysisError, 'output'):
+            self.engine.analyze('genres', self.audio)

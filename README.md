@@ -1,8 +1,8 @@
 # Local Music Analyser — incremental foundation
 
-This repository implements **partial Phase 1 and a backend-only Phase 2 increment**
-of [the CLI plan](plans/music-analyzer-cli-plan.md). The CLI does not analyse audio
-yet; no real model inference has been validated.
+This repository implements **partial Phase 1 and an unvalidated Phase 2 single-track implementation**
+of [the CLI plan](plans/music-analyzer-cli-plan.md). The CLI can invoke real Essentia APIs when dependencies and approved models are
+installed; no real model inference has been validated.
 `doctor` reports Python/platform information, checks `ffmpeg -version` (five-second
 timeout), and discovers the top-level Essentia module **without importing it**.
 No runtime third-party Python dependencies are needed for this slice.
@@ -216,7 +216,8 @@ interruptions clean up audio and record an interrupted run. Unexpected programmi
 errors propagate and can leave a running row; crash recovery is deferred.
 
 A real FFmpeg adapter decodes a local file once to disposable 44.1 kHz mono
-float32 PCM. It does not edit the input. Python does not buffer the full track.
+float32 PCM. It does not edit the input. The decoder does not buffer the full track; rhythm/key each load the capped
+track into memory. Essentia/TensorFlow internal allocations are not OS-limited.
 Default application duration cap is 900 seconds (~152 MiB temporary PCM), with
 an explicit hard maximum of 3600 seconds (~606 MiB). One extra second detects
 oversized inputs, which are rejected rather than silently truncated. Decode has
@@ -238,14 +239,53 @@ batch recovery system. Never point it at a Mixxx database.
 A provisional pure score summary retains duration-weighted mean, minimum,
 maximum and explicit disjoint-window coverage. It does not select tags, infer
 sustained instrument presence, calibrate probabilities or invent an energy
-scale. No production inference currently calls this policy.
+scale. The semantic adapter uses this policy for section summaries.
 
-**Remaining Phase 2 work:** official-API Essentia rhythm/key and semantic engine
-adapters, verified model preprocessing/tensor/framing and provenance mapping,
-section checks, energy interpretation, six-attribute CLI and presenters, and
-real graph execution/shape/label validation. No `analyze` command is exposed
-until those adapters can produce honest results. Essentia is not installed in
-the current interpreter, weights are not downloaded, and download approval and
-publisher-license clarification remain outstanding. Existing doctor/config/model
-commands are unchanged. Passing delivery tests are preliminary, not independent
-review or proof of inference accuracy.
+### Single-file CLI (experimental, inference acceptance still open)
+
+```sh
+music-analyzer analyze --file /path/to/track.flac --database /existing/directory/analysis.sqlite
+music-analyzer analyze --file /path/to/track.flac --max-duration 900 --json
+```
+
+`--file` is explicitly a local path. The approved future `--track TRACK_ID`
+remains reserved for catalogue IDs; argument-less batch/resume, `--limit`,
+`--force` and `--retry-failed` are not implemented. Every invocation starts a
+new run. Database parent directories must exist. No audio tags or Mixxx writes.
+Config options work before or after `analyze`. Exit 0 means all stages completed,
+1 means setup/analysis failure, 2 argument/configuration error, 130 interrupt.
+JSON contains all stage values, windows, summaries, uncertainty and provenance;
+setup failures have a null run ID. Human output truncates semantic labels to top
+10 for display only; these are not threshold-selected tags.
+
+RhythmExtractor2013 uses multifeature at 44.1 kHz; KeyExtractor uses 44.1 kHz.
+They currently provide whole-track estimates, not section ambiguity checks.
+Semantic inference uses all audio up to 90 seconds, otherwise three disjoint
+30-second beginning/middle/end sections. Coverage is **section exposure**, not
+independent receptive-field coverage. Native overlapping patch predictions are
+averaged per section, then weighted by section duration; min/max are section
+means, not frame extrema. Final patches are repeated by the official predictor;
+Effnet fixed batches use `lastBatchMode=same`, excluding padding-only predictions.
+Discogs embeddings are reused across genre/mood/instrument heads. Emomusic uses
+its separate MusiCNN embeddings and metadata order `(valence, arousal)`; raw
+arousal is only a provisional energy proxy, not a calibrated DJ energy score.
+No guessed tensor names, class orders, custom spectrograms or fake inference
+fallbacks. Verified local model hashes and Essentia version accompany results.
+No source content hash/reuse identity is claimed.
+
+**Open acceptance work:** real graph execution and shape/label/preprocessing
+validation, compatible pinned inference stack, CPU/RAM measurements, section
+rhythm/key ambiguity checks, independent review and accuracy evaluation.
+Python 3.14 on this host has no Essentia; optional libraries load lazily and
+produce actionable setup errors. No weights downloaded or real inference run.
+Download approval and publisher-license clarification remain outstanding.
+Model verification is integrity checking, not proof of inference readiness.
+The Phase 1 inference gate and Phase 2 acceptance gate remain **open**; Phase 3
+batch/catalogue and later Mixxx integration are deliberately not started.
+
+Official APIs consulted: retained model metadata, plus MTG/essentia upstream
+`src/algorithms/machinelearning/tensorflowpredict{effnetdiscogs,musicnn,2d}.{h,cpp}`,
+`src/algorithms/rhythm/rhythmextractor2013.cpp`, and
+`src/algorithms/extractor/keyextractor.cpp` at
+https://github.com/MTG/essentia . API reference host requests timed out during
+this delivery; upstream source snapshots were retained externally instead.
