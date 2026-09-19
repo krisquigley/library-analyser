@@ -16,6 +16,7 @@ class CacheWiringTests(unittest.TestCase):
             with patch.dict('os.environ', {'XDG_CACHE_HOME': str(root/'cache')}), \
                  patch('music_analyzer.frameworks.cli.main.load_backend', return_value=(Library(), 'v', SimpleNamespace(numpy=SimpleNamespace(__version__='fake')))), \
                  patch('music_analyzer.frameworks.cli.main.build_models', return_value=(SimpleNamespace(manifest=load_manifest()), ())), \
+                 patch('music_analyzer.frameworks.cli.main.subprocess.run', return_value=SimpleNamespace(stdout='ffmpeg fixture-only version')), \
                  patch('music_analyzer.frameworks.cli.main.load_settings', return_value=settings):
                 explicit = build_analysis()
                 _, worker = build_batch_worker(settings, 900)

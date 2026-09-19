@@ -8,6 +8,10 @@ The CI matrix is a verification target; consult the run for the exact revision
 before claiming a tested combination. Build-only setuptools 84.0.0 is not an
 inference dependency. Runner images/Python patch releases can change; CI is
 repeatable in scope and fixtures, not a byte-reproducible build certification.
+FFmpeg integration is opt-in via workflow dispatch and requires an existing runner
+executable; the hosted Ubuntu image examined did not include FFmpeg. It fails
+explicitly if requested without that tool. No CI step installs system packages;
+run the documented local command on an already provisioned host instead.
 
 ## Installation rehearsal and evidence
 

@@ -2,6 +2,12 @@ name: CLI foundation
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_ffmpeg:
+        description: Require existing runner FFmpeg for optional decode tests
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -32,6 +38,7 @@ jobs:
           RUN_PACKAGING_TESTS: '1'
         run: python -m unittest tests.packaging.test_distribution -v
   ffmpeg-integration:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ffmpeg
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
