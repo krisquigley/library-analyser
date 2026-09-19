@@ -15,3 +15,6 @@ music-analyzer = "music_analyzer.frameworks.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["music_analyzer*"]
+
+[tool.setuptools.package-data]
+"music_analyzer.infrastructure.models" = ["data/manifest.json", "data/LICENSE"]

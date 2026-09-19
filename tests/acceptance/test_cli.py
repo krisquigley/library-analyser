@@ -27,5 +27,5 @@ class CliAcceptanceTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertEqual(result.returncode, 0 if report['foundation_ready'] else 1)
         self.assertFalse(report['analysis_ready'])
-        self.assertEqual([check['name'] for check in report['checks']], ['python', 'platform', 'ffmpeg', 'essentia'])
+        self.assertEqual([check['name'] for check in report['checks']], ['python', 'platform', 'ffmpeg', 'essentia', 'models'])
         self.assertEqual(result.stderr, '')

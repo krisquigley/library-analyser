@@ -23,7 +23,7 @@ class RunDoctor:
             analysis_ready=False,
             remaining_validation=(
                 'Configured paths do not validate database schemas, write permissions or model readiness.',
-                'Model manifests, downloads, integrity and license records are not implemented.',
+                'Model integrity checks do not establish successful model loading or inference.',
                 'Validate FLAC, MP3 and M4A decoding and every selected model on target hardware.',
                 'Confirm RAM and a compatible Python/Essentia TensorFlow build; pin the tested combination.',
             ),

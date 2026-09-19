@@ -45,7 +45,7 @@ TensorFlow operators; FFmpeg version detection cannot prove any format decodes.
 
 ## Configuration and overrides
 
-Options may appear before or after `doctor`. Precedence is **CLI > TOML >
+Options may appear before or after `doctor`, or at any level of `models download` / `models verify`. Precedence is **CLI > TOML >
 defaults** for each setting. An explicit `--config` replaces the default config
 file; it does not merge with it. Repeated CLI options use the last value.
 
@@ -83,10 +83,88 @@ are checked even if overridden; final target paths and their existing parents
 are checked for file/directory conflicts. Missing target directories are allowed.
 
 Doctor displays the selected paths and whether a config file was loaded in both
-human and JSON reports. It does **not** create directories, open SQLite, check
-schemas or writability, download models, or establish model readiness. Selecting
-a model directory is not evidence that models exist or can run. Future database
+human and JSON reports. It verifies the selected model bundles read-only. It does **not** create
+directories, open SQLite, check schemas or writability, download models, or
+establish inference readiness. Selecting
+a model directory alone is not evidence that models exist or can run. Future database
 operations must still enforce schema/identity safety before writing anything.
+
+## Model setup (integrity, not inference)
+
+```sh
+music-analyzer models verify --json
+music-analyzer models download --model-directory /path/to/models
+music-analyzer --config /path/to/config.toml models verify
+music-analyzer doctor --json
+```
+
+`download` fetches the six pinned graphs below, sequentially over HTTPS from
+`essentia.upf.edu` only, with certificate validation, restricted redirects,
+30-second socket timeout and manifest size limits. No weights were downloaded
+or executed during this delivery; tests use tiny fake transfers. The official
+HTTP HEAD sizes measured for this selection total **29,151,559 bytes (27.80 MiB)**.
+Allow roughly 30 MiB for a fresh installation including metadata/licenses; when
+retaining an old copy for recovery allow another complete copy. Real download
+and target inference validation still require explicit approval.
+
+| Model / role | Version | Graph bytes | Official metadata (ordered labels, tensors, preprocessing and attribution) |
+| --- | --- | ---: | --- |
+| Discogs-EffNet embeddings | bs64-1 | 18,366,619 | [metadata](https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.json) |
+| MSD-MusiCNN embeddings | 1 | 3,197,999 | [metadata](https://essentia.upf.edu/models/feature-extractors/musicnn/msd-musicnn-1.json) |
+| Discogs400 genre head | 1 | 2,057,977 | [metadata](https://essentia.upf.edu/models/classification-heads/genre_discogs400/genre_discogs400-discogs-effnet-1.json) |
+| Jamendo mood/theme head | 1 | 2,739,668 | [metadata](https://essentia.upf.edu/models/classification-heads/mtg_jamendo_moodtheme/mtg_jamendo_moodtheme-discogs-effnet-1.json) |
+| Jamendo instrument head | 1 | 2,706,836 | [metadata](https://essentia.upf.edu/models/classification-heads/mtg_jamendo_instrument/mtg_jamendo_instrument-discogs-effnet-1.json) |
+| Emomusic valence/arousal head | 2 | 82,460 | [metadata](https://essentia.upf.edu/models/classification-heads/emomusic/emomusic-msd-musicnn-2.json) |
+
+The bundled manifest retains official JSON metadata without reordering classes
+(genre 400, mood 56, instrument 40; Emomusic order is **valence, arousal**).
+All selected metadata specifies 16 kHz input audio for the embedding pipeline;
+heads consume embeddings, not raw audio. The [official examples](https://essentia.upf.edu/models.html)
+select Discogs-EffNet `PartitionedCall:1` and MusiCNN `model/dense/BiasAdd`
+embeddings. Some head metadata retains older Discogs embedding URLs; those
+records remain verbatim, while downloads use the current official feature
+extractor URL. No preprocessing, tensor shape, dependency build or inference
+compatibility has yet been tested on target hardware.
+
+**License discrepancy requiring publisher clarification:** the official models
+page states **CC BY-NC-SA 4.0**, but the official
+[LICENSE](https://essentia.upf.edu/models/LICENSE) has a
+**Attribution-NonCommercial-NoDerivatives 4.0** heading and legal text, while its
+summary links to BY-NC-SA legalcode. Do not treat this tool as resolving that
+conflict or granting commercial/derivative rights. The complete publisher
+LICENSE (including third-party notices), original authors/citations and this
+warning are retained with every bundle. Contact MTG for clarification or
+proprietary licensing as appropriate.
+
+Each `<model-directory>/<model-id>/` contains `model.pb`, `metadata.json`,
+`LICENSE` and `receipt.json`. A fresh bundle is staged in a unique temporary
+sibling directory, checked, flushed and renamed only after completion. Failures
+and Ctrl+C remove the active temporary directory; hard process/machine failure
+may leave a `.download-*` directory, which can be removed manually when no
+installer is running. No automatic partial-download resume or repair is done.
+Verified existing bundles are reused without network access. Invalid existing
+bundles fail closed: inspect/move the named bundle aside, then retry download.
+Model paths containing symlinks are rejected. Avoid concurrent installers and
+untrusted mutation of the configured model directory; this is not a hostile
+multi-user filesystem sandbox or a power-loss durability guarantee.
+
+No publisher SHA-256 was supplied by the primary metadata examined. Receipts
+therefore label these graphs **local-sha256**: verification detects changes
+against the locally recorded bytes and checks the pinned size, original metadata
+and license. It does not authenticate publisher bytes, detect simultaneous
+malicious replacement of both graph and receipt, validate a TensorFlow graph,
+or prove successful inference. The storage adapter distinguishes publisher
+checksums if a future curated manifest supplies one. There is deliberately no
+user-supplied manifest/URL option.
+
+Model reports go to stdout in human or JSON form (`models`, `ready`,
+`inference_validated`); each result includes `model_id`, `available`, `integrity`
+and `detail`. Exit **0** means all bundles pass integrity, **1** means setup or
+transfer failure, **2** means invalid usage/configuration, **130** means Ctrl+C.
+Doctor now includes a model integrity check in `foundation_ready` but always
+reports `analysis_ready: false`. Verification and doctor work offline and write
+nothing; only explicit `models download` writes model bundles. Neither command
+opens music or Mixxx data or the configured analysis database.
 
 ## Tests and architecture
 
@@ -104,6 +182,8 @@ they accept an actionable missing-dependency report, not real inference success.
 
 - `music_analyzer/application/{dto,ports,use_cases}`: immutable readiness results,
   the small probe protocol, and `RunDoctor` orchestration/readiness policy.
+- `music_analyzer/application/ports/models.py`: model storage and transfer boundaries.
+- `music_analyzer/infrastructure/models`: curated manifest, HTTPS and atomic filesystem bundles.
 - `music_analyzer/infrastructure/config.py`: read-only TOML loading and XDG/path validation.
 - `music_analyzer/infrastructure/environment`: Python/platform, FFmpeg, and
   Essentia discovery adapters.
@@ -118,10 +198,9 @@ checks are architectural regression tests, not a security sandbox.
 
 ## Still deferred
 
-Phase 1 is **not complete**. Model manifests, downloads, hashes and
-attribution/license records remain unimplemented. CPU/RAM
+Phase 1 is **not complete**. CPU/RAM
 suitability, Python/Essentia TensorFlow compatibility, FLAC/MP3/M4A decoding and
 all selected models must be validated on the target machine before pinning a
 working inference environment. Analysis, persistence, library scanning, exports
-and Mixxx integration are later phases. Only `doctor` is currently shipped;
+and Mixxx integration are later phases. Only `doctor`, `models download` and `models verify` are shipped;
 other planned commands are intentionally absent.
