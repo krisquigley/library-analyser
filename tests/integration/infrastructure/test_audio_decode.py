@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
@@ -9,7 +10,8 @@ from music_analyzer.application.dto.analysis import AnalysisError, AudioSource
 from music_analyzer.infrastructure.audio.ffmpeg import FFmpegDecoder
 
 
-@unittest.skipUnless(shutil.which('ffmpeg'), 'requires existing FFmpeg executable')
+@unittest.skipUnless(os.environ.get('RUN_FFMPEG_TESTS') == '1' and shutil.which('ffmpeg'),
+                     'requires RUN_FFMPEG_TESTS=1 and existing FFmpeg executable')
 class FFmpegDecoderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

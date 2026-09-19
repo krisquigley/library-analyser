@@ -106,6 +106,7 @@ class DistributionTests(unittest.TestCase):
             members = {name.split('/', 1)[-1] for name in archive.getnames()}
             self.assertIn('plans/music-analyzer-cli-plan.md', members)
             self.assertIn('README.md', members)
+            self.assertIn('docs/release-preparation.md', members)
 
     def test_installed_entrypoints_and_offline_setup_errors(self):
         for module in (False, True):

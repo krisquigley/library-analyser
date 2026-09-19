@@ -1,11 +1,15 @@
 # Local Music Analyser — incremental foundation
 
-This repository implements **partial Phase 1 and an unvalidated Phase 2 single-track implementation**
+This repository implements **partial Phases 1–4 and Phase 7 packaging preparation**
 of [the CLI plan](plans/music-analyzer-cli-plan.md). The CLI can invoke real Essentia APIs when dependencies and approved models are
 installed; no real model inference has been validated.
 `doctor` reports Python/platform information, checks `ffmpeg -version` (five-second
 timeout), and discovers the top-level Essentia module **without importing it**.
-No runtime third-party Python dependencies are needed for this slice.
+No runtime third-party Python dependencies are needed for setup, catalogue and review commands.
+See [release preparation and user hand-off](docs/release-preparation.md) for install
+checks, pilot selection/ratings/measurement, backup/recovery and required Mixxx
+inputs. Actual pilot/calibration, real inference, Mixxx acceptance and final
+release gates remain **not completed**.
 
 ## Install and run
 
@@ -173,9 +177,16 @@ opens music or Mixxx data or the configured analysis database.
 .venv/bin/python -m unittest discover -v
 .venv/bin/python -m unittest discover -s tests/unit -v
 .venv/bin/python -m unittest tests.architecture.test_import_boundaries -v
+# Optional real decode tests; existing FFmpeg required (otherwise skipped):
+RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest tests.integration.infrastructure.test_audio_decode -v
+# Offline build/install tests; setuptools>=77 and venv/pip required:
+RUN_PACKAGING_TESTS=1 .venv/bin/python -m unittest tests.packaging.test_distribution -v
 ```
 
-Tests use the standard-library `unittest` runner. Application tests use fake
+Tests use the standard-library `unittest` runner. Default discovery skips real
+FFmpeg decode and distribution-build tests unless explicitly enabled above.
+GitHub Actions separates unit/boundary, adapter/CLI, build/install, and real decode
+checks; the Linux Python 3.11–3.14 matrix does not certify Essentia compatibility. Application tests use fake
 probes, with no external tools or heavy inference imports. Infrastructure tests
 mock process execution and module discovery. CLI acceptance tests launch the
 actual module and perform read-only local discovery (FFmpeg may run if present);
@@ -191,8 +202,8 @@ they accept an actionable missing-dependency report, not real inference success.
 - `music_analyzer/interface_adapters/presenters`: human and JSON translation.
 - `music_analyzer/frameworks/cli`: argparse entry point and concrete composition.
 
-No domain folder or future ports are created yet: dependency availability is an
-application concern, and there are no music-domain rules in this slice. Automated
+Domain rules now cover catalogue identities, score summaries and override precedence;
+the original doctor availability policy remains in application. Automated
 AST checks enforce layer dependencies, restrict inner-layer imports to a small
 stdlib allowlist, and test rejection of representative forbidden imports. These
 checks are architectural regression tests, not a security sandbox.
@@ -202,9 +213,9 @@ checks are architectural regression tests, not a security sandbox.
 Phase 1 is **not complete**. CPU/RAM
 suitability, Python/Essentia TensorFlow compatibility, FLAC/MP3/M4A decoding and
 all selected models must be validated on the target machine before pinning a
-working inference environment. Analysis, persistence, library scanning, exports
-and Mixxx integration are later phases. Only `doctor`, `models download` and `models verify` are shipped;
-other planned commands are intentionally absent.
+working inference environment. Experimental analysis, persistence, library scanning
+and review/exports are available as documented below. Pilot/calibration and Mixxx
+integration remain deferred; no Mixxx commands are shipped.
 
 ## Phase 2 backend increment (not the six-attribute acceptance gate)
 
