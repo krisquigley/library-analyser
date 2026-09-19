@@ -1,6 +1,8 @@
 """Framework-free readiness results, not serialized payloads."""
 from dataclasses import dataclass
 
+from music_analyzer.application.dto.settings import Settings
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -20,3 +22,4 @@ class DoctorReport:
     foundation_ready: bool
     analysis_ready: bool
     remaining_validation: tuple[str, ...]
+    settings: Settings | None = None
