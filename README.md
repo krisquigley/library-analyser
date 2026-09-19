@@ -228,13 +228,13 @@ FLAC, MP3 and M4A decode tests pass with the installed FFmpeg. These silent
 one-second fixtures do not validate rhythm, harmony or semantic inference.
 
 `SQLiteAnalysisRepository` initializes a dedicated empty database transactionally
-with an application ID and schema version 1. It rejects unrelated schemas,
+with an application ID and schema version 2 (transactional v0 → v1 → v2). It rejects unrelated schemas,
 unknown versions, symlink paths and Mixxx-named databases; it stores separate run
 IDs, source locations, stage results, uncertainty and provenance. It never opens
 the music file. Parent directories must already exist. Identity is not a security
-boundary against hostile concurrent local replacement. This is not yet a track
-catalogue, content identity/reuse, cache, migration from other applications or
-batch recovery system. Never point it at a Mixxx database.
+boundary against hostile concurrent local replacement. The v1 → v2 migration adds
+tracks, locations and root membership without rewriting runs or stage/provenance
+payloads. No migration from other applications, result reuse or batch recovery. Never point it at a Mixxx database.
 
 A provisional pure score summary retains duration-weighted mean, minimum,
 maximum and explicit disjoint-window coverage. It does not select tags, infer
@@ -248,8 +248,9 @@ music-analyzer analyze --file /path/to/track.flac --database /existing/directory
 music-analyzer analyze --file /path/to/track.flac --max-duration 900 --json
 ```
 
-`--file` is explicitly a local path. The approved future `--track TRACK_ID`
-remains reserved for catalogue IDs; argument-less batch/resume, `--limit`,
+`--file` is explicitly a local path. Alternatively, `--track TRACK_ID` resolves
+a catalogue location and rehashes it before dispatch; the selectors are mutually
+exclusive. Unknown/missing/changed tracks require a rescan; argument-less batch/resume, `--limit`,
 `--force` and `--retry-failed` are not implemented. Every invocation starts a
 new run. Database parent directories must exist. No audio tags or Mixxx writes.
 Config options work before or after `analyze`. Exit 0 means all stages completed,
@@ -271,7 +272,8 @@ its separate MusiCNN embeddings and metadata order `(valence, arousal)`; raw
 arousal is only a provisional energy proxy, not a calibrated DJ energy score.
 No guessed tensor names, class orders, custom spectrograms or fake inference
 fallbacks. Verified local model hashes and Essentia version accompany results.
-No source content hash/reuse identity is claimed.
+Catalogue hashes are exact-file identities only; analysis runs still record source
+paths, not immutable content snapshots. No persisted analysis reuse is implemented.
 
 **Open acceptance work:** real graph execution and shape/label/preprocessing
 validation, compatible pinned inference stack, CPU/RAM measurements, section
@@ -281,7 +283,8 @@ produce actionable setup errors. No weights downloaded or real inference run.
 Download approval and publisher-license clarification remain outstanding.
 Model verification is integrity checking, not proof of inference readiness.
 The Phase 1 inference gate and Phase 2 acceptance gate remain **open**; Phase 3
-batch/catalogue and later Mixxx integration are deliberately not started.
+catalogue foundation is partial; batch acceptance and later Mixxx integration
+remain unimplemented.
 
 Official APIs consulted: retained model metadata, plus MTG/essentia upstream
 `src/algorithms/machinelearning/tensorflowpredict{effnetdiscogs,musicnn,2d}.{h,cpp}`,
@@ -289,3 +292,46 @@ Official APIs consulted: retained model metadata, plus MTG/essentia upstream
 `src/algorithms/extractor/keyextractor.cpp` at
 https://github.com/MTG/essentia . API reference host requests timed out during
 this delivery; upstream source snapshots were retained externally instead.
+
+
+### Phase 3 catalogue foundation (bounded slice, not Phase 3 completion)
+
+```sh
+music-analyzer scan /explicitly/selected/music --database /existing/directory/analysis.sqlite --json
+music-analyzer scan /explicitly/selected/music --max-entries 10000 --max-file-bytes 536870912 --max-total-bytes 8589934592
+music-analyzer analyze --track sha256:DIGEST_FROM_SCAN --database /existing/directory/analysis.sqlite --json
+```
+
+Only the supplied directory is inventoried. No default music directory, tag writes,
+Mixxx access, metadata network requests or model downloads. Supported inventory
+extensions: FLAC, MP3, M4A, WAV, OGG, OPUS, AIFF/AIF (case insensitive). This slice
+records filesystem metadata (size, nanosecond mtime, extension) and streaming
+SHA-256, **not audio tags, duration, codec validation or acoustic fingerprints**.
+Malformed audio can enter the catalogue and later fail decoding. Other extensions
+are ignored. Symlink files/directories are skipped; a symlink root/ancestor is
+rejected. Special files are never read. Unicode locations remain distinct.
+
+Track IDs are `sha256:<exact-byte digest>`: identical copies share an ID but retain
+separate location rows. Moving identical bytes preserves the ID; changed bytes
+create a different identity at that path. Different encodings are not merged.
+Every scan rehashes; metadata-only fast skipping and result reuse are not claimed.
+A successful complete rescan marks previously registered, now-absent locations
+under that exact root unavailable, retaining historical tracks/locations.
+Errors or exhausted limits produce a partial report (exit 1) and never mark missing
+locations; successful files are still registered atomically. Scan issues are
+returned, not stored as durable jobs. Root membership supports repeated and
+overlapping roots; missing detection requires rescanning the same root.
+
+Defaults bound entries (including directories/ignored entries) to 10,000, files to
+512 MiB each and attempted hashing to 8 GiB total; configurable hard ceilings are
+100,000 entries, 2 GiB/file and 64 GiB total. Memory uses 1 MiB hash chunks plus
+bounded inventory records. Select smaller roots or raise explicit limits when
+reported. No wall-clock deadline or protection from a hostile concurrently mutated
+filesystem is promised. Stat checks detect ordinary mutation during hashing, but
+files can still change between catalogue verification and decoding. `--track`
+verification uses the default 512 MiB file cap; larger inventoried files can be
+explicitly selected using `--file`. No immutable snapshot or reuse claim.
+
+Remaining Phase 3 work: durable queue, exclusive batch dispatch, recovery/retry,
+cache/invalidation and immutable run identity. Review/export, calibration and Mixxx
+remain later work. Real inference is still unvalidated; no models were downloaded.

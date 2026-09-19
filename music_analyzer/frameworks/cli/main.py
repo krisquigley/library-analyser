@@ -3,6 +3,10 @@ import argparse
 import json
 import sys
 
+from music_analyzer.application.use_cases.scan_library import ScanLibrary, ResolveTrack
+from music_analyzer.application.dto.catalogue import ScanLimits
+from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
+from music_analyzer.interface_adapters.presenters.catalogue import present_scan
 from music_analyzer.application.use_cases.analyze_track import AnalyzeTrack
 from music_analyzer.application.dto.analysis import AudioSource
 from music_analyzer.domain.analysis import finite
@@ -67,9 +71,18 @@ def main(argv: list[str] | None = None) -> int:
         subcommand = actions.add_parser(action)
         add_configuration_options(subcommand)
         subcommand.add_argument('--json', action='store_true', help='Print a machine-readable report.')
-    analyze = commands.add_parser('analyze', help='Analyze one local file; no catalogue or batch dispatch yet.')
+    scan = commands.add_parser('scan', help='Inventory an explicitly selected root without changing audio tags.')
+    add_configuration_options(scan)
+    scan.add_argument('root')
+    scan.add_argument('--max-entries', type=int, default=10000)
+    scan.add_argument('--max-file-bytes', type=int, default=512 * 1024 * 1024)
+    scan.add_argument('--max-total-bytes', type=int, default=8 * 1024 * 1024 * 1024)
+    scan.add_argument('--json', action='store_true')
+    analyze = commands.add_parser('analyze', help='Analyze one local file or verified catalogue track; no batch dispatch.')
     add_configuration_options(analyze)
-    analyze.add_argument('--file', required=True, help='Local audio path (future --track is reserved for catalogue IDs).')
+    source = analyze.add_mutually_exclusive_group(required=True)
+    source.add_argument('--file', help='Explicit local audio path.')
+    source.add_argument('--track', help='Exact-file track ID returned by scan.')
     analyze.add_argument('--max-duration', type=float, default=900, help='Reject longer audio; default 900s, maximum 3600s.')
     analyze.add_argument('--json', action='store_true', help='Print complete raw scores and provenance as JSON.')
     args = parser.parse_args(argv)
@@ -82,8 +95,16 @@ def main(argv: list[str] | None = None) -> int:
             report = build_doctor(**overrides).execute()
             output = present_doctor(report, as_json=args.json)
             ready = report.foundation_ready
+        elif args.command == 'scan':
+            limits = ScanLimits(args.max_entries, args.max_file_bytes, args.max_total_bytes)
+            settings = load_settings(**overrides)
+            report = ScanLibrary(LocalInventory(), SQLiteAnalysisRepository(settings.database)).execute(args.root, limits)
+            output = present_scan(report, as_json=args.json)
+            ready = report.complete
         elif args.command == 'analyze':
-            report = build_analysis(**overrides).execute(AudioSource(args.file), args.max_duration)
+            source = AudioSource(args.file) if args.file else ResolveTrack(
+                SQLiteAnalysisRepository(load_settings(**overrides).database), LocalInventory()).execute(args.track)
+            report = build_analysis(**overrides).execute(source, args.max_duration)
             output = present_analysis(report, as_json=args.json)
             ready = report.status == 'completed'
         else:
@@ -98,6 +119,10 @@ def main(argv: list[str] | None = None) -> int:
         print('music-analyzer: interrupted; completed analysis stages retained; temporary work cleaned up. A new analyze invocation starts a new run.', file=sys.stderr)
         return 130
     except Exception as error:
+        if args.command == 'scan' and args.json:
+            print(json.dumps({'root': args.root, 'complete': False, 'files': [], 'missing': [],
+                              'issues': [{'location': args.root, 'detail': str(error)}]}))
+            return 1
         if args.command == 'analyze' and args.json:
             print(json.dumps({'run_id': None, 'status': 'setup_failed', 'stages': [], 'detail': str(error)}))
             return 1
