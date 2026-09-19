@@ -1,0 +1,2 @@
+# Preserve publisher license verbatim, including upstream whitespace.
+music_analyzer/infrastructure/models/data/LICENSE -whitespace
