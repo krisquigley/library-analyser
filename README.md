@@ -1,7 +1,8 @@
-# Local Music Analyser — foundation slice
+# Local Music Analyser — incremental foundation
 
-This repository implements **only a bounded part of Phase 1** of
-[the CLI plan](plans/music-analyzer-cli-plan.md). It does not analyse audio yet.
+This repository implements **partial Phase 1 and a backend-only Phase 2 increment**
+of [the CLI plan](plans/music-analyzer-cli-plan.md). The CLI does not analyse audio
+yet; no real model inference has been validated.
 `doctor` reports Python/platform information, checks `ffmpeg -version` (five-second
 timeout), and discovers the top-level Essentia module **without importing it**.
 No runtime third-party Python dependencies are needed for this slice.
@@ -204,3 +205,47 @@ all selected models must be validated on the target machine before pinning a
 working inference environment. Analysis, persistence, library scanning, exports
 and Mixxx integration are later phases. Only `doctor`, `models download` and `models verify` are shipped;
 other planned commands are intentionally absent.
+
+## Phase 2 backend increment (not the six-attribute acceptance gate)
+
+The callable `AnalyzeTrack` use case now orchestrates six ordered stages through
+explicit decoder, analysis-engine and repository ports. Tests use fake engines;
+these fixtures are not music predictions. Each successful stage is committed
+before the next. Expected failures retain earlier stages and stop the run;
+interruptions clean up audio and record an interrupted run. Unexpected programming
+errors propagate and can leave a running row; crash recovery is deferred.
+
+A real FFmpeg adapter decodes a local file once to disposable 44.1 kHz mono
+float32 PCM. It does not edit the input. Python does not buffer the full track.
+Default application duration cap is 900 seconds (~152 MiB temporary PCM), with
+an explicit hard maximum of 3600 seconds (~606 MiB). One extra second detects
+oversized inputs, which are rejected rather than silently truncated. Decode has
+a 120-second wall timeout, and normal failure/interrupt paths remove temporary
+files. Hard process kills may leave OS-temp directories named
+`music-analyzer-audio-*`; remove only abandoned directories. Actual disposable
+FLAC, MP3 and M4A decode tests pass with the installed FFmpeg. These silent
+one-second fixtures do not validate rhythm, harmony or semantic inference.
+
+`SQLiteAnalysisRepository` initializes a dedicated empty database transactionally
+with an application ID and schema version 1. It rejects unrelated schemas,
+unknown versions, symlink paths and Mixxx-named databases; it stores separate run
+IDs, source locations, stage results, uncertainty and provenance. It never opens
+the music file. Parent directories must already exist. Identity is not a security
+boundary against hostile concurrent local replacement. This is not yet a track
+catalogue, content identity/reuse, cache, migration from other applications or
+batch recovery system. Never point it at a Mixxx database.
+
+A provisional pure score summary retains duration-weighted mean, minimum,
+maximum and explicit disjoint-window coverage. It does not select tags, infer
+sustained instrument presence, calibrate probabilities or invent an energy
+scale. No production inference currently calls this policy.
+
+**Remaining Phase 2 work:** official-API Essentia rhythm/key and semantic engine
+adapters, verified model preprocessing/tensor/framing and provenance mapping,
+section checks, energy interpretation, six-attribute CLI and presenters, and
+real graph execution/shape/label validation. No `analyze` command is exposed
+until those adapters can produce honest results. Essentia is not installed in
+the current interpreter, weights are not downloaded, and download approval and
+publisher-license clarification remain outstanding. Existing doctor/config/model
+commands are unchanged. Passing delivery tests are preliminary, not independent
+review or proof of inference accuracy.
