@@ -36,6 +36,7 @@ class SQLiteBatchQueue(SQLiteAnalysisRepository):
                 raise AnalysisError('Batch worker requires exactly one running job')
             db.execute('INSERT INTO runs(id,location,status) VALUES(?,?,?)', (run_id, source.location, 'running'))
             db.execute('UPDATE batch_jobs SET run_id=? WHERE track_id=?', (run_id, running[0][0]))
+            self._link_run(db, run_id, running[0][0])
         return run_id
 
     def recover(self):

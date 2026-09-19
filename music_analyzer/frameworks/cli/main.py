@@ -1,4 +1,5 @@
 """Composition root: the only place that assembles concrete dependencies."""
+from music_analyzer.interface_adapters.mappers.review import review_to_mapping
 import argparse
 import os
 import json
@@ -36,6 +37,11 @@ from music_analyzer.infrastructure.environment.probes import (
     EssentiaProbe, FFmpegProbe, PlatformProbe, PythonProbe,
 )
 from music_analyzer.interface_adapters.presenters.doctor import present_doctor
+
+
+from music_analyzer.application.use_cases.review import ReviewTracks
+from music_analyzer.infrastructure.filesystem.review_output import FileReviewOutput
+from music_analyzer.interface_adapters.presenters.review import present_review
 
 
 def build_doctor(**overrides) -> RunDoctor:
@@ -149,6 +155,28 @@ def main(argv: list[str] | None = None) -> int:
     analyze.add_argument('--force', action='store_true', help='Reset attempt budget and rerun selected tracks.')
     analyze.add_argument('--max-duration', type=float, default=900, help='Reject longer audio; default 900s, maximum 3600s.')
     analyze.add_argument('--json', action='store_true', help='Print complete raw scores and provenance as JSON.')
+    for name in ('show', 'reaggregate'):
+        command = commands.add_parser(name, help='Inspect stored evidence; no decoding or inference.')
+        add_configuration_options(command)
+        command.add_argument('track_id', metavar='TRACK_ID')
+        command.add_argument('--json', action='store_true')
+        if name == 'reaggregate': command.add_argument('--threshold', type=float, required=True)
+    listing = commands.add_parser('list', help='List catalogue identities with conservative review flags.')
+    add_configuration_options(listing)
+    listing.add_argument('--needs-review', action='store_true')
+    override = commands.add_parser('override', help='Set or clear a manual text annotation by track and field.')
+    add_configuration_options(override)
+    operations = override.add_subparsers(dest='operation', required=True)
+    for name in ('set', 'clear'):
+        command = operations.add_parser(name)
+        add_configuration_options(command)
+        command.add_argument('track_id', metavar='TRACK_ID')
+        command.add_argument('field', choices=('bpm', 'key', 'genres', 'mood', 'instruments', 'energy'))
+        if name == 'set': command.add_argument('value')
+    export = commands.add_parser('export', help='Export all catalogue review records; new output path required.')
+    add_configuration_options(export)
+    export.add_argument('--format', choices=('json', 'csv'), required=True)
+    export.add_argument('--output', required=True)
     args = parser.parse_args(argv)
     if args.command == 'analyze' and (not finite(args.max_duration) or not 0 < args.max_duration <= 3600):
         parser.error('--max-duration must be positive, finite and at most 3600 seconds')
@@ -160,7 +188,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         overrides = {key: value for key, value in vars(args).items()
                      if key in {'config', 'database', 'model_directory'}}
-        if args.command == 'doctor':
+        if args.command in {'show', 'list', 'override', 'export', 'reaggregate'}:
+            review = ReviewTracks(SQLiteAnalysisRepository(load_settings(**overrides).database))
+            if args.command == 'list':
+                print('TRACK_ID\tNEEDS_REVIEW\tRUN_STATUS')
+                for report in review.list(args.needs_review):
+                    print(f'{report.track.track_id}\t{report.needs_review}\t{report.track.run.status if report.track.run else "missing"}')
+                return 0
+            if args.command == 'export':
+                review.export(FileReviewOutput(review_to_mapping), args.format, args.output)
+                output = 'Exported ' + args.output
+            elif args.command == 'override':
+                output = present_review(review.override(args.track_id, args.field,
+                    args.value if args.operation == 'set' else None))
+            else:
+                output = present_review(review.show(args.track_id, getattr(args, 'threshold', None)), args.json)
+            ready = True
+        elif args.command == 'doctor':
             report = build_doctor(**overrides).execute()
             output = present_doctor(report, as_json=args.json)
             ready = report.foundation_ready

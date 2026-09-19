@@ -1,4 +1,4 @@
-"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 migrations.
+"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 -> v4 migrations.
 
 Existing unrelated schemas are rejected before any persistent pragma or DDL.
 Exact-file catalogue identity; each explicit analysis request is still a new run.
@@ -43,7 +43,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2, 3):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if db.execute('PRAGMA user_version').fetchone()[0] == 1:
                 self._validate(db, 1)
@@ -58,19 +58,26 @@ class SQLiteAnalysisRepository:
                     state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')),
                     attempts INTEGER NOT NULL CHECK(attempts >= 0), run_id TEXT, detail TEXT NOT NULL)""")
                 db.execute('PRAGMA user_version=3')
+            if db.execute('PRAGMA user_version').fetchone()[0] == 3:
+                self._validate(db, 3)
+                db.execute('CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id))')
+                db.execute('CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field))')
+                db.execute('PRAGMA user_version=4')
             self._validate(db)
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
             raise AnalysisError('Refusing Mixxx-named or symlink database path')
 
-    def _validate(self, db, version=3):
+    def _validate(self, db, version=4):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
                 or db.execute('PRAGMA user_version').fetchone()[0] != version):
             raise AnalysisError('Analysis database identity/version changed')
         columns_by_table = _COLUMNS if version == 1 else {**_COLUMNS, **_CATALOGUE_COLUMNS}
-        if version == 3:
+        if version >= 3:
             columns_by_table = {**columns_by_table, 'batch_jobs': ('track_id', 'fingerprint', 'state', 'attempts', 'run_id', 'detail')}
+        if version >= 4:
+            columns_by_table = {**columns_by_table, 'run_tracks': ('run_id', 'track_id'), 'overrides': ('track_id', 'field', 'value')}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         if objects != {(name, 'table') for name in columns_by_table}:
             raise AnalysisError('Unexpected analysis database schema')
@@ -104,6 +111,7 @@ class SQLiteAnalysisRepository:
         run_id = str(uuid4())
         with self._transaction() as db:
             db.execute('INSERT INTO runs(id,location,status) VALUES(?,?,?)', (run_id, source.location, 'running'))
+            self._link_run(db, run_id, source.expected_identity)
         return run_id
 
     def save_stage(self, run_id: str, result: StageResult) -> None:
@@ -144,3 +152,51 @@ class SQLiteAnalysisRepository:
     def locations(self, track_id):
         with self._transaction() as db:
             return tuple(row[0] for row in db.execute('SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path', (track_id,)))
+
+    def _link_run(self, db, run_id, track_id):
+        if track_id:
+            db.execute('INSERT INTO run_tracks VALUES(?,?)', (run_id, track_id))
+
+    def track_ids(self):
+        # Keyset pages: no catalogue-sized materialization or long read transaction.
+        after = ''
+        while True:
+            with self._transaction() as db:
+                page = db.execute('SELECT id FROM tracks WHERE id>? ORDER BY id LIMIT 100', (after,)).fetchall()
+            if not page: return
+            for (track,) in page: yield track
+            after = page[-1][0]
+
+    def read_track(self, track_id):
+        from music_analyzer.application.dto.analysis import AnalysisReport
+        from music_analyzer.application.dto.review import StoredTrack
+        from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_mapping
+        with self._transaction() as db:
+            track = db.execute('SELECT id,sha256,size FROM tracks WHERE id=?', (track_id,)).fetchone()
+            if not track: raise AnalysisError('Unknown track ID; scan first')
+            locations = tuple(r[0] for r in db.execute('SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path', (track_id,)))
+            row = db.execute('SELECT r.id,r.status,r.detail FROM runs r JOIN run_tracks t ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', (track_id,)).fetchone()
+            run = None
+            if row:
+                stages = []
+                for stage, size in db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (row[0],)):
+                    if size > 16 * 1024 * 1024: raise AnalysisError('Oversized stored stage (16 MiB limit)')
+                    payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (row[0], stage)).fetchone()[0]
+                    try:
+                        result = stage_from_mapping(json.loads(payload))
+                        if result.stage != stage: raise ValueError('Stage name mismatch')
+                        stages.append(result)
+                    except (ValueError, KeyError, TypeError, IndexError) as error:
+                        raise AnalysisError('Invalid stored stage: ' + str(error)) from error
+                run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
+            overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
+            return StoredTrack(*track, locations, run, overrides)
+
+    def set_override(self, track_id, field, value):
+        with self._transaction() as db:
+            if not db.execute('SELECT 1 FROM tracks WHERE id=?', (track_id,)).fetchone():
+                raise AnalysisError('Unknown track ID; scan first')
+            if value is None:
+                db.execute('DELETE FROM overrides WHERE track_id=? AND field=?', (track_id, field))
+            else:
+                db.execute('INSERT INTO overrides VALUES(?,?,?) ON CONFLICT(track_id,field) DO UPDATE SET value=excluded.value', (track_id, field, value))

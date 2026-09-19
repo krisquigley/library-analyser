@@ -228,7 +228,7 @@ FLAC, MP3 and M4A decode tests pass with the installed FFmpeg. These silent
 one-second fixtures do not validate rhythm, harmony or semantic inference.
 
 `SQLiteAnalysisRepository` initializes a dedicated empty database transactionally
-with an application ID and schema version 3 (transactional v0 → v1 → v2 → v3). It rejects unrelated schemas,
+with an application ID and schema version 4 (transactional v0 → v1 → v2 → v3 → v4). It rejects unrelated schemas,
 unknown versions, symlink paths and Mixxx-named databases; it stores separate run
 IDs, source locations, stage results, uncertainty and provenance. It never opens
 the music file. Parent directories must already exist. Identity is not a security
@@ -428,12 +428,80 @@ to existing section score windows, provenance and summaries. No database migrati
 was needed; old stage bytes remain untouched and may lack raw predictions. The
 inward `select_scores(labels, windows, duration, threshold)` capability creates a
 provisional threshold view of retained scores without invoking any inference.
-There is **no threshold/reaggregation CLI or persisted review selection yet**:
-Phase 4 must add a read/mapping port for stored stages, expose this operation and
-handle legacy payloads explicitly. Thresholds are not calibrated tag assertions.
+The Phase 4 `reaggregate` command exposes this as a transient view (not a persisted selection).
+Legacy payloads without retained windows produce no selection. Thresholds are not calibrated tag assertions.
 
 Tests use fake model adapters and disposable audio, not downloaded weights.
 **Real inference remains unvalidated**, Phase 1/2 gates remain open, and this does
 not declare all Phase 3 complete. Remaining work includes compatible real-runtime
 validation/resource measurements, broader recovery review, metadata queue scaling,
-review/export/overrides, calibration and later Mixxx integration.
+real-runtime review, calibration and later Mixxx integration.
+
+
+## Phase 4: stored review, manual annotations and exports
+
+These commands use only the dedicated catalogue and retained analysis stages.
+They never load models, decode audio, download weights, or write music/Mixxx.
+`TRACK_ID` is the exact-file identity printed by `scan` or `list`, not a path or run ID.
+Configuration options work before or after the command (for `override`, also after `set`/`clear`).
+
+```sh
+music-analyzer --database /tmp/analysis.sqlite list --needs-review
+music-analyzer --database /tmp/analysis.sqlite show TRACK_ID
+music-analyzer --database /tmp/analysis.sqlite show TRACK_ID --json
+music-analyzer --database /tmp/analysis.sqlite override set TRACK_ID genres 'House; personal annotation'
+music-analyzer --database /tmp/analysis.sqlite override set TRACK_ID bpm '123.5'
+music-analyzer --database /tmp/analysis.sqlite override clear TRACK_ID bpm
+music-analyzer --database /tmp/analysis.sqlite reaggregate TRACK_ID --threshold 0.5 --json
+music-analyzer --database /tmp/analysis.sqlite export --format json --output /tmp/new-review.json
+music-analyzer --database /tmp/analysis.sqlite export --format csv --output /tmp/new-review.csv
+```
+
+**Semantics and limitations:**
+
+- Manual overrides are explicit nonblank text annotations (maximum 4096 characters),
+  for `bpm`, `key`, `genres`, `mood`, `instruments`, or `energy`. They are not parsed
+  as validated musical measurements. Use `--` before a value beginning with `-`.
+  Manual text takes precedence over automatic scalar values or threshold selections;
+  `clear` restores the automatic/missing view. Raw stages are never replaced.
+  Overrides belong to content identity, persist across reanalysis/restarts and moves,
+  and do not transfer to different bytes at the same path. No override history yet.
+- Show uses the latest **started identity-linked run**, including a failed/running
+  partial run, rather than silently falling back to an older successful result.
+  v4 adds `run_tracks` and `overrides` transactionally without rewriting old run/stage,
+  catalogue or queue rows. Legacy path-only runs cannot be safely attributed: they
+  remain stored but review reports missing evidence. Explicit `analyze --file` is
+  still path-only; scan then `analyze --track TRACK_ID` or batch analyze for review.
+- Review flags are intentionally conservative: absent location/run/stage, noncompleted
+  run, reported uncertainty or provisional scores need review. Overrides do not
+  erase evidence limitations or mark a track reviewed. This is not a confidence
+  calibration; currently almost all analyzed tracks can need review.
+- `reaggregate` recomputes duration-weighted means from retained section windows and
+  selects labels at or above the explicit finite raw-score threshold. No default
+  threshold or probability interpretation is invented. It is a transient JSON/human
+  view, never changes the database, never runs decoder/inference, and manual text
+  still wins. Coverage reconstructs duration; missing legacy windows/coverage yield
+  no selection and an explanation. Native raw matrices remain unchanged evidence.
+- JSON export is a UTF-8 array of complete review DTO mappings, with identity,
+  locations, overrides, effective values, status, raw scores/windows/matrices,
+  summary coverage, uncertainty and provenance. CSV has identity columns, per-field
+  manual annotations and a `record` JSON column carrying the same full evidence.
+  CSV quoting handles commas/quotes/newlines/Unicode. Formula-like text (including
+  whitespace-prefixed `=`, `+`, `-`, `@` and initial tab/CR/LF) gets an apostrophe
+  prefix; numeric/JSON evidence is not recast as a calibrated probability.
+- Exports require a **new destination**: existing files and symlinks are refused,
+  never overwritten. A temporary sibling is flushed/fsynced and atomically linked;
+  errors clean it up and preserve existing output. Destination directory must exist
+  and support hard links. Hard kill can leave `.export-*` files; no directory fsync
+  guarantee is claimed. No whole-catalogue snapshot under concurrent writers: each
+  track is a consistent read transaction, with identity pages of 100. Export streams
+  one track at a time; a stored stage is capped at 16 MiB on read. Per-track raw
+  matrices, JSON encoding and locations still require memory.
+- `show --json` and `reaggregate --json` emit only a JSON object on success;
+  operational errors produce nonzero status and stderr, no fake success JSON.
+  `list` is tabular and export prints its destination only after publication.
+  Stdout from a failed streaming list can contain preceding rows; check exit status.
+
+Delivery tests use fake inference and disposable catalogues. They are **not independent
+review** or proof of real-model accuracy. No pilot/calibration/Mixxx milestone is
+claimed; real weights/runtime/resource validation and representative listening remain gates.
