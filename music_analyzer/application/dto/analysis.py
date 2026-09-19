@@ -10,6 +10,7 @@ class AnalysisError(Exception):
 @dataclass(frozen=True)
 class AudioSource:
     location: str
+    expected_identity: str = ""
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class DecodedAudio:
     handle: str
     duration: float
     sample_rate: int
+    identity: str = ""
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class StageResult:
     values: tuple[tuple[str, str | float], ...] = ()
     windows: tuple[ScoreWindow, ...] = ()
     summary: ScoreSummary | None = None
+    raw_predictions: tuple[tuple[tuple[float, ...], ...], ...] = ()
 
 
 @dataclass(frozen=True)

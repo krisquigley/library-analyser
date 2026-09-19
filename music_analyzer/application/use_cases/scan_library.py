@@ -20,5 +20,5 @@ class ResolveTrack:
     def execute(self, track_id: str) -> AudioSource:
         for location in self.catalogue.locations(track_id):
             if self.files.matches(location, track_id):
-                return AudioSource(location)
+                return AudioSource(location, track_id)
         raise ValueError('No verified available location for track; scan the selected root again or use --file PATH')

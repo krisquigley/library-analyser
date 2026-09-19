@@ -1,5 +1,6 @@
 """Composition root: the only place that assembles concrete dependencies."""
 import argparse
+import os
 import json
 import sys
 import hashlib
@@ -8,6 +9,7 @@ import subprocess
 
 from music_analyzer.application.use_cases.analyze_batch import AnalyzeBatch
 from music_analyzer.infrastructure.persistence.batch import SQLiteBatchQueue
+from music_analyzer.infrastructure.analysis.embedding_cache import FileEmbeddingCache
 from music_analyzer.infrastructure.analysis.fingerprint import recipe_fingerprint
 from music_analyzer.interface_adapters.presenters.batch import present_batch
 
@@ -48,11 +50,17 @@ def build_models(settings):
     return FileModelStorage(settings.model_directory, manifest, HTTPSTransfer()), tuple(manifest)
 
 
+def build_embedding_cache():
+    root = os.environ.get('XDG_CACHE_HOME', '')
+    base = Path(root) if root and Path(root).is_absolute() else Path.home() / '.cache'
+    return FileEmbeddingCache(base / 'music-analyzer/embeddings-v1')
+
+
 def build_analysis(**overrides):
     settings = load_settings(**overrides)
     library, version, reader = load_backend()
     storage, _ = build_models(settings)
-    engine = EssentiaEngine(library, version, storage.manifest, VerifiedModels(storage), reader)
+    engine = EssentiaEngine(library, version, storage.manifest, VerifiedModels(storage), reader, cache=build_embedding_cache())
     return AnalyzeTrack(FFmpegDecoder(), engine, SQLiteAnalysisRepository(settings.database))
 
 
@@ -72,7 +80,7 @@ def build_batch_worker(settings, max_duration):
         engine=f'{version};numpy={reader.numpy.__version__}', decoder=decoder_version,
         preprocessing='ffmpeg-mono-44100-f32le;sections-v1', algorithm=algorithm,
         max_duration=max_duration)
-    engine = EssentiaEngine(library, version, storage.manifest, models, reader)
+    engine = EssentiaEngine(library, version, storage.manifest, models, reader, cache=build_embedding_cache())
     worker = AnalyzeTrack(FFmpegDecoder(), engine, SQLiteBatchQueue(settings.database))
     return recipe, worker.execute
 

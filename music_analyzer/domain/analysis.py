@@ -48,3 +48,14 @@ def summarize_scores(labels: tuple[str, ...], windows: tuple[ScoreWindow, ...], 
                         tuple(min(w.scores[i] for w in windows) for i in range(len(labels))),
                         tuple(max(w.scores[i] for w in windows) for i in range(len(labels))),
                         covered / duration)
+
+
+def select_scores(labels, windows, duration, threshold):
+    """Provisional threshold view over retained section scores, without inference.
+
+    No calibrated tag or probability assertion. Does not mutate raw evidence.
+    """
+    if not finite(threshold):
+        raise ValueError('Finite threshold required')
+    summary = summarize_scores(labels, windows, duration)
+    return tuple(label for label, mean in zip(labels, summary.mean) if mean >= threshold)

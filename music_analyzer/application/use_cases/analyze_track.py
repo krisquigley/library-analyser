@@ -6,7 +6,8 @@ from music_analyzer.domain.analysis import finite
 class AnalyzeTrack:
     """One explicit run; checkpoint each stage, never claim partial success.
 
-    No reuse, retries, batch dispatch or recording identity assumptions yet.
+    Embedding reuse is supplied by the engine; this use case always checkpoints
+    a new full run. It makes no acoustic recording identity assumptions.
     Unexpected programmer/storage exceptions propagate, not hidden as success.
     """
     def __init__(self, decoder: AudioDecoder, engine: AnalysisEngine, repository: AnalysisRepository):

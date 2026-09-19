@@ -71,3 +71,13 @@ class AnalysisRepositoryTests(unittest.TestCase):
             repository.save_stage(one, StageResult('bpm', (), 'late'))
         with self.assertRaises(AnalysisError):
             repository.finish('missing', 'completed', '')
+
+    def test_raw_prediction_matrices_survive_reopen(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        run = repository.start(AudioSource('fake'))
+        repository.save_stage(run, StageResult('mood', (), 'raw', raw_predictions=(((.1, .9), (.3, .7)),)))
+        repository.finish(run, 'completed', '')
+        SQLiteAnalysisRepository(str(self.path))
+        with closing(sqlite3.connect(self.path)) as db:
+            stage = json.loads(db.execute('SELECT result FROM stages').fetchone()[0])
+        self.assertEqual(stage['raw_predictions'], [[[.1, .9], [.3, .7]]])

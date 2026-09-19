@@ -63,7 +63,7 @@ relative. Default data paths are:
 - `$XDG_DATA_HOME/music-analyzer/models`
 
 `XDG_DATA_HOME` falls back to `~/.local/share` when unset, empty or relative, as
-required by the XDG specification. No cache is used in this slice.
+required by the XDG specification. Embeddings use XDG cache (see the cache slice below).
 
 The TOML format has two optional **top-level** keys (no section header):
 
@@ -271,8 +271,8 @@ its separate MusiCNN embeddings and metadata order `(valence, arousal)`; raw
 arousal is only a provisional energy proxy, not a calibrated DJ energy score.
 No guessed tensor names, class orders, custom spectrograms or fake inference
 fallbacks. Verified local model hashes and Essentia version accompany results.
-Catalogue hashes are exact-file identities only; analysis runs still record source
-paths, not immutable content snapshots. No persisted analysis reuse is implemented.
+Catalogue hashes are exact-file identities only. Runs record source paths and
+verified snapshot/PCM provenance; persistent embedding reuse is described below.
 
 **Open acceptance work:** real graph execution and shape/label/preprocessing
 validation, compatible pinned inference stack, CPU/RAM measurements, section
@@ -282,7 +282,7 @@ produce actionable setup errors. No weights downloaded or real inference run.
 Download approval and publisher-license clarification remain outstanding.
 Model verification is integrity checking, not proof of inference readiness.
 The Phase 1 inference gate and Phase 2 acceptance gate remain **open**; Phase 3
-catalogue and durable batch delivery is partial; cache and later Mixxx integration
+catalogue, durable batch and embedding cache delivery is partial; later Mixxx integration
 remain unimplemented.
 
 Official APIs consulted: retained model metadata, plus MTG/essentia upstream
@@ -327,11 +327,11 @@ Defaults bound entries (including directories/ignored entries) to 10,000, files 
 bounded inventory records. Select smaller roots or raise explicit limits when
 reported. No wall-clock deadline or protection from a hostile concurrently mutated
 filesystem is promised. Stat checks detect ordinary mutation during hashing, but
-files can still change between catalogue verification and decoding. `--track`
-verification uses the default 512 MiB file cap; larger inventoried files can be
-explicitly selected using `--file`. No immutable audio snapshot is created.
+files can still change during catalogue inspection. Analysis now verifies a
+private snapshot before decoding. Both `--track` and `--file` analysis use a
+512 MiB snapshot cap even if the scan inventory cap was raised.
 
-Remaining Phase 3 work: persistent embedding cache/invalidation and stronger immutable audio snapshot binding. Review/export, calibration and Mixxx
+The next bounded cache/snapshot slice is delivered below; Phase 3 acceptance remains partial. Review/export, calibration and Mixxx
 remain later work. Real inference is still unvalidated; no models were downloaded.
 
 
@@ -364,7 +364,7 @@ using a limit. JSON includes counts and job records, not full stage payloads.
 
 Ctrl+C stops dispatch and checkpoints the current job pending. Restart recovers
 abandoned running jobs, marks their bound runs interrupted, retains completed
-stage payloads, and starts a **new full run**, not partial-stage/cache reuse.
+stage payloads, and starts a **new full run**, not partial-stage reuse (valid embedding cache entries may still be reused).
 Each real worker run is transactionally bound to its job before stage writes.
 Old runs are retained even when force or a recipe change replaces a job pointer.
 
@@ -373,10 +373,67 @@ verified local model hashes and manifest, Essentia/NumPy and FFmpeg versions,
 preprocessing, duration cap, and hashes of algorithm/decoder/aggregation source.
 Unavailable models/runtime fail setup even for potentially skippable jobs; no
 weights are downloaded implicitly. The selected source is rehashed after success;
-ordinary identity changes fail the job. This is **not** a hostile-mutation-proof
-snapshot: changes during decode and restored bytes cannot be detected reliably.
-No reuse of legacy explicit runs, audio embeddings on disk, or invented cache hits.
-Persistent embedding caching is explicitly the **next pending Phase 3 slice**.
+ordinary identity changes fail the job. The verified private snapshot described
+below additionally binds decoding against source change-and-restore races.
+No reuse of legacy explicit runs or invented cache hits. Persistent embedding
+reuse is now available as described below.
 Queue/status materialize catalogue job metadata in memory; audio/temp/duration
 bounds remain as above, with a single worker. No real inference acceptance is
 claimed by the fake-engine tests, and weights approval remains pending.
+
+
+### Persistent embedding cache and verified decode snapshots (bounded Phase 3 slice)
+
+Both explicit and batch analysis now inject a disposable embedding cache through
+an application port. Compatible classifier heads share embeddings, not predictions.
+The key includes the SHA-256 of the **actual private source snapshot and decoded
+PCM**, verified embedding-model hash and metadata/tensors, Essentia/NumPy version,
+mono 44100Hz float32/resampling policy, engine implementation hash, target rate,
+duration and exact sampled sections. Head/threshold changes do not invalidate a
+compatible embedding; head inference still runs in a new analysis. Corrupt, absent,
+wrong-shape or nonfinite entries recompute. Unidentified fake/custom decoder output
+never enters persistent caching. Model verification/runtime are still required on
+hits, and decoding still runs to establish verified PCM identity; this is not a
+whole-run or decoded-audio cache.
+
+FFmpeg reads a private, read-only compressed snapshot, not the changing source
+path. Copying is bounded to **512 MiB**, in 1 MiB chunks. Catalogue-resolved inputs
+carry the expected content hash: snapshot mismatch fails with a rescan request.
+Even a change-and-restore during decode cannot substitute different bytes after
+snapshot verification. Explicit files bind results/cache to the bytes actually
+copied; they do not assert catalogue identity. This is ordinary concurrent-source
+mutation protection, not protection against a malicious same-user process or
+model-file replacement. Existing post-run batch checks remain in place.
+Temporary snapshots and decoded PCM are removed on normal exit, error and Ctrl+C.
+The existing 3600s hard PCM cap (~606 MiB) and 120s decoder timeout remain; snapshot
+plus PCM can require ~1.1 GiB temporary disk per worker. Abrupt kill/power loss can
+leave temporary directories; do not remove directories of running analyses.
+
+Cache location: `$XDG_CACHE_HOME/music-analyzer/embeddings-v1` when the XDG value
+is absolute, otherwise `~/.cache/music-analyzer/embeddings-v1`. JSON entries contain
+only finite rectangular embedding data and an integrity digest (not executable
+pickle). Writes use same-directory temporary files, flush/fsync and atomic replace;
+failed writes leave the old entry usable. Limits: **16 MiB serialized per entry**,
+**256 MiB total after successful writes**, oldest-write eviction (not LRU). Oversized
+entries and unwritable/full caches fall back to inference; cache durability is not
+required for correctness. Independent explicit processes can temporarily exceed
+the directory bound; no global cache lock or background cleanup is claimed.
+After stopping analysis, deleting this directory is safe. Hidden `.write-*` remnants
+from abrupt termination are disposable and not counted by eviction. No decoded
+library copies are retained in the cache. Native model tensors/predictors remain
+subject to real-runtime resource validation, not these serialized-file limits.
+
+New stage JSON retains **raw native per-patch predictions** by section, in addition
+to existing section score windows, provenance and summaries. No database migration
+was needed; old stage bytes remain untouched and may lack raw predictions. The
+inward `select_scores(labels, windows, duration, threshold)` capability creates a
+provisional threshold view of retained scores without invoking any inference.
+There is **no threshold/reaggregation CLI or persisted review selection yet**:
+Phase 4 must add a read/mapping port for stored stages, expose this operation and
+handle legacy payloads explicitly. Thresholds are not calibrated tag assertions.
+
+Tests use fake model adapters and disposable audio, not downloaded weights.
+**Real inference remains unvalidated**, Phase 1/2 gates remain open, and this does
+not declare all Phase 3 complete. Remaining work includes compatible real-runtime
+validation/resource measurements, broader recovery review, metadata queue scaling,
+review/export/overrides, calibration and later Mixxx integration.

@@ -62,3 +62,25 @@ class FFmpegDecoderTests(unittest.TestCase):
         with self.assertRaises(AnalysisError):
             with FFmpegDecoder(executable='/does-not-exist/ffmpeg').decode(AudioSource(str(self.source)), 2):
                 self.fail('must not yield audio')
+
+    def test_snapshot_rejects_changed_expected_source_and_bounds_input(self):
+        with self.assertRaisesRegex(AnalysisError, 'identity'):
+            with FFmpegDecoder().decode(AudioSource(str(self.source), 'sha256:' + '0' * 64), 2):
+                self.fail('wrong source')
+        with self.assertRaisesRegex(AnalysisError, 'snapshot limit'):
+            with FFmpegDecoder(max_source_bytes=10).decode(AudioSource(str(self.source)), 2):
+                self.fail('oversized snapshot')
+
+    def test_decode_uses_private_snapshot_even_if_source_changes(self):
+        from unittest.mock import patch
+        import hashlib
+        original = self.source.read_bytes()
+        real_popen = subprocess.Popen
+        def mutate(command, **kwargs):
+            self.assertNotEqual(command[command.index('-i') + 1], str(self.source))
+            self.source.write_bytes(b'changed while decoding')
+            return real_popen(command, **kwargs)
+        with patch('music_analyzer.infrastructure.audio.ffmpeg.subprocess.Popen', side_effect=mutate):
+            with FFmpegDecoder().decode(AudioSource(str(self.source), 'sha256:' + hashlib.sha256(original).hexdigest()), 2) as audio:
+                self.assertTrue(audio.identity)
+                self.assertAlmostEqual(audio.duration, 1)

@@ -2,8 +2,12 @@
 
 Three disjoint sections, at most 90s total, for semantic estimates. Coverage is
 section exposure, not independent frame coverage or calibrated confidence.
-An instance owns only one track's in-memory embedding reuse; no disk cache.
+Optional persistent reuse is bound to verified snapshot and preprocessing identity.
 """
+import hashlib
+import json
+from pathlib import Path
+from music_analyzer.application.use_cases.reuse_embeddings import ReuseEmbeddings
 from music_analyzer.application.dto.analysis import AnalysisError, StageResult
 from music_analyzer.domain.analysis import ScoreWindow, finite, summarize_scores
 
@@ -52,7 +56,8 @@ def load_backend():
 
 
 class EssentiaEngine:
-    def __init__(self, library, version, manifest, resolve_model, read_audio):
+    def __init__(self, library, version, manifest, resolve_model, read_audio, cache=None):
+        self.cache = cache
         self.library, self.version, self.manifest = library, version, manifest
         self.resolve_model, self.read_audio = resolve_model, read_audio
         self._audio = None
@@ -87,6 +92,8 @@ class EssentiaEngine:
             if audio != self._audio:
                 self._audio, self._embeddings = audio, {}
             provenance = [('engine', 'Essentia'), ('version', str(self.version))]
+            if audio.identity:
+                provenance.append(('audio-snapshot-pcm', audio.identity))
             if stage in ('bpm', 'key'):
                 signal = self.read_audio(audio, 0, audio.duration, 44100)
                 if stage == 'bpm':
@@ -107,8 +114,24 @@ class EssentiaEngine:
             if embedding_model not in self._embeddings:
                 predictor = self._predictor(embedding_model, 'embeddings')
                 rate = self.manifest[embedding_model]['metadata']['inference']['sample_rate']
-                self._embeddings[embedding_model] = tuple(predictor(self.read_audio(audio, start, end, rate))
-                                                          for start, end in regions)
+                def compute():
+                    return tuple(tuple(tuple(float(v) for v in row) for row in
+                                       predictor(self.read_audio(audio, start, end, rate)))
+                                 for start, end in regions)
+                # Head identity is intentionally excluded: compatible heads consume
+                # the same verified embedding tensor; width is checked inward.
+                key = ""
+                if self.cache is not None and audio.identity:
+                    key = json.dumps(dict(audio=audio.identity, model=self._hashes[embedding_model],
+                        metadata=self.manifest[embedding_model], version=str(self.version),
+                        numpy=str(getattr(getattr(self.read_audio, 'numpy', None), '__version__', 'unknown')),
+                        preprocessing='mono44100-f32;resample-quality1;native-repeat-v1',
+                        algorithm=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                        regions=regions, rate=rate, duration=audio.duration), sort_keys=True)
+                width = metadata['schema']['inputs'][0]['shape'][-1]
+                self._embeddings[embedding_model] = (
+                    ReuseEmbeddings(self.cache).execute(key, len(regions), width, compute)
+                    if self.cache is not None and audio.identity else compute())
             width = metadata['schema']['inputs'][0]['shape'][-1]
             for embedding in self._embeddings[embedding_model]:
                 if len(embedding) == 0 or any(len(row) != width or not all(finite(float(v)) for v in row) for row in embedding):
@@ -116,10 +139,12 @@ class EssentiaEngine:
             predictor = self._predictor(model, 'predictions')
             labels = tuple(metadata['classes'])
             windows = []
+            raw_predictions = []
             for (start, end), embeddings in zip(regions, self._embeddings[embedding_model]):
                 rows = tuple(tuple(float(score) for score in row) for row in predictor(embeddings))
                 if len(rows) != len(embeddings) or not rows or any(len(row) != len(labels) or not all(finite(v) for v in row) for row in rows):
                     raise ValueError('invalid output shape or nonfinite output')
+                raw_predictions.append(rows)
                 mean = tuple(sum(row[i] / len(rows) for row in rows) for i in range(len(labels)))
                 windows.append(ScoreWindow(start, end, mean))
             provenance.extend([(m, self._hashes[m]) for m in (embedding_model, model)])
@@ -129,7 +154,8 @@ class EssentiaEngine:
             if stage == 'energy':
                 uncertainty += ' Provisional energy proxy: raw arousal only, with valence retained; no DJ energy scale or thresholds.'
             return StageResult(stage, tuple(provenance), uncertainty, windows=tuple(windows),
-                               summary=summarize_scores(labels, tuple(windows), audio.duration))
+                               summary=summarize_scores(labels, tuple(windows), audio.duration),
+                               raw_predictions=tuple(raw_predictions))
         except AnalysisError:
             raise
         except (RuntimeError, ValueError, TypeError, KeyError, OSError, AttributeError, StopIteration) as error:
