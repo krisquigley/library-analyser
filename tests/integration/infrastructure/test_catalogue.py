@@ -114,3 +114,12 @@ class CatalogueTests(unittest.TestCase):
         result = self.scan()
         self.assertFalse(result.complete)
         self.assertIn('regular', result.issues[0].detail)
+
+    def test_failed_hash_reserves_remaining_read_budget(self):
+        for name in ('one.flac', 'two.flac'):
+            (self.root / name).write_bytes(b'x')
+        files = LocalInventory()
+        with patch.object(files, '_read', side_effect=ValueError('grew during read')) as read:
+            result = files.inventory(str(self.root), ScanLimits(max_file_bytes=10, max_total_bytes=10))
+        self.assertEqual(read.call_count, 1)
+        self.assertFalse(result.complete)

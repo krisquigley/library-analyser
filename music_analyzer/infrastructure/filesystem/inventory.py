@@ -70,8 +70,11 @@ class LocalInventory:
                                 size = entry.stat(follow_symlinks=False).st_size
                                 if size > budget:
                                     raise ValueError('File exceeds remaining scan byte budget; increase limits or select smaller root')
-                                total += size
-                                files.append(self._read(entry.path, budget))
+                                # Reserve the entire permitted read on failure (e.g. a growing file).
+                                total += budget
+                                file = self._read(entry.path, budget)
+                                total -= budget - file.identity.size
+                                files.append(file)
                         except (OSError, ValueError) as error:
                             issues.append(ScanIssue(entry.path, str(error)))
             except (OSError, ValueError) as error:
