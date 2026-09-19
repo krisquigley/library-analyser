@@ -2,6 +2,14 @@
 import argparse
 import json
 import sys
+import hashlib
+from pathlib import Path
+import subprocess
+
+from music_analyzer.application.use_cases.analyze_batch import AnalyzeBatch
+from music_analyzer.infrastructure.persistence.batch import SQLiteBatchQueue
+from music_analyzer.infrastructure.analysis.fingerprint import recipe_fingerprint
+from music_analyzer.interface_adapters.presenters.batch import present_batch
 
 from music_analyzer.application.use_cases.scan_library import ScanLibrary, ResolveTrack
 from music_analyzer.application.dto.catalogue import ScanLimits
@@ -48,6 +56,48 @@ def build_analysis(**overrides):
     return AnalyzeTrack(FFmpegDecoder(), engine, SQLiteAnalysisRepository(settings.database))
 
 
+def build_batch_worker(settings, max_duration):
+    # Read-only verification. No implicit download, including on an empty queue.
+    library, version, reader = load_backend()
+    storage, model_ids = build_models(settings)
+    models = VerifiedModels(storage)
+    hashes = {model: models(model)[1] for model in model_ids}
+    decoder_version = subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True,
+                                     text=True, timeout=10).stdout
+    package = Path(__file__).resolve().parents[2]
+    algorithm = {name: hashlib.sha256((package / name).read_bytes()).hexdigest() for name in (
+        'infrastructure/analysis/essentia.py', 'domain/analysis.py',
+        'application/use_cases/analyze_track.py', 'infrastructure/audio/ffmpeg.py')}
+    recipe = recipe_fingerprint(models=hashes, manifest=storage.manifest,
+        engine=f'{version};numpy={reader.numpy.__version__}', decoder=decoder_version,
+        preprocessing='ffmpeg-mono-44100-f32le;sections-v1', algorithm=algorithm,
+        max_duration=max_duration)
+    engine = EssentiaEngine(library, version, storage.manifest, models, reader)
+    worker = AnalyzeTrack(FFmpegDecoder(), engine, SQLiteBatchQueue(settings.database))
+    return recipe, worker.execute
+
+
+def build_batch(settings, max_duration):
+    queue = SQLiteBatchQueue(settings.database)
+    files = LocalInventory()
+    resolver = ResolveTrack(queue, files)
+    selected = {}
+    worker = []
+    def recipe():
+        fingerprint, analyze = build_batch_worker(settings, max_duration)
+        worker.append(analyze)
+        return fingerprint
+    def resolve(track):
+        source = resolver.execute(track)
+        selected[track] = source.location
+        return source
+    def verify(track):
+        if track in selected:
+            return files.matches(selected[track], track)
+        return any(files.matches(path, track) for path in queue.locations(track))
+    return AnalyzeBatch(queue, resolve, lambda source, duration: worker[0](source, duration), verify), recipe
+
+
 def add_configuration_options(parser: argparse.ArgumentParser) -> None:
     for option, help_text in (
         ("--config", "Read this TOML file instead of the optional XDG config file."),
@@ -58,7 +108,7 @@ def add_configuration_options(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog='music-analyzer', description='Local single-track analysis and environment setup.')
+    parser = argparse.ArgumentParser(prog='music-analyzer', description='Local catalogue and single-worker analysis.')
     add_configuration_options(parser)
     commands = parser.add_subparsers(dest='command', required=True)
     doctor = commands.add_parser('doctor', help='Check dependency availability (not analysis readiness).')
@@ -78,16 +128,27 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument('--max-file-bytes', type=int, default=512 * 1024 * 1024)
     scan.add_argument('--max-total-bytes', type=int, default=8 * 1024 * 1024 * 1024)
     scan.add_argument('--json', action='store_true')
-    analyze = commands.add_parser('analyze', help='Analyze one local file or verified catalogue track; no batch dispatch.')
+    status = commands.add_parser('status', help='Show durable batch job states (no inference).')
+    add_configuration_options(status)
+    status.add_argument('--json', action='store_true')
+    analyze = commands.add_parser('analyze', help='Dispatch catalogue jobs, or analyze an explicit file/track.')
     add_configuration_options(analyze)
-    source = analyze.add_mutually_exclusive_group(required=True)
+    source = analyze.add_mutually_exclusive_group()
     source.add_argument('--file', help='Explicit local audio path.')
     source.add_argument('--track', help='Exact-file track ID returned by scan.')
+    analyze.add_argument('--limit', type=int, help='Maximum attempted tracks this invocation.')
+    analyze.add_argument('--retry-failed', action='store_true', help='Retry failures, at most three attempts per recipe.')
+    analyze.add_argument('--force', action='store_true', help='Reset attempt budget and rerun selected tracks.')
     analyze.add_argument('--max-duration', type=float, default=900, help='Reject longer audio; default 900s, maximum 3600s.')
     analyze.add_argument('--json', action='store_true', help='Print complete raw scores and provenance as JSON.')
     args = parser.parse_args(argv)
     if args.command == 'analyze' and (not finite(args.max_duration) or not 0 < args.max_duration <= 3600):
         parser.error('--max-duration must be positive, finite and at most 3600 seconds')
+    if args.command == 'analyze':
+        if args.limit is not None and args.limit <= 0:
+            parser.error('--limit must be positive')
+        if (args.file or args.track) and (args.limit is not None or args.retry_failed or args.force):
+            parser.error('Batch options cannot be used with --file or --track')
     try:
         overrides = {key: value for key, value in vars(args).items()
                      if key in {'config', 'database', 'model_directory'}}
@@ -101,6 +162,13 @@ def main(argv: list[str] | None = None) -> int:
             report = ScanLibrary(LocalInventory(), SQLiteAnalysisRepository(settings.database)).execute(args.root, limits)
             output = present_scan(report, as_json=args.json)
             ready = report.complete
+        elif args.command == 'status':
+            jobs = SQLiteBatchQueue(load_settings(**overrides).database).status()
+            output, ready = present_batch(jobs, args.json), True
+        elif args.command == 'analyze' and not (args.file or args.track):
+            batch, recipe = build_batch(load_settings(**overrides), args.max_duration)
+            jobs = batch.execute(recipe, args.limit, args.retry_failed, args.force, args.max_duration)
+            output, ready = present_batch(jobs, args.json), not any(j.state == 'failed' for j in jobs)
         elif args.command == 'analyze':
             source = AudioSource(args.file) if args.file else ResolveTrack(
                 SQLiteAnalysisRepository(load_settings(**overrides).database), LocalInventory()).execute(args.track)
@@ -116,14 +184,14 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigurationError as error:
         parser.error(str(error))
     except KeyboardInterrupt:
-        print('music-analyzer: interrupted; completed analysis stages retained; temporary work cleaned up. A new analyze invocation starts a new run.', file=sys.stderr)
+        print('music-analyzer: interrupted; completed analysis stages retained; temporary work cleaned up. Batch analyze resumes pending work; explicit --file/--track starts a new run.', file=sys.stderr)
         return 130
     except Exception as error:
         if args.command == 'scan' and args.json:
             print(json.dumps({'root': args.root, 'complete': False, 'files': [], 'missing': [],
                               'issues': [{'location': args.root, 'detail': str(error)}]}))
             return 1
-        if args.command == 'analyze' and args.json:
+        if args.command in {'analyze', 'status'} and args.json:
             print(json.dumps({'run_id': None, 'status': 'setup_failed', 'stages': [], 'detail': str(error)}))
             return 1
         print(f'music-analyzer: {args.command} failed: {error}', file=sys.stderr)

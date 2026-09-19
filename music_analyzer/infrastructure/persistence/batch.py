@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import astuple
 import fcntl
 import os
+from uuid import uuid4
 
 from music_analyzer.application.dto.analysis import AnalysisError
 from music_analyzer.application.ports.batch import BatchJob
@@ -27,9 +28,20 @@ class SQLiteBatchQueue(SQLiteAnalysisRepository):
         finally:
             os.close(descriptor)
 
+    def start(self, source):
+        run_id = str(uuid4())
+        with self._transaction() as db:
+            running = db.execute("SELECT track_id FROM batch_jobs WHERE state='running'").fetchall()
+            if len(running) != 1:
+                raise AnalysisError('Batch worker requires exactly one running job')
+            db.execute('INSERT INTO runs(id,location,status) VALUES(?,?,?)', (run_id, source.location, 'running'))
+            db.execute('UPDATE batch_jobs SET run_id=? WHERE track_id=?', (run_id, running[0][0]))
+        return run_id
+
     def recover(self):
         with self._transaction() as db:
-            db.execute("UPDATE batch_jobs SET state=CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END, detail='Interrupted dispatcher; retained prior run stages' WHERE state='running'")
+            db.execute("UPDATE runs SET status='interrupted',detail='Dispatcher stopped; stage checkpoints retained' WHERE status='running' AND id IN (SELECT run_id FROM batch_jobs WHERE state IN ('running','pending','failed'))")
+            db.execute("UPDATE batch_jobs SET state='pending', detail='Interrupted dispatcher; retained prior run stages' WHERE state='running'")
 
     def tracks(self):
         with self._transaction() as db:

@@ -51,6 +51,7 @@ class BatchTests(unittest.TestCase):
 
     def test_changed_identity_cannot_complete(self):
         batch = self.build(); batch.verify = lambda t: False
+        self.queue.tracks = lambda: ('a',)
         batch.execute('fp', limit=1)
         self.assertEqual(self.queue.jobs['a'].state, 'failed')
 
@@ -58,3 +59,11 @@ class BatchTests(unittest.TestCase):
         batch = self.build()
         for limit in (0, -1):
             with self.assertRaises(ValueError): batch.execute('fp', limit=limit)
+
+    def test_exhausted_interruption_becomes_failed(self):
+        batch = self.build(KeyboardInterrupt())
+        for _ in range(3):
+            with self.assertRaises(KeyboardInterrupt): batch.execute('fp', limit=1)
+        self.queue.tracks = lambda: ('a',)
+        batch.execute('fp', limit=1)
+        self.assertEqual(self.queue.jobs['a'].state, 'failed')

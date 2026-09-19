@@ -29,6 +29,8 @@ class AnalyzeBatch:
                     if previous.state == 'completed' and self.verify(track):
                         continue
                     if previous.attempts >= self.MAX_ATTEMPTS:
+                        if previous.state != 'failed':
+                            self.queue.put_job(replace(previous, state='failed', detail='Attempt budget exhausted; --force required'))
                         continue
                     if previous.state == 'failed' and not retry_failed:
                         continue
@@ -51,9 +53,11 @@ class AnalyzeBatch:
                     else:
                         job = replace(job, state='completed', run_id=report.run_id)
                 except KeyboardInterrupt:
+                    job = self.queue.get_job(track) or job
                     self.queue.put_job(replace(job, state='pending', detail='Interrupted; retry on next dispatch'))
                     raise
                 except Exception as error:
+                    job = self.queue.get_job(track) or job
                     job = replace(job, state='failed', detail=str(error))
                 self.queue.put_job(job)
             return self.queue.status()

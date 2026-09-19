@@ -228,13 +228,13 @@ FLAC, MP3 and M4A decode tests pass with the installed FFmpeg. These silent
 one-second fixtures do not validate rhythm, harmony or semantic inference.
 
 `SQLiteAnalysisRepository` initializes a dedicated empty database transactionally
-with an application ID and schema version 2 (transactional v0 → v1 → v2). It rejects unrelated schemas,
+with an application ID and schema version 3 (transactional v0 → v1 → v2 → v3). It rejects unrelated schemas,
 unknown versions, symlink paths and Mixxx-named databases; it stores separate run
 IDs, source locations, stage results, uncertainty and provenance. It never opens
 the music file. Parent directories must already exist. Identity is not a security
 boundary against hostile concurrent local replacement. The v1 → v2 migration adds
 tracks, locations and root membership without rewriting runs or stage/provenance
-payloads. No migration from other applications, result reuse or batch recovery. Never point it at a Mixxx database.
+payloads. The v2 → v3 migration adds batch jobs without rewriting existing records. No migration from other applications. Never point it at a Mixxx database.
 
 A provisional pure score summary retains duration-weighted mean, minimum,
 maximum and explicit disjoint-window coverage. It does not select tags, infer
@@ -250,9 +250,8 @@ music-analyzer analyze --file /path/to/track.flac --max-duration 900 --json
 
 `--file` is explicitly a local path. Alternatively, `--track TRACK_ID` resolves
 a catalogue location and rehashes it before dispatch; the selectors are mutually
-exclusive. Unknown/missing/changed tracks require a rescan; argument-less batch/resume, `--limit`,
-`--force` and `--retry-failed` are not implemented. Every invocation starts a
-new run. Database parent directories must exist. No audio tags or Mixxx writes.
+exclusive. Unknown/missing/changed tracks require a rescan. Each explicit
+`--file` or `--track` invocation starts a new run; batch-only options are rejected. Database parent directories must exist. No audio tags or Mixxx writes.
 Config options work before or after `analyze`. Exit 0 means all stages completed,
 1 means setup/analysis failure, 2 argument/configuration error, 130 interrupt.
 JSON contains all stage values, windows, summaries, uncertainty and provenance;
@@ -283,7 +282,7 @@ produce actionable setup errors. No weights downloaded or real inference run.
 Download approval and publisher-license clarification remain outstanding.
 Model verification is integrity checking, not proof of inference readiness.
 The Phase 1 inference gate and Phase 2 acceptance gate remain **open**; Phase 3
-catalogue foundation is partial; batch acceptance and later Mixxx integration
+catalogue and durable batch delivery is partial; cache and later Mixxx integration
 remain unimplemented.
 
 Official APIs consulted: retained model metadata, plus MTG/essentia upstream
@@ -330,8 +329,54 @@ reported. No wall-clock deadline or protection from a hostile concurrently mutat
 filesystem is promised. Stat checks detect ordinary mutation during hashing, but
 files can still change between catalogue verification and decoding. `--track`
 verification uses the default 512 MiB file cap; larger inventoried files can be
-explicitly selected using `--file`. No immutable snapshot or reuse claim.
+explicitly selected using `--file`. No immutable audio snapshot is created.
 
-Remaining Phase 3 work: durable queue, exclusive batch dispatch, recovery/retry,
-cache/invalidation and immutable run identity. Review/export, calibration and Mixxx
+Remaining Phase 3 work: persistent embedding cache/invalidation and stronger immutable audio snapshot binding. Review/export, calibration and Mixxx
 remain later work. Real inference is still unvalidated; no models were downloaded.
+
+
+### Durable single-worker batch slice (Phase 3 still incomplete)
+
+```sh
+music-analyzer analyze --database /existing/directory/analysis.sqlite --limit 10 --json
+music-analyzer analyze --database /existing/directory/analysis.sqlite --retry-failed
+music-analyzer analyze --database /existing/directory/analysis.sqlite --force --limit 1
+music-analyzer status --database /existing/directory/analysis.sqlite --json
+```
+
+Without `--file`/`--track`, analyze selects available catalogue identities in stable
+track-ID order. One worker loads models once, attempts tracks sequentially and
+persists pending/running/completed/failed jobs. `--limit` caps attempts, not scans
+or identity checks; no unsafe parallelism is provided. Failed tracks do not abort
+other tracks. Defaults do not retry failures; `--retry-failed` permits one attempt
+per eligible track this invocation, with three attempts total per recipe.
+`--force` resets that budget and reruns selected tracks including completed ones.
+A changed recipe starts a fresh budget. Attempts interrupted by Ctrl+C count.
+
+A nonblocking POSIX advisory lock beside the database rejects a second batch
+process. Keep the `.batch.lock` file; never delete it while a dispatcher runs.
+Use one canonical database pathname (hard-link aliases are not supported).
+Status is observational and does not recover or dispatch. It lists existing jobs,
+not yet-unattempted catalogue entries; it exits 0 on successful inspection even
+if jobs failed. Batch exit 1 means setup failure or any stored failed job, 130
+means interrupted, and 0 does **not** mean the entire catalogue was attempted when
+using a limit. JSON includes counts and job records, not full stage payloads.
+
+Ctrl+C stops dispatch and checkpoints the current job pending. Restart recovers
+abandoned running jobs, marks their bound runs interrupted, retains completed
+stage payloads, and starts a **new full run**, not partial-stage/cache reuse.
+Each real worker run is transactionally bound to its job before stage writes.
+Old runs are retained even when force or a recipe change replaces a job pointer.
+
+Completed jobs skip only after current exact bytes verify and the recipe matches:
+verified local model hashes and manifest, Essentia/NumPy and FFmpeg versions,
+preprocessing, duration cap, and hashes of algorithm/decoder/aggregation source.
+Unavailable models/runtime fail setup even for potentially skippable jobs; no
+weights are downloaded implicitly. The selected source is rehashed after success;
+ordinary identity changes fail the job. This is **not** a hostile-mutation-proof
+snapshot: changes during decode and restored bytes cannot be detected reliably.
+No reuse of legacy explicit runs, audio embeddings on disk, or invented cache hits.
+Persistent embedding caching is explicitly the **next pending Phase 3 slice**.
+Queue/status materialize catalogue job metadata in memory; audio/temp/duration
+bounds remain as above, with a single worker. No real inference acceptance is
+claimed by the fake-engine tests, and weights approval remains pending.
