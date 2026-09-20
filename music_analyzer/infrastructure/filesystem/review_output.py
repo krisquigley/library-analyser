@@ -15,11 +15,15 @@ def safe_cell(value):
 
 
 class FileReviewOutput:
-    def __init__(self, mapper):
+    def __init__(self, mapper, markdown_renderer=None, markdown_header=""):
         self.mapper = mapper
+        self.markdown_renderer = markdown_renderer
+        self.markdown_header = markdown_header
 
     def write(self, reports, format, destination):
-        if format not in ('json', 'csv'): raise ValueError('Unsupported export format')
+        if format not in ('json', 'csv', 'markdown'): raise ValueError('Unsupported export format')
+        if format == 'markdown' and self.markdown_renderer is None:
+            raise ValueError('Markdown renderer required')
         target = Path(destination).absolute()
         if any(p.is_symlink() for p in (target, *target.parents)):
             raise ValueError('Refusing symlink export path')
@@ -36,6 +40,10 @@ class FileReviewOutput:
                         json.dump(self.mapper(report), stream, ensure_ascii=False, allow_nan=False)
                         separator = ',\n'
                     stream.write(']\n')
+                elif format == 'markdown':
+                    stream.write(self.markdown_header)
+                    for report in reports:
+                        stream.write(self.markdown_renderer(report))
                 else:
                     writer = csv.writer(stream)
                     writer.writerow(['track_id', 'sha256', 'size', 'locations', 'needs_review',

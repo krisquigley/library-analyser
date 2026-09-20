@@ -55,9 +55,10 @@ class ReviewTests(unittest.TestCase):
             def write(self, reports, format, destination):
                 self.args = (tuple(reports), format, destination)
         output = Output()
-        ReviewTracks(Store()).export(output, 'json', 'destination')
-        self.assertEqual(output.args[0][0].track.track_id, 't')
-        self.assertEqual(output.args[1:], ('json', 'destination'))
+        for format in ('json', 'csv', 'markdown'):
+            ReviewTracks(Store()).export(output, format, 'destination')
+            self.assertEqual(output.args[0][0].track.track_id, 't')
+            self.assertEqual(output.args[1:], (format, 'destination'))
 
     def test_summary_only_results_expose_labelled_means_not_missing_or_selected_tags(self):
         store = Store()

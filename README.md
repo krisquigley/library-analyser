@@ -465,6 +465,7 @@ music-analyzer --database /tmp/analysis.sqlite override clear TRACK_ID bpm
 music-analyzer --database /tmp/analysis.sqlite reaggregate TRACK_ID --threshold 0.5 --json
 music-analyzer --database /tmp/analysis.sqlite export --format json --output /tmp/new-review.json
 music-analyzer --database /tmp/analysis.sqlite export --format csv --output /tmp/new-review.csv
+music-analyzer --database /tmp/analysis.sqlite export --format markdown --output /tmp/new-review.md
 ```
 
 **Semantics and limitations:**
@@ -503,6 +504,19 @@ music-analyzer --database /tmp/analysis.sqlite export --format csv --output /tmp
   view, never changes the database, never runs decoder/inference, and manual text
   still wins. Coverage reconstructs duration; missing legacy windows/coverage yield
   no selection and an explanation. Native raw matrices remain unchanged evidence.
+- Markdown export is a readable, UTF-8 per-track review with file name, locations,
+  content identity, effective BPM/key and manual-override precedence. Genres, moods
+  and instruments show at most the **top 5 labelled mean scores**, descending with
+  stored label order breaking ties, rounded to 6 significant digits. These are not
+  probabilities or confirmed tags. Energy is labelled provisional raw
+  valence/arousal, not a DJ energy scale. Missing results, failed-run detail,
+  uncertainty, sampled coverage/window counts and stage provenance remain visible,
+  including when a manual annotation replaces the effective result. Text is escaped
+  for Markdown/HTML, line breaks flattened, and control/bidirectional formatting
+  characters made visible. No tables or active metadata links are emitted.
+  This is a lossy reading view: use unchanged JSON/CSV exports for **all** labels,
+  full precision, windows, ranges and raw predictions. Empty catalogues produce a
+  header-only document. The same safe new-path/nonoverwrite publication applies.
 - JSON export is a UTF-8 array of complete review DTO mappings, with identity,
   locations, overrides, effective values, status, raw scores/windows/matrices,
   summary coverage, uncertainty and provenance. CSV has identity columns, per-field

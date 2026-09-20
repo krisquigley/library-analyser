@@ -57,5 +57,5 @@ class ReviewTracks:
         return self.show(track_id)
 
     def export(self, output: ReviewOutput, format, destination):
-        if format not in ('json', 'csv'): raise ValueError('Export format must be json or csv')
+        if format not in ('json', 'csv', 'markdown'): raise ValueError('Export format must be json, csv or markdown')
         output.write(self.list(), format, destination)

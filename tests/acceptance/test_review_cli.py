@@ -109,4 +109,13 @@ class ReviewCLITests(unittest.TestCase):
                 exported = json.loads(row['record'])
                 self.assertTrue(all(row['override_' + s.stage] == '' for s in stages))
             self.assertEqual(exported, record)
+        dest = self.root / 'summary.md'
+        self.assertEqual(self.call('export', '--format', 'markdown', '--output', str(dest))[0], 0)
+        markdown = dest.read_text()
+        for text in ('BPM', '128', 'A', 'minor', 'Jazz: 0.7', 'sad: 0.4',
+                     'drums: 0.7', 'valence: 5.1', 'arousal: 7.2', '33.3%'):
+            self.assertIn(text, markdown)
+        self.assertNotIn('missing / no selection', markdown)
+        self.assertEqual(self.call('export', '--format', 'markdown', '--output', str(dest))[0], 1)
+        self.assertEqual(dest.read_text(), markdown)
         self.assertEqual(self.db.read_bytes(), before)

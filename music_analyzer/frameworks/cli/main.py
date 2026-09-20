@@ -41,6 +41,7 @@ from music_analyzer.interface_adapters.presenters.doctor import present_doctor
 
 from music_analyzer.application.use_cases.review import ReviewTracks
 from music_analyzer.infrastructure.filesystem.review_output import FileReviewOutput
+from music_analyzer.interface_adapters.presenters.markdown import markdown_track, MARKDOWN_HEADER
 from music_analyzer.interface_adapters.presenters.review import present_review
 
 
@@ -175,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         if name == 'set': command.add_argument('value')
     export = commands.add_parser('export', help='Export all catalogue review records; new output path required.')
     add_configuration_options(export)
-    export.add_argument('--format', choices=('json', 'csv'), required=True)
+    export.add_argument('--format', choices=('json', 'csv', 'markdown'), required=True)
     export.add_argument('--output', required=True)
     args = parser.parse_args(argv)
     if args.command == 'analyze' and (not finite(args.max_duration) or not 0 < args.max_duration <= 3600):
@@ -196,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f'{report.track.track_id}\t{report.needs_review}\t{report.track.run.status if report.track.run else "missing"}')
                 return 0
             if args.command == 'export':
-                review.export(FileReviewOutput(review_to_mapping), args.format, args.output)
+                review.export(FileReviewOutput(review_to_mapping, markdown_track, MARKDOWN_HEADER), args.format, args.output)
                 output = 'Exported ' + args.output
             elif args.command == 'override':
                 output = present_review(review.override(args.track_id, args.field,
