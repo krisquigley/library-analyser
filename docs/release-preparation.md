@@ -2,7 +2,9 @@
 
 Phase 7 packaging work can proceed while Phases 5 and 6 wait for user inputs.
 It does **not** close their gates or the Phase 7 prerequisite/acceptance gate.
-No inference stack is pinned. CI tests the dependency-free Linux CLI on Python
+A subsequent [bounded real pilot](real-pilot.md) records one optional tested
+inference stack and 14 FLAC tracks; representative listening/calibration and
+release acceptance remain open. CI tests the dependency-free Linux CLI on Python
 3.11–3.14, not Essentia compatibility, model accuracy or other operating systems.
 The CI matrix is a verification target; consult the run for the exact revision
 before claiming a tested combination. Build-only setuptools 84.0.0 is not an

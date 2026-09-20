@@ -1,4 +1,6 @@
 """Explicit external representation mapping; never deserialize arbitrary objects."""
+from math import isclose
+
 from music_analyzer.application.dto.analysis import StageResult
 from music_analyzer.domain.analysis import ScoreSummary, ScoreWindow, finite, summarize_scores
 
@@ -27,6 +29,11 @@ def stage_from_mapping(data):
     if windows:
         if mapped is None: raise ValueError('Windows require summary labels')
         duration = sum(w.end-w.start for w in windows) / mapped.coverage
+        # Inverting rounded coverage can lose an ULP at the final boundary.
+        # Correct only reconstruction roundoff; retain strict domain validation.
+        end = windows[-1].end
+        if finite(end) and duration < end and isclose(duration, end, rel_tol=1e-14, abs_tol=0):
+            duration = end
         summarize_scores(mapped.labels, windows, duration)
     raw = tuple(tuple(tuple(row) for row in section) for section in data.get('raw_predictions', ()))
     if any(not finite(x) for section in raw for row in section for x in row):

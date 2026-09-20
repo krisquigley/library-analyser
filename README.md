@@ -2,20 +2,22 @@
 
 This repository implements **partial Phases 1–4 and Phase 7 packaging preparation**
 of [the CLI plan](plans/music-analyzer-cli-plan.md). The CLI can invoke real Essentia APIs when dependencies and approved models are
-installed; no real model inference has been validated.
+installed. A [bounded 14-track local FLAC pilot](docs/real-pilot.md) has now
+validated real CPU execution on one pinned runtime; this is not calibrated accuracy.
 `doctor` reports Python/platform information, checks `ffmpeg -version` (five-second
 timeout), and discovers the top-level Essentia module **without importing it**.
 No runtime third-party Python dependencies are needed for setup, catalogue and review commands.
 See [release preparation and user hand-off](docs/release-preparation.md) for install
 checks, pilot selection/ratings/measurement, backup/recovery and required Mixxx
-inputs. Actual pilot/calibration, real inference, Mixxx acceptance and final
+inputs. Representative listening/calibration, Mixxx acceptance and final
 release gates remain **not completed**.
 
 ## Install and run
 
 Python **3.11+** is required for this CLI, not a promise of Essentia compatibility.
 The foundation tests and installation were exercised with Python 3.14.7 on Linux;
-no working inference dependency combination has been selected or pinned.
+the optional tested Linux Python 3.14 inference pins and limitations are in
+[the real-pilot report](docs/real-pilot.md), not default package requirements.
 
 ```sh
 python -m venv .venv
@@ -105,12 +107,11 @@ music-analyzer doctor --json
 
 `download` fetches the six pinned graphs below, sequentially over HTTPS from
 `essentia.upf.edu` only, with certificate validation, restricted redirects,
-30-second socket timeout and manifest size limits. No weights were downloaded
-or executed during this delivery; tests use tiny fake transfers. The official
+30-second socket timeout and manifest size limits. Automated transfer tests use tiny fake transfers; the subsequent approved
+[real pilot](docs/real-pilot.md) downloaded and executed all six graphs. The official
 HTTP HEAD sizes measured for this selection total **29,151,559 bytes (27.80 MiB)**.
 Allow roughly 30 MiB for a fresh installation including metadata/licenses; when
-retaining an old copy for recovery allow another complete copy. Real download
-and target inference validation still require explicit approval.
+retaining an old copy for recovery allow another complete copy. New downloads and use of additional user audio still require explicit approval.
 
 | Model / role | Version | Graph bytes | Official metadata (ordered labels, tensors, preprocessing and attribution) |
 | --- | --- | ---: | --- |
@@ -128,8 +129,8 @@ heads consume embeddings, not raw audio. The [official examples](https://essenti
 select Discogs-EffNet `PartitionedCall:1` and MusiCNN `model/dense/BiasAdd`
 embeddings. Some head metadata retains older Discogs embedding URLs; those
 records remain verbatim, while downloads use the current official feature
-extractor URL. No preprocessing, tensor shape, dependency build or inference
-compatibility has yet been tested on target hardware.
+extractor URL. Actual shapes and CPU compatibility for one pinned host runtime are recorded
+in the [real pilot](docs/real-pilot.md); other combinations remain unvalidated.
 
 **License discrepancy requiring publisher clarification:** the official models
 page states **CC BY-NC-SA 4.0**, but the official
@@ -285,12 +286,11 @@ fallbacks. Verified local model hashes and Essentia version accompany results.
 Catalogue hashes are exact-file identities only. Runs record source paths and
 verified snapshot/PCM provenance; persistent embedding reuse is described below.
 
-**Open acceptance work:** real graph execution and shape/label/preprocessing
-validation, compatible pinned inference stack, CPU/RAM measurements, section
-rhythm/key ambiguity checks, independent review and accuracy evaluation.
-Python 3.14 on this host has no Essentia; optional libraries load lazily and
-produce actionable setup errors. No weights downloaded or real inference run.
-Download approval and publisher-license clarification remain outstanding.
+**Open acceptance work:** section rhythm/key ambiguity checks, independent
+review, representative listening and accuracy evaluation. The approved
+[real pilot](docs/real-pilot.md) records graph execution, actual tensors and
+CPU/RAM measurements on a pinned external Python 3.14 venv. Optional libraries
+still load lazily; publisher-license clarification remains outstanding.
 Model verification is integrity checking, not proof of inference readiness.
 The Phase 1 inference gate and Phase 2 acceptance gate remain **open**; Phase 3
 catalogue, durable batch and embedding cache delivery is partial; later Mixxx integration
@@ -342,8 +342,8 @@ files can still change during catalogue inspection. Analysis now verifies a
 private snapshot before decoding. Both `--track` and `--file` analysis use a
 512 MiB snapshot cap even if the scan inventory cap was raised.
 
-The next bounded cache/snapshot slice is delivered below; Phase 3 acceptance remains partial. Review/export, calibration and Mixxx
-remain later work. Real inference is still unvalidated; no models were downloaded.
+The next bounded cache/snapshot slice is delivered below; Phase 3 acceptance remains partial. Review/export is described below. Calibration and Mixxx remain later work;
+the subsequent [real pilot](docs/real-pilot.md) is bounded execution validation.
 
 
 ### Durable single-worker batch slice (Phase 3 still incomplete)
@@ -390,7 +390,7 @@ No reuse of legacy explicit runs or invented cache hits. Persistent embedding
 reuse is now available as described below.
 Queue/status materialize catalogue job metadata in memory; audio/temp/duration
 bounds remain as above, with a single worker. No real inference acceptance is
-claimed by the fake-engine tests, and weights approval remains pending.
+claimed by the fake-engine tests; see the separate approved real-pilot evidence.
 
 
 ### Persistent embedding cache and verified decode snapshots (bounded Phase 3 slice)
@@ -442,11 +442,10 @@ provisional threshold view of retained scores without invoking any inference.
 The Phase 4 `reaggregate` command exposes this as a transient view (not a persisted selection).
 Legacy payloads without retained windows produce no selection. Thresholds are not calibrated tag assertions.
 
-Tests use fake model adapters and disposable audio, not downloaded weights.
-**Real inference remains unvalidated**, Phase 1/2 gates remain open, and this does
-not declare all Phase 3 complete. Remaining work includes compatible real-runtime
-validation/resource measurements, broader recovery review, metadata queue scaling,
-real-runtime review, calibration and later Mixxx integration.
+Automated tests use fake model adapters and disposable audio. The separate
+[real pilot](docs/real-pilot.md) used approved weights and measured one runtime.
+Phase 1/2 gates and broader Phase 3 acceptance remain open: broader recovery
+review, metadata queue scaling, independent review, calibration and Mixxx remain.
 
 
 ## Phase 4: stored review, manual annotations and exports
@@ -514,5 +513,5 @@ music-analyzer --database /tmp/analysis.sqlite export --format csv --output /tmp
   Stdout from a failed streaming list can contain preceding rows; check exit status.
 
 Delivery tests use fake inference and disposable catalogues. They are **not independent
-review** or proof of real-model accuracy. No pilot/calibration/Mixxx milestone is
-claimed; real weights/runtime/resource validation and representative listening remain gates.
+review** or proof of real-model accuracy. No representative pilot/calibration/Mixxx milestone is
+claimed; the bounded real-runtime pilot does not close representative listening gates.

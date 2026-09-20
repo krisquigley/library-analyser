@@ -61,6 +61,25 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(energy.summary.labels, ('valence', 'arousal'))
         self.assertIn('arousal', energy.uncertainty)
 
+    def test_immutable_embeddings_are_converted_to_native_matrix_input(self):
+        original = self.engine._predictor
+        received = []
+        def predictor(model, purpose):
+            native = original(model, purpose)
+            if purpose != 'predictions':
+                return native
+            def classify(matrix):
+                # Essentia recognizes nested lists, not tuple-of-tuples.
+                self.assertIsInstance(matrix, list)
+                self.assertTrue(all(isinstance(row, list) for row in matrix))
+                received.append(matrix)
+                return native(matrix)
+            return classify
+        self.engine._predictor = predictor
+        for stage in ('genres', 'mood', 'instruments', 'energy'):
+            self.engine.analyze(stage, self.audio)
+        self.assertEqual(len(received), 12)
+
     def test_nonfinite_output_is_actionable_failure(self):
         self.library.bad = True
         with self.assertRaisesRegex(AnalysisError, 'genres.*output'):

@@ -141,7 +141,7 @@ class EssentiaEngine:
             windows = []
             raw_predictions = []
             for (start, end), embeddings in zip(regions, self._embeddings[embedding_model]):
-                rows = tuple(tuple(float(score) for score in row) for row in predictor(embeddings))
+                rows = tuple(tuple(float(score) for score in row) for row in predictor([list(row) for row in embeddings]))
                 if len(rows) != len(embeddings) or not rows or any(len(row) != len(labels) or not all(finite(v) for v in row) for row in rows):
                     raise ValueError('invalid output shape or nonfinite output')
                 raw_predictions.append(rows)
