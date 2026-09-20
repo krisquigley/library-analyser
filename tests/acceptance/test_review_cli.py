@@ -71,3 +71,42 @@ class ReviewCLITests(unittest.TestCase):
         self.assertEqual(self.db.read_bytes(), before)
         self.assertEqual(self.call('reaggregate', self.track, '--threshold', 'nan')[0], 1)
         self.assertIn('TRACK_ID', self.call('show', self.track)[1])
+
+    def test_stored_summary_only_stages_are_visible_in_show_and_exports(self):
+        from music_analyzer.domain.analysis import ScoreWindow, summarize_scores
+        stages = [StageResult('bpm', (), 'estimate', values=(('bpm', 128.), ('confidence', 2.1))),
+                  StageResult('key', (), 'estimate', values=(('key', 'A'), ('scale', 'minor')))]
+        for field, labels, rows in (
+                ('genres', ('House', 'Jazz'), ((.2, .8), (.4, .6))),
+                ('mood', ('happy', 'sad'), ((.1, .3), (.3, .5))),
+                ('instruments', ('guitar', 'drums'), ((.05, .6), (.15, .8))),
+                ('energy', ('valence', 'arousal'), ((5., 7.), (5.2, 7.4)))):
+            scores = tuple(sum(row[i] / len(rows) for row in rows) for i in range(2))
+            windows = (ScoreWindow(0, 10, scores),)
+            stages.append(StageResult(field, (), 'raw scores, not calibrated', windows=windows,
+                summary=summarize_scores(labels, windows, 30), raw_predictions=(rows,)))
+        run = self.repo.start(AudioSource('fixture', self.track))
+        for stage in stages: self.repo.save_stage(run, stage)
+        self.repo.finish(run, 'completed', '')
+        before = self.db.read_bytes()
+        code, out, err = self.call('show', self.track, '--json')
+        self.assertEqual((code, err), (0, ''))
+        record = json.loads(out)
+        for stage in stages:
+            expected = stage.values or tuple(zip(stage.summary.labels, stage.summary.mean))
+            self.assertEqual(record['effective'][stage.stage], [list(pair) for pair in expected])
+        human = self.call('show', self.track)[1]
+        self.assertNotIn('missing / no selection', human)
+        self.assertIn("('arousal', 7.2)", human)
+        self.assertIn('automatic/provisional', human)
+        self.assertIn(self.track, self.call('list', '--needs-review')[1])
+        for format in ('json', 'csv'):
+            dest = self.root / ('summary.' + format)
+            self.assertEqual(self.call('export', '--format', format, '--output', str(dest))[0], 0)
+            if format == 'json': exported = json.loads(dest.read_text())[0]
+            else:
+                with dest.open(newline='') as stream: row = next(csv.DictReader(stream))
+                exported = json.loads(row['record'])
+                self.assertTrue(all(row['override_' + s.stage] == '' for s in stages))
+            self.assertEqual(exported, record)
+        self.assertEqual(self.db.read_bytes(), before)

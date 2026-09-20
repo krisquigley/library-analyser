@@ -26,6 +26,10 @@ class ReviewTracks:
                 reasons.append(field + ': missing result')
             else:
                 automatic = stage.values or None
+                if automatic is None and stage.summary is not None:
+                    # Model heads retain labelled scores in summaries, not values.
+                    # Expose means as evidence, never as selected/calibrated tags.
+                    automatic = tuple(zip(stage.summary.labels, stage.summary.mean))
                 if stage.uncertainty: reasons.append(field + ': ' + stage.uncertainty)
                 if stage.summary and stage.summary.provisional:
                     reasons.append(field + ': provisional, uncalibrated scores')

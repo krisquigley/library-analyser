@@ -472,8 +472,19 @@ music-analyzer --database /tmp/analysis.sqlite export --format csv --output /tmp
 - Manual overrides are explicit nonblank text annotations (maximum 4096 characters),
   for `bpm`, `key`, `genres`, `mood`, `instruments`, or `energy`. They are not parsed
   as validated musical measurements. Use `--` before a value beginning with `-`.
-  Manual text takes precedence over automatic scalar values or threshold selections;
-  `clear` restores the automatic/missing view. Raw stages are never replaced.
+  Manual text takes precedence over automatic scalar values, labelled mean scores,
+  or explicit threshold selections; `clear` restores the automatic/missing view.
+  Without a threshold, `effective` uses stored scalar `values` for BPM/key and
+  `[label, mean_score]` pairs from `summary` for summary-only model heads (genres,
+  mood, instruments, energy). These are all retained labels, not selected tags or
+  calibrated probabilities. Energy retains raw valence/arousal, not a DJ energy
+  scale. Coverage, ranges and uncertainty remain in `run.stages`; manual text does
+  not replace that evidence. Missing evidence still yields null. A null `threshold`
+  and empty `selections` mean no threshold was requested, not failed inference.
+  BPM/key `summary: null` and model-head `values: {}` are intentional stored shapes.
+  CSV `override_*` columns are manual annotations only (normally blank); automatic
+  results and full evidence are in the `record` JSON column. `show` displays effective
+  values; `list` remains an identity/review/status index, not a score table.
   Overrides belong to content identity, persist across reanalysis/restarts and moves,
   and do not transfer to different bytes at the same path. No override history yet.
 - Show uses the latest **started identity-linked run**, including a failed/running

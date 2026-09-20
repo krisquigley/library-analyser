@@ -58,3 +58,41 @@ class ReviewTests(unittest.TestCase):
         ReviewTracks(Store()).export(output, 'json', 'destination')
         self.assertEqual(output.args[0][0].track.track_id, 't')
         self.assertEqual(output.args[1:], ('json', 'destination'))
+
+    def test_summary_only_results_expose_labelled_means_not_missing_or_selected_tags(self):
+        store = Store()
+        stages = [StageResult('bpm', (), 'estimate', values=(('bpm', 128.),)),
+                  StageResult('key', (), 'estimate', values=(('key', 'A'), ('scale', 'minor')))]
+        for field, labels, scores in (
+                ('genres', ('Electronic---House', 'Jazz'), (.2, .8)),
+                ('mood', ('happy', 'sad'), (.1, .3)),
+                ('instruments', ('guitar', 'drums'), (.05, .6)),
+                ('energy', ('valence', 'arousal'), (5.1, 7.2))):
+            windows = (ScoreWindow(0, 10, scores), ScoreWindow(20, 40, tuple(x / 2 for x in scores)))
+            stages.append(StageResult(field, (), 'uncalibrated', windows=windows,
+                summary=summarize_scores(labels, windows, 60)))
+        store.run = AnalysisReport('r', 'completed', tuple(stages))
+        review = ReviewTracks(store)
+        report = review.show('t')
+        for stage in stages:
+            expected = stage.values or tuple(zip(stage.summary.labels, stage.summary.mean))
+            self.assertEqual(dict(report.effective)[stage.stage], expected)
+        self.assertTrue(report.needs_review)
+        self.assertEqual(report.selections, ())
+        self.assertEqual(tuple(review.list())[0], report)
+        review.override('t', 'energy', 'human assessment')
+        self.assertEqual(dict(review.show('t').effective)['energy'], 'human assessment')
+        review.override('t', 'energy', None)
+        self.assertEqual(review.show('t'), report)
+        self.assertEqual(store.run.stages, tuple(stages))
+
+    def test_empty_evidence_remains_absent_and_explicit_values_take_precedence(self):
+        store = Store()
+        summary = store.run.stages[0].summary
+        store.run = AnalysisReport('r', 'completed', (
+            StageResult('genres', (), 'missing'),
+            StageResult('energy', (), 'raw', values=(('arousal', 7.),), summary=summary)))
+        effective = dict(ReviewTracks(store).show('t').effective)
+        self.assertIsNone(effective['genres'])
+        self.assertIsNone(effective['mood'])
+        self.assertEqual(effective['energy'], (('arousal', 7.),))
