@@ -1,7 +1,9 @@
+import io
 import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +15,18 @@ from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID
 
 VALID = {
     'artifact_version': 'journey-projection-artifact-v1',
+    'fingerprint_version': 'projection-fingerprint-v1',
     'fingerprint': 'abc',
+    'policy_versions': {
+        'artifact_version': 'journey-projection-artifact-v1',
+        'projection_policy_version': 'anchor-distance-projection-v1',
+        'projection_feature_contract_version': 'projection-features-v1',
+        'projection_fingerprint_version': 'projection-fingerprint-v1',
+        'projection_refresh_policy_version': 'fixed-transform-refresh-v1',
+        'neighbour_policy_version': 'endpoint-local-exact-top-k-neighbours-v2',
+        'distance_policy_version': 'symmetric-feature-distance-v1',
+        'transform_recipe_version': 'anchor-distance-projection-v1',
+    },
     'transform': {'policy_version': 'anchor-distance-projection-v1'},
     'tracks': ({'track_id': 'a', 'x': 0.0, 'y': None, 'layout_state': 'partial', 'missing_groups': (), 'missing_reasons': ()},),
     'edges': (),
@@ -97,6 +110,29 @@ class FileProjectionArtifactStoreTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 1)
             self.assertEqual(audio.read_bytes(), b'ORIGINAL_AUDIO_BYTES')
+
+    def test_cli_prepare_projection_human_success_reports_committed_durability_warning(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / 'analysis.sqlite'
+            audio = root / 'song.flac'
+            artifact = root / 'projection.json'
+            audio.write_bytes(b'ORIGINAL_AUDIO_BYTES')
+            _write_projection_ready_database(db_path, audio)
+            stdout = io.StringIO()
+
+            with patch('music_analyzer.infrastructure.filesystem.projection_artifacts._fsync_directory', side_effect=OSError('simulated directory fsync failure')):
+                with redirect_stdout(stdout):
+                    exit_code = main(['--database', str(db_path), 'prepare-projection', '--artifact', str(artifact)])
+
+            output = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn('Prepared 1 tracks', output)
+            self.assertIn('durability', output)
+            self.assertIn('committed', output)
+            self.assertNotIn('rolled back', output.lower())
+            self.assertNotIn('preserved prior', output.lower())
+            self.assertTrue(artifact.exists())
 
     def test_corrupt_load_is_actionable(self):
         with tempfile.TemporaryDirectory() as td:

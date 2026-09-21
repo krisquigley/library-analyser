@@ -95,7 +95,7 @@ def _artifact_result(artifact, outcome):
 def _build_artifact(repository, parameters, existing_transform):
     metadata, records = repository.candidate_snapshot()
     features = tuple(_features(record) for record in records)
-    transform = fit_projection_transform(features, parameters) if existing_transform is None else existing_transform
+    transform = fit_projection_transform(features, parameters) if existing_transform is None else _transform_with_parameters(existing_transform, parameters)
     projection = project_tracks(features, transform)
     fingerprint = _fingerprint(metadata, records, parameters)
     artifact = {
@@ -131,6 +131,19 @@ def _fingerprint(metadata, records, parameters):
         safe['tracks'].append({'track_id': record.track_id, 'sha256': record.sha256, 'size': record.size, 'display_label': record.display_label, 'available_locations': record.available_locations, 'run_id': record.run.run_id if record.run else None, 'run_status': record.run.status if record.run else None, 'stages': stages, 'overrides': tuple(sorted(record.overrides))})
     encoded = json.dumps(safe, sort_keys=True, separators=(',', ':'), allow_nan=False)
     return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
+def _transform_with_parameters(transform, parameters):
+    return ProjectionTransform(
+        transform.policy_version,
+        parameters,
+        transform.anchors,
+        transform.center_x,
+        transform.center_y,
+        transform.range_x,
+        transform.range_y,
+        transform.degenerate_axes,
+    )
 
 
 def _transform_mapping(transform, parameters):
@@ -170,6 +183,14 @@ def _tuple_pairs(value):
 def _validate_artifact(artifact):
     if not isinstance(artifact, dict) or artifact.get('artifact_version') != ARTIFACT_VERSION:
         raise ProjectionArtifactError('unsupported_version')
+    if artifact.get('fingerprint_version') != FINGERPRINT_VERSION:
+        raise ProjectionArtifactError('stale unsupported fingerprint_version')
+    versions = artifact.get('policy_versions')
+    if not isinstance(versions, dict):
+        raise ProjectionArtifactError('stale unsupported policy_versions')
+    for key, expected in _contract_versions().items():
+        if versions.get(key) != expected:
+            raise ProjectionArtifactError(f'stale unsupported policy_versions.{key}')
     transform = artifact.get('transform')
     if not isinstance(transform, dict) or transform.get('policy_version') != PROJECTION_POLICY_VERSION:
         raise ProjectionArtifactError('unsupported transform')

@@ -251,7 +251,12 @@ def main(argv: list[str] | None = None) -> int:
             summary = {'artifact': args.artifact, 'fingerprint': result.artifact['fingerprint'], 'tracks': len(result.artifact['tracks']), 'edges': len(result.artifact['edges'])}
             if result.warning:
                 summary['warning'] = result.warning
-            output = json.dumps(summary, sort_keys=True) if args.json else f"Prepared {summary['tracks']} tracks, {summary['edges']} edges at {args.artifact}"
+            if args.json:
+                output = json.dumps(summary, sort_keys=True)
+            else:
+                output = f"Prepared {summary['tracks']} tracks, {summary['edges']} edges at {args.artifact}"
+                if result.warning:
+                    output += f"\nWarning: {result.warning}"
             ready = True
         else:
             storage, model_ids = build_models(load_settings(**overrides))

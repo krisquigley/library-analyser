@@ -110,7 +110,8 @@ class ProjectionArtifactUseCaseContractTests(unittest.TestCase):
         self.assertEqual(store.replaced, [])
 
     def test_load_is_readonly_and_never_repairs_or_rebuilds(self):
-        store = SpyArtifactStore(existing={'artifact_version': 'journey-projection-artifact-v1', 'transform': {'policy_version': 'anchor-distance-projection-v1'}, 'tracks': (), 'edges': ()})
+        artifact = PrepareProjectionArtifact(FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0))), SpyArtifactStore()).execute().artifact
+        store = SpyArtifactStore(existing=artifact)
         result = LoadProjectionArtifact(store).execute()
 
         self.assertEqual(result['artifact_version'], 'journey-projection-artifact-v1')
@@ -121,27 +122,42 @@ class ProjectionArtifactUseCaseContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ProjectionArtifactError, 'missing'):
             LoadProjectionArtifact(SpyArtifactStore()).execute()
 
+    def test_load_rejects_missing_or_unknown_fingerprint_version_as_stale_artifact(self):
+        valid = PrepareProjectionArtifact(FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0))), SpyArtifactStore()).execute().artifact
+        for label, fingerprint_version in (('missing', None), ('unknown', 'projection-fingerprint-v0')):
+            artifact = dict(valid)
+            if fingerprint_version is None:
+                artifact.pop('fingerprint_version')
+            else:
+                artifact['fingerprint_version'] = fingerprint_version
 
-    def test_refresh_reuses_compatible_transform_when_neighbour_policy_changes_fingerprint(self):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ProjectionArtifactError, 'stale.*fingerprint_version|fingerprint_version.*stale'):
+                    LoadProjectionArtifact(SpyArtifactStore(existing=artifact)).execute()
+
+    def test_load_rejects_missing_or_unknown_policy_versions_as_stale_artifact(self):
+        valid = PrepareProjectionArtifact(FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0))), SpyArtifactStore()).execute().artifact
+        for label, policy_versions in (('missing', None), ('unknown', {**valid['policy_versions'], 'projection_refresh_policy_version': 'fixed-transform-refresh-v0'})):
+            artifact = dict(valid)
+            if policy_versions is None:
+                artifact.pop('policy_versions')
+            else:
+                artifact['policy_versions'] = policy_versions
+
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ProjectionArtifactError, 'stale.*policy_versions|policy_versions.*stale'):
+                    LoadProjectionArtifact(SpyArtifactStore(existing=artifact)).execute()
+
+    def test_refresh_rejects_stale_neighbour_policy_version_without_implicit_repair(self):
         repo = FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0)))
         prepared = PrepareProjectionArtifact(repo, SpyArtifactStore()).execute().artifact
-        import music_analyzer.application.use_cases.projection_artifacts as module
-        current = module.NEIGHBOUR_POLICY_VERSION
-        try:
-            module.NEIGHBOUR_POLICY_VERSION = 'bounded-symmetric-neighbours-v1'
-            old_fingerprint = module._fingerprint(*repo.candidate_snapshot(), module.ProjectionParameters(k=10))
-        finally:
-            module.NEIGHBOUR_POLICY_VERSION = current
         prepared['policy_versions'] = dict(prepared['policy_versions'])
         prepared['policy_versions']['neighbour_policy_version'] = 'bounded-symmetric-neighbours-v1'
-        prepared['fingerprint'] = old_fingerprint
         store = SpyArtifactStore(existing=prepared)
 
-        refreshed = RefreshProjectionArtifact(repo, store).execute().artifact
-
-        self.assertEqual(refreshed['transform']['policy_version'], 'anchor-distance-projection-v1')
-        self.assertNotEqual(refreshed['fingerprint'], old_fingerprint)
-        self.assertEqual(refreshed['policy_versions']['neighbour_policy_version'], 'endpoint-local-exact-top-k-neighbours-v2')
+        with self.assertRaisesRegex(ProjectionArtifactError, 'stale.*neighbour_policy_version'):
+            RefreshProjectionArtifact(repo, store).execute()
+        self.assertEqual(store.replaced, [])
 
     def test_refresh_preserves_unchanged_coordinates_with_same_transform(self):
         repository = FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0)))
@@ -153,6 +169,24 @@ class ProjectionArtifactUseCaseContractTests(unittest.TestCase):
         after = {point['track_id']: (point['x'], point['y']) for point in refreshed['tracks']}
         self.assertEqual(after, before)
         self.assertEqual(refreshed['transform']['anchors'], original['transform']['anchors'])
+
+    def test_refresh_changed_k_recomputes_edges_and_metadata_with_preserved_coordinates(self):
+        repository = FakeExplorerRepository(tuple(track(str(index), bpm=100 + index, arousal=index / 10) for index in range(6)))
+        store = SpyArtifactStore()
+        original = PrepareProjectionArtifact(repository, store, k=1).execute().artifact
+        refreshed = RefreshProjectionArtifact(repository, store, k=3).execute().artifact
+
+        before = {point['track_id']: (point['x'], point['y']) for point in original['tracks']}
+        after = {point['track_id']: (point['x'], point['y']) for point in refreshed['tracks']}
+        self.assertEqual(after, before)
+        self.assertEqual(refreshed['resource_limits']['k'], 3)
+        self.assertEqual(refreshed['transform']['parameters']['k'], 3)
+        self.assertTrue(len(refreshed['edges']) >= len(original['edges']))
+        degree = {point['track_id']: 0 for point in refreshed['tracks']}
+        for edge in refreshed['edges']:
+            degree[edge['a']] += 1
+            degree[edge['b']] += 1
+        self.assertLessEqual(max(degree.values()), 3)
 
     def test_refresh_reconstructs_transform_from_serialized_artifact(self):
         repository = FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0)))
