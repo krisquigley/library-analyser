@@ -241,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == 'prepare-projection':
             settings = load_settings(**overrides)
             repository = ReadOnlyExplorerSQLiteRepository(settings.database)
-            store = FileProjectionArtifactStore(args.artifact, source_database_path=settings.database)
+            store = FileProjectionArtifactStore(args.artifact, source_database_path=settings.database, protected_audio_paths=repository.available_audio_paths())
             if args.refresh:
                 result = RefreshProjectionArtifact(repository, store, args.k).execute(explicit_relayout=args.relayout)
             else:

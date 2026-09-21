@@ -9,6 +9,7 @@ from music_analyzer.application.ports.explorer import ExplorerRepository
 from music_analyzer.application.ports.projection_artifacts import ProjectionArtifactStore
 from music_analyzer.application.use_cases.candidates import _features
 from music_analyzer.domain.projection import (
+    DISTANCE_POLICY_VERSION,
     NEIGHBOUR_POLICY_VERSION,
     PROJECTION_POLICY_VERSION,
     ProjectionAnchor,
@@ -20,6 +21,21 @@ from music_analyzer.domain.projection import (
 
 ARTIFACT_VERSION = 'journey-projection-artifact-v1'
 FINGERPRINT_VERSION = 'projection-fingerprint-v1'
+FEATURE_CONTRACT_VERSION = 'projection-features-v1'
+REFRESH_POLICY_VERSION = 'fixed-transform-refresh-v1'
+
+
+def _contract_versions():
+    return {
+        'artifact_version': ARTIFACT_VERSION,
+        'projection_policy_version': PROJECTION_POLICY_VERSION,
+        'projection_feature_contract_version': FEATURE_CONTRACT_VERSION,
+        'projection_fingerprint_version': FINGERPRINT_VERSION,
+        'projection_refresh_policy_version': REFRESH_POLICY_VERSION,
+        'neighbour_policy_version': NEIGHBOUR_POLICY_VERSION,
+        'distance_policy_version': DISTANCE_POLICY_VERSION,
+        'transform_recipe_version': PROJECTION_POLICY_VERSION,
+    }
 
 
 class ProjectionArtifactError(Exception):
@@ -79,7 +95,7 @@ def _build_artifact(repository, parameters, existing_transform):
         'fingerprint_version': FINGERPRINT_VERSION,
         'fingerprint': fingerprint,
         'metadata': {'application_id': metadata.get('application_id'), 'schema_version': metadata.get('schema_version'), 'read_policy': metadata.get('read_policy')},
-        'policy_versions': {'projection_policy_version': PROJECTION_POLICY_VERSION, 'neighbour_policy_version': NEIGHBOUR_POLICY_VERSION},
+        'policy_versions': _contract_versions(),
         'runtime': {'python': platform.python_version(), 'implementation': platform.python_implementation()},
         'transform': _transform_mapping(projection.transform, parameters),
         'transform_object': projection.transform,
@@ -94,7 +110,8 @@ def _build_artifact(repository, parameters, existing_transform):
 def _fingerprint(metadata, records, parameters):
     safe = {
         'version': FINGERPRINT_VERSION,
-        'metadata': {'application_id': metadata.get('application_id'), 'schema_version': metadata.get('schema_version')},
+        'contract_versions': _contract_versions(),
+        'metadata': {'application_id': metadata.get('application_id'), 'schema_version': metadata.get('schema_version'), 'read_policy': metadata.get('read_policy')},
         'parameters': {'k': parameters.k, 'explicit_relayout': parameters.explicit_relayout},
         'tracks': [],
     }

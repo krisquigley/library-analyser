@@ -105,6 +105,10 @@ class ReadOnlyExplorerSQLiteRepository:
         with self._transaction() as db:
             return tuple(row[0] for row in db.execute('SELECT id FROM tracks ORDER BY id'))
 
+    def available_audio_paths(self):
+        with self._transaction() as db:
+            return tuple(row[0] for row in db.execute('SELECT path FROM locations WHERE available=1 ORDER BY path'))
+
     def read_track(self, track_id: str):
         with self._transaction() as db:
             return self._read_track(db, track_id)

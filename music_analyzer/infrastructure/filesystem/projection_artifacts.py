@@ -3,15 +3,17 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import stat
 
 from music_analyzer.application.use_cases.projection_artifacts import ProjectionArtifactError, _validate_artifact
 
 
 class FileProjectionArtifactStore:
-    def __init__(self, artifact_path, source_database_path=None, max_bytes=64 * 1024 * 1024):
+    def __init__(self, artifact_path, source_database_path=None, max_bytes=64 * 1024 * 1024, protected_audio_paths=()):
         self.artifact_path = Path(artifact_path)
         self.source_database_path = Path(source_database_path).resolve() if source_database_path else None
         self.max_bytes = max_bytes
+        self.protected_audio_paths = tuple(Path(path) for path in protected_audio_paths)
 
     def load(self):
         try:
@@ -53,8 +55,38 @@ class FileProjectionArtifactStore:
             raise
 
     def _ensure_safe_location(self):
-        if self.source_database_path and self.artifact_path.resolve() == self.source_database_path:
+        if self.source_database_path and _matches_source_database(self.artifact_path, self.source_database_path):
             raise ProjectionArtifactError('safe artifact location must not overwrite source database')
+        if _matches_known_audio(self.artifact_path, self.protected_audio_paths):
+            raise ProjectionArtifactError('safe artifact location must not overwrite known catalogue audio')
+
+
+def _matches_source_database(artifact_path, source_database_path):
+    resolved = artifact_path.resolve()
+    source = source_database_path.resolve()
+    return resolved == source or str(resolved) in {str(source) + '-wal', str(source) + '-shm'}
+
+
+def _matches_known_audio(artifact_path, protected_audio_paths):
+    if not protected_audio_paths:
+        return False
+    artifact_resolved = artifact_path.resolve()
+    artifact_stat = _stat_existing(artifact_path)
+    for audio_path in protected_audio_paths:
+        audio_resolved = audio_path.resolve()
+        if artifact_resolved == audio_resolved:
+            return True
+        audio_stat = _stat_existing(audio_path)
+        if artifact_stat and audio_stat and artifact_stat.st_ino == audio_stat.st_ino and artifact_stat.st_dev == audio_stat.st_dev:
+            return True
+    return False
+
+
+def _stat_existing(path):
+    try:
+        return Path(path).stat()
+    except FileNotFoundError:
+        return None
 
 
 def _serializable(artifact):

@@ -84,6 +84,21 @@ class ProjectionContractTests(unittest.TestCase):
         self.assertIn('tempo', ab.group_distances)
         self.assertEqual(symmetric_feature_distance(a, c).group_distances, {})
 
+    def test_neighbour_selection_uses_exact_feature_distances_beyond_scalar_window(self):
+        # a and z are closest by genre vector, but z is more than the old
+        # scalar-order window away from a because tempo orders m00..m24 first.
+        tracks = [features('a', bpm=100, genres=(('close', 1.0), ('far', 0.0)))]
+        for i in range(25):
+            tracks.append(features(f'm{i:02d}', bpm=101 + i, genres=(('close', 0.0), ('far', 1.0))))
+        tracks.append(features('z', bpm=1000, genres=(('close', 1.0), ('far', 0.0))))
+
+        projection = project_tracks(tuple(tracks), fit_projection_transform(tuple(tracks), ProjectionParameters(k=1)))
+
+        edges = {(edge.a, edge.b): edge.distance for edge in projection.edges}
+        self.assertIn(('a', 'z'), edges)
+        self.assertLess(edges[('a', 'z')], symmetric_feature_distance(tracks[0], tracks[1]).distance)
+        self.assertNotIn(('a', 'm00'), edges)
+
     def test_undirected_neighbour_degree_is_bounded_by_k_without_dense_matrix(self):
         tracks = tuple(features(str(i), bpm=100 + i, arousal=i / 10) for i in range(8))
         projection = project_tracks(tracks, fit_projection_transform(tracks, ProjectionParameters(k=2)))

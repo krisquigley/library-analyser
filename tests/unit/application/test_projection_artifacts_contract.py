@@ -8,6 +8,7 @@ from music_analyzer.application.use_cases.projection_artifacts import (
     PrepareProjectionArtifact,
     ProjectionArtifactError,
     RefreshProjectionArtifact,
+    _fingerprint,
 )
 
 
@@ -75,6 +76,28 @@ class ProjectionArtifactUseCaseContractTests(unittest.TestCase):
         self.assertNotIn('raw_predictions', serialized)
         self.assertIn('fingerprint', result.artifact)
         self.assertIn('transform', result.artifact)
+
+    def test_fingerprint_invalidates_when_projection_contract_versions_change(self):
+        records = (track('a'), track('b', bpm=130, arousal=1.0))
+        metadata = FakeExplorerRepository(records).metadata()
+        from music_analyzer.application.use_cases import projection_artifacts as module
+        original = _fingerprint(metadata, records, module.ProjectionParameters(k=10))
+        prior = module.ARTIFACT_VERSION
+        try:
+            module.ARTIFACT_VERSION = prior + '-next'
+            changed = _fingerprint(metadata, records, module.ProjectionParameters(k=10))
+        finally:
+            module.ARTIFACT_VERSION = prior
+        self.assertNotEqual(changed, original)
+
+    def test_artifact_records_full_projection_contract_versions(self):
+        result = PrepareProjectionArtifact(FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0))), SpyArtifactStore()).execute()
+
+        versions = result.artifact['policy_versions']
+        self.assertEqual(versions['projection_feature_contract_version'], 'projection-features-v1')
+        self.assertEqual(versions['projection_fingerprint_version'], 'projection-fingerprint-v1')
+        self.assertEqual(versions['projection_refresh_policy_version'], 'fixed-transform-refresh-v1')
+        self.assertIn('distance_policy_version', versions)
 
     def test_prepare_preserves_prior_artifact_when_replacement_fails(self):
         prior = {'artifact_version': 'journey-projection-artifact-v1', 'sentinel': 'prior'}

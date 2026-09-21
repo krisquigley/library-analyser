@@ -168,22 +168,17 @@ def symmetric_feature_distance(a: CandidateFeatures, b: CandidateFeatures) -> Fe
 def _bounded_edges(tracks, k):
     if k <= 0 or not tracks:
         return ()
-    # Bound preparation work: compare each track only with a deterministic window
-    # in cheap scalar order. Stored distances remain true symmetric feature
-    # distances for accepted edges; no dense pair matrix/list is retained.
-    window = max(k * 20, 20)
-    ordered = sorted(tracks, key=lambda t: (_ordering_scalar(t), t.track_id))
+    # Exact feature-neighbour selection: every unordered pair in the prepared
+    # representative set is measured with the canonical symmetric feature
+    # distance. We stream proposals into a deterministic sorted list, but never
+    # retain a dense distance matrix or expose approximate/windowed neighbours.
+    ordered = tuple(sorted(tracks, key=lambda t: t.track_id))
     pairs = []
-    seen = set()
     for i, a in enumerate(ordered):
-        for b in ordered[i + 1:i + 1 + window]:
-            key = (a.track_id, b.track_id) if a.track_id < b.track_id else (b.track_id, a.track_id)
-            if key in seen:
-                continue
-            seen.add(key)
+        for b in ordered[i + 1:]:
             d = symmetric_feature_distance(a, b)
             if d.distance is not None:
-                pairs.append((d.distance, key[0], key[1], d.supported_group_count))
+                pairs.append((d.distance, a.track_id, b.track_id, d.supported_group_count))
     degree = {t.track_id: 0 for t in tracks}
     edges = []
     for distance, a, b, count in sorted(pairs):
@@ -191,14 +186,6 @@ def _bounded_edges(tracks, k):
             degree[a] += 1; degree[b] += 1
             edges.append(ProjectionEdge(a, b, distance, count))
     return tuple(edges)
-
-
-def _ordering_scalar(track):
-    for group in ('tempo', 'energy', 'genre', 'mood', 'harmony'):
-        value = _scalar(track, group)
-        if value is not None:
-            return value
-    return 0.0
 
 
 def _raw_point(track, tracks, anchors):
