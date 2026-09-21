@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## Container Runtime
+
+Use **Podman**, not Docker, for all container operations in this repository.
+
+- Use `podman` commands for container inspection, execution, file copies, and cleanup.
+- Do not invoke the `docker` CLI or assume a Docker daemon/socket is available.
+- If tooling uses a Docker-compatible API or an adapter named `docker`, ensure it is configured to use Podman; the adapter name is not permission to use Docker.
+- If Podman is unavailable or misconfigured, report the blocker rather than falling back to Docker.
+
 ## Development Philosophy
 
 Agents working in this repository must practice disciplined, test-driven development and Clean Architecture.
