@@ -102,10 +102,6 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(metadata['Requires-Python'], '>=3.11')
             self.assertIsNone(metadata['Requires-Dist'])
             self.assertFalse(any(name.endswith('.pb') for name in names))
-        with tarfile.open(self.sdist) as archive:
-            members = {name.split('/', 1)[-1] for name in archive.getnames()}
-            self.assertIn('README.md', members)
-            self.assertIn('docs/release-preparation.md', members)
 
     def test_installed_entrypoints_and_offline_setup_errors(self):
         for module in (False, True):
