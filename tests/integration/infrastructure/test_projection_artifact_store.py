@@ -3,7 +3,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -187,7 +187,7 @@ class FileProjectionArtifactStoreTests(unittest.TestCase):
 
 def _write_projection_ready_database(db_path, audio_path):
     tid = 'sha256:' + ('1' * 64)
-    with sqlite3.connect(db_path) as db:
+    with closing(sqlite3.connect(db_path)) as db, db:
         db.executescript(f"""
             PRAGMA application_id={APPLICATION_ID};
             PRAGMA user_version=4;
