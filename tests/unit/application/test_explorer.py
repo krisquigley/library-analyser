@@ -34,6 +34,12 @@ class FakeExplorerRepository:
     def track_ids(self):
         return tuple(record.track_id for record in self.records)
 
+    def list_tracks(self, limit, after=None):
+        records = self.records
+        if after is not None:
+            records = tuple(record for record in records if record.track_id > after)
+        return self.metadata(), len(records), records[:limit]
+
     def read_track(self, track_id):
         for record in self.records:
             if record.track_id == track_id:
@@ -55,6 +61,7 @@ class ExplorerUseCaseTests(unittest.TestCase):
         self.assertEqual(first.display_label, 'A Song.flac')
         self.assertEqual(first.available_locations, 1)
         self.assertEqual(first.latest_run_status, 'failed')
+        self.assertEqual(first.latest_run_detail, '')
         self.assertEqual(first.fields['bpm'].automatic_values, (('bpm', 120.0),))
         self.assertEqual(first.fields['bpm'].manual_text, 'about 128 maybe')
         self.assertEqual(first.fields['bpm'].effective_source, 'manual_text')
@@ -82,6 +89,18 @@ class ExplorerUseCaseTests(unittest.TestCase):
     def test_unknown_detail_handle_is_actionable(self):
         with self.assertRaises(ValueError):
             GetExplorerTrackDetail(self.reader).execute('missing')
+
+    def test_list_uses_single_repository_snapshot_boundary(self):
+        class SnapshotOnlyRepository(FakeExplorerRepository):
+            def track_ids(self):  # pragma: no cover - must not be used for list assembly
+                raise AssertionError('list must not assemble tracks across separate repository calls')
+
+            def read_track(self, track_id):  # pragma: no cover - must not be used for list assembly
+                raise AssertionError('list must not assemble tracks across separate repository calls')
+
+        report = ListExplorerTracks(SnapshotOnlyRepository()).execute(limit=1)
+        self.assertEqual(report.metadata.track_count, 2)
+        self.assertEqual(tuple(track.handle for track in report.tracks), ('sha256:' + 'a' * 64,))
 
 
 if __name__ == '__main__':

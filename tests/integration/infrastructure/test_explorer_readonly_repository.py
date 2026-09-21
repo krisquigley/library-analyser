@@ -104,6 +104,35 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Invalid stored stage'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).read_track(tid)
 
+    def test_non_object_stage_payload_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + 'a' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, 'a' * 64, 10))
+            db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run', '', 'completed', ''))
+            db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run', tid))
+            db.execute('INSERT INTO stages VALUES(?,?,?)', ('run', 'bpm', '[]'))
+            db.commit(); db.close()
+            with self.assertRaisesRegex(AnalysisError, 'Invalid stored stage'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).read_track(tid)
+
+    def test_list_tracks_reads_page_and_records_in_one_transaction(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            first = 'sha256:' + '1' * 64
+            second = 'sha256:' + '2' * 64
+            for tid in (first, second):
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, tid.split(':')[1], 10))
+            db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/private/music/First.flac', first, 1, 'flac', 1))
+            db.commit(); db.close()
+            metadata, track_count, tracks = ReadOnlyExplorerSQLiteRepository(str(path)).list_tracks(limit=1)
+            self.assertEqual(metadata['read_policy'], 'bounded_read_transaction')
+            self.assertEqual(track_count, 2)
+            self.assertEqual(tuple(track.track_id for track in tracks), (first,))
+            self.assertEqual(tracks[0].display_label, 'First.flac')
+
 
 if __name__ == '__main__':
     unittest.main()

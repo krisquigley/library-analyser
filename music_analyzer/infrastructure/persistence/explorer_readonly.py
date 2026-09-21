@@ -34,11 +34,16 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def metadata(self):
         with self._transaction() as db:
-            return {
-                'application_id': db.execute('PRAGMA application_id').fetchone()[0],
-                'schema_version': db.execute('PRAGMA user_version').fetchone()[0],
-                'read_policy': 'bounded_read_transaction',
-            }
+            return self._metadata(db)
+
+    def list_tracks(self, limit: int, after: str | None = None):
+        with self._transaction() as db:
+            metadata = self._metadata(db)
+            where = '' if after is None else 'WHERE id > ?'
+            params = () if after is None else (after,)
+            track_count = db.execute(f'SELECT count(*) FROM tracks {where}', params).fetchone()[0]
+            ids = tuple(row[0] for row in db.execute(f'SELECT id FROM tracks {where} ORDER BY id LIMIT ?', (*params, limit)))
+            return metadata, track_count, tuple(self._read_track(db, track_id) for track_id in ids)
 
     def track_ids(self):
         with self._transaction() as db:
@@ -46,31 +51,44 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def read_track(self, track_id: str):
         with self._transaction() as db:
-            track = db.execute('SELECT id,sha256,size FROM tracks WHERE id=?', (track_id,)).fetchone()
-            if not track:
-                raise AnalysisError('Unknown explorer track')
-            locations = db.execute('SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path', (track_id,)).fetchall()
-            display_label = Path(locations[0][0]).name if locations else ''
-            row = db.execute('SELECT r.id,r.status,r.detail FROM runs r JOIN run_tracks t ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', (track_id,)).fetchone()
-            run = None
-            if row:
-                stages = []
-                for stage, size in db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (row[0],)):
-                    if size > 16 * 1024 * 1024:
-                        raise AnalysisError('Oversized stored stage (16 MiB limit)')
-                    payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (row[0], stage)).fetchone()[0]
-                    try:
-                        result = stage_from_mapping(json.loads(payload))
-                        if result.stage != stage:
-                            raise ValueError('Stage name mismatch')
-                        # Do not expose raw prediction tensors through explorer DTOs.
-                        result = type(result)(result.stage, result.provenance, result.uncertainty, result.values, result.windows, result.summary, ())
-                        stages.append(result)
-                    except (ValueError, KeyError, TypeError, IndexError, json.JSONDecodeError) as error:
-                        raise AnalysisError('Invalid stored stage: ' + str(error)) from error
-                run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
-            overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
-            return ExplorerStoredTrack(track[0], track[1], track[2], display_label, len(locations), run, overrides)
+            return self._read_track(db, track_id)
+
+    def _metadata(self, db):
+        return {
+            'application_id': db.execute('PRAGMA application_id').fetchone()[0],
+            'schema_version': db.execute('PRAGMA user_version').fetchone()[0],
+            'read_policy': 'bounded_read_transaction',
+        }
+
+    def _read_track(self, db, track_id: str):
+        track = db.execute('SELECT id,sha256,size FROM tracks WHERE id=?', (track_id,)).fetchone()
+        if not track:
+            raise AnalysisError('Unknown explorer track')
+        locations = db.execute('SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path', (track_id,)).fetchall()
+        display_label = Path(locations[0][0]).name if locations else ''
+        row = db.execute('SELECT r.id,r.status,r.detail FROM runs r JOIN run_tracks t ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', (track_id,)).fetchone()
+        run = None
+        if row:
+            stages = []
+            for stage, size in db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (row[0],)):
+                if size > 16 * 1024 * 1024:
+                    raise AnalysisError('Oversized stored stage (16 MiB limit)')
+                payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (row[0], stage)).fetchone()[0]
+                try:
+                    data = json.loads(payload)
+                    if not isinstance(data, dict):
+                        raise ValueError('Stage payload must be a JSON object')
+                    result = stage_from_mapping(data)
+                    if result.stage != stage:
+                        raise ValueError('Stage name mismatch')
+                    # Do not expose raw prediction tensors through explorer DTOs.
+                    result = type(result)(result.stage, result.provenance, result.uncertainty, result.values, result.windows, result.summary, ())
+                    stages.append(result)
+                except (ValueError, KeyError, TypeError, IndexError, AttributeError, json.JSONDecodeError) as error:
+                    raise AnalysisError('Invalid stored stage: ' + str(error)) from error
+            run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
+        overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
+        return ExplorerStoredTrack(track[0], track[1], track[2], display_label, len(locations), run, overrides)
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):

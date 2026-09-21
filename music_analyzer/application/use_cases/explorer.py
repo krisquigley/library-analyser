@@ -16,14 +16,10 @@ class ListExplorerTracks:
     def execute(self, limit=100, after=None):
         if not isinstance(limit, int) or limit < 1 or limit > 500:
             raise ValueError('Explorer list limit must be between 1 and 500')
-        track_ids = tuple(self.repository.track_ids())
-        if after is not None:
-            track_ids = tuple(track_id for track_id in track_ids if track_id > after)
-        visible_ids = track_ids[:limit]
-        return ExplorerSnapshot(self._metadata(len(track_ids)), tuple(_map_track(self.repository.read_track(track_id)) for track_id in visible_ids))
+        metadata, track_count, tracks = self.repository.list_tracks(limit, after)
+        return ExplorerSnapshot(self._metadata(metadata, track_count), tuple(_map_track(track) for track in tracks))
 
-    def _metadata(self, track_count):
-        raw = self.repository.metadata()
+    def _metadata(self, raw, track_count):
         return ExplorerMetadata(
             application_id=int(raw.get('application_id', 0)),
             schema_version=int(raw.get('schema_version', 0)),
@@ -102,7 +98,7 @@ def _map_track(track):
         available_locations=track.available_locations,
         latest_run_id=track.run.run_id if track.run else None,
         latest_run_status=track.run.status if track.run else None,
-        latest_run_detail=track.run.detail if track.run else '',
+        latest_run_detail='',
         fields=fields,
         reasons=tuple(reasons),
     )
