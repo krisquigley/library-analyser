@@ -66,7 +66,7 @@ def markdown_track(report):
             rendered = escape_text(value)
         else:
             pairs = list(value)
-            if field in ('genres', 'mood', 'instruments'):
+            if field in ('genres', 'mood', 'instruments') and all(isinstance(score, (float, int)) for _, score in pairs):
                 pairs = sorted(pairs, key=lambda pair: -pair[1])[:5]
                 suffix = f'; top {len(pairs)} of {len(value)}'
             rendered = '; '.join(escape_text(label) + ': ' + display_value(score) for label, score in pairs)

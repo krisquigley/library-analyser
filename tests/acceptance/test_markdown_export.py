@@ -55,6 +55,28 @@ class MarkdownTests(unittest.TestCase):
         self.assertIn('Energy (manual override): my assessment', text)
         self.assertIn('not probabilities', MARKDOWN_HEADER)
 
+
+    def test_categorical_string_values_render_without_score_sort_crash(self):
+        stage = StageResult('genres', (), 'reviewed', values=(
+            ('primary', 'House & garage'), ('secondary', 'Jazz'), ('maybe', 'Rock'),
+            ('support', 'Ambient'), ('low', 'Funk'), ('extra', 'Classical')))
+        text = markdown_track(self.report(AnalysisReport('run', 'completed', (stage,))))
+        self.assertIn('primary: House &amp; garage', text)
+        self.assertIn('secondary: Jazz', text)
+        self.assertIn('extra: Classical', text)
+        self.assertNotIn('top 5 of 6', text)
+
+    def test_mood_and_instrument_mixed_legal_values_keep_numeric_top_five_only(self):
+        stages = (
+            StageResult('mood', (), 'reviewed', values=(('warm', 'manual'), ('bright', 0.8), ('dark', 0.2))),
+            StageResult('instruments', (), 'reviewed', values=(('piano', 0.4), ('drums', 'present'))),
+        )
+        text = markdown_track(self.report(AnalysisReport('run', 'completed', stages)))
+        self.assertIn('warm: manual; bright: 0.8; dark: 0.2', text)
+        self.assertIn('piano: 0.4; drums: present', text)
+        self.assertNotIn('top 3 of 3', text)
+        self.assertNotIn('top 2 of 2', text)
+
     def test_atomic_cleanup_no_overwrite_and_symlink_refusal(self):
         output = FileReviewOutput(review_to_mapping, markdown_track, MARKDOWN_HEADER)
         with tempfile.TemporaryDirectory() as tmp:
