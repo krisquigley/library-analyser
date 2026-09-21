@@ -37,6 +37,9 @@ from music_analyzer.infrastructure.environment.probes import (
     EssentiaProbe, FFmpegProbe, PlatformProbe, PythonProbe,
 )
 from music_analyzer.interface_adapters.presenters.doctor import present_doctor
+from music_analyzer.application.use_cases.projection_artifacts import PrepareProjectionArtifact, RefreshProjectionArtifact
+from music_analyzer.infrastructure.filesystem.projection_artifacts import FileProjectionArtifactStore
+from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
 
 from music_analyzer.application.use_cases.review import ReviewTracks
@@ -178,6 +181,13 @@ def main(argv: list[str] | None = None) -> int:
     add_configuration_options(export)
     export.add_argument('--format', choices=('json', 'csv', 'markdown'), required=True)
     export.add_argument('--output', required=True)
+    projection = commands.add_parser('prepare-projection', help='Prepare or refresh the read-only explorer projection artifact.')
+    add_configuration_options(projection)
+    projection.add_argument('--artifact', required=True, help='Projection artifact JSON path, separate from the analysis database.')
+    projection.add_argument('--refresh', action='store_true', help='Refresh with the persisted transform instead of initial preparation.')
+    projection.add_argument('--relayout', action='store_true', help='Explicitly refit anchors and ranges during refresh.')
+    projection.add_argument('--k', type=int, default=10, help='Maximum undirected neighbour degree; default 10.')
+    projection.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
     if args.command == 'analyze' and (not finite(args.max_duration) or not 0 < args.max_duration <= 3600):
         parser.error('--max-duration must be positive, finite and at most 3600 seconds')
@@ -228,6 +238,26 @@ def main(argv: list[str] | None = None) -> int:
             report = build_analysis(**overrides).execute(source, args.max_duration)
             output = present_analysis(report, as_json=args.json)
             ready = report.status == 'completed'
+        elif args.command == 'prepare-projection':
+            settings = load_settings(**overrides)
+            repository = ReadOnlyExplorerSQLiteRepository(settings.database)
+            store = FileProjectionArtifactStore(args.artifact, source_database_path=settings.database, protected_audio_paths=repository.available_audio_paths())
+            if args.refresh:
+                result = RefreshProjectionArtifact(repository, store, args.k).execute(explicit_relayout=args.relayout)
+            else:
+                if args.relayout:
+                    parser.error('--relayout requires --refresh')
+                result = PrepareProjectionArtifact(repository, store, args.k).execute()
+            summary = {'artifact': args.artifact, 'fingerprint': result.artifact['fingerprint'], 'tracks': len(result.artifact['tracks']), 'edges': len(result.artifact['edges'])}
+            if result.warning:
+                summary['warning'] = result.warning
+            if args.json:
+                output = json.dumps(summary, sort_keys=True)
+            else:
+                output = f"Prepared {summary['tracks']} tracks, {summary['edges']} edges at {args.artifact}"
+                if result.warning:
+                    output += f"\nWarning: {result.warning}"
+            ready = True
         else:
             storage, model_ids = build_models(load_settings(**overrides))
             use_case = DownloadModels if args.action == 'download' else VerifyModels

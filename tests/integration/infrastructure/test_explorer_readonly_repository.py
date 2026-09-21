@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from music_analyzer.application.dto.analysis import AnalysisError
@@ -16,7 +17,8 @@ APP_ID = 0x4D414E41
 
 def create_db(path):
     db = sqlite3.connect(path)
-    db.executescript('''
+    try:
+        db.executescript('''
     CREATE TABLE runs (id TEXT PRIMARY KEY, location TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','completed','failed','interrupted')), detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE stages (run_id TEXT NOT NULL REFERENCES runs(id), stage TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(run_id,stage));
     CREATE TABLE tracks(id TEXT PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, size INTEGER NOT NULL);
@@ -26,9 +28,12 @@ def create_db(path):
     CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
     CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
     ''')
-    db.execute(f'PRAGMA application_id={APP_ID}')
-    db.execute('PRAGMA user_version=4')
-    return db
+        db.execute(f'PRAGMA application_id={APP_ID}')
+        db.execute('PRAGMA user_version=4')
+        return db
+    except Exception:
+        db.close()
+        raise
 
 
 def stage(name, value=1.0):
@@ -42,7 +47,8 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             sqlite3.connect(path).close()
             with self.assertRaisesRegex(AnalysisError, 'supported music-analyzer'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
-            self.assertEqual(sqlite3.connect(path).execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall(), [])
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall(), [])
 
     def test_reads_latest_identity_linked_run_and_redacts_path_to_label(self):
         with tempfile.TemporaryDirectory() as td:
@@ -123,8 +129,8 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
     def test_rejects_v4_schema_with_expected_names_but_missing_constraints(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
-            db = sqlite3.connect(path)
-            db.executescript('''
+            with closing(sqlite3.connect(path)) as db, db:
+                db.executescript('''
             CREATE TABLE runs (id, location, status, detail, created_at);
             CREATE TABLE stages (run_id, stage, result);
             CREATE TABLE tracks(id, sha256, size);
@@ -134,10 +140,9 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             CREATE TABLE run_tracks(run_id, track_id);
             CREATE TABLE overrides(track_id, field, value);
             ''')
-            db.execute(f'PRAGMA application_id={APP_ID}')
-            db.execute('PRAGMA user_version=4')
-            db.execute('INSERT INTO tracks VALUES(?,?,?)', ('not-a-sha-id', 'not-sha', 'not-int'))
-            db.commit(); db.close()
+                db.execute(f'PRAGMA application_id={APP_ID}')
+                db.execute('PRAGMA user_version=4')
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', ('not-a-sha-id', 'not-sha', 'not-int'))
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
@@ -162,16 +167,15 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
     def test_accepts_legacy_v1_schema_migrated_to_v4(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
-            db = sqlite3.connect(path)
-            db.executescript('''
+            with closing(sqlite3.connect(path)) as db, db:
+                db.executescript('''
             CREATE TABLE runs(id TEXT PRIMARY KEY,location TEXT,status TEXT,detail TEXT,created_at TEXT);
-            CREATE TABLE stages(run_id TEXT,stage TEXT,result TEXT,PRIMARY KEY(run_id,stage));
-            ''')
-            db.execute(f'PRAGMA application_id={APP_ID}')
-            db.execute('PRAGMA user_version=1')
-            db.execute("INSERT INTO runs VALUES('run','old','completed','','then')")
-            db.execute("INSERT INTO stages VALUES('run','rhythm',?)", ('{"provenance":"unchanged"}',))
-            db.commit(); db.close()
+                CREATE TABLE stages(run_id TEXT,stage TEXT,result TEXT,PRIMARY KEY(run_id,stage));
+                ''')
+                db.execute(f'PRAGMA application_id={APP_ID}')
+                db.execute('PRAGMA user_version=1')
+                db.execute("INSERT INTO runs VALUES('run','old','completed','','then')")
+                db.execute("INSERT INTO stages VALUES('run','rhythm',?)", ('{"provenance":"unchanged"}',))
             repo = SQLiteAnalysisRepository(str(path))
             identity = FileIdentity('4' * 64, 40)
             inventory = Inventory('/music', (ScannedFile('/music/Legacy.flac', identity, 1, 'flac'),), (), True)

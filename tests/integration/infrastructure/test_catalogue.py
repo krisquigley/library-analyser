@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
@@ -53,7 +54,7 @@ class CatalogueTests(unittest.TestCase):
         self.assertFalse(result.complete)
         self.assertFalse(result.missing)
         self.assertTrue(result.issues)
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             self.assertEqual(db.execute('SELECT available FROM locations').fetchone(), (1,))
         self.assertLessEqual(len(self.scan(ScanLimits(max_entries=1)).files), 1)
 
@@ -66,7 +67,7 @@ class CatalogueTests(unittest.TestCase):
             ResolveTrack(SQLiteAnalysisRepository(str(self.db)), LocalInventory()).execute(track)
 
     def test_v1_migration_preserves_stage_bytes(self):
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             db.executescript('CREATE TABLE runs(id TEXT PRIMARY KEY,location TEXT,status TEXT,detail TEXT,created_at TEXT); CREATE TABLE stages(run_id TEXT,stage TEXT,result TEXT,PRIMARY KEY(run_id,stage));')
             db.execute(f'PRAGMA application_id={APPLICATION_ID}')
             db.execute('PRAGMA user_version=1')
@@ -74,17 +75,17 @@ class CatalogueTests(unittest.TestCase):
             db.execute("INSERT INTO stages VALUES('run','rhythm',?)", ('{"provenance":"unchanged Unicode é"}',))
         SQLiteAnalysisRepository(str(self.db))
         SQLiteAnalysisRepository(str(self.db))
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (4,))
             self.assertEqual(db.execute('SELECT result FROM stages').fetchone()[0], '{"provenance":"unchanged Unicode é"}')
 
     def test_malformed_v1_not_partially_migrated(self):
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             db.execute('CREATE TABLE surprise(x)')
             db.execute(f'PRAGMA application_id={APPLICATION_ID}')
             db.execute('PRAGMA user_version=1')
         with self.assertRaises(Exception): SQLiteAnalysisRepository(str(self.db))
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (1,))
             self.assertEqual(db.execute('SELECT name FROM sqlite_master').fetchall(), [('surprise',)])
 
