@@ -220,6 +220,31 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             self.assertEqual(tuple(track.track_id for track in tracks), (first,))
             self.assertEqual(tracks[0].display_label, 'First.flac')
 
+    def test_candidate_snapshot_reads_all_records_in_one_transaction(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            db.execute('PRAGMA journal_mode=WAL')
+            first = 'sha256:' + '1' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (first, first.split(':')[1], 10))
+            db.commit()
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+            original_read_track = repo._read_track
+
+            def concurrent_insert_after_snapshot_ids_are_selected(connection, track_id):
+                writer = sqlite3.connect(path)
+                second = 'sha256:' + '2' * 64
+                writer.execute('INSERT INTO tracks VALUES(?,?,?)', (second, second.split(':')[1], 20))
+                writer.commit(); writer.close()
+                return original_read_track(connection, track_id)
+
+            repo._read_track = concurrent_insert_after_snapshot_ids_are_selected
+            metadata, tracks = repo.candidate_snapshot()
+            self.assertEqual(metadata['read_policy'], 'bounded_read_transaction')
+            self.assertEqual(tuple(track.track_id for track in tracks), (first,))
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), (first, 'sha256:' + '2' * 64))
+            db.close()
+
 
 if __name__ == '__main__':
     unittest.main()

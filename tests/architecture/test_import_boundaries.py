@@ -19,7 +19,7 @@ ALLOWED_LAYERS = {
     'infrastructure': {'domain', 'application', 'infrastructure'},
     'frameworks': {'domain', 'application', 'interface_adapters', 'infrastructure', 'frameworks'},
 }
-INNER_STDLIB = {'__future__', 'dataclasses', 'typing', 'collections', 'enum', 'abc'}
+INNER_STDLIB = {'__future__', 'dataclasses', 'typing', 'collections', 'enum', 'abc', 'math'}
 
 
 def violations(source, module):
