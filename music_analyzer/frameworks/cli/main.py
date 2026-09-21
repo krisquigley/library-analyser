@@ -40,6 +40,7 @@ from music_analyzer.interface_adapters.presenters.doctor import present_doctor
 from music_analyzer.application.use_cases.projection_artifacts import PrepareProjectionArtifact, RefreshProjectionArtifact
 from music_analyzer.infrastructure.filesystem.projection_artifacts import FileProjectionArtifactStore
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
+from music_analyzer.frameworks.explorer.server import create_server
 
 
 from music_analyzer.application.use_cases.review import ReviewTracks
@@ -181,6 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     add_configuration_options(export)
     export.add_argument('--format', choices=('json', 'csv', 'markdown'), required=True)
     export.add_argument('--output', required=True)
+    explorer = commands.add_parser('explorer', help='Start the personal read-only localhost journey explorer.')
+    add_configuration_options(explorer)
+    explorer.add_argument('--host', default='127.0.0.1', help='Bind host; default 127.0.0.1.')
+    explorer.add_argument('--port', type=int, default=8765, help='Bind port; default 8765.')
     projection = commands.add_parser('prepare-projection', help='Prepare or refresh the read-only explorer projection artifact.')
     add_configuration_options(projection)
     projection.add_argument('--artifact', required=True, help='Projection artifact JSON path, separate from the analysis database.')
@@ -238,6 +243,14 @@ def main(argv: list[str] | None = None) -> int:
             report = build_analysis(**overrides).execute(source, args.max_duration)
             output = present_analysis(report, as_json=args.json)
             ready = report.status == 'completed'
+        elif args.command == 'explorer':
+            if args.host != '127.0.0.1':
+                parser.error('explorer binds 127.0.0.1 only in this local personal-use slice')
+            settings = load_settings(**overrides)
+            server = create_server(settings.database, args.host, args.port)
+            print(f'Explorer running at http://{args.host}:{server.server_port}/ (Ctrl+C to stop)')
+            server.serve_forever()
+            return 0
         elif args.command == 'prepare-projection':
             settings = load_settings(**overrides)
             repository = ReadOnlyExplorerSQLiteRepository(settings.database)

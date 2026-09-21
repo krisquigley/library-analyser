@@ -540,3 +540,13 @@ music-analyzer --database /tmp/analysis.sqlite export --format markdown --output
 Delivery tests use fake inference and disposable catalogues. They are **not independent
 review** or proof of real-model accuracy. No representative pilot/calibration/Mixxx milestone is
 claimed; the bounded real-runtime pilot does not close representative listening gates.
+
+### Personal local explorer
+
+After scanning/analyzing tracks, start the simple read-only journey explorer with:
+
+```bash
+music-analyzer explorer --database /path/to/analysis.sqlite --port 8765
+```
+
+Open `http://127.0.0.1:8765/` in a browser. The explorer is intended for personal local use only: it binds to `127.0.0.1`, serves bundled offline HTML/CSS/JavaScript assets, reads the existing analysis database, and does not edit audio files, annotations, overrides, migrations, or analysis results. It can list tracks, inspect read-only details, explicitly set/undo/reset the current track, run the five existing candidate controls, and draw a simple 2D map from prepared coordinates when evidence is available.

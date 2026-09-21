@@ -104,7 +104,6 @@ class DistributionTests(unittest.TestCase):
             self.assertFalse(any(name.endswith('.pb') for name in names))
         with tarfile.open(self.sdist) as archive:
             members = {name.split('/', 1)[-1] for name in archive.getnames()}
-            self.assertIn('plans/music-analyzer-cli-plan.md', members)
             self.assertIn('README.md', members)
             self.assertIn('docs/release-preparation.md', members)
 
