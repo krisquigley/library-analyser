@@ -17,10 +17,9 @@ class SelectExplorerCandidates:
             raise ValueError('Cursor paging is not supported for candidate selection')
         if not isinstance(query.limit, int) or query.limit < 1 or query.limit > 500:
             raise ValueError('Candidate limit must be between 1 and 500')
-        track_ids = tuple(self.repository.track_ids())
-        records = tuple(self.repository.read_track(track_id) for track_id in track_ids)
-        total = len(track_ids)
-        raw_meta = self.repository.metadata()
+        raw_meta, records = self.repository.candidate_snapshot()
+        records = tuple(records)
+        total = len(records)
         by_id = {record.track_id: record for record in records}
         if query.current_track_id not in by_id:
             raise ValueError('Unknown current track')
@@ -50,6 +49,7 @@ class SelectExplorerCandidates:
             candidates=tuple(CandidateSummaryDto(r.track_id, labels.get(r.track_id, ''), i + 1, r.tier, r.score, r.supported_weight_mass, r.missing_weight_mass, r.requested_weight_mass, r.explanation) for i, r in enumerate(domain_result.candidates)),
             excluded_summary=domain_result.excluded_summary,
             no_match_suggestions=suggestions,
+            no_match_details=domain_result.no_match_details,
         )
 
 

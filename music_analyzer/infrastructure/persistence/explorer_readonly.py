@@ -95,6 +95,12 @@ class ReadOnlyExplorerSQLiteRepository:
             ids = tuple(row[0] for row in db.execute(f'SELECT id FROM tracks {where} ORDER BY id LIMIT ?', (*params, limit)))
             return metadata, track_count, tuple(self._read_track(db, track_id) for track_id in ids)
 
+    def candidate_snapshot(self):
+        with self._transaction() as db:
+            metadata = self._metadata(db)
+            ids = tuple(row[0] for row in db.execute('SELECT id FROM tracks ORDER BY id'))
+            return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
+
     def track_ids(self):
         with self._transaction() as db:
             return tuple(row[0] for row in db.execute('SELECT id FROM tracks ORDER BY id'))

@@ -12,27 +12,28 @@ class FakeSnapshotRepository:
         self.records = tuple(records)
         self.list_calls = []
         self.read_calls = []
+        self.snapshot_calls = 0
 
     def metadata(self):
-        return {'application_id': 0x4D414E41, 'schema_version': 4, 'read_policy': 'coherent_in_memory_snapshot'}
+        raise AssertionError('candidate selection must use one snapshot read')
 
     def track_ids(self):
-        return tuple(record.track_id for record in self.records)
+        raise AssertionError('candidate selection must use one snapshot read')
 
     def read_track(self, track_id):
-        self.read_calls.append(track_id)
-        for record in self.records:
-            if record.track_id == track_id:
-                return record
-        raise KeyError(track_id)
+        raise AssertionError('candidate selection must use one snapshot read')
+
+    def candidate_snapshot(self):
+        self.snapshot_calls += 1
+        return {'application_id': 0x4D414E41, 'schema_version': 4, 'read_policy': 'coherent_in_memory_snapshot'}, self.records
 
     def list_tracks(self, limit, after=None):
         self.list_calls.append((limit, after))
         raise AssertionError('candidate selection must not use bounded list pagination')
 
 
-def stage(name, values=(), summary=(), uncertainty=''):
-    return StageResult(name, (), uncertainty, tuple(values), (), ScoreSummary(tuple(k for k, _ in summary), tuple(v for _, v in summary), tuple(v for _, v in summary), tuple(v for _, v in summary), 1.0, False) if summary else None)
+def stage(name, values=(), summary=(), uncertainty='', provenance=()):
+    return StageResult(name, tuple(provenance), uncertainty, tuple(values), (), ScoreSummary(tuple(k for k, _ in summary), tuple(v for _, v in summary), tuple(v for _, v in summary), tuple(v for _, v in summary), 1.0, False) if summary else None)
 
 
 def track(suffix, stages=(), overrides=(), label=''):
@@ -48,7 +49,7 @@ class SelectExplorerCandidatesTests(unittest.TestCase):
         result = SelectExplorerCandidates(repo).execute(CandidateQuery(current.track_id, (SelectionControlDto('energy', 'soft', 1, {'energy_mode': 'rise'}),), limit=1))
         self.assertEqual([c.track_id for c in result.candidates], [best_late.track_id])
         self.assertEqual(repo.list_calls, [])
-        self.assertEqual(repo.read_calls, [current.track_id, far_first.track_id, best_late.track_id])
+        self.assertEqual(repo.snapshot_calls, 1)
         self.assertEqual(result.policy_versions['override_policy_version'], 'manual-text-display-only-v1')
         self.assertEqual(result.metadata.read_policy, 'coherent_in_memory_snapshot')
 
@@ -68,6 +69,15 @@ class SelectExplorerCandidatesTests(unittest.TestCase):
         self.assertEqual(result.candidates[0].tier, 'eligible_insufficient_evidence')
         self.assertIn('tempo: candidate bpm has unresolved manual text', result.candidates[0].explanation.missing_evidence)
         self.assertEqual(result.candidates[0].explanation.manual_values, (('bpm', '100 maybe'),))
+
+    def test_phase1_genre_provenance_model_is_mapped_for_compatibility(self):
+        current = track('a', (stage('genres', summary=(('house', 1.0), ('techno', 0.0)), provenance=(('model', 'discogs'),)),))
+        candidate = track('b', (stage('genres', summary=(('house', 1.0), ('techno', 0.0)), provenance=(('model', 'other-model'),)),))
+        query = CandidateQuery(current.track_id, (SelectionControlDto('genre', 'soft', 1, {'genre_mode': 'stay_near'}),))
+        result = SelectExplorerCandidates(FakeSnapshotRepository((current, candidate))).execute(query)
+        self.assertEqual(result.candidates[0].tier, 'eligible_insufficient_evidence')
+        self.assertIn('genre: incompatible label/model alignment', result.candidates[0].explanation.missing_evidence)
+        self.assertIn(('genres', (('model', 'other-model'),)), result.candidates[0].explanation.provenance)
 
     def test_rejects_unsupported_cursor_semantics(self):
         one = track('a')

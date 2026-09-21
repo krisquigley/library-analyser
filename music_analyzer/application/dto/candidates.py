@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from typing import Mapping
 
-from music_analyzer.domain.candidate_selection import CandidateExplanation
+from music_analyzer.domain.candidate_selection import CandidateExplanation, NoMatchDetail
 from music_analyzer.application.dto.explorer import ExplorerMetadata
 
 
@@ -46,3 +46,4 @@ class CandidateResultDto:
     candidates: tuple[CandidateSummaryDto, ...]
     excluded_summary: Mapping[str, int]
     no_match_suggestions: tuple[str, ...]
+    no_match_details: tuple[NoMatchDetail, ...] = ()

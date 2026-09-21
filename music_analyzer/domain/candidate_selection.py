@@ -89,17 +89,29 @@ class CandidateRank:
 
 
 @dataclass(frozen=True)
+class NoMatchDetail:
+    track_id: str
+    failed_rules: tuple[str, ...]
+    missing_evidence: tuple[str, ...]
+    relation_labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SelectionResult:
     policy_versions: Mapping[str, str]
     candidates: tuple[CandidateRank, ...]
     excluded_summary: Mapping[str, int]
     no_match_suggestions: tuple[str, ...]
+    no_match_details: tuple[NoMatchDetail, ...] = ()
 
 
 def rank_candidates(current: CandidateFeatures, candidates: list[CandidateFeatures] | tuple[CandidateFeatures, ...], request: SelectionRequest) -> SelectionResult:
     controls = tuple(c for c in request.controls if c.mode != 'off')
     ranked = []
+    no_match_details: list[NoMatchDetail] = []
     excluded: dict[str, int] = {}
+    for control in controls:
+        _validate_control_parameters(control)
     for candidate in candidates:
         if candidate.track_id in request.exclude_track_ids or candidate.track_id == current.track_id:
             excluded['explicitly_excluded'] = excluded.get('explicitly_excluded', 0) + 1
@@ -135,6 +147,8 @@ def rank_candidates(current: CandidateFeatures, candidates: list[CandidateFeatur
             else:
                 satisfied.append(control.name + ': zero-weight soft ignored for score')
         if failed:
+            if len(no_match_details) < 20:
+                no_match_details.append(NoMatchDetail(candidate.track_id, tuple(failed), _uniq(missing), tuple(relations)))
             continue
         supported_weight = sum(c.weight for c in contribs if c.supported and c.value is not None)
         missing_weight = max(0.0, requested_weight - supported_weight)
@@ -149,11 +163,58 @@ def rank_candidates(current: CandidateFeatures, candidates: list[CandidateFeatur
     ranked.sort(key=lambda r: (0 if r.tier == 'eligible_scored' else 1, -(r.score or 0.0), -r.supported_weight_mass, r.track_id))
     limited = tuple(ranked[:request.limit])
     suggestions = () if limited else ('No automatic relaxation was applied; explicitly widen a hard control or make it soft to change results.',)
-    return SelectionResult(_versions(), limited, dict(sorted(excluded.items())), suggestions)
+    return SelectionResult(_versions(), limited, dict(sorted(excluded.items())), suggestions, tuple(no_match_details))
 
 
 def _versions():
     return {'selection_policy_version': SELECTION_POLICY_VERSION, 'distance_policy_version': DISTANCE_POLICY_VERSION, 'ranking_policy_version': RANKING_POLICY_VERSION, 'harmonic_policy_version': HARMONIC_POLICY_VERSION}
+
+
+def _finite_number(value, name):
+    if not isinstance(value, (int, float)) or not isfinite(value):
+        raise ValueError(f'{name} must be finite')
+    return float(value)
+
+
+def _positive_number(value, name):
+    number = _finite_number(value, name)
+    if number <= 0:
+        raise ValueError(f'{name} must be positive')
+    return number
+
+
+def _validate_control_parameters(control):
+    params = control.parameters
+    if control.name == 'tempo':
+        _positive_number(params.get('tolerance', 0.06), 'tempo tolerance')
+    elif control.name == 'energy':
+        mode = str(params.get('energy_mode', 'hold'))
+        if mode in {'rise', 'fall'}:
+            _positive_number(params.get('delta_target', 1.0), 'energy delta target')
+        elif mode == 'target_band':
+            low = _finite_number(params.get('low', -1.0), 'energy low')
+            high = _finite_number(params.get('high', 1.0), 'energy high')
+            if low > high:
+                raise ValueError('energy band must be coherent')
+            _positive_number(params.get('band_tolerance', 1.0), 'energy band tolerance')
+        else:
+            _positive_number(params.get('hold_tolerance', 1.0), 'energy hold tolerance')
+    elif control.name in {'mood', 'genre'}:
+        if 'threshold' in params:
+            threshold = _finite_number(params.get('threshold'), f'{control.name} threshold')
+            if threshold < 0 or threshold > 1:
+                raise ValueError(f'{control.name} threshold must be in [0, 1]')
+        if control.name == 'genre':
+            mode = str(params.get('genre_mode', 'stay_near'))
+            if mode == 'prefer_novelty':
+                minimum = _finite_number(params.get('novelty_min_distance', 0.20), 'genre novelty minimum')
+                target = _finite_number(params.get('novelty_target_distance', 0.60), 'genre novelty target')
+                if minimum < 0 or target > 1 or target <= minimum:
+                    raise ValueError('genre novelty distances must be coherent')
+            elif mode not in {'move_toward_labels'} or not params.get('include'):
+                near = _finite_number(params.get('near_distance', 0.35), 'genre near distance')
+                if near <= 0 or near > 1:
+                    raise ValueError('genre near distance must be positive')
 
 
 def _evaluate_control(control, current, candidate):
@@ -225,7 +286,7 @@ def _tempo(control, current, candidate):
         return (False, None, _manual_missing('bpm', _field(current, 'bpm'), 'current').replace('bpm:', 'tempo:'), '')
     if cand is None or cand <= 0:
         return (False, None, _manual_missing('bpm', cand_ev, 'candidate').replace('bpm:', 'tempo:'), '')
-    tol = float(control.parameters.get('tolerance', 0.06))
+    tol = _positive_number(control.parameters.get('tolerance', 0.06), 'tempo tolerance')
     multipliers = (0.5, 1.0, 2.0) if control.parameters.get('allow_octaves') else (1.0,)
     pairs = [(abs(log((cand * m) / cur)), m) for m in multipliers]
     distance, mult = min(pairs, key=lambda x: (x[0], x[1]))
@@ -247,13 +308,13 @@ def _energy(control, current, candidate):
     cur = cur_s['arousal']; cand = cand_s['arousal']
     mode = str(control.parameters.get('energy_mode', 'hold'))
     if mode == 'rise':
-        delta = cand - cur; value = _clamp01(delta / float(control.parameters.get('delta_target', 1.0))); ok = cand > cur
+        delta = cand - cur; value = _clamp01(delta / _positive_number(control.parameters.get('delta_target', 1.0), 'energy delta target')); ok = cand > cur
     elif mode == 'fall':
-        delta = cur - cand; value = _clamp01(delta / float(control.parameters.get('delta_target', 1.0))); ok = cand < cur
+        delta = cur - cand; value = _clamp01(delta / _positive_number(control.parameters.get('delta_target', 1.0), 'energy delta target')); ok = cand < cur
     elif mode == 'target_band':
-        low = float(control.parameters.get('low', cur - 1.0)); high = float(control.parameters.get('high', cur + 1.0)); outside = max(low - cand, cand - high, 0.0); tol = float(control.parameters.get('band_tolerance', 1.0)); value = 1 - _clamp01(outside / tol); ok = low <= cand <= high
+        low = _finite_number(control.parameters.get('low', cur - 1.0), 'energy low'); high = _finite_number(control.parameters.get('high', cur + 1.0), 'energy high'); outside = max(low - cand, cand - high, 0.0); tol = _positive_number(control.parameters.get('band_tolerance', 1.0), 'energy band tolerance'); value = 1 - _clamp01(outside / tol); ok = low <= cand <= high
     else:
-        tol = float(control.parameters.get('hold_tolerance', 1.0)); dist = abs(cand - cur); value = 1 - _clamp01(dist / tol); ok = dist <= tol
+        tol = _positive_number(control.parameters.get('hold_tolerance', 1.0), 'energy hold tolerance'); dist = abs(cand - cur); value = 1 - _clamp01(dist / tol); ok = dist <= tol
     return (ok, Contribution('energy', control.weight, True, value, 'raw-arousal-relative-v1', mode, abs(cand - cur)), '', 'energy:' + mode)
 
 
@@ -263,7 +324,7 @@ def _labels(control, candidate, field, control_label=None):
     if labels is None:
         return [(False, None, _manual_missing(control_label, _field(candidate, field), 'candidate'), '')]
     params = control.parameters
-    threshold = float(params.get('threshold', 0.5))
+    threshold = _finite_number(params.get('threshold', 0.5), f'{control_label} threshold')
     out = []
     include = tuple(params.get('include', ()))
     exclude = tuple(params.get('exclude', ()))
@@ -279,10 +340,14 @@ def _labels(control, candidate, field, control_label=None):
         out.append((ok, Contribution(control_label + '_include', control.weight, value is not None, _clamp01(value) if value is not None else None, 'label-mean-include-v1', control.within, None, miss), miss, ''))
     if exclude:
         known = [labels.get(x) for x in exclude if labels.get(x) is not None]
-        # Exclusion means no known excluded label may meet the visible threshold. Missing excluded labels are not failures.
-        ok = not any(x >= threshold for x in known)
-        value = 1 - max(known) if known else None
         miss = '' if len(known) == len(exclude) else f'{control_label}: candidate missing selected labels'
+        if miss:
+            ok = False
+        elif control.within == 'all':
+            ok = not all(x >= threshold for x in known)
+        else:
+            ok = not any(x >= threshold for x in known)
+        value = 1 - max(known) if known else None
         out.append((ok, Contribution(control_label + '_exclude', control.weight, value is not None, _clamp01(value) if value is not None else None, 'one-minus-max-exclude-v1', control.within, None, miss), miss, ''))
     return out or [(True, None, '', '')]
 
@@ -303,16 +368,17 @@ def _genre(control, current, candidate):
         return [(False, None, 'genre: zero vector is missing usable evidence', '')]
     dist = 1 - _clamp01(sim)
     if mode == 'prefer_novelty':
-        mn = float(control.parameters.get('novelty_min_distance', 0.20)); target = float(control.parameters.get('novelty_target_distance', 0.60)); value = _clamp01((dist - mn) / (target - mn)); ok = dist >= mn
+        mn = _finite_number(control.parameters.get('novelty_min_distance', 0.20), 'genre novelty minimum'); target = _finite_number(control.parameters.get('novelty_target_distance', 0.60), 'genre novelty target'); value = _clamp01((dist - mn) / (target - mn)); ok = dist >= mn
     else:
-        near = float(control.parameters.get('near_distance', 0.35)); value = 1 - _clamp01(dist / near); ok = dist <= near
+        near = _positive_number(control.parameters.get('near_distance', 0.35), 'genre near distance'); value = 1 - _clamp01(dist / near); ok = dist <= near
     return [(ok, Contribution('genre', control.weight, True, value, 'cosine-genre-distance-v1', mode, dist), '', 'genre:' + mode)]
 
 
 def _model(ev):
-    for k, v in ev.values:
-        if k == 'model':
-            return v
+    for source in (ev.values, ev.provenance):
+        for k, v in source:
+            if k == 'model':
+                return v
     return ''
 
 

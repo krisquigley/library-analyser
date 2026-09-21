@@ -138,6 +138,47 @@ class CandidateSelectionDomainTests(unittest.TestCase):
         result = rank_candidates(current, [candidate], SelectionRequest((exclude,)))
         self.assertEqual(result.candidates, ())
 
+    def test_hard_label_exclusions_require_selected_evidence_and_honor_any_all(self):
+        current = features('a')
+        missing_excluded = features('b', mood=evidence(summary=(('happy', 0.9),)))
+        one_excluded = features('c', mood=evidence(summary=(('angry', 0.9), ('sad', 0.1))))
+        all_excluded = features('d', mood=evidence(summary=(('angry', 0.9), ('sad', 0.8))))
+
+        missing_result = rank_candidates(current, [missing_excluded], SelectionRequest((SelectionControl('mood', 'hard', 0, {'exclude': ('angry',), 'threshold': 0.5}),)))
+        self.assertEqual(missing_result.candidates, ())
+        self.assertEqual(missing_result.excluded_summary['mood_hard_failed'], 1)
+
+        all_result = rank_candidates(current, [one_excluded, all_excluded], SelectionRequest((SelectionControl('mood', 'hard', 0, {'exclude': ('angry', 'sad'), 'threshold': 0.5}, within='all'),)))
+        self.assertEqual([candidate.track_id for candidate in all_result.candidates], ['c'])
+        self.assertEqual(all_result.excluded_summary['mood_hard_failed'], 1)
+
+    def test_rejects_malformed_numeric_parameters_before_ranking(self):
+        current = features('a', bpm=evidence((('bpm', 100.0),)), energy=evidence(summary=(('arousal', 0.0),)), genres=evidence(summary=(('house', 1.0),), values=(('model', 'discogs'),)))
+        candidate = features('b', bpm=evidence((('bpm', 100.0),)), energy=evidence(summary=(('arousal', 0.5),)), genres=evidence(summary=(('house', 0.5),), values=(('model', 'discogs'),)))
+        invalid_controls = (
+            SelectionControl('tempo', 'soft', 1, {'tolerance': -0.1}),
+            SelectionControl('energy', 'soft', 1, {'energy_mode': 'rise', 'delta_target': 0}),
+            SelectionControl('energy', 'soft', 1, {'hold_tolerance': float('nan')}),
+            SelectionControl('mood', 'soft', 1, {'include': ('happy',), 'threshold': float('inf')}),
+            SelectionControl('genre', 'soft', 1, {'genre_mode': 'prefer_novelty', 'novelty_min_distance': 0.2, 'novelty_target_distance': 0.2}),
+        )
+        for control in invalid_controls:
+            with self.subTest(control=control):
+                with self.assertRaisesRegex(ValueError, 'finite|positive|coherent|threshold'):
+                    rank_candidates(current, [candidate], SelectionRequest((control,)))
+
+    def test_hard_failures_return_bounded_no_match_diagnostics(self):
+        current = features('a', bpm=evidence((('bpm', 100.0),)), key=evidence((('key', 'C'), ('scale', 'major'))))
+        candidate = features('b', bpm=evidence((('bpm', 140.0),)), key=evidence((('key', 'F#'), ('scale', 'major'))))
+        result = rank_candidates(current, [candidate], SelectionRequest((SelectionControl('tempo', 'hard', 0), SelectionControl('harmony', 'hard', 0))))
+        self.assertEqual(result.candidates, ())
+        self.assertEqual(len(result.no_match_details), 1)
+        detail = result.no_match_details[0]
+        self.assertEqual(detail.track_id, 'b')
+        self.assertEqual(set(detail.failed_rules), {'tempo: hard failed', 'harmony: hard failed'})
+        self.assertIn('tempo:1.0x', detail.relation_labels)
+        self.assertIn('harmony:unsupported', detail.relation_labels)
+
     def test_harmony_respects_selected_relations_and_ambiguity_uncertainty(self):
         current = features('a', key=evidence((('key', 'A'), ('scale', 'minor'))))
         relative = features('b', key=evidence((('key', 'C'), ('scale', 'major'))))
