@@ -30,6 +30,8 @@ class ProjectionAnchor:
     low_value: float
     high_value: float
     metadata: tuple[tuple[str, str], ...] = ()
+    low_feature: tuple[tuple[str, object], ...] = ()
+    high_feature: tuple[tuple[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -89,7 +91,10 @@ def fit_projection_transform(tracks, parameters: ProjectionParameters | None = N
         if len({value for _, value in values}) >= 2:
             low = min(values, key=lambda item: (item[1], item[0]))
             high = max(values, key=lambda item: (item[1], item[0]))
-            anchors[group] = ProjectionAnchor(low[0], high[0], low[1], high[1], _metadata(_by_id(tracks, low[0]), group))
+            anchors[group] = ProjectionAnchor(
+                low[0], high[0], low[1], high[1], _metadata(_by_id(tracks, low[0]), group),
+                _anchor_feature(_by_id(tracks, low[0]), group), _anchor_feature(_by_id(tracks, high[0]), group)
+            )
     raw = [_raw_point(track, tracks, anchors) for track in tracks]
     xs = [x for x, _ in raw if x is not None]
     ys = [y for _, y in raw if y is not None]
@@ -207,16 +212,16 @@ def _raw_point_from_transform(track, transform):
         scalar = _scalar(track, group)
         if scalar is None:
             continue
-        denom = anchor.high_value - anchor.low_value
-        if denom == 0:
+        if group in {'mood', 'genre'}:
+            meta = _metadata(track, 'genres' if group == 'genre' else group)
+            if meta != anchor.metadata:
+                continue
+        contribution = _anchor_contribution(track, group, anchor)
+        if contribution is None:
             continue
-        contribution = ((scalar - anchor.low_value) / denom) * 2 - 1
         if group in {'tempo', 'energy', 'harmony'}:
             horizontal.append(contribution)
         else:
-            meta = _metadata(track, 'genres' if group == 'genre' else group)
-            if group in {'mood', 'genre'} and meta != anchor.metadata:
-                continue
             vertical.append(contribution)
     return (_mean(horizontal), _mean(vertical))
 
@@ -232,6 +237,58 @@ def _missing_groups(track, transform):
             if _metadata(track, field) != anchor.metadata:
                 missing.append(group + ': incompatible label/model alignment')
     return tuple(_uniq(missing))
+
+
+def _anchor_contribution(track, group, anchor):
+    feature = _anchor_feature(track, group)
+    if not feature:
+        return None
+    feature = dict(feature)
+    low = dict(anchor.low_feature)
+    high = dict(anchor.high_feature)
+    d_low = _feature_distance(group, feature, low)
+    d_high = _feature_distance(group, feature, high)
+    if d_low is None or d_high is None:
+        return None
+    return d_low - d_high
+
+
+def _anchor_feature(track, group):
+    if group == 'tempo':
+        value = _scalar(track, group)
+        return (('value', value),) if value is not None else ()
+    if group == 'energy':
+        value = _scalar(track, group)
+        return (('value', value),) if value is not None else ()
+    if group == 'harmony':
+        key = _key(track)
+        return (('pitch', key[0]), ('scale', key[1])) if key else ()
+    if group == 'mood':
+        values = _summary(track, 'mood')
+        return tuple(sorted(values.items())) if values else ()
+    if group == 'genre':
+        values = _summary(track, 'genres')
+        return tuple(sorted(values.items())) if values else ()
+    return ()
+
+
+def _feature_distance(group, a, b):
+    if group in {'tempo', 'energy'}:
+        if 'value' not in a or 'value' not in b:
+            return None
+        if group == 'tempo':
+            return min(1.0, abs(a['value'] - b['value']) / log(2))
+        return min(1.0, abs(a['value'] - b['value']) / 2.0)
+    if group in {'mood', 'genre'}:
+        if set(a) != set(b):
+            return None
+        sim = _cosine(a, b)
+        return None if sim is None else 1.0 - _clamp(sim, 0, 1)
+    if group == 'harmony':
+        if 'pitch' not in a or 'scale' not in a or 'pitch' not in b or 'scale' not in b:
+            return None
+        return _harmony_distance((a['pitch'], a['scale']), (b['pitch'], b['scale']))
+    return None
 
 
 def _scalar(track, group):

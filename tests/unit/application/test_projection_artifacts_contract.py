@@ -86,7 +86,7 @@ class ProjectionArtifactUseCaseContractTests(unittest.TestCase):
         self.assertEqual(store.replaced, [])
 
     def test_load_is_readonly_and_never_repairs_or_rebuilds(self):
-        store = SpyArtifactStore(existing={'artifact_version': 'journey-projection-artifact-v1', 'tracks': (), 'edges': ()})
+        store = SpyArtifactStore(existing={'artifact_version': 'journey-projection-artifact-v1', 'transform': {'policy_version': 'anchor-distance-projection-v1'}, 'tracks': (), 'edges': ()})
         result = LoadProjectionArtifact(store).execute()
 
         self.assertEqual(result['artifact_version'], 'journey-projection-artifact-v1')
@@ -101,6 +101,19 @@ class ProjectionArtifactUseCaseContractTests(unittest.TestCase):
         repository = FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0)))
         store = SpyArtifactStore()
         original = PrepareProjectionArtifact(repository, store).execute().artifact
+        refreshed = RefreshProjectionArtifact(repository, store).execute().artifact
+
+        before = {point['track_id']: (point['x'], point['y']) for point in original['tracks']}
+        after = {point['track_id']: (point['x'], point['y']) for point in refreshed['tracks']}
+        self.assertEqual(after, before)
+        self.assertEqual(refreshed['transform']['anchors'], original['transform']['anchors'])
+
+    def test_refresh_reconstructs_transform_from_serialized_artifact(self):
+        repository = FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0)))
+        store = SpyArtifactStore()
+        original = PrepareProjectionArtifact(repository, store).execute().artifact
+        serialized_existing = {key: value for key, value in original.items() if key != 'transform_object'}
+        store.existing = serialized_existing
         refreshed = RefreshProjectionArtifact(repository, store).execute().artifact
 
         before = {point['track_id']: (point['x'], point['y']) for point in original['tracks']}

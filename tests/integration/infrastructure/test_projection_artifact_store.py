@@ -10,6 +10,7 @@ from music_analyzer.infrastructure.filesystem.projection_artifacts import FilePr
 VALID = {
     'artifact_version': 'journey-projection-artifact-v1',
     'fingerprint': 'abc',
+    'transform': {'policy_version': 'anchor-distance-projection-v1'},
     'tracks': ({'track_id': 'a', 'x': 0.0, 'y': None, 'layout_state': 'partial', 'missing_groups': (), 'missing_reasons': ()},),
     'edges': (),
     'resource_limits': {'k': 10},

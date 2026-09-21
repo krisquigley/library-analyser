@@ -11,7 +11,9 @@ from music_analyzer.application.use_cases.candidates import _features
 from music_analyzer.domain.projection import (
     NEIGHBOUR_POLICY_VERSION,
     PROJECTION_POLICY_VERSION,
+    ProjectionAnchor,
     ProjectionParameters,
+    ProjectionTransform,
     fit_projection_transform,
     project_tracks,
 )
@@ -60,7 +62,7 @@ class RefreshProjectionArtifact:
     def execute(self, explicit_relayout: bool = False):
         existing = self.store.load()
         _validate_artifact(existing)
-        transform = None if explicit_relayout else existing.get('transform_object')
+        transform = None if explicit_relayout else _transform_from_mapping(existing.get('transform'))
         artifact = _build_artifact(self.repository, ProjectionParameters(self.k, explicit_relayout), transform)
         self.store.replace(artifact)
         return ProjectionArtifactResult(artifact)
@@ -110,7 +112,7 @@ def _transform_mapping(transform, parameters):
     return {
         'policy_version': transform.policy_version,
         'parameters': {'k': parameters.k, 'explicit_relayout': parameters.explicit_relayout},
-        'anchors': {name: {'low_track_id': anchor.low_track_id, 'high_track_id': anchor.high_track_id, 'low_value': anchor.low_value, 'high_value': anchor.high_value, 'metadata': anchor.metadata} for name, anchor in sorted(transform.anchors.items())},
+        'anchors': {name: {'low_track_id': anchor.low_track_id, 'high_track_id': anchor.high_track_id, 'low_value': anchor.low_value, 'high_value': anchor.high_value, 'metadata': anchor.metadata, 'low_feature': anchor.low_feature, 'high_feature': anchor.high_feature} for name, anchor in sorted(transform.anchors.items())},
         'center_x': transform.center_x,
         'center_y': transform.center_y,
         'range_x': transform.range_x,
@@ -119,9 +121,33 @@ def _transform_mapping(transform, parameters):
     }
 
 
+def _transform_from_mapping(mapping):
+    if not isinstance(mapping, dict):
+        raise ProjectionArtifactError('missing transform')
+    params = mapping.get('parameters', {})
+    anchors = {}
+    for name, anchor in mapping.get('anchors', {}).items():
+        anchors[name] = ProjectionAnchor(
+            anchor['low_track_id'], anchor['high_track_id'], float(anchor['low_value']), float(anchor['high_value']),
+            _tuple_pairs(anchor.get('metadata', ())), _tuple_pairs(anchor.get('low_feature', ())), _tuple_pairs(anchor.get('high_feature', ()))
+        )
+    return ProjectionTransform(
+        mapping.get('policy_version'), ProjectionParameters(int(params.get('k', 10)), bool(params.get('explicit_relayout', False))), anchors,
+        float(mapping.get('center_x', 0.0)), float(mapping.get('center_y', 0.0)), float(mapping.get('range_x', 0.0)), float(mapping.get('range_y', 0.0)),
+        tuple(mapping.get('degenerate_axes', ())),
+    )
+
+
+def _tuple_pairs(value):
+    return tuple((item[0], item[1]) for item in value)
+
+
 def _validate_artifact(artifact):
     if not isinstance(artifact, dict) or artifact.get('artifact_version') != ARTIFACT_VERSION:
         raise ProjectionArtifactError('unsupported_version')
+    transform = artifact.get('transform')
+    if not isinstance(transform, dict) or transform.get('policy_version') != PROJECTION_POLICY_VERSION:
+        raise ProjectionArtifactError('unsupported transform')
     tracks = artifact.get('tracks', ())
     edges = artifact.get('edges', ())
     if len(edges) > max(0, len(tracks) * 100):
