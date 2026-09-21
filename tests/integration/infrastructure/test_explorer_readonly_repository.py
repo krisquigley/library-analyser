@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 
 from music_analyzer.application.dto.analysis import AnalysisError
+from music_analyzer.application.dto.catalogue import Inventory, ScannedFile
+from music_analyzer.domain.catalogue import FileIdentity
+from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
 APP_ID = 0x4D414E41
@@ -116,6 +119,90 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             db.commit(); db.close()
             with self.assertRaisesRegex(AnalysisError, 'Invalid stored stage'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).read_track(tid)
+
+    def test_rejects_v4_schema_with_expected_names_but_missing_constraints(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = sqlite3.connect(path)
+            db.executescript('''
+            CREATE TABLE runs (id, location, status, detail, created_at);
+            CREATE TABLE stages (run_id, stage, result);
+            CREATE TABLE tracks(id, sha256, size);
+            CREATE TABLE locations(path, track_id, mtime_ns, format, available);
+            CREATE TABLE scan_roots(root, path);
+            CREATE TABLE batch_jobs(track_id, fingerprint, state, attempts, run_id, detail);
+            CREATE TABLE run_tracks(run_id, track_id);
+            CREATE TABLE overrides(track_id, field, value);
+            ''')
+            db.execute(f'PRAGMA application_id={APP_ID}')
+            db.execute('PRAGMA user_version=4')
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', ('not-a-sha-id', 'not-sha', 'not-int'))
+            db.commit(); db.close()
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
+    def test_rejects_v4_schema_with_invalid_track_identity_and_size_values(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', ('not-a-sha-id', 'not-sha', 'not-int'))
+            db.commit(); db.close()
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
+    def test_accepts_schema_migrated_by_analysis_repository(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            repo = SQLiteAnalysisRepository(str(path))
+            identity = FileIdentity('3' * 64, 30)
+            inventory = Inventory('/music', (ScannedFile('/music/Legacy.flac', identity, 1, 'flac'),), (), True)
+            repo.register(inventory)
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), (identity.track_id,))
+
+    def test_accepts_legacy_v1_schema_migrated_to_v4(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = sqlite3.connect(path)
+            db.executescript('''
+            CREATE TABLE runs(id TEXT PRIMARY KEY,location TEXT,status TEXT,detail TEXT,created_at TEXT);
+            CREATE TABLE stages(run_id TEXT,stage TEXT,result TEXT,PRIMARY KEY(run_id,stage));
+            ''')
+            db.execute(f'PRAGMA application_id={APP_ID}')
+            db.execute('PRAGMA user_version=1')
+            db.execute("INSERT INTO runs VALUES('run','old','completed','','then')")
+            db.execute("INSERT INTO stages VALUES('run','rhythm',?)", ('{"provenance":"unchanged"}',))
+            db.commit(); db.close()
+            repo = SQLiteAnalysisRepository(str(path))
+            identity = FileIdentity('4' * 64, 40)
+            inventory = Inventory('/music', (ScannedFile('/music/Legacy.flac', identity, 1, 'flac'),), (), True)
+            repo.register(inventory)
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), (identity.track_id,))
+
+    def test_read_transaction_uses_consistent_wal_snapshot_for_count_and_page(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            db.execute('PRAGMA journal_mode=WAL')
+            first = 'sha256:' + '1' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (first, first.split(':')[1], 10))
+            db.commit()
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+            original_read_track = repo._read_track
+
+            def concurrent_insert_after_page_ids_are_selected(connection, track_id):
+                writer = sqlite3.connect(path)
+                second = 'sha256:' + '2' * 64
+                writer.execute('INSERT INTO tracks VALUES(?,?,?)', (second, second.split(':')[1], 20))
+                writer.commit(); writer.close()
+                return original_read_track(connection, track_id)
+
+            repo._read_track = concurrent_insert_after_page_ids_are_selected
+            metadata, track_count, tracks = repo.list_tracks(limit=10)
+            self.assertEqual(metadata['read_policy'], 'bounded_read_transaction')
+            self.assertEqual(track_count, 1)
+            self.assertEqual(tuple(track.track_id for track in tracks), (first,))
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), (first, 'sha256:' + '2' * 64))
+            db.close()
 
     def test_list_tracks_reads_page_and_records_in_one_transaction(self):
         with tempfile.TemporaryDirectory() as td:
