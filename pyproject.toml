@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "music-analyzer"
+version = "0.1.0"
+description = "Local music analyser: experimental catalogue, analysis and review CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+music-analyzer = "music_analyzer.frameworks.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["music_analyzer*"]
+
+[tool.setuptools.package-data]
+"music_analyzer.infrastructure.models" = ["data/manifest.json", "data/LICENSE"]

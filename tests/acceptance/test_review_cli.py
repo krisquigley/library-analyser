@@ -1,0 +1,121 @@
+import csv
+import io
+import json
+import tempfile
+import unittest
+from contextlib import redirect_stdout, redirect_stderr
+from pathlib import Path
+from unittest.mock import patch
+from music_analyzer.frameworks.cli.main import main
+from music_analyzer.application.dto.analysis import AudioSource, StageResult
+from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
+from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
+from music_analyzer.application.use_cases.scan_library import ScanLibrary
+
+
+class ReviewCLITests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name); self.db = self.root/'analysis.db'
+        (self.root/'音,".flac').write_bytes(b'fixture not audio')
+        self.repo = SQLiteAnalysisRepository(str(self.db))
+        self.track = ScanLibrary(LocalInventory(), self.repo).execute(str(self.root)).files[0].identity.track_id
+
+    def call(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err), patch('music_analyzer.frameworks.cli.main.load_backend', side_effect=AssertionError('no inference')), patch('music_analyzer.frameworks.cli.main.FFmpegDecoder', side_effect=AssertionError('no decode')):
+            code = main(['--database', str(self.db), *args])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_inspect_override_reanalysis_clear_export_and_errors(self):
+        code, out, err = self.call('show', self.track, '--json')
+        self.assertEqual((code, err), (0, '')); self.assertIsNone(json.loads(out)['run'])
+        self.assertIn(self.track, self.call('list', '--needs-review')[1])
+        manual = ' \t=SUM(1,2) "été"\nnext'
+        self.assertEqual(self.call('override', 'set', self.track, 'genres', manual)[0], 0)
+        run = self.repo.start(AudioSource('fixture', self.track))
+        stage = StageResult('genres', (('engine', 'fake only'),), 'uncalibrated', raw_predictions=(((.2, .8),),))
+        self.repo.save_stage(run, stage); self.repo.finish(run, 'failed', 'fixture partial')
+        result = json.loads(self.call('show', self.track, '--json')[1])
+        self.assertEqual(result['effective']['genres'], manual)
+        self.assertEqual(result['run']['stages'][0]['raw_predictions'], [[[.2, .8]]])
+        for format in ('json', 'csv'):
+            output = self.root/('export.' + format)
+            code, out, err = self.call('export', '--format', format, '--output', str(output))
+            self.assertEqual((code, err), (0, ''))
+            if format == 'json':
+                self.assertEqual(json.loads(output.read_text())[0], result)
+            else:
+                rows = list(csv.DictReader(io.StringIO(output.read_text())))
+                self.assertEqual(rows[0]['track_id'], self.track)
+                self.assertEqual(rows[0]['override_genres'], "'" + manual)
+                self.assertEqual(json.loads(rows[0]['record'])['run'], result['run'])
+        self.assertEqual(self.call('override', 'clear', self.track, 'genres')[0], 0)
+        self.assertEqual(json.loads(self.call('show', self.track, '--json')[1])['overrides'], {})
+        code, out, err = self.call('show', 'absent', '--json')
+        self.assertEqual(code, 1); self.assertEqual(out, ''); self.assertIn('Unknown track', err)
+        code, out, err = self.call('export', '--format', 'json', '--output', str(self.root/'absent'/'x'))
+        self.assertEqual(code, 1); self.assertFalse(out); self.assertTrue(err)
+
+    def test_reaggregate_json_uses_retained_windows_and_preserves_database(self):
+        from music_analyzer.domain.analysis import ScoreWindow, summarize_scores
+        windows = (ScoreWindow(0, 10, (.2, .8)),)
+        run = self.repo.start(AudioSource('fixture', self.track))
+        self.repo.save_stage(run, StageResult('genres', (), 'raw', windows=windows,
+            summary=summarize_scores(('a','b'), windows, 10)))
+        self.repo.finish(run, 'completed', '')
+        before = self.db.read_bytes()
+        code, out, err = self.call('reaggregate', self.track, '--threshold', '.5', '--json')
+        self.assertEqual((code, err), (0, ''))
+        self.assertEqual(json.loads(out)['selections']['genres'], ['b'])
+        self.assertEqual(self.db.read_bytes(), before)
+        self.assertEqual(self.call('reaggregate', self.track, '--threshold', 'nan')[0], 1)
+        self.assertIn('TRACK_ID', self.call('show', self.track)[1])
+
+    def test_stored_summary_only_stages_are_visible_in_show_and_exports(self):
+        from music_analyzer.domain.analysis import ScoreWindow, summarize_scores
+        stages = [StageResult('bpm', (), 'estimate', values=(('bpm', 128.), ('confidence', 2.1))),
+                  StageResult('key', (), 'estimate', values=(('key', 'A'), ('scale', 'minor')))]
+        for field, labels, rows in (
+                ('genres', ('House', 'Jazz'), ((.2, .8), (.4, .6))),
+                ('mood', ('happy', 'sad'), ((.1, .3), (.3, .5))),
+                ('instruments', ('guitar', 'drums'), ((.05, .6), (.15, .8))),
+                ('energy', ('valence', 'arousal'), ((5., 7.), (5.2, 7.4)))):
+            scores = tuple(sum(row[i] / len(rows) for row in rows) for i in range(2))
+            windows = (ScoreWindow(0, 10, scores),)
+            stages.append(StageResult(field, (), 'raw scores, not calibrated', windows=windows,
+                summary=summarize_scores(labels, windows, 30), raw_predictions=(rows,)))
+        run = self.repo.start(AudioSource('fixture', self.track))
+        for stage in stages: self.repo.save_stage(run, stage)
+        self.repo.finish(run, 'completed', '')
+        before = self.db.read_bytes()
+        code, out, err = self.call('show', self.track, '--json')
+        self.assertEqual((code, err), (0, ''))
+        record = json.loads(out)
+        for stage in stages:
+            expected = stage.values or tuple(zip(stage.summary.labels, stage.summary.mean))
+            self.assertEqual(record['effective'][stage.stage], [list(pair) for pair in expected])
+        human = self.call('show', self.track)[1]
+        self.assertNotIn('missing / no selection', human)
+        self.assertIn("('arousal', 7.2)", human)
+        self.assertIn('automatic/provisional', human)
+        self.assertIn(self.track, self.call('list', '--needs-review')[1])
+        for format in ('json', 'csv'):
+            dest = self.root / ('summary.' + format)
+            self.assertEqual(self.call('export', '--format', format, '--output', str(dest))[0], 0)
+            if format == 'json': exported = json.loads(dest.read_text())[0]
+            else:
+                with dest.open(newline='') as stream: row = next(csv.DictReader(stream))
+                exported = json.loads(row['record'])
+                self.assertTrue(all(row['override_' + s.stage] == '' for s in stages))
+            self.assertEqual(exported, record)
+        dest = self.root / 'summary.md'
+        self.assertEqual(self.call('export', '--format', 'markdown', '--output', str(dest))[0], 0)
+        markdown = dest.read_text()
+        for text in ('BPM', '128', 'A', 'minor', 'Jazz: 0.7', 'sad: 0.4',
+                     'drums: 0.7', 'valence: 5.1', 'arousal: 7.2', '33.3%'):
+            self.assertIn(text, markdown)
+        self.assertNotIn('missing / no selection', markdown)
+        self.assertEqual(self.call('export', '--format', 'markdown', '--output', str(dest))[0], 1)
+        self.assertEqual(dest.read_text(), markdown)
+        self.assertEqual(self.db.read_bytes(), before)
