@@ -71,6 +71,15 @@ class ExplorerServerTests(unittest.TestCase):
         self.assertEqual({p['track_id'] for p in projection['tracks']}, {self.first, self.second})
         self.assertIn('x', projection['tracks'][0])
 
+    def test_projection_endpoint_computes_from_live_database_not_prepared_artifact(self):
+        artifact = self.db.with_name('projection.json')
+        artifact.write_text(json.dumps({'tracks': [{'track_id': 'not-from-server-artifact'}]}), encoding='utf-8')
+
+        projection = self.get_json('/api/projection')
+
+        self.assertEqual({p['track_id'] for p in projection['tracks']}, {self.first, self.second})
+        self.assertNotIn('not-from-server-artifact', {p['track_id'] for p in projection['tracks']})
+
     def test_post_state_changes_are_explicit_and_request_bounded(self):
         req = Request(self.base + '/api/current', data=json.dumps({'track_id': self.second}).encode(), method='POST', headers={'Content-Type': 'application/json'})
         with urlopen(req, timeout=5) as response:

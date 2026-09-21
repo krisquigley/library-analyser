@@ -543,10 +543,24 @@ claimed; the bounded real-runtime pilot does not close representative listening 
 
 ### Personal local explorer
 
-After scanning/analyzing tracks, start the simple read-only journey explorer with:
+After scanning/analyzing tracks into the dedicated `music-analyzer` database, start the simple read-only journey explorer with:
 
 ```bash
 music-analyzer explorer --database /path/to/analysis.sqlite --port 8765
 ```
 
-Open `http://127.0.0.1:8765/` in a browser. The explorer is intended for personal local use only: it binds to `127.0.0.1`, serves bundled offline HTML/CSS/JavaScript assets, reads the existing analysis database, and does not edit audio files, annotations, overrides, migrations, or analysis results. It can list tracks, inspect read-only details, explicitly set/undo/reset the current track, run the five existing candidate controls, and draw a simple 2D map from prepared coordinates when evidence is available.
+Open `http://127.0.0.1:8765/` in a browser. Stop it with Ctrl+C in the terminal. The explorer is intended for personal local use only: this slice rejects non-`127.0.0.1` binds, serves bundled offline HTML/CSS/JavaScript assets, reads the existing analysis database in read-only SQLite mode, and does not edit audio files, annotations, overrides, migrations, or analysis results. Do not point it at a Mixxx database.
+
+The page can list tracks, inspect read-only details, explicitly set/undo/reset the current track, run the five existing candidate controls, and draw a simple 2D map from the live database. If fields are missing, from a noncompleted run, provisional or uncertain, the detail/candidate/map views report or degrade around that missing evidence rather than inventing tags, calibration or playback decisions.
+
+Refresh behaviour is deliberately simple: re-run `scan` after library file changes, then `analyze --track ...` or batch `analyze` for identities needing new evidence, and reload the browser tab to fetch the latest committed database contents. The server also opens fresh bounded read transactions for API calls, but the in-memory current-track/history state belongs to that running server process: a tab reload keeps it, while the page Reset button or restarting the explorer process returns the current track to the first known ID and clears history. The Reset button only resets this explorer session state; it does not clear analysis jobs, manual overrides or the embedding cache.
+
+Optional standalone projection artifacts are prepared separately and are not a browser startup prerequisite:
+
+```bash
+music-analyzer prepare-projection --database /path/to/analysis.sqlite --artifact /path/to/projection.json
+music-analyzer prepare-projection --database /path/to/analysis.sqlite --artifact /path/to/projection.json --refresh
+music-analyzer prepare-projection --database /path/to/analysis.sqlite --artifact /path/to/projection.json --refresh --relayout
+```
+
+Those artifact files are durable JSON snapshots for offline inspection or later tooling. The current browser server does **not** accept an artifact path and does **not** consume that JSON; `/api/projection` computes its projection from the live read-only database at request time. Preparing or refreshing an artifact therefore will not change the browser map unless the underlying database evidence also changed and the browser requests `/api/projection` again. This is separate from the embedding cache described above: cache entries may speed later inference, while projection artifacts are coordinates/edges snapshots and are safe to delete when you no longer need that standalone file.
