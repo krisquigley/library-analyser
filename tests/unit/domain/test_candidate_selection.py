@@ -138,6 +138,54 @@ class CandidateSelectionDomainTests(unittest.TestCase):
         result = rank_candidates(current, [candidate], SelectionRequest((exclude,)))
         self.assertEqual(result.candidates, ())
 
+    def test_label_include_any_discloses_partial_missing_without_requiring_all_labels(self):
+        current = features('a')
+        mood_candidate = features('b', mood=evidence(summary=(('happy', 0.9),)))
+        genre_candidate = features('c', genres=evidence(summary=(('house', 0.9),)))
+
+        cases = (
+            ('mood', 'hard', mood_candidate, 'mood: candidate missing selected labels'),
+            ('mood', 'soft', mood_candidate, 'mood: candidate missing selected labels'),
+            ('genre', 'hard', genre_candidate, 'genre: candidate missing selected labels'),
+            ('genre', 'soft', genre_candidate, 'genre: candidate missing selected labels'),
+        )
+        for control_name, mode, candidate, missing_message in cases:
+            with self.subTest(control=control_name, mode=mode):
+                labels = ('happy', 'calm') if control_name == 'mood' else ('house', 'disco')
+                parameters = {'include': labels, 'threshold': 0.5}
+                if control_name == 'genre':
+                    parameters['genre_mode'] = 'move_toward_labels'
+                control = SelectionControl(control_name, mode, 1, parameters, within='any')
+
+                result = rank_candidates(current, [candidate], SelectionRequest((control,)))
+
+                self.assertEqual([rank.track_id for rank in result.candidates], [candidate.track_id])
+                explanation = result.candidates[0].explanation
+                self.assertIn(missing_message, explanation.missing_evidence)
+                raw_field = 'mood' if control_name == 'mood' else 'genres'
+                self.assertIn(raw_field, dict(explanation.raw_values))
+                if mode == 'soft':
+                    self.assertEqual(explanation.contributions[0].reason, missing_message)
+                    self.assertEqual(explanation.contributions[0].value, 0.9)
+                    self.assertEqual(result.candidates[0].score, 0.9)
+
+    def test_label_include_any_distinguishes_full_partial_and_wholly_missing_evidence(self):
+        current = features('a')
+        full = features('full', mood=evidence(summary=(('happy', 0.9), ('calm', 0.7))))
+        partial = features('partial', mood=evidence(summary=(('happy', 0.9),)))
+        wholly_missing = features('missing', mood=evidence(summary=(('sad', 0.9),)))
+        control = SelectionControl('mood', 'soft', 1, {'include': ('happy', 'calm'), 'threshold': 0.5}, within='any')
+
+        result = rank_candidates(current, [partial, full, wholly_missing], SelectionRequest((control,)))
+
+        by_id = {candidate.track_id: candidate for candidate in result.candidates}
+        self.assertEqual(by_id['full'].explanation.missing_evidence, ())
+        self.assertEqual(by_id['full'].explanation.contributions[0].value, 0.8)
+        self.assertIn('mood: candidate missing selected labels', by_id['partial'].explanation.missing_evidence)
+        self.assertEqual(by_id['partial'].explanation.contributions[0].value, 0.9)
+        self.assertIn('mood: candidate missing selected labels', by_id['missing'].explanation.missing_evidence)
+        self.assertIsNone(by_id['missing'].explanation.contributions[0].value)
+
     def test_hard_label_exclusions_require_selected_evidence_and_honor_any_all(self):
         current = features('a')
         missing_excluded = features('b', mood=evidence(summary=(('happy', 0.9),)))

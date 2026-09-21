@@ -336,7 +336,7 @@ def _labels(control, candidate, field, control_label=None):
         else:
             ok = any(x >= threshold for x in known)
         value = sum(known) / len(known) if known else None
-        miss = '' if (known and (control.within == 'any' or len(known) == len(include))) else f'{control_label}: candidate missing selected labels'
+        miss = '' if len(known) == len(include) else f'{control_label}: candidate missing selected labels'
         out.append((ok, Contribution(control_label + '_include', control.weight, value is not None, _clamp01(value) if value is not None else None, 'label-mean-include-v1', control.within, None, miss), miss, ''))
     if exclude:
         known = [labels.get(x) for x in exclude if labels.get(x) is not None]
