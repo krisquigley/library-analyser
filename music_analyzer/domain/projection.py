@@ -9,7 +9,7 @@ from math import isfinite, log, sqrt
 from music_analyzer.domain.candidate_selection import CandidateFeatures, FeatureEvidence
 
 PROJECTION_POLICY_VERSION = 'anchor-distance-projection-v1'
-NEIGHBOUR_POLICY_VERSION = 'bounded-symmetric-neighbours-v1'
+NEIGHBOUR_POLICY_VERSION = 'endpoint-local-exact-top-k-neighbours-v2'
 DISTANCE_POLICY_VERSION = 'symmetric-feature-distance-v1'
 
 
@@ -170,22 +170,126 @@ def _bounded_edges(tracks, k):
         return ()
     # Exact feature-neighbour selection: every unordered pair in the prepared
     # representative set is measured with the canonical symmetric feature
-    # distance. We stream proposals into a deterministic sorted list, but never
-    # retain a dense distance matrix or expose approximate/windowed neighbours.
+    # distance. Retained storage is bounded to each endpoint's best sparse
+    # candidates; no dense distance matrix or unbounded pair array is kept.
     ordered = tuple(sorted(tracks, key=lambda t: t.track_id))
-    pairs = []
-    for i, a in enumerate(ordered):
-        for b in ordered[i + 1:]:
-            d = symmetric_feature_distance(a, b)
-            if d.distance is not None:
-                pairs.append((d.distance, a.track_id, b.track_id, d.supported_group_count))
-    degree = {t.track_id: 0 for t in tracks}
-    edges = []
-    for distance, a, b, count in sorted(pairs):
-        if degree[a] < k and degree[b] < k:
-            degree[a] += 1; degree[b] += 1
-            edges.append(ProjectionEdge(a, b, distance, count))
-    return tuple(edges)
+    profiles = tuple(_NeighbourFeatureProfile.from_track(track) for track in ordered)
+    selector = _SparseNeighbourSelector(ordered, k)
+    for i, a in enumerate(profiles):
+        for b in profiles[i + 1:]:
+            distance = a.distance_to(b)
+            if distance.distance is not None:
+                selector.consider(a.track_id, b.track_id, distance.distance, distance.supported_group_count)
+    return selector.edges()
+
+
+
+@dataclass(frozen=True)
+class _NeighbourDistance:
+    distance: float | None
+    supported_group_count: int
+
+
+@dataclass(frozen=True)
+class _VectorProfile:
+    model: str
+    labels: tuple[str, ...]
+    values: tuple[float, ...]
+    norm: float
+
+    @classmethod
+    def from_track(cls, track, field):
+        values = _summary(track, field)
+        if not values:
+            return None
+        ev = _field(track, field)
+        labels = tuple(sorted(values))
+        ordered = tuple(values[label] for label in labels)
+        norm = sqrt(sum(value * value for value in ordered))
+        if norm == 0:
+            return None
+        return cls(_model(ev), labels, ordered, norm)
+
+    def distance_to(self, other):
+        if other is None or self.labels != other.labels or self.model != other.model:
+            return None
+        dot = sum(a * b for a, b in zip(self.values, other.values))
+        return 1.0 - _clamp(dot / (self.norm * other.norm), 0, 1)
+
+
+@dataclass(frozen=True)
+class _NeighbourFeatureProfile:
+    track_id: str
+    tempo: float | None
+    energy: float | None
+    mood: _VectorProfile | None
+    genre: _VectorProfile | None
+    harmony: tuple[int, str] | None
+
+    @classmethod
+    def from_track(cls, track):
+        energy = _summary(track, 'energy')
+        return cls(
+            track.track_id,
+            _tempo(track),
+            (energy.get('arousal') if energy and 'arousal' in energy else None),
+            _VectorProfile.from_track(track, 'mood'),
+            _VectorProfile.from_track(track, 'genres'),
+            _key(track),
+        )
+
+    def distance_to(self, other):
+        groups = []
+        if self.tempo is not None and other.tempo is not None:
+            groups.append(min(1.0, abs(log(other.tempo / self.tempo)) / log(2)))
+        if self.energy is not None and other.energy is not None:
+            groups.append(min(1.0, abs(self.energy - other.energy) / 2.0))
+        mood = self.mood.distance_to(other.mood) if self.mood is not None else None
+        if mood is not None:
+            groups.append(mood)
+        genre = self.genre.distance_to(other.genre) if self.genre is not None else None
+        if genre is not None:
+            groups.append(genre)
+        if self.harmony is not None and other.harmony is not None:
+            groups.append(_harmony_distance(self.harmony, other.harmony))
+        if not groups:
+            return _NeighbourDistance(None, 0)
+        return _NeighbourDistance(sum(groups) / len(groups), len(groups))
+
+
+class _SparseNeighbourSelector:
+    def __init__(self, tracks, k):
+        self._k = k
+        self._candidates = {track.track_id: [] for track in tracks}
+        self._track_ids = tuple(track.track_id for track in tracks)
+
+    def consider(self, a, b, distance, supported_group_count):
+        first = min(a, b)
+        second = max(a, b)
+        item = (distance, first, second, supported_group_count)
+        self._retain(a, item)
+        self._retain(b, item)
+
+    def edges(self):
+        proposals = sorted(set(item for values in self._candidates.values() for item in values))
+        degree = {track_id: 0 for track_id in self._track_ids}
+        edges = []
+        for distance, a, b, count in proposals:
+            if degree[a] < self._k and degree[b] < self._k:
+                degree[a] += 1
+                degree[b] += 1
+                edges.append(ProjectionEdge(a, b, distance, count))
+        return tuple(edges)
+
+    def _retain(self, endpoint, item):
+        values = self._candidates[endpoint]
+        if len(values) < self._k:
+            values.append(item)
+        else:
+            worst_index, worst = max(enumerate(values), key=lambda value: value[1])
+            if item < worst:
+                values[worst_index] = item
+        self._candidates[endpoint] = values
 
 
 def _raw_point(track, tracks, anchors):

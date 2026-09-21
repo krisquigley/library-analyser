@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import stat
 
+from music_analyzer.application.ports.projection_artifacts import ProjectionArtifactReplaceOutcome
 from music_analyzer.application.use_cases.projection_artifacts import ProjectionArtifactError, _validate_artifact
 
 
@@ -46,7 +47,11 @@ class FileProjectionArtifactStore:
                 reread = json.load(handle)
             _validate_artifact(reread)
             os.replace(tmp, self.artifact_path)
-            _fsync_directory(self.artifact_path.parent)
+            try:
+                _fsync_directory(self.artifact_path.parent)
+            except OSError as error:
+                return ProjectionArtifactReplaceOutcome(True, 'committed; durability warning: ' + str(error))
+            return ProjectionArtifactReplaceOutcome(True, None)
         except Exception:
             try:
                 tmp.unlink()

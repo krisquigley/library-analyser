@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from music_analyzer.application.use_cases.projection_artifacts import ProjectionArtifactError
 from music_analyzer.frameworks.cli.main import main
@@ -103,6 +104,37 @@ class FileProjectionArtifactStoreTests(unittest.TestCase):
             path.write_text('{bad json')
             with self.assertRaisesRegex(ProjectionArtifactError, 'corrupt'):
                 FileProjectionArtifactStore(path).load()
+
+
+    def test_directory_fsync_after_replace_reports_committed_warning(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'projection.json'
+            store = FileProjectionArtifactStore(path)
+            store.replace(VALID)
+            replacement = dict(VALID)
+            replacement['fingerprint'] = 'new-fingerprint'
+
+            with patch('music_analyzer.infrastructure.filesystem.projection_artifacts._fsync_directory', side_effect=OSError('simulated directory fsync failure')):
+                outcome = store.replace(replacement)
+
+            self.assertEqual(path.read_text(), json.dumps(replacement, sort_keys=True, separators=(',', ':')))
+            self.assertTrue(outcome.committed)
+            self.assertIn('durability', outcome.warning)
+
+    def test_replace_failure_before_commit_preserves_prior_bytes(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'projection.json'
+            store = FileProjectionArtifactStore(path)
+            store.replace(VALID)
+            prior = path.read_bytes()
+            replacement = dict(VALID)
+            replacement['fingerprint'] = 'new-fingerprint'
+
+            with patch('music_analyzer.infrastructure.filesystem.projection_artifacts.os.replace', side_effect=OSError('simulated replace failure')):
+                with self.assertRaises(OSError):
+                    store.replace(replacement)
+
+            self.assertEqual(path.read_bytes(), prior)
 
     def test_failed_replacement_preserves_prior_bytes(self):
         with tempfile.TemporaryDirectory() as td:

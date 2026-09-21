@@ -97,6 +97,7 @@ class ProjectionArtifactUseCaseContractTests(unittest.TestCase):
         self.assertEqual(versions['projection_feature_contract_version'], 'projection-features-v1')
         self.assertEqual(versions['projection_fingerprint_version'], 'projection-fingerprint-v1')
         self.assertEqual(versions['projection_refresh_policy_version'], 'fixed-transform-refresh-v1')
+        self.assertEqual(versions['neighbour_policy_version'], 'endpoint-local-exact-top-k-neighbours-v2')
         self.assertIn('distance_policy_version', versions)
 
     def test_prepare_preserves_prior_artifact_when_replacement_fails(self):
@@ -119,6 +120,28 @@ class ProjectionArtifactUseCaseContractTests(unittest.TestCase):
     def test_load_failure_is_actionable(self):
         with self.assertRaisesRegex(ProjectionArtifactError, 'missing'):
             LoadProjectionArtifact(SpyArtifactStore()).execute()
+
+
+    def test_refresh_reuses_compatible_transform_when_neighbour_policy_changes_fingerprint(self):
+        repo = FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0)))
+        prepared = PrepareProjectionArtifact(repo, SpyArtifactStore()).execute().artifact
+        import music_analyzer.application.use_cases.projection_artifacts as module
+        current = module.NEIGHBOUR_POLICY_VERSION
+        try:
+            module.NEIGHBOUR_POLICY_VERSION = 'bounded-symmetric-neighbours-v1'
+            old_fingerprint = module._fingerprint(*repo.candidate_snapshot(), module.ProjectionParameters(k=10))
+        finally:
+            module.NEIGHBOUR_POLICY_VERSION = current
+        prepared['policy_versions'] = dict(prepared['policy_versions'])
+        prepared['policy_versions']['neighbour_policy_version'] = 'bounded-symmetric-neighbours-v1'
+        prepared['fingerprint'] = old_fingerprint
+        store = SpyArtifactStore(existing=prepared)
+
+        refreshed = RefreshProjectionArtifact(repo, store).execute().artifact
+
+        self.assertEqual(refreshed['transform']['policy_version'], 'anchor-distance-projection-v1')
+        self.assertNotEqual(refreshed['fingerprint'], old_fingerprint)
+        self.assertEqual(refreshed['policy_versions']['neighbour_policy_version'], 'endpoint-local-exact-top-k-neighbours-v2')
 
     def test_refresh_preserves_unchanged_coordinates_with_same_transform(self):
         repository = FakeExplorerRepository((track('a'), track('b', bpm=130, arousal=1.0)))

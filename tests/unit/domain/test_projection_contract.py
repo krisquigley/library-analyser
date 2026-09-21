@@ -12,7 +12,7 @@ from music_analyzer.domain.projection import (
 )
 
 
-def features(track_id, *, bpm=None, arousal=None, genres=(), genre_model='g-v1', manual_bpm=None):
+def features(track_id, *, bpm=None, arousal=None, genres=(), genre_model='g-v1', mood=(), mood_model='mood-v1', manual_bpm=None):
     fields = {}
     if bpm is not None or manual_bpm is not None:
         fields['bpm'] = FeatureEvidence(
@@ -28,13 +28,23 @@ def features(track_id, *, bpm=None, arousal=None, genres=(), genre_model='g-v1',
             provenance=(('model', genre_model),),
             effective_source='automatic',
         )
+    if mood:
+        fields['mood'] = FeatureEvidence(
+            summary_values=tuple(mood),
+            provenance=(('model', mood_model),),
+            effective_source='automatic',
+        )
     return CandidateFeatures(track_id, fields)
+
+
+def _edge_ids(edges):
+    return {tuple(sorted((edge.a, edge.b))) for edge in edges}
 
 
 class ProjectionContractTests(unittest.TestCase):
     def test_version_strings_are_frozen(self):
         self.assertEqual(PROJECTION_POLICY_VERSION, 'anchor-distance-projection-v1')
-        self.assertEqual(NEIGHBOUR_POLICY_VERSION, 'bounded-symmetric-neighbours-v1')
+        self.assertEqual(NEIGHBOUR_POLICY_VERSION, 'endpoint-local-exact-top-k-neighbours-v2')
 
     def test_fit_persists_deterministic_anchors_and_transform(self):
         tracks = (
@@ -98,6 +108,72 @@ class ProjectionContractTests(unittest.TestCase):
         self.assertIn(('a', 'z'), edges)
         self.assertLess(edges[('a', 'z')], symmetric_feature_distance(tracks[0], tracks[1]).distance)
         self.assertNotIn(('a', 'm00'), edges)
+
+
+
+    def test_endpoint_local_top_k_oracle_with_ties_missing_and_model_partitions(self):
+        tracks = (
+            features('a', arousal=0.0, mood=(('calm', 1.0),), genres=(('jazz', 1.0),), genre_model='m1'),
+            features('b', arousal=0.0, mood=(('calm', 1.0),), genres=(('jazz', 1.0),), genre_model='m1'),
+            features('c', arousal=0.3, mood=(('calm', 1.0),), genres=(('jazz', 1.0),), genre_model='m1'),
+            features('d', arousal=0.8, mood=(('calm', 1.0),), genres=(('jazz', 1.0),), genre_model='m1'),
+            features('e', arousal=0.05, mood=(('calm', 1.0),), genres=(('jazz', 1.0),), genre_model='m2'),
+            features('f', bpm=None, arousal=None, mood=(), genres=()),
+        )
+        edges = _edge_ids(project_tracks(tuple(reversed(tracks)), fit_projection_transform(tracks, ProjectionParameters(k=2))).edges)
+
+        self.assertEqual(edges, {('a', 'b'), ('a', 'e'), ('b', 'e'), ('c', 'd')})
+
+    def test_endpoint_local_policy_intentionally_differs_from_global_greedy_fill(self):
+        import music_analyzer.domain.projection as projection
+
+        tracks = tuple(features(track_id, bpm=100, arousal=0.1) for track_id in ('u', 'v', 'x', 'y'))
+        selector = projection._SparseNeighbourSelector(tracks, k=1)
+        for a, b, distance in (
+            ('x', 'y', 0.1),
+            ('u', 'x', 0.2),
+            ('v', 'y', 0.3),
+            ('u', 'v', 0.4),
+            ('u', 'y', 0.9),
+            ('v', 'x', 1.0),
+        ):
+            selector.consider(a, b, distance, 1)
+
+        edges = _edge_ids(selector.edges())
+
+        self.assertEqual(edges, {('x', 'y')})
+        self.assertNotIn(('u', 'v'), edges)
+
+    def test_endpoint_local_selection_is_symmetric_and_permutation_deterministic(self):
+        tracks = tuple(features(chr(ord('a') + i), bpm=100 + (i % 3), arousal=(i % 5) / 10) for i in range(9))
+        transform = fit_projection_transform(tracks, ProjectionParameters(k=3))
+        forward = _edge_ids(project_tracks(tracks, transform).edges)
+        reverse = _edge_ids(project_tracks(tuple(reversed(tracks)), transform).edges)
+        shuffled = _edge_ids(project_tracks((tracks[3], tracks[1], tracks[8], tracks[0], tracks[5], tracks[2], tracks[7], tracks[4], tracks[6]), transform).edges)
+
+        self.assertEqual(forward, reverse)
+        self.assertEqual(forward, shuffled)
+
+    def test_exact_neighbour_selection_does_not_retain_all_finite_pairs(self):
+        import music_analyzer.domain.projection as projection
+
+        tracks = tuple(features(str(i), bpm=100 + i, arousal=i / 10) for i in range(12))
+        original = projection._SparseNeighbourSelector
+
+        class FailingSelector(original):
+            def consider(self, *args, **kwargs):
+                super().consider(*args, **kwargs)
+                retained = sum(len(values) for values in self._candidates.values())
+                if retained > len(tracks) * self._k * 2:
+                    raise AssertionError('retained unbounded pair proposals')
+
+        try:
+            projection._SparseNeighbourSelector = FailingSelector
+            result = project_tracks(tracks, fit_projection_transform(tracks, ProjectionParameters(k=2)))
+        finally:
+            projection._SparseNeighbourSelector = original
+
+        self.assertLessEqual(len(result.edges), len(tracks) * 2 // 2)
 
     def test_undirected_neighbour_degree_is_bounded_by_k_without_dense_matrix(self):
         tracks = tuple(features(str(i), bpm=100 + i, arousal=i / 10) for i in range(8))

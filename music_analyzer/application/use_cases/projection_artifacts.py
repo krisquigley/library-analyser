@@ -45,6 +45,8 @@ class ProjectionArtifactError(Exception):
 @dataclass(frozen=True)
 class ProjectionArtifactResult:
     artifact: dict[str, object]
+    committed: bool = True
+    warning: str | None = None
 
 
 class PrepareProjectionArtifact:
@@ -55,8 +57,8 @@ class PrepareProjectionArtifact:
 
     def execute(self):
         artifact = _build_artifact(self.repository, ProjectionParameters(self.k, False), None)
-        self.store.replace(artifact)
-        return ProjectionArtifactResult(artifact)
+        outcome = self.store.replace(artifact)
+        return _artifact_result(artifact, outcome)
 
 
 class LoadProjectionArtifact:
@@ -80,8 +82,14 @@ class RefreshProjectionArtifact:
         _validate_artifact(existing)
         transform = None if explicit_relayout else _transform_from_mapping(existing.get('transform'))
         artifact = _build_artifact(self.repository, ProjectionParameters(self.k, explicit_relayout), transform)
-        self.store.replace(artifact)
+        outcome = self.store.replace(artifact)
+        return _artifact_result(artifact, outcome)
+
+
+def _artifact_result(artifact, outcome):
+    if outcome is None:
         return ProjectionArtifactResult(artifact)
+    return ProjectionArtifactResult(artifact, bool(outcome.committed), outcome.warning)
 
 
 def _build_artifact(repository, parameters, existing_transform):

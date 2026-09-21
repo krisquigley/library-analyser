@@ -12,7 +12,7 @@ a browser/API contract, or a claim that screen distance is musically meaningful.
 - `projection_artifact_version`: `journey-projection-artifact-v1`
 - `projection_fingerprint_version`: `projection-fingerprint-v1`
 - `projection_refresh_policy_version`: `fixed-transform-refresh-v1`
-- `neighbour_policy_version`: `bounded-symmetric-neighbours-v1`
+- `neighbour_policy_version`: `endpoint-local-exact-top-k-neighbours-v2`
 
 Artifacts must store these strings and loaders must reject unknown versions with
 an actionable error. Reproducibility metadata records the Python implementation
@@ -143,12 +143,20 @@ evidence remain `missing` with null coordinates.
 The artifact stores a bounded sparse graph, never a dense matrix and never an
 unbounded retained pairwise matrix. Default `k` is `10`.
 
-For each track, compute exact symmetric true-feature distances to a bounded,
-deterministic candidate window in cheap scalar order as a streaming calculation.
-The Phase3 utility is an exploratory sparse baseline, not an exact all-pairs
-nearest-neighbour index. For the undirected exported graph, an endpoint must have
-degree `<= k`; when proposals would exceed the cap, retain edges sorted by
-`(distance, min_id, max_id)` while respecting both endpoint caps.
+For each track, compute exact symmetric true-feature distances to every other
+eligible track as a streaming calculation. Retain only that endpoint's best `k`
+proposals by `(distance, min_id, max_id)`, take the union of retained endpoint
+proposals, sort the union by `(distance, min_id, max_id)`, and emit an undirected
+edge only when both endpoints still have degree `< k`. This is the versioned
+`endpoint-local-exact-top-k-neighbours-v2` sparse graph policy.
+
+The Phase3 utility is an exploratory sparse baseline, not a global greedy
+all-pairs b-matching and not a full per-node kNN index. The final graph may
+underfill degrees or omit a node's local top-`k` proposal when the other endpoint
+has already reached the degree cap. It computes true feature distances exactly
+for eligible pairs, but bounded retained storage and endpoint caps mean exported
+edges are not equivalent to sorting every finite pair globally and greedily
+filling degrees.
 
 Edges require at least one supported group. If no group supports a pair, omit the
 edge and record a missing/no-edge reason in diagnostics.
@@ -198,8 +206,11 @@ Validation rejects:
 - dense `N x N` matrices or retained unbounded pair arrays;
 - artifacts exceeding the configured resource limits.
 
-On any preparation, validation, write, or rename failure, the previous artifact
-is preserved.
+On any preparation, validation, write, or rename failure before the atomic rename
+commit point, the previous artifact is preserved. Once the rename commits, a
+subsequent directory durability failure is reported as a committed artifact with
+a durability warning rather than as rollback/preservation; callers must not assume
+old bytes remain after that commit point.
 
 ## Load and refresh
 

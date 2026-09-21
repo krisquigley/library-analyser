@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import random
 import resource
+import signal
 import sys
 import time
 
@@ -102,14 +103,50 @@ def main():
     repo = Repo(records)
     store = Store()
     prep_start = time.perf_counter()
-    artifact = PrepareProjectionArtifact(repo, store, args.k).execute().artifact
+    def _timeout(_signum, _frame):
+        raise TimeoutError('preparation exceeded max-seconds cap')
+    prior_handler = signal.signal(signal.SIGALRM, _timeout)
+    signal.setitimer(signal.ITIMER_REAL, max(0.001, args.max_seconds - (time.perf_counter() - started)))
+    try:
+        artifact = PrepareProjectionArtifact(repo, store, args.k).execute().artifact
+    except TimeoutError as error:
+        prep_seconds = time.perf_counter() - prep_start
+        wall_seconds = time.perf_counter() - started
+        rss_kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        result = {
+            'tracks': args.tracks,
+            'genre_dimensions': args.genre_dimensions,
+            'mood_dimensions': args.mood_dimensions,
+            'pathological': args.pathological,
+            'representative_phase3_acceptance_workload': representative,
+            'queries_requested': args.queries,
+            'queries_completed': 0,
+            'preparation_seconds_before_timeout': prep_seconds,
+            'artifact_tracks': 0,
+            'artifact_edges': 0,
+            'query_p50_seconds': None,
+            'query_p95_seconds': None,
+            'query_max_seconds': None,
+            'wall_seconds': wall_seconds,
+            'max_rss_kib': rss_kib,
+            'completed_within_cap': False,
+            'timeout_phase': 'preparation',
+            'timeout_error': str(error),
+        }
+        print(json.dumps(result, sort_keys=True))
+        return 2
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, prior_handler)
     prep_seconds = time.perf_counter() - prep_start
     selector = SelectExplorerCandidates(repo)
     query_times = []
     rng = random.Random(3)
     controls = (SelectionControlDto('tempo', 'soft', 1.0, {'tolerance': 0.08}), SelectionControlDto('energy', 'soft', 1.0, {'energy_mode': 'hold'}))
+    timed_out_phase = None
     for _ in range(args.queries):
         if time.perf_counter() - started > args.max_seconds:
+            timed_out_phase = 'queries'
             break
         current = records[rng.randrange(len(records))].track_id if records else ''
         q_start = time.perf_counter()
@@ -136,6 +173,8 @@ def main():
         'max_rss_kib': rss_kib,
         'completed_within_cap': len(query_times) == args.queries and wall_seconds <= args.max_seconds,
     }
+    if timed_out_phase:
+        result['timeout_phase'] = timed_out_phase
     print(json.dumps(result, sort_keys=True))
     return 0 if result['completed_within_cap'] and representative else 2
 

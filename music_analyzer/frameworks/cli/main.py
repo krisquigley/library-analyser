@@ -249,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
                     parser.error('--relayout requires --refresh')
                 result = PrepareProjectionArtifact(repository, store, args.k).execute()
             summary = {'artifact': args.artifact, 'fingerprint': result.artifact['fingerprint'], 'tracks': len(result.artifact['tracks']), 'edges': len(result.artifact['edges'])}
+            if result.warning:
+                summary['warning'] = result.warning
             output = json.dumps(summary, sort_keys=True) if args.json else f"Prepared {summary['tracks']} tracks, {summary['edges']} edges at {args.artifact}"
             ready = True
         else:
