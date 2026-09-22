@@ -97,6 +97,10 @@ const model = graph.buildMoodGraphModel(payload);
 assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
 assert(model.nodes.every(n => Math.abs(n.x) > 1), 'render coordinates are scaled for browser visibility');
 const before = new Map(model.nodes.map(n => [n.id, JSON.stringify([n.x,n.y,n.z,n.fx,n.fy,n.fz])]));
+for (const node of model.nodes) {
+  assert.strictEqual(node.z, node.axis.z.normalized * 720, 'display mood depth should be four times the X/Y display scale');
+  assert.strictEqual(node.fz, node.z, 'fixed simulation depth must match displayed depth');
+}
 assert.deepStrictEqual(model.genreOptions, ['jazz','rock']);
 const visible = graph.applyMoodGraphFilters(model, {bpmMin:119,bpmMax:121,genres:['jazz']});
 assert.deepStrictEqual(visible.nodes.map(n => n.id), []);
@@ -129,6 +133,118 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
             self.assertIn('function canvasPoint', source)
             self.assertIn('canvasPoint', source[source.index('module.exports'):])
             self.assertIn('module.exports', source)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for color behavior tests')
+    def test_library_relative_color_legend_and_selection_survive_filters_and_mood_changes(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const app = require(process.argv[1]);
+const point = (id,v,a,z) => ({track_id:id,display_label:id,x:{raw:v,normalized:v},y:{raw:a,normalized:a},z:{raw:z,normalized:z,label:'calm'}});
+const positioned = [point('low',-2,10,0.1),point('high',3,30,0.8),point('middle',0.5,20,0.4)];
+const model = app.buildMoodGraphModel({positioned,selected_mood:'calm'});
+assert.deepStrictEqual(model.colorRanges, {valence:[-2,3],arousal:[10,30]});
+assert.strictEqual(model.nodes[0].color, app.moodNodeColor(0,0));
+assert.strictEqual(model.nodes[1].color, app.moodNodeColor(1,1));
+assert.strictEqual(model.nodes[2].color, app.moodNodeColor(0.5,0.5));
+assert.notStrictEqual(model.nodes[0].color,model.nodes[1].color);
+assert.notStrictEqual(app.moodNodeColor(0,0),app.moodNodeColor(0,1));
+assert.notStrictEqual(app.moodNodeColor(0,1),app.moodNodeColor(1,1));
+const filtered = app.applyMoodGraphFilters(model,{bpmMin:0});
+assert.deepStrictEqual(filtered.nodes,[]);
+model.nodes[0].bpm=120; model.nodes[1].bpm=140;
+assert.strictEqual(app.applyMoodGraphFilters(model,{bpmMin:130}).nodes[0].color,model.nodes[1].color);
+assert.deepStrictEqual(app.applyMoodGraphFilters(model,{}).nodes.map(n=>n.color),model.nodes.map(n=>n.color));
+const other = app.buildMoodGraphModel({positioned:positioned.map(n=>({...n,z:{...n.z,raw:0.9,normalized:0.9,label:'heavy'}})),selected_mood:'heavy'});
+assert.deepStrictEqual(other.nodes.map(n=>n.color),model.nodes.map(n=>n.color));
+const flat = app.buildMoodGraphModel({positioned:[point('one',7,-5,0),point('two',7,-5,1)]});
+assert.deepStrictEqual(flat.colorRanges,{valence:[7,7],arousal:[-5,-5]});
+assert(flat.nodes.every(n=>n.color===app.moodNodeColor(0.5,0.5)));
+assert(app.graphColorLegend(model).includes('relative to this library'));
+assert(app.graphColorLegend(model).includes('-2 to 3'));
+assert(app.graphColorLegend(model).includes('10 to 30'));
+assert(app.graphColorLegend(model).includes('blue'));
+assert(app.graphColorLegend(model).includes('bright'));
+const context = {module:{exports:{}},console,URLSearchParams};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context);
+let color, size, info={textContent:''};
+const graph = new Proxy({}, {get(_,key){
+ if(key==='nodeColor') return callback=>{color=callback;return graph};
+ if(key==='nodeVal') return callback=>{size=callback;return graph};
+ if(key==='camera') return ()=>({fov:60});
+ return ()=>graph;
+}});
+context.ForceGraph3D=()=>()=>graph;
+context.document={getElementById:id=>id==='graph3d'?{clientWidth:900,clientHeight:500}:id==='graph-info'?info:null};
+vm.runInContext("state.current_track_id='low'",context);
+vm.runInContext('graphModel=buildMoodGraphModel('+JSON.stringify({positioned,selected_mood:'calm'})+')',context);
+context.renderMap(model);
+assert.strictEqual(color(model.nodes[0]),model.nodes[0].color,'selection must not replace color');
+assert(size(model.nodes[0])>size(model.nodes[1]),'selection should be larger');
+assert(info.textContent.includes('relative to this library'));
+assert(info.textContent.includes('-2 to 3'));
+vm.runInContext("selectedGraphControls={mood:'heavy',bpmMin:100,bpmMax:140,genres:['jazz']}",context);
+assert.strictEqual(context.graphQueryFromControls(),'?mood=heavy','fetch full mood library before local filtering');
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for camera behavior tests')
+    def test_graph_camera_centers_bounds_fits_viewport_and_preserves_selection_view(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const nodes = [{id:'a',x:900,y:200,z:-80}, {id:'b',x:1500,y:600,z:120}];
+const before = JSON.stringify(nodes);
+const wide = app.graphCameraFrame(nodes, {width:1000,height:500}, 60);
+assert.deepStrictEqual(wide.target, {x:1200,y:400,z:20});
+assert.strictEqual(wide.position.x, 1200);
+assert.strictEqual(wide.position.y, 400);
+const narrow = app.graphCameraFrame(nodes, {width:250,height:500}, 60);
+assert(narrow.position.z > wide.position.z, 'portrait viewport needs more distance');
+const tightFov = app.graphCameraFrame(nodes, {width:1000,height:500}, 30);
+assert(tightFov.position.z > wide.position.z);
+for (const [frame, aspect] of [[wide,2], [narrow,0.5]]) {
+  for (const n of nodes) {
+    const depth = frame.position.z - n.z - 4;
+    assert(Math.abs(n.x-frame.target.x)+4 < depth*Math.tan(Math.PI/6)*aspect);
+    assert(Math.abs(n.y-frame.target.y)+4 < depth*Math.tan(Math.PI/6));
+  }
+}
+assert.strictEqual(JSON.stringify(nodes), before, 'camera framing must not translate data');
+assert.deepStrictEqual(app.graphCameraFrame([...nodes,{x:NaN,y:0,z:0}], {width:1000,height:500},60), wide);
+for (const input of [[], [{x:Infinity,y:0,z:0}], [nodes[0]]]) {
+  const frame = app.graphCameraFrame(input, {width:0,height:0}, NaN);
+  assert(Object.values(frame.position).every(Number.isFinite));
+  assert(frame.position.z > frame.target.z);
+}
+assert.deepStrictEqual(app.graphCameraFrame([nodes[0]], {width:500,height:500},60).target, {x:900,y:200,z:-80});
+assert.deepStrictEqual(app.graphCameraFrame([], {width:500,height:500},60).target, {x:0,y:0,z:0});
+
+const vm = require('vm'), fs = require('fs');
+const context = {module:{exports:{}}, console};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const calls = [];
+const graph = new Proxy({}, {get(_, key){
+  if(key==='camera') return ()=>({fov:60});
+  if(key==='cameraPosition') return (...args)=>{calls.push(args); return graph;};
+  return ()=>graph;
+}});
+context.ForceGraph3D = ()=>()=>graph;
+context.document = {getElementById: id=>id==='graph3d'?{clientWidth:1000,clientHeight:500}:null};
+context.renderMap({nodes,links:[],unpositioned:[]});
+assert.strictEqual(calls.length,1);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(calls[0][1])),wide.target);
+vm.runInContext("state.current_track_id='a'", context);
+context.renderMap({nodes:JSON.parse(before),links:[],unpositioned:[]});
+assert.strictEqual(calls.length,1,'selection/detail refresh must preserve user orbit/zoom/pan');
+context.renderMap({nodes:[nodes[0]],links:[],unpositioned:[]});
+assert.strictEqual(calls.length,2,'filtering to different bounds reframes');
+context.renderMap({nodes:[{...nodes[0],x:950}],links:[],unpositioned:[]});
+assert.strictEqual(calls.length,3,'changed layout reframes');
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
     def test_vanilla_js_detail_renderer_reads_nested_automatic_summary_values(self):
         script = r"""
@@ -169,6 +285,7 @@ assert(renderedFields.includes('energy: [["arousal",0.2],["valence",0.7]]'));
 assert(renderedFields.includes('key: [["key","C major"]]'));
 assert(renderedFields.includes('missing: "missing"'));
 assert.deepStrictEqual(app.graphDimensions({clientWidth: 1374, clientHeight: 520, parentElement: {clientWidth: 734}}), {width: 734, height: 520});
+assert.deepStrictEqual(app.graphDimensions({clientWidth: 900, clientHeight: 0}), {width: 900, height: 1040});
 const parentStyle = {paddingLeft:'16px', paddingRight:'16px', borderLeftWidth:'1px', borderRightWidth:'1px'};
 global.getComputedStyle = elem => elem.computedStyle || {paddingLeft:'0px', paddingRight:'0px', borderLeftWidth:'0px', borderRightWidth:'0px'};
 assert.deepStrictEqual(app.graphDimensions({clientWidth: 1374, clientHeight: 520, parentElement: {clientWidth: 768, computedStyle: parentStyle}}), {width: 734, height: 520});
