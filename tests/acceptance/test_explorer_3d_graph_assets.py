@@ -130,6 +130,28 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
             self.assertIn('canvasPoint', source[source.index('module.exports'):])
             self.assertIn('module.exports', source)
 
+    def test_vanilla_js_detail_renderer_reads_nested_automatic_summary_values(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const summaryField = {
+  automatic: {summary_values: [['arousal', 0.2], ['valence', 0.7]], values: []},
+  effective_source: 'automatic'
+};
+assert.deepStrictEqual(app.fieldDisplay(summaryField), [['arousal', 0.2], ['valence', 0.7]]);
+assert.strictEqual(app.fieldDisplay({manual_text: 'human says fast', automatic: {values: [['bpm', 128]]}, effective_source: 'manual_text'}), 'manual_text');
+assert.strictEqual(app.fieldDisplay({automatic: {values: []}, effective_source: 'missing'}), 'missing');
+assert.deepStrictEqual(app.fieldDisplay({automatic: {values: [['bpm', 120]], summary_values: [['ignored', 1]]}, effective_source: 'automatic'}), [['bpm', 120]]);
+assert.deepStrictEqual(app.graphDimensions({clientWidth: 1374, clientHeight: 520, parentElement: {clientWidth: 734}}), {width: 734, height: 520});
+""";
+        if shutil.which('node'):
+            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        else:
+            source = APP_JS.read_text(encoding='utf-8')
+            self.assertIn('if(a.summary_values&&a.summary_values.length) return a.summary_values', source)
+            self.assertIn('const parent=elem&&elem.parentElement', source)
+            self.assertIn('fieldDisplay', source[source.index('module.exports'):])
+
 
 if __name__ == '__main__':
     unittest.main()

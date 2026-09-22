@@ -34,8 +34,14 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     page.get_by_text('Status: completed').wait_for()
                     current = page.evaluate("fetch('/api/state').then(r=>r.json())")
                     self.assertEqual(current['current_track_id'], second)
-                    pixels = page.locator('#map').evaluate("canvas => Array.from(canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data).some(v => v !== 0)")
-                    self.assertTrue(pixels)
+                    scene = page.locator('#graph3d canvas').evaluate("""canvas => {
+                        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+                        const box = canvas.getBoundingClientRect();
+                        return {hasWebGL: !!gl, width: Math.round(box.width), height: Math.round(box.height)};
+                    }""")
+                    self.assertTrue(scene['hasWebGL'])
+                    self.assertGreater(scene['width'], 0)
+                    self.assertGreater(scene['height'], 0)
                     browser.close()
             finally:
                 server.shutdown(); server.server_close()
