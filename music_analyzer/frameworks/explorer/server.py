@@ -34,14 +34,13 @@ DEFAULT_CONTROLS = (
 class ExplorerState:
     def __init__(self, repository):
         self.repository = repository
-        ids = repository.track_ids()
-        self.current_track_id = ids[0] if ids else None
+        self.current_track_id = None
         self.history: list[str] = []
 
     def set_current(self, track_id: str):
         if track_id not in self.repository.track_ids():
             raise ValueError('Unknown explorer track')
-        if self.current_track_id and self.current_track_id != track_id:
+        if self.current_track_id != track_id:
             self.history.append(self.current_track_id)
         self.current_track_id = track_id
 
@@ -50,8 +49,7 @@ class ExplorerState:
             self.current_track_id = self.history.pop()
 
     def reset(self):
-        ids = self.repository.track_ids()
-        self.current_track_id = ids[0] if ids else None
+        self.current_track_id = None
         self.history.clear()
 
 
@@ -89,7 +87,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json({'current_track_id': state.current_track_id, 'history': list(state.history)})
             if path == '/api/tracks':
                 query = parse_qs(parsed.query)
-                limit = int(query.get('limit', ['100'])[0])
+                raw_limit = query.get('limit', ['100'])[0]
+                limit = 'all' if raw_limit == 'all' else int(raw_limit)
                 after = query.get('after', [None])[0]
                 return self._json(_to_json(ListExplorerTracks(repository).execute(limit, after)))
             if path.startswith('/api/tracks/'):

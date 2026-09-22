@@ -58,12 +58,15 @@ class ExplorerServerTests(unittest.TestCase):
 
     def test_api_lists_details_candidates_state_and_projection(self):
         state = self.get_json('/api/state')
-        self.assertEqual(state['current_track_id'], self.first)
+        self.assertIsNone(state['current_track_id'])
         self.assertEqual(state['history'], [])
         listing = self.get_json('/api/tracks')
         self.assertEqual(listing['tracks'][0]['display_label'], 'First & Friend.flac')
         detail = self.get_json('/api/tracks/' + self.first)
         self.assertEqual(detail['fields']['bpm']['automatic']['values'], [['bpm', 120.0]])
+        req = Request(self.base + '/api/current', data=json.dumps({'track_id': self.first}).encode(), method='POST', headers={'Content-Type': 'application/json'})
+        with urlopen(req, timeout=5):
+            pass
         candidates = self.get_json('/api/candidates?control=tempo:soft:1&limit=5')
         self.assertEqual(candidates['current_track_id'], self.first)
         self.assertEqual(candidates['controls_echo'][0]['name'], 'tempo')
@@ -88,7 +91,7 @@ class ExplorerServerTests(unittest.TestCase):
         req = Request(self.base + '/api/undo', data=b'{}', method='POST', headers={'Content-Type': 'application/json'})
         with urlopen(req, timeout=5):
             pass
-        self.assertEqual(self.get_json('/api/state')['current_track_id'], self.first)
+        self.assertIsNone(self.get_json('/api/state')['current_track_id'])
         too_large = Request(self.base + '/api/current', data=(b'{' + b' ' * 70000 + b'}'), method='POST', headers={'Content-Type': 'application/json'})
         with self.assertRaises(HTTPError) as raised:
             urlopen(too_large, timeout=5)

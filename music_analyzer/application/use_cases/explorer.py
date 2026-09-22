@@ -14,8 +14,11 @@ class ListExplorerTracks:
         self.repository = repository
 
     def execute(self, limit=100, after=None):
+        if limit == 'all':
+            metadata, tracks = self.repository.candidate_snapshot()
+            return ExplorerSnapshot(self._metadata(metadata, len(tracks)), tuple(_map_track(track) for track in tracks))
         if not isinstance(limit, int) or limit < 1 or limit > 500:
-            raise ValueError('Explorer list limit must be between 1 and 500')
+            raise ValueError('Explorer list limit must be between 1 and 500 or all')
         metadata, track_count, tracks = self.repository.list_tracks(limit, after)
         return ExplorerSnapshot(self._metadata(metadata, track_count), tuple(_map_track(track) for track in tracks))
 
@@ -43,7 +46,7 @@ class ExploreCatalogue:
         self.repository = repository
 
     def list_tracks(self):
-        return ListExplorerTracks(self.repository).execute(limit=500)
+        return ListExplorerTracks(self.repository).execute(limit='all')
 
     def track_detail(self, handle):
         return GetExplorerTrackDetail(self.repository).execute(handle)
