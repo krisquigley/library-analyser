@@ -124,6 +124,7 @@ class MoodAxisNode:
     bpm: float | None
     genres: tuple[tuple[str, float], ...]
     reasons: tuple[str, ...] = ()
+    genre_threshold: float = 0.5
 
 
 @dataclass(frozen=True)

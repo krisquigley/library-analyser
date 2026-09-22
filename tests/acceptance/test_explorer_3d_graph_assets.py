@@ -49,9 +49,9 @@ CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT 
             stages = [
                 ('bpm', {'stage': 'bpm', 'provenance': [], 'uncertainty': '', 'values': [['bpm', bpm]]}),
                 ('key', {'stage': 'key', 'provenance': [], 'uncertainty': '', 'values': [['key', key]]}),
-                ('energy', {'stage': 'energy', 'provenance': [], 'uncertainty': '', 'values': [], 'summary': summary(('arousal', 'valence'), (arousal, valence))}),
-                ('genres', {'stage': 'genres', 'provenance': [['model', 'test']], 'uncertainty': '', 'values': [], 'summary': summary(('rock', 'jazz'), genre)}),
-                ('mood', {'stage': 'mood', 'provenance': [['model', 'test']], 'uncertainty': '', 'values': [], 'summary': summary(('happy', 'sad'), mood)}),
+                ('energy', {'stage': 'energy', 'provenance': [['emomusic-msd-musicnn-2', 'synthetic-sha256'], ['scale', 'native_valence_arousal_regression']], 'uncertainty': '', 'values': [], 'summary': summary(('arousal', 'valence'), (arousal, valence))}),
+                ('genres', {'stage': 'genres', 'provenance': [['genre_discogs400-discogs-effnet-1', 'synthetic-sha256'], ['threshold', '0.5']], 'uncertainty': '', 'values': [], 'summary': summary(('rock', 'jazz'), genre)}),
+                ('mood', {'stage': 'mood', 'provenance': [['mtg_jamendo_moodtheme-discogs-effnet-1', 'synthetic-sha256'], ['scale', 'sigmoid_mean_score_0_1']], 'uncertainty': '', 'values': [], 'summary': summary(('relaxing', 'heavy'), mood)}),
             ]
             for stage, payload in stages:
                 db.execute('INSERT INTO stages VALUES(?,?,?)', (run_id, stage, json.dumps(payload)))
@@ -89,31 +89,22 @@ class Explorer3DGraphAssetTests(unittest.TestCase):
         script = r"""
 const assert = require('assert');
 const graph = require(process.argv[1]);
-const tracks = [
-  {handle:'a', track_id:'a', display_label:'Alpha', latest_run_status:'completed', available_locations:1, fields:{bpm:{effective_source:'automatic'}, key:{effective_source:'automatic'}, genres:{effective_source:'automatic'}, mood:{effective_source:'automatic'}, energy:{effective_source:'automatic'}}, reasons:[]},
-  {handle:'b', track_id:'b', display_label:'Beta', latest_run_status:'completed', available_locations:1, fields:{bpm:{effective_source:'automatic'}, key:{effective_source:'missing'}, genres:{effective_source:'automatic'}, mood:{effective_source:'missing'}, energy:{effective_source:'automatic'}}, reasons:['key: missing result','mood: missing result']},
-  {handle:'c', track_id:'c', display_label:'Missing', latest_run_status:null, available_locations:0, fields:{bpm:{effective_source:'missing'}, key:{effective_source:'missing'}, genres:{effective_source:'missing'}, mood:{effective_source:'missing'}, energy:{effective_source:'missing'}}, reasons:['No available catalogue location']}
-];
-const projection = {tracks:[
-  {track_id:'a',x:-0.4,y:0.2,z:-0.5,layout_state:'projected',missing_groups:[],missing_reasons:[]},
-  {track_id:'b',x:0.5,y:-0.1,z:0.25,layout_state:'partial',missing_groups:['harmony','mood'],missing_reasons:['harmony: missing usable evidence']},
-  {track_id:'c',x:null,y:null,z:null,layout_state:'missing',missing_groups:['tempo'],missing_reasons:['tempo: missing usable evidence']}
-], edges:[{a:'a',b:'b',distance:0.23,supported_group_count:3}]};
-const model = graph.buildGraphModel(tracks, projection);
-assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b','c']);
-assert(new Set(model.nodes.map(n => n.position.z)).size > 1, 'true non-coplanar z coordinates expected');
-const before = new Map(model.nodes.map(n => [n.id, JSON.stringify(n.position)]));
-const visible = graph.applyGraphFilters(model, {tempo:'off',harmony:'hard',energy:'off',genre:'off',mood:'off'});
-assert.deepStrictEqual(visible.nodes.map(n => n.id), ['a']);
-assert.deepStrictEqual(visible.edges, []);
-const cleared = graph.applyGraphFilters(model, {tempo:'off',harmony:'off',energy:'off',genre:'off',mood:'off'});
-assert.deepStrictEqual(cleared.nodes.map(n => n.id), ['a','b','c']);
-for (const node of cleared.nodes) assert.strictEqual(JSON.stringify(node.position), before.get(node.id));
-const missingEvidenceLabel = model.nodes.find(n => n.id === 'c').evidenceLabel;
-assert(missingEvidenceLabel.includes('No identity-linked analysis'));
-assert(missingEvidenceLabel.includes('No available catalogue location'));
-assert(missingEvidenceLabel.includes('Position uses deterministic isolated fallback'));
-assert(missingEvidenceLabel.includes('tempo: missing usable evidence'));
+const payload = {selected_mood:'relaxing', available_moods:['relaxing','heavy'], metadata:{}, unpositioned:[{track_id:'c',display_label:'Missing',reasons:['mood: no supported labels available']}], positioned:[
+  {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'relaxing', raw:0.9, normalized:0.8, scale:'sigmoid'}, bpm:120, genres:[['rock',0.6]], genre_threshold:0.5, reasons:[]},
+  {track_id:'b', display_label:'Beta', x:{raw:0.3, normalized:0.3, scale:'native'}, y:{raw:0.4, normalized:0.4, scale:'native'}, z:{label:'relaxing', raw:0.2, normalized:-0.6, scale:'sigmoid'}, bpm:130, genres:[['jazz',0.7]], genre_threshold:0.5, reasons:[]}
+], edges:[{a:'a',b:'b',score:0.77,explanation:'axis-independent relatedness',supported_group_count:3}]};
+const model = graph.buildMoodGraphModel(payload);
+assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
+assert(model.nodes.every(n => Math.abs(n.x) > 1), 'render coordinates are scaled for browser visibility');
+const before = new Map(model.nodes.map(n => [n.id, JSON.stringify([n.x,n.y,n.z,n.fx,n.fy,n.fz])]));
+assert.deepStrictEqual(model.genreOptions, ['jazz','rock']);
+const visible = graph.applyMoodGraphFilters(model, {bpmMin:119,bpmMax:121,genres:['jazz']});
+assert.deepStrictEqual(visible.nodes.map(n => n.id), []);
+const genreAny = graph.applyMoodGraphFilters(model, {genres:['jazz','rock']});
+assert.deepStrictEqual(genreAny.nodes.map(n => n.id), ['a','b']);
+const cleared = graph.applyMoodGraphFilters(model, {});
+assert.deepStrictEqual(cleared.nodes.map(n => n.id), ['a','b']);
+for (const node of cleared.nodes) assert.strictEqual(JSON.stringify([node.x,node.y,node.z,node.fx,node.fy,node.fz]), before.get(node.id));
 const camera = {yaw:0,pitch:0,distance:5,panX:0,panY:0};
 graph.orbitCamera(camera, 20, -10); graph.panCamera(camera, 5, -3); graph.zoomCamera(camera, -2);
 assert.notStrictEqual(camera.yaw, 0); assert.notStrictEqual(camera.pitch, 0); assert(camera.distance < 5); assert.notStrictEqual(camera.panX, 0);
