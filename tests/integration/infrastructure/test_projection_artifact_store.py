@@ -23,7 +23,7 @@ VALID = {
         'projection_feature_contract_version': 'projection-features-v1',
         'projection_fingerprint_version': 'projection-fingerprint-v1',
         'projection_refresh_policy_version': 'fixed-transform-refresh-v1',
-        '3d_coordinate_policy': 'deterministic-evidence-completeness-z-v1',
+        '3d_coordinate_policy': 'deterministic-missing-evidence-z-v1',
         'neighbour_policy_version': 'endpoint-local-exact-top-k-neighbours-v2',
         'distance_policy_version': 'symmetric-feature-distance-v1',
         'transform_recipe_version': 'anchor-distance-projection-v1',

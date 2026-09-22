@@ -62,6 +62,59 @@ class ProjectionContractTests(unittest.TestCase):
         self.assertTrue(math.isfinite(transform.center_x))
         self.assertGreater(transform.range_x, 0.0)
 
+    def test_identical_complete_tracks_get_honest_degenerate_positions(self):
+        tracks = (
+            features('a', bpm=120, arousal=0.2, genres=(('rock', 1.0),), mood=(('calm', 1.0),)),
+            features('b', bpm=120, arousal=0.2, genres=(('rock', 1.0),), mood=(('calm', 1.0),)),
+        )
+        projection = project_tracks(tracks, fit_projection_transform(tracks, ProjectionParameters(k=1)))
+
+        self.assertEqual(projection.transform.anchors, {})
+        by_id = {point.track_id: point for point in projection.points}
+        for track_id in ('a', 'b'):
+            self.assertEqual(by_id[track_id].layout_state, 'degenerate')
+            self.assertEqual((by_id[track_id].x, by_id[track_id].y), (0.0, 0.0))
+            self.assertEqual(by_id[track_id].missing_groups, ())
+            self.assertEqual(by_id[track_id].missing_reasons, ())
+        self.assertEqual(_edge_ids(projection.edges), {('a', 'b')})
+
+    def test_one_complete_track_gets_degenerate_position_without_fabricated_similarity(self):
+        track = features('solo', bpm=120, arousal=0.2, genres=(('rock', 1.0),), mood=(('calm', 1.0),))
+        projection = project_tracks((track,), fit_projection_transform((track,), ProjectionParameters(k=1)))
+        point = projection.points[0]
+
+        self.assertEqual(point.layout_state, 'degenerate')
+        self.assertEqual((point.x, point.y), (0.0, 0.0))
+        self.assertEqual(point.missing_groups, ())
+        self.assertEqual(projection.edges, ())
+
+    def test_genuinely_missing_track_stays_isolated_when_transform_has_no_anchors(self):
+        projection = project_tracks((features('missing'),), fit_projection_transform((features('missing'),), ProjectionParameters(k=1)))
+        point = projection.points[0]
+
+        self.assertEqual(point.layout_state, 'missing')
+        self.assertIsNone(point.x)
+        self.assertIsNone(point.y)
+        self.assertIn('tempo', point.missing_groups)
+        self.assertIn('tempo: missing usable evidence', point.missing_reasons)
+        self.assertEqual(projection.edges, ())
+
+    def test_mixed_single_complete_and_missing_tracks_distinguish_degenerate_from_absent(self):
+        tracks = (
+            features('complete', bpm=120, arousal=0.2, genres=(('rock', 1.0),), mood=(('calm', 1.0),)),
+            features('missing'),
+        )
+        projection = project_tracks(tracks, fit_projection_transform(tracks, ProjectionParameters(k=1)))
+        by_id = {point.track_id: point for point in projection.points}
+
+        self.assertEqual(by_id['complete'].layout_state, 'degenerate')
+        self.assertEqual((by_id['complete'].x, by_id['complete'].y), (0.0, 0.0))
+        self.assertEqual(by_id['complete'].missing_groups, ())
+        self.assertEqual(by_id['missing'].layout_state, 'missing')
+        self.assertIsNone(by_id['missing'].x)
+        self.assertIn('genre', by_id['missing'].missing_groups)
+        self.assertEqual(projection.edges, ())
+
     def test_missing_manual_or_incompatible_groups_do_not_fabricate_positions(self):
         fitted = (
             features('a', bpm=100, arousal=-1.0, genres=(('house', 1.0), ('techno', 0.0))),

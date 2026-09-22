@@ -109,10 +109,22 @@ assert.deepStrictEqual(visible.edges, []);
 const cleared = graph.applyGraphFilters(model, {tempo:'off',harmony:'off',energy:'off',genre:'off',mood:'off'});
 assert.deepStrictEqual(cleared.nodes.map(n => n.id), ['a','b','c']);
 for (const node of cleared.nodes) assert.strictEqual(JSON.stringify(node.position), before.get(node.id));
-assert.strictEqual(model.nodes.find(n => n.id === 'c').evidenceLabel, 'No identity-linked analysis; No available catalogue location');
+const missingEvidenceLabel = model.nodes.find(n => n.id === 'c').evidenceLabel;
+assert(missingEvidenceLabel.includes('No identity-linked analysis'));
+assert(missingEvidenceLabel.includes('No available catalogue location'));
+assert(missingEvidenceLabel.includes('Position uses deterministic isolated fallback'));
+assert(missingEvidenceLabel.includes('tempo: missing usable evidence'));
 const camera = {yaw:0,pitch:0,distance:5,panX:0,panY:0};
 graph.orbitCamera(camera, 20, -10); graph.panCamera(camera, 5, -3); graph.zoomCamera(camera, -2);
 assert.notStrictEqual(camera.yaw, 0); assert.notStrictEqual(camera.pitch, 0); assert(camera.distance < 5); assert.notStrictEqual(camera.panX, 0);
+const point = graph.canvasPoint({clientX:160, clientY:110}, {left:100, top:50, width:600, height:300}, {width:900, height:600});
+assert.deepStrictEqual(point, {x:90, y:120});
+const bordered = graph.canvasPoint(
+  {clientX:162, clientY:112},
+  {left:100, top:50, width:604, height:304},
+  {width:900, height:600, clientWidth:600, clientHeight:300, clientLeft:2, clientTop:2}
+);
+assert.deepStrictEqual(bordered, {x:90, y:120});
 """;
         if shutil.which('node'):
             subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
@@ -123,6 +135,8 @@ assert.notStrictEqual(camera.yaw, 0); assert.notStrictEqual(camera.pitch, 0); as
             self.assertIn('function orbitCamera', source)
             self.assertIn('function panCamera', source)
             self.assertIn('function zoomCamera', source)
+            self.assertIn('function canvasPoint', source)
+            self.assertIn('canvasPoint', source[source.index('module.exports'):])
             self.assertIn('module.exports', source)
 
 

@@ -32,7 +32,7 @@ def _contract_versions():
         'projection_feature_contract_version': FEATURE_CONTRACT_VERSION,
         'projection_fingerprint_version': FINGERPRINT_VERSION,
         'projection_refresh_policy_version': REFRESH_POLICY_VERSION,
-        '3d_coordinate_policy': 'deterministic-evidence-completeness-z-v1',
+        '3d_coordinate_policy': 'deterministic-missing-evidence-z-v1',
         'neighbour_policy_version': NEIGHBOUR_POLICY_VERSION,
         'distance_policy_version': DISTANCE_POLICY_VERSION,
         'transform_recipe_version': PROJECTION_POLICY_VERSION,
@@ -120,8 +120,8 @@ def _z_coordinate(point):
     if point.x is None and point.y is None:
         return None
     missing_count = len(point.missing_groups or ())
-    # Meaningful third axis: evidence completeness. Fully evidenced projected
-    # tracks sit forward, partial tracks recede by missing feature group count.
+    # Deterministic display-only third axis: tracks with fewer missing projection
+    # groups sit forward; this is not calibrated audio-feature depth.
     return max(-1.0, min(1.0, 1.0 - 0.4 * missing_count))
 
 

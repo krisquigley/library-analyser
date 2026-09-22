@@ -110,6 +110,13 @@ def project_tracks(tracks, transform: ProjectionTransform) -> ProjectionResult:
     for track in tracks:
         raw_x, raw_y = _raw_point_from_transform(track, transform)
         missing = _missing_groups(track, transform)
+        if raw_x is None and raw_y is None and not transform.anchors:
+            if _has_projection_evidence(track):
+                raw_x = transform.center_x
+                raw_y = transform.center_y
+                missing = ()
+            else:
+                missing = _missing_projection_evidence(track)
         if raw_x is None and raw_y is None:
             state = 'missing'; x = y = None
         else:
@@ -328,6 +335,14 @@ def _missing_groups(track, transform):
             if _metadata(track, field) != anchor.metadata:
                 missing.append(group + ': incompatible label/model alignment')
     return tuple(_uniq(missing))
+
+
+def _has_projection_evidence(track):
+    return any(_scalar(track, group) is not None for group in ('tempo', 'energy', 'mood', 'genre', 'harmony'))
+
+
+def _missing_projection_evidence(track):
+    return tuple(group + ': missing usable evidence' for group in ('tempo', 'energy', 'mood', 'genre', 'harmony') if _scalar(track, group) is None)
 
 
 def _anchor_contribution(track, group, anchor):
