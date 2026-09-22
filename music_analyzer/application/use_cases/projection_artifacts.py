@@ -32,6 +32,7 @@ def _contract_versions():
         'projection_feature_contract_version': FEATURE_CONTRACT_VERSION,
         'projection_fingerprint_version': FINGERPRINT_VERSION,
         'projection_refresh_policy_version': REFRESH_POLICY_VERSION,
+        '3d_coordinate_policy': 'deterministic-missing-evidence-z-v1',
         'neighbour_policy_version': NEIGHBOUR_POLICY_VERSION,
         'distance_policy_version': DISTANCE_POLICY_VERSION,
         'transform_recipe_version': PROJECTION_POLICY_VERSION,
@@ -107,12 +108,21 @@ def _build_artifact(repository, parameters, existing_transform):
         'runtime': {'python': platform.python_version(), 'implementation': platform.python_implementation()},
         'transform': _transform_mapping(projection.transform, parameters),
         'transform_object': projection.transform,
-        'tracks': tuple({'track_id': p.track_id, 'x': p.x, 'y': p.y, 'layout_state': p.layout_state, 'missing_groups': p.missing_groups, 'missing_reasons': p.missing_reasons} for p in projection.points),
+        'tracks': tuple({'track_id': p.track_id, 'x': p.x, 'y': p.y, 'z': _z_coordinate(p), 'layout_state': p.layout_state, 'missing_groups': p.missing_groups, 'missing_reasons': p.missing_reasons} for p in projection.points),
         'edges': tuple({'a': e.a, 'b': e.b, 'distance': e.distance, 'supported_group_count': e.supported_group_count} for e in projection.edges),
         'resource_limits': {'k': parameters.k, 'track_count': len(projection.points), 'edge_count': len(projection.edges)},
     }
     _validate_artifact(artifact)
     return artifact
+
+
+def _z_coordinate(point):
+    if point.x is None and point.y is None:
+        return None
+    missing_count = len(point.missing_groups or ())
+    # Deterministic display-only third axis: tracks with fewer missing projection
+    # groups sit forward; this is not calibrated audio-feature depth.
+    return max(-1.0, min(1.0, 1.0 - 0.4 * missing_count))
 
 
 def _fingerprint(metadata, records, parameters):
@@ -203,7 +213,7 @@ def _validate_artifact(artifact):
         if point['track_id'] in ids:
             raise ProjectionArtifactError('duplicate track id')
         ids.add(point['track_id'])
-        for key in ('x', 'y'):
+        for key in ('x', 'y', 'z'):
             value = point.get(key)
             if value is not None and (not isinstance(value, (int, float)) or not isfinite(float(value))):
                 raise ProjectionArtifactError('coordinate shape error')
