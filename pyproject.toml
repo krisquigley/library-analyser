@@ -18,4 +18,4 @@ include = ["music_analyzer*"]
 
 [tool.setuptools.package-data]
 "music_analyzer.infrastructure.models" = ["data/manifest.json", "data/LICENSE"]
-"music_analyzer.frameworks.explorer" = ["assets/index.html", "assets/app.js", "assets/style.css"]
+"music_analyzer.frameworks.explorer" = ["assets/index.html", "assets/app.js", "assets/style.css", "assets/vendor/3d-force-graph/3d-force-graph.min.js", "assets/vendor/3d-force-graph/NOTICE"]

@@ -1,11 +1,20 @@
+from math import isfinite
+
 from music_analyzer.application.dto.explorer import (
     AutomaticEvidence,
+    AxisValue,
     ExplorerFieldEvidence,
     ExplorerMetadata,
     ExplorerSnapshot,
     ExplorerTrackDetail,
+    MoodAxisEdge,
+    MoodAxisGraph,
+    MoodAxisNode,
+    UnpositionedTrack,
 )
 from music_analyzer.application.ports.explorer import ExplorerRepository
+from music_analyzer.application.use_cases.candidates import _features
+from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, symmetric_feature_distance
 from music_analyzer.domain.review import FIELDS
 
 
@@ -50,6 +59,58 @@ class ExploreCatalogue:
 
     def track_detail(self, handle):
         return GetExplorerTrackDetail(self.repository).execute(handle)
+
+
+class BuildMoodAxisGraph:
+    def __init__(self, repository: ExplorerRepository, sparse_k: int = 10):
+        self.repository = repository
+        self.sparse_k = sparse_k
+
+    def execute(self, mood: str | None = None):
+        raw_meta, records = self.repository.candidate_snapshot()
+        records = tuple(records)
+        available = _available_moods(records)
+        selected = _resolve_mood(mood, available)
+        positioned = []
+        unpositioned = []
+        for record in records:
+            detail = _map_track(record)
+            node, reasons = _axis_node(record, detail, selected)
+            if node is None:
+                unpositioned.append(UnpositionedTrack(record.track_id, record.display_label, tuple(reasons)))
+            else:
+                positioned.append(node)
+        edges = _axis_edges(records, {node.track_id for node in positioned}, self.sparse_k)
+        return MoodAxisGraph(
+            metadata={
+                'application_id': int(raw_meta.get('application_id', 0)),
+                'schema_version': int(raw_meta.get('schema_version', 0)),
+                'read_policy': str(raw_meta.get('read_policy', 'coherent_in_memory_snapshot')),
+                'track_count': len(records),
+                'coordinate_policy': 'fixed-mood-axis-v1',
+                'normalization_policy': 'documented-model-scale-linear-v1',
+                'energy_scale': 'emomusic summary labels valence/arousal, display normalized from [0,1] to [-1,1] when finite',
+                'mood_scale': 'Jamendo mood/theme labelled mean score, display normalized from [0,1] to [-1,1] when finite',
+                'genre_filter_policy': 'ANY selected genre with retained mean score >= stored threshold provenance or 0.5 default',
+                'edge_policy': NEIGHBOUR_POLICY_VERSION,
+                'distance_policy': DISTANCE_POLICY_VERSION,
+                'sparse_k': self.sparse_k,
+            },
+            selected_mood=selected,
+            available_moods=available,
+            positioned=tuple(positioned),
+            unpositioned=tuple(unpositioned),
+            edges=edges,
+        )
+
+
+class FilterMoodAxisGraph:
+    def execute(self, graph: MoodAxisGraph, bpm_min=None, bpm_max=None, genres=()):
+        selected_genres = tuple(g for g in (genres or ()) if g)
+        nodes = tuple(node for node in graph.positioned if _passes_filters(node, bpm_min, bpm_max, selected_genres))
+        ids = {node.track_id for node in nodes}
+        edges = tuple(edge for edge in graph.edges if edge.a in ids and edge.b in ids)
+        return MoodAxisGraph(graph.metadata, graph.selected_mood, graph.available_moods, nodes, graph.unpositioned, edges)
 
 
 def _map_track(track):
@@ -105,3 +166,140 @@ def _map_track(track):
         fields=fields,
         reasons=tuple(reasons),
     )
+
+
+def _available_moods(records):
+    labels = []
+    for record in records:
+        if dict(record.overrides).get('mood') is not None:
+            continue
+        stage = _stage(record, 'mood')
+        if stage and stage.summary:
+            for label, value in zip(stage.summary.labels, stage.summary.mean):
+                if _finite_number(value) and label not in labels:
+                    labels.append(label)
+    return tuple(sorted(labels))
+
+
+def _resolve_mood(requested, available):
+    if not available:
+        raise ValueError('No supported mood labels are available')
+    if requested is None or requested == '':
+        return available[0]
+    folded = str(requested).strip().lower().replace('_', ' ').replace('-', ' ')
+    aliases = {label.lower().replace('_', ' ').replace('-', ' '): label for label in available}
+    if folded not in aliases:
+        raise ValueError('Unsupported mood label ' + str(requested) + '; available: ' + ', '.join(available))
+    return aliases[folded]
+
+
+def _axis_node(record, detail, selected_mood):
+    reasons = []
+    energy = _summary_map(record, 'energy', reasons)
+    mood = _summary_map(record, 'mood', reasons)
+    if dict(record.overrides).get('energy') is not None:
+        reasons.append('energy: unresolved manual text override')
+    if dict(record.overrides).get('mood') is not None:
+        reasons.append('mood: unresolved manual text override')
+    valence = energy.get('valence') if energy else None
+    arousal = energy.get('arousal') if energy else None
+    z = mood.get(selected_mood) if mood else None
+    if not _finite_number(valence): reasons.append('energy: missing valence')
+    if not _finite_number(arousal): reasons.append('energy: missing arousal')
+    if mood is not None and not any(value != 0 for value in mood.values()): reasons.append('mood: zero vector is missing usable evidence')
+    if not _finite_number(z): reasons.append('mood: missing selected label ' + selected_mood)
+    if reasons:
+        return None, _uniq(reasons)
+    energy_prov = _stage(record, 'energy').provenance
+    mood_prov = _stage(record, 'mood').provenance
+    return MoodAxisNode(
+        record.track_id,
+        record.display_label,
+        AxisValue('valence', float(valence), _norm01(float(valence)), 'model-fixed-[0,1]->[-1,1]', energy_prov),
+        AxisValue('arousal', float(arousal), _norm01(float(arousal)), 'model-fixed-[0,1]->[-1,1]', energy_prov),
+        AxisValue(selected_mood, float(z), _norm01(float(z)), 'model-fixed-[0,1]->[-1,1]', mood_prov),
+        _bpm(record),
+        tuple(sorted((_summary_map(record, 'genres', []) or {}).items())),
+        detail.reasons,
+    ), ()
+
+
+def _axis_edges(records, positioned_ids, k):
+    features = tuple(_features(record) for record in records if record.track_id in positioned_ids)
+    proposals = []
+    for i, a in enumerate(features):
+        for b in features[i + 1:]:
+            distance = symmetric_feature_distance(a, b)
+            if distance.distance is None:
+                continue
+            proposals.append((distance.distance, a.track_id, b.track_id, distance.supported_group_count, tuple(distance.group_distances)))
+    degree = {track.track_id: 0 for track in features}
+    edges = []
+    for distance, a, b, count, groups in sorted(proposals):
+        if degree[a] < k and degree[b] < k:
+            degree[a] += 1; degree[b] += 1
+            edges.append(MoodAxisEdge(a, b, round(1.0 - distance, 6), 'axis-independent relatedness from existing stored summaries; groups=' + ','.join(groups), {'policy': DISTANCE_POLICY_VERSION, 'neighbour_policy': NEIGHBOUR_POLICY_VERSION}, count))
+    return tuple(edges)
+
+
+def _passes_filters(node, bpm_min, bpm_max, genres):
+    if not genres:
+        if bpm_min is not None and (node.bpm is None or node.bpm < float(bpm_min)):
+            return False
+        if bpm_max is not None and (node.bpm is None or node.bpm > float(bpm_max)):
+            return False
+    if genres:
+        scores = dict(node.genres)
+        threshold = 0.5
+        return any(scores.get(genre, -1.0) >= threshold for genre in genres)
+    return True
+
+
+def _stage(record, field):
+    if not record.run:
+        return None
+    for stage in record.run.stages:
+        if stage.stage == field:
+            return stage
+    return None
+
+
+def _summary_map(record, field, reasons):
+    if dict(record.overrides).get(field) is not None:
+        return None
+    stage = _stage(record, field)
+    if stage is None or stage.summary is None:
+        return None
+    values = {}
+    for label, value in zip(stage.summary.labels, stage.summary.mean):
+        if _finite_number(value):
+            values[str(label)] = float(value)
+    return values or None
+
+
+def _bpm(record):
+    if dict(record.overrides).get('bpm') is not None:
+        return None
+    stage = _stage(record, 'bpm')
+    if stage is None:
+        return None
+    for key, value in stage.values:
+        if key == 'bpm' and _finite_number(value) and float(value) > 0:
+            return float(value)
+    return None
+
+
+def _finite_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+
+
+def _norm01(value):
+    return round(max(-1.0, min(1.0, value * 2.0 - 1.0)), 12)
+
+
+def _uniq(items):
+    out = []
+    for item in items:
+        if item and item not in out:
+            out.append(item)
+    return tuple(out)

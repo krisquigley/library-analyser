@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import json
+from math import isfinite
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from importlib import resources
@@ -10,7 +11,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from music_analyzer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_analyzer.application.use_cases.candidates import SelectExplorerCandidates
-from music_analyzer.application.use_cases.explorer import GetExplorerTrackDetail, ListExplorerTracks
+from music_analyzer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks
 from music_analyzer.application.use_cases.projection_artifacts import _build_artifact
 from music_analyzer.domain.projection import ProjectionParameters
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
@@ -81,8 +82,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             path = parsed.path
             if path == '/':
                 return self._asset('index.html', 'text/html; charset=utf-8')
-            if path in {'/app.js', '/style.css'}:
-                return self._asset(path[1:], 'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
+            if path in {'/app.js', '/style.css', '/vendor/3d-force-graph/3d-force-graph.min.js', '/vendor/3d-force-graph/NOTICE'}:
+                return self._asset(path[1:], 'text/javascript; charset=utf-8' if path.endswith('.js') else ('text/plain; charset=utf-8' if path.endswith('NOTICE') else 'text/css; charset=utf-8'))
             if path == '/api/state':
                 return self._json({'current_track_id': state.current_track_id, 'history': list(state.history)})
             if path == '/api/tracks':
@@ -106,6 +107,14 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path == '/api/projection':
                 artifact = _build_artifact(repository, ProjectionParameters(10, False), None)
                 return self._json(_to_json({'policy_versions': artifact['policy_versions'], 'tracks': artifact['tracks'], 'edges': artifact['edges']}))
+            if path == '/api/mood-axis-graph':
+                query = parse_qs(parsed.query)
+                mood = query.get('mood', [None])[0]
+                graph = BuildMoodAxisGraph(repository).execute(mood)
+                bpm_min = _optional_float(query.get('bpm_min', [None])[0])
+                bpm_max = _optional_float(query.get('bpm_max', [None])[0])
+                genres = tuple(g for value in query.get('genre', ()) for g in value.split(',') if g)
+                return self._json(_to_json(FilterMoodAxisGraph().execute(graph, bpm_min, bpm_max, genres)))
             return self._json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
 
         def _route_post(self):
@@ -137,7 +146,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             return data
 
         def _asset(self, name, content_type):
-            if name not in {'index.html', 'app.js', 'style.css'}:
+            if name not in {'index.html', 'app.js', 'style.css', 'vendor/3d-force-graph/3d-force-graph.min.js', 'vendor/3d-force-graph/NOTICE'}:
                 return self._json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
             text = resources.files('music_analyzer.frameworks.explorer.assets').joinpath(name).read_text(encoding='utf-8')
             payload = text.encode('utf-8')
@@ -194,3 +203,15 @@ def _to_json(value):
     if isinstance(value, list):
         return [_to_json(item) for item in value]
     return value
+
+
+def _optional_float(value):
+    if value in (None, ''):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError('Filter bound must be finite')
+    if not isfinite(number):
+        raise ValueError('Filter bound must be finite')
+    return number
