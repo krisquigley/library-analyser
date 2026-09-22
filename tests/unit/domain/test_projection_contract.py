@@ -88,6 +88,50 @@ class ProjectionContractTests(unittest.TestCase):
         self.assertEqual(point.missing_groups, ())
         self.assertEqual(projection.edges, ())
 
+    def test_zero_mood_vector_is_not_projection_evidence_without_anchors(self):
+        track = features('zero-mood', mood=(('calm', 0.0), ('happy', 0.0)))
+        projection = project_tracks((track,), fit_projection_transform((track,), ProjectionParameters(k=1)))
+        point = projection.points[0]
+
+        self.assertEqual(point.layout_state, 'missing')
+        self.assertIsNone(point.x)
+        self.assertIsNone(point.y)
+        self.assertIn('mood', point.missing_groups)
+        self.assertIn('mood: zero vector is missing usable evidence', point.missing_reasons)
+        self.assertEqual(projection.edges, ())
+
+    def test_constant_nonzero_mood_vector_remains_degenerate_projection_evidence(self):
+        tracks = (
+            features('a', mood=(('calm', 0.5), ('happy', 0.5))),
+            features('b', mood=(('calm', 0.5), ('happy', 0.5))),
+        )
+        projection = project_tracks(tracks, fit_projection_transform(tracks, ProjectionParameters(k=1)))
+
+        by_id = {point.track_id: point for point in projection.points}
+        for track_id in ('a', 'b'):
+            self.assertEqual(by_id[track_id].layout_state, 'degenerate')
+            self.assertEqual((by_id[track_id].x, by_id[track_id].y), (0.0, 0.0))
+            self.assertEqual(by_id[track_id].missing_groups, ())
+            self.assertEqual(by_id[track_id].missing_reasons, ())
+        self.assertEqual(_edge_ids(projection.edges), {('a', 'b')})
+
+    def test_mixed_zero_and_nonzero_mood_only_tracks_do_not_hide_missing_zero_vector(self):
+        tracks = (
+            features('nonzero', mood=(('calm', 1.0), ('happy', 0.0))),
+            features('zero', mood=(('calm', 0.0), ('happy', 0.0))),
+        )
+        projection = project_tracks(tracks, fit_projection_transform(tracks, ProjectionParameters(k=1)))
+        by_id = {point.track_id: point for point in projection.points}
+
+        self.assertEqual(by_id['nonzero'].layout_state, 'degenerate')
+        self.assertEqual((by_id['nonzero'].x, by_id['nonzero'].y), (0.0, 0.0))
+        self.assertEqual(by_id['nonzero'].missing_groups, ())
+        self.assertEqual(by_id['zero'].layout_state, 'missing')
+        self.assertIsNone(by_id['zero'].x)
+        self.assertIsNone(by_id['zero'].y)
+        self.assertIn('mood: zero vector is missing usable evidence', by_id['zero'].missing_reasons)
+        self.assertEqual(projection.edges, ())
+
     def test_genuinely_missing_track_stays_isolated_when_transform_has_no_anchors(self):
         projection = project_tracks((features('missing'),), fit_projection_transform((features('missing'),), ProjectionParameters(k=1)))
         point = projection.points[0]

@@ -329,7 +329,7 @@ def _missing_groups(track, transform):
     for group, anchor in transform.anchors.items():
         scalar = _scalar(track, group)
         if scalar is None:
-            missing.append(group + ': missing usable evidence')
+            missing.append(_missing_group_reason(track, group))
         elif group in {'mood', 'genre'}:
             field = 'genres' if group == 'genre' else group
             if _metadata(track, field) != anchor.metadata:
@@ -342,7 +342,16 @@ def _has_projection_evidence(track):
 
 
 def _missing_projection_evidence(track):
-    return tuple(group + ': missing usable evidence' for group in ('tempo', 'energy', 'mood', 'genre', 'harmony') if _scalar(track, group) is None)
+    return tuple(_missing_group_reason(track, group) for group in ('tempo', 'energy', 'mood', 'genre', 'harmony') if _scalar(track, group) is None)
+
+
+def _missing_group_reason(track, group):
+    if group in {'mood', 'genre'}:
+        field = 'genres' if group == 'genre' else group
+        values = _summary(track, field)
+        if values and not any(value != 0 for value in values.values()):
+            return group + ': zero vector is missing usable evidence'
+    return group + ': missing usable evidence'
 
 
 def _anchor_contribution(track, group, anchor):
@@ -406,7 +415,9 @@ def _scalar(track, group):
         return values.get('arousal') if values and 'arousal' in values else None
     if group == 'mood':
         values = _summary(track, 'mood')
-        return values[sorted(values)[0]] if values else None
+        if values and any(v != 0 for v in values.values()):
+            return values[sorted(values)[0]]
+        return None
     if group == 'genre':
         values = _summary(track, 'genres')
         if values and any(v != 0 for v in values.values()):
