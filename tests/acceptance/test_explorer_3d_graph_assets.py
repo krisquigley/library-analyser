@@ -139,10 +139,40 @@ const summaryField = {
   effective_source: 'automatic'
 };
 assert.deepStrictEqual(app.fieldDisplay(summaryField), [['arousal', 0.2], ['valence', 0.7]]);
-assert.strictEqual(app.fieldDisplay({manual_text: 'human says fast', automatic: {values: [['bpm', 128]]}, effective_source: 'manual_text'}), 'manual_text');
+assert.deepStrictEqual(app.fieldDisplay({manual_text: 'human says fast', automatic: {values: [['bpm', 128]]}, effective_source: 'manual_text'}), [['bpm', 128]]);
 assert.strictEqual(app.fieldDisplay({automatic: {values: []}, effective_source: 'missing'}), 'missing');
 assert.deepStrictEqual(app.fieldDisplay({automatic: {values: [['bpm', 120]], summary_values: [['ignored', 1]]}, effective_source: 'automatic'}), [['bpm', 120]]);
+
+const fs = require('fs');
+const vm = require('vm');
+const context = {module:{exports:{}}, console};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function element(tag){
+  return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};
+}
+const detail = element('section');
+context.document = {createElement: element, getElementById(id){assert.strictEqual(id, 'detail'); return detail;}};
+context.renderDetail({
+  handle: 'track-1', display_label: 'Manual Override Track', latest_run_status: 'completed', available_locations: 1, reasons: [],
+  fields: {
+    bpm: {manual_text: 'human says fast', automatic: {values: [['bpm', 128]]}, effective_source: 'manual_text'},
+    energy: summaryField,
+    key: {automatic: {values: [['key', 'C major']], summary_values: [['ignored', 1]]}, effective_source: 'automatic'},
+    missing: {automatic: {values: []}, effective_source: 'missing'}
+  }
+});
+const renderedFields = detail.children[3].children.map(node => node.textContent);
+assert(renderedFields.includes('bpm: human says fast'));
+assert(!renderedFields.some(line => line.includes('bpm: [["bpm",128]]')));
+assert(renderedFields.includes('energy: [["arousal",0.2],["valence",0.7]]'));
+assert(renderedFields.includes('key: [["key","C major"]]'));
+assert(renderedFields.includes('missing: "missing"'));
 assert.deepStrictEqual(app.graphDimensions({clientWidth: 1374, clientHeight: 520, parentElement: {clientWidth: 734}}), {width: 734, height: 520});
+const parentStyle = {paddingLeft:'16px', paddingRight:'16px', borderLeftWidth:'1px', borderRightWidth:'1px'};
+global.getComputedStyle = elem => elem.computedStyle || {paddingLeft:'0px', paddingRight:'0px', borderLeftWidth:'0px', borderRightWidth:'0px'};
+assert.deepStrictEqual(app.graphDimensions({clientWidth: 1374, clientHeight: 520, parentElement: {clientWidth: 768, computedStyle: parentStyle}}), {width: 734, height: 520});
+assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520, parentElement: {clientWidth: 568, computedStyle: parentStyle}}), {width: 534, height: 520});
 """;
         if shutil.which('node'):
             subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
