@@ -96,12 +96,15 @@ const payload = {selected_mood:'relaxing', available_moods:['relaxing','heavy'],
 const model = graph.buildMoodGraphModel(payload);
 assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
 assert(model.nodes.every(n => Math.abs(n.x) > 1), 'render coordinates are scaled for browser visibility');
+assert.strictEqual(model.nodes[0].x, model.nodes[0].axis.x.normalized * 180, 'X display spacing remains unchanged');
+assert.strictEqual(model.nodes[0].fx, model.nodes[0].x, 'fixed X coordinate matches displayed X');
+assert.strictEqual(model.nodes[0].y, model.nodes[0].axis.y.normalized * 180, 'Y display spacing is unchanged');
 const before = new Map(model.nodes.map(n => [n.id, JSON.stringify([n.x,n.y,n.z,n.fx,n.fy,n.fz])]));
 for (const node of model.nodes) {
-  assert.strictEqual(node.z, node.axis.z.normalized * 720, 'fixed BPM depth should retain four times the X/Y display scale');
+  assert.strictEqual(node.z, node.axis.z.normalized * 360, 'fixed BPM depth is half its previous display scale');
   assert.strictEqual(node.fz, node.z, 'fixed simulation depth must match displayed depth');
 }
-assert.strictEqual(model.nodes[1].z-model.nodes[0].z, 360, '10 BPM must be visually substantial');
+assert.strictEqual(model.nodes[1].z-model.nodes[0].z, 180, '10 BPM retains visible depth at half scale');
 const other = graph.buildMoodGraphModel({...payload,selected_mood:'heavy',positioned:payload.positioned.map(n=>({...n,mood_score:{label:'heavy',raw:0.5,normalized:0.5}}))});
 assert.deepStrictEqual(other.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]),model.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]));
 assert.deepStrictEqual(graph.graphCameraFrame(other.nodes,{width:900,height:700},50),graph.graphCameraFrame(model.nodes,{width:900,height:700},50));
@@ -149,6 +152,23 @@ const point = (id,v,a,z) => ({track_id:id,display_label:id,x:{raw:v,normalized:v
 const positioned = [point('low',-2,10,0.1),point('high',3,30,0.8),point('middle',0.5,20,0.4)];
 const model = app.buildMoodGraphModel({positioned,selected_mood:'calm'});
 assert.deepStrictEqual(model.colorRanges, {valence:[-2,3],arousal:[10,30]});
+assert.strictEqual(app.displayNumber(0.05),'0.1');
+assert.strictEqual(app.displayNumber(-0.05),'-0.1');
+assert.strictEqual(app.displayNumber(128),'128.0');
+assert.strictEqual(app.displayNumber(Infinity),'Infinity');
+const raw = {nodes:[{id:'one',label:'Track',moodScore:{label:'calm',raw:0.151},axis:{x:{raw:-2.46,scale:'native'},y:{raw:3.35,scale:'native'},z:{raw:128.05,label:'BPM',scale:'raw'}}}]};
+const strip = app.buildMoodStrip(raw,'one');
+assert.strictEqual(strip[0].position,0.151);
+assert.strictEqual(strip[0].score,0.151);
+assert(strip[0].description.includes('0.2 / 1'));
+assert(app.nodeLabel(raw.nodes[0]).includes('valence -2.5 (native)'));
+assert(app.nodeLabel(raw.nodes[0]).includes('arousal 3.4 (native)'));
+assert(app.nodeLabel(raw.nodes[0]).includes('BPM 128.1 (raw)'));
+assert(app.nodeLabel(raw.nodes[0]).includes('calm 0.2 / 1'));
+assert.strictEqual(raw.nodes[0].moodScore.raw,0.151);
+assert.deepStrictEqual(app.graphAxisSpec([{x:36,y:54,z:4320},{x:126,y:90,z:4608}]).map(a=>a.references),[['0.2','0.7'],['0.3','0.5'],['120.0','128.0']]);
+
+assert.strictEqual(app.graphColorLegend({colorRanges:{valence:[-2.46,3.35],arousal:[10.01,30.08]}}).includes('-2.5 to 3.4'),true);
 assert.strictEqual(model.nodes[0].color, app.moodNodeColor(0,0));
 assert.strictEqual(model.nodes[1].color, app.moodNodeColor(1,1));
 assert.strictEqual(model.nodes[2].color, app.moodNodeColor(0.5,0.5));
@@ -166,13 +186,14 @@ const flat = app.buildMoodGraphModel({positioned:[point('one',7,-5,0),point('two
 assert.deepStrictEqual(flat.colorRanges,{valence:[7,7],arousal:[-5,-5]});
 assert(flat.nodes.every(n=>n.color===app.moodNodeColor(0.5,0.5)));
 assert(app.graphColorLegend(model).includes('relative to this library'));
-assert(app.graphColorLegend(model).includes('-2 to 3'));
-assert(app.graphColorLegend(model).includes('10 to 30'));
+assert(app.graphColorLegend(model).includes('-2.0 to 3.0'));
+assert(app.graphColorLegend(model).includes('10.0 to 30.0'));
 assert(app.graphColorLegend(model).includes('blue'));
 assert(app.graphColorLegend(model).includes('bright'));
 const context = {module:{exports:{}},console,URLSearchParams};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context);
+assert.strictEqual(context.linkLabel({score:0.151,explanation:'related',supportedGroupCount:3}),'score 0.2; related; groups 3');
 let color, size, info={textContent:''};
 const graph = new Proxy({}, {get(_,key){
  if(key==='nodeColor') return callback=>{color=callback;return graph};
@@ -188,7 +209,7 @@ context.renderMap(model);
 assert.strictEqual(color(model.nodes[0]),model.nodes[0].color,'selection must not replace color');
 assert(size(model.nodes[0])>size(model.nodes[1]),'selection should be larger');
 assert(info.textContent.includes('relative to this library'));
-assert(info.textContent.includes('-2 to 3'));
+assert(info.textContent.includes('-2.0 to 3.0'));
 vm.runInContext("selectedGraphControls={mood:'heavy',bpmMin:100,bpmMax:140,genres:['jazz']}",context);
 assert.strictEqual(context.graphQueryFromControls(),'?mood=heavy','fetch full mood library before local filtering');
 """
@@ -251,45 +272,85 @@ assert.strictEqual(calls.length,3,'changed layout reframes');
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+    def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
+        style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
+        self.assertIn('#detail .score-gauge{position:relative;width:39px;height:39px;', style)
+        self.assertIn('@media(max-width:700px){#detail .score-gauge{width:34px;height:34px}', style)
+        self.assertNotIn('.score-tick', style)
+
     def test_vanilla_js_detail_renderer_reads_nested_automatic_summary_values(self):
         script = r"""
 const assert = require('assert');
 const app = require(process.argv[1]);
-const summaryField = {
-  automatic: {summary_values: [['arousal', 0.2], ['valence', 0.7]], values: []},
-  effective_source: 'automatic'
-};
-assert.deepStrictEqual(app.fieldDisplay(summaryField), [['arousal', 0.2], ['valence', 0.7]]);
-assert.deepStrictEqual(app.fieldDisplay({manual_text: 'human says fast', automatic: {values: [['bpm', 128]]}, effective_source: 'manual_text'}), [['bpm', 128]]);
-assert.strictEqual(app.fieldDisplay({automatic: {values: []}, effective_source: 'missing'}), 'missing');
-assert.deepStrictEqual(app.fieldDisplay({automatic: {values: [['bpm', 120]], summary_values: [['ignored', 1]]}, effective_source: 'automatic'}), [['bpm', 120]]);
-
 const fs = require('fs');
 const vm = require('vm');
 const context = {module:{exports:{}}, console};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 function element(tag){
-  return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};
+  return {tag, textContent:'', className:'', style:{}, setAttribute(){}, children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};
 }
 const detail = element('section');
 context.document = {createElement: element, getElementById(id){assert.strictEqual(id, 'detail'); return detail;}};
-context.renderDetail({
-  handle: 'track-1', display_label: 'Manual Override Track', latest_run_status: 'completed', available_locations: 1, reasons: [],
-  fields: {
-    bpm: {manual_text: 'human says fast', automatic: {values: [['bpm', 128]]}, effective_source: 'manual_text'},
-    energy: summaryField,
-    key: {automatic: {values: [['key', 'C major']], summary_values: [['ignored', 1]]}, effective_source: 'automatic'},
-    missing: {automatic: {values: []}, effective_source: 'missing'}
-  }
+const auto = (pairs, provenance=[], key='summary_values') => ({automatic:{values:[],summary_values:[],provenance,[key]:pairs},effective_source:'automatic'});
+const render = fields => context.renderDetail({handle:'track-1', display_label:'<track>',latest_run_status:'failed',available_locations:1,reasons:['evidence pending'], fields});
+const all = node => [node,...node.children.flatMap(all)];
+const nodes = () => all(detail);
+const gauges = () => nodes().filter(n => n.className==='score-gauge');
+render({
+  genres:auto([['low',0.1],['mid',0.5],['high',1],['tie',1],['bad',Infinity],['out',1.1]], [['genre_discogs400-discogs-effnet-1','hash'],['threshold','0.5']]),
+  mood:auto([['zero',0],['middle',0.5],['above',0.8],['invalid',-0.3]], [['mtg_jamendo_moodtheme-discogs-effnet-1','hash']]),
+  energy:auto([['arousal',3.7],['valence',-0.6]], [['emomusic-msd-musicnn-2','hash']]),
+  bpm:{automatic:{values:[['bpm',128]]},effective_source:'automatic'},
+  key:{automatic:{values:[['key','C major']]},effective_source:'automatic'},
+  instruments:auto([['guitar',0.9],['piano',0.1],['drums',0.2]], [['mtg_jamendo_instrument-discogs-effnet-1','hash']]),
+  absent:{automatic:{values:[]},effective_source:'missing',missing_reason:'stage absent'}
 });
-assert(detail.children[2].textContent.startsWith('Selected mood score:'), 'selected score belongs near the title, ahead of verbose fields');
-const renderedFields = detail.children[4].children.map(node => node.textContent);
-assert(renderedFields.includes('bpm: human says fast'));
-assert(!renderedFields.some(line => line.includes('bpm: [["bpm",128]]')));
-assert(renderedFields.includes('energy: [["arousal",0.2],["valence",0.7]]'));
-assert(renderedFields.includes('key: [["key","C major"]]'));
-assert(renderedFields.includes('missing: "missing"'));
+assert(detail.children[2].textContent.startsWith('Selected mood score:'), 'selected score stays near title');
+let rendered = nodes().map(n => n.textContent).join(' ');
+assert(rendered.includes('Status: failed') && rendered.includes('evidence pending'));
+assert(rendered.includes('mid') && rendered.includes('high') && rendered.includes('tie') && !rendered.includes('low') && !rendered.includes('out'));
+assert(rendered.includes('middle') && rendered.includes('above') && !rendered.includes('zero'));
+assert(rendered.includes('guitar') && rendered.includes('drums') && !rendered.includes('piano'));
+assert(nodes().some(n=>n.className==='score-row' && n.children[0].textContent==='guitar'));
+assert(!nodes().some(n=>n.className==='score-row' && n.children[0].textContent.includes(' / 1')));
+assert(rendered.includes('native') && rendered.includes('3.7') && rendered.includes('-0.6'));
+assert(rendered.includes('128') && rendered.includes('C major') && rendered.includes('no usable evidence') && rendered.includes('stage absent'));
+assert(rendered.includes('display scores > 0.1') && rendered.includes('not probabilities'));
+assert(!rendered.includes('stage threshold'));
+assert(!rendered.includes('Infinity'));
+assert.strictEqual(gauges().length,7);
+assert(gauges().every(g=>g.tag==='div' && g.children.some(n=>n.className==='score-arc') && g.children.some(n=>n.className==='score-hub')));
+assert(nodes().some(n=>n.textContent==='128.0 BPM (raw)'));
+
+assert.deepStrictEqual(gauges().map(g => g.children.find(n => n.className==='score-needle').style.transform), ['rotate(120deg)','rotate(120deg)','rotate(0deg)','rotate(72deg)','rotate(0deg)','rotate(96deg)','rotate(-72deg)']);
+assert(gauges().every(g => !g.children.some(n => n.className.startsWith('score-tick'))));
+assert(gauges().every(g => !g.children.some(n => n.className==='score-threshold')));
+render({genres:auto([['under',0.099],['at',0.1],['top',1],['just-above',0.1001],['round-up',0.05]], [['genre_discogs400-discogs-effnet-1','hash'],['threshold','0.7']]), mood:auto([['x',0.9]], [['unknown','hash']])});
+rendered = nodes().map(n => n.textContent).join(' ');
+assert(!rendered.includes('under:') && !rendered.includes('at:') && nodes().some(n=>n.className==='score-row' && n.children[0].textContent==='just-above') && rendered.includes('no usable evidence'));
+assert.strictEqual(gauges().length,2);
+render({genres:auto([['wrong-model',0.95]], [['model','other'],['genre_discogs400-discogs-effnet-1','hash']])});
+assert.strictEqual(gauges().length,0);
+assert(nodes().some(n => n.textContent.includes('no usable evidence')));
+render({mood:auto([['wrong-scale',0.8]], [['mtg_jamendo_moodtheme-discogs-effnet-1','hash'],['scale','native_valence_arousal_regression']]),instruments:auto([['wrong',0.7]], [['mtg_jamendo_instrument-discogs-effnet-1','hash'],['model','other']]),energy:auto([['arousal',3.7]], [['emomusic-msd-musicnn-2','hash'],['scale','sigmoid_mean_score_0_1']])});
+assert.strictEqual(gauges().length,0);
+assert(!nodes().some(n=>n.textContent==='arousal: 3.7'));
+render({instruments:auto([['wrong',0.7]], [['unsupported','hash']]),mood:auto([['finite',0.2]], [['mtg_jamendo_moodtheme-discogs-effnet-1','hash']])});
+assert.strictEqual(gauges().length,1);
+assert(!nodes().some(n=>n.textContent==='wrong'));
+render({genres:{...auto([['automatic',1]], [['genre_discogs400-discogs-effnet-1','hash']]),manual_text:'<script>chosen</script>',effective_source:'manual_text',typed_override_status:'unresolved'},mood:auto([['tiny',0.2]], [['mtg_jamendo_moodtheme-discogs-effnet-1','hash'],['scale','sigmoid_mean_score_0_1']])});
+rendered = nodes().map(n => n.textContent).join(' ');
+assert(rendered.includes('<script>chosen</script>') && rendered.includes('unresolved') && !rendered.includes('automatic: 1'));
+assert(nodes().some(n=>n.className==='score-row' && n.children[0].textContent==='tiny') && rendered.includes('display scores > 0.1'));
+assert.strictEqual(gauges().length,1);
+render({genres:auto([['zero',0],['half',0.5],['one',1]], [['genre_discogs400-discogs-effnet-1','hash'],['threshold','0']])});
+assert.deepStrictEqual(gauges().map(g => g.children.find(n => n.className==='score-needle').style.transform), ['rotate(120deg)','rotate(0deg)']);
+render({genres:auto(Array.from({length:15},(_,i)=>['label'+i,0.9]), [['genre_discogs400-discogs-effnet-1','hash']])});
+assert.strictEqual(gauges().length,12);
+assert(nodes().some(n => n.textContent.includes('3 more significant labels not shown')));
+assert.strictEqual(context.detailGauge('zero',0,0.1).children.find(n=>n.className==='score-gauge').children.find(n=>n.className==='score-needle').style.transform,'rotate(-120deg)');
+assert.strictEqual(context.detailGauge('half',0.5,0.1).children.find(n=>n.className==='score-gauge').children.find(n=>n.className==='score-needle').style.transform,'rotate(0deg)');
 assert.deepStrictEqual(app.graphDimensions({clientWidth: 1374, clientHeight: 520, parentElement: {clientWidth: 734}}), {width: 734, height: 520});
 assert.deepStrictEqual(app.graphDimensions({clientWidth: 900, clientHeight: 0}), {width: 900, height: 1040});
 const parentStyle = {paddingLeft:'16px', paddingRight:'16px', borderLeftWidth:'1px', borderRightWidth:'1px'};

@@ -54,7 +54,7 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     for key in ('ids', 'positions', 'edges', 'camera', 'layout'):
                         self.assertEqual(before[key], after[key], key)
                     self.assertNotEqual(before['score'], after['score'])
-                    self.assertEqual(after['positions'][1][2] - after['positions'][0][2], 288)
+                    self.assertEqual(after['positions'][1][2] - after['positions'][0][2], 144)
                     self.assertEqual(after['strip'][0]['score'], 0.2)
                     self.assertTrue(all(url.startswith(f'http://127.0.0.1:{server.server_port}/') for url in requests))
                     self.assertEqual(page.url, f'http://127.0.0.1:{server.server_port}/')

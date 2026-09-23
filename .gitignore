@@ -5,4 +5,5 @@ build/
 dist/
 .venv/
 # User-supplied, read-only private pilot audio must never be committed.
-/music/
+/*music/
+
