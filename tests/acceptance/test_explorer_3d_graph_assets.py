@@ -96,12 +96,15 @@ const payload = {selected_mood:'relaxing', available_moods:['relaxing','heavy'],
 const model = graph.buildMoodGraphModel(payload);
 assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
 assert(model.nodes.every(n => Math.abs(n.x) > 1), 'render coordinates are scaled for browser visibility');
+assert.strictEqual(model.nodes[0].x, model.nodes[0].axis.x.normalized * 180, 'X display spacing remains unchanged');
+assert.strictEqual(model.nodes[0].fx, model.nodes[0].x, 'fixed X coordinate matches displayed X');
+assert.strictEqual(model.nodes[0].y, model.nodes[0].axis.y.normalized * 180, 'Y display spacing is unchanged');
 const before = new Map(model.nodes.map(n => [n.id, JSON.stringify([n.x,n.y,n.z,n.fx,n.fy,n.fz])]));
 for (const node of model.nodes) {
-  assert.strictEqual(node.z, node.axis.z.normalized * 720, 'fixed BPM depth should retain four times the X/Y display scale');
+  assert.strictEqual(node.z, node.axis.z.normalized * 360, 'fixed BPM depth is half its previous display scale');
   assert.strictEqual(node.fz, node.z, 'fixed simulation depth must match displayed depth');
 }
-assert.strictEqual(model.nodes[1].z-model.nodes[0].z, 360, '10 BPM must be visually substantial');
+assert.strictEqual(model.nodes[1].z-model.nodes[0].z, 180, '10 BPM retains visible depth at half scale');
 const other = graph.buildMoodGraphModel({...payload,selected_mood:'heavy',positioned:payload.positioned.map(n=>({...n,mood_score:{label:'heavy',raw:0.5,normalized:0.5}}))});
 assert.deepStrictEqual(other.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]),model.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]));
 assert.deepStrictEqual(graph.graphCameraFrame(other.nodes,{width:900,height:700},50),graph.graphCameraFrame(model.nodes,{width:900,height:700},50));
