@@ -106,6 +106,56 @@ class ExplorerTrackDetail:
 
 
 @dataclass(frozen=True)
+class AxisValue:
+    label: str
+    raw: float
+    normalized: float
+    scale: str
+    provenance: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class MoodAxisNode:
+    track_id: str
+    display_label: str
+    x: AxisValue
+    y: AxisValue
+    z: AxisValue
+    bpm: float | None
+    genres: tuple[tuple[str, float], ...]
+    reasons: tuple[str, ...] = ()
+    genre_threshold: float = 0.5
+    mood_score: AxisValue | None = None
+
+
+@dataclass(frozen=True)
+class UnpositionedTrack:
+    track_id: str
+    display_label: str
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MoodAxisEdge:
+    a: str
+    b: str
+    score: float
+    explanation: str
+    provenance: Mapping[str, str]
+    supported_group_count: int
+
+
+@dataclass(frozen=True)
+class MoodAxisGraph:
+    metadata: Mapping[str, object]
+    selected_mood: str
+    available_moods: tuple[str, ...]
+    positioned: tuple[MoodAxisNode, ...]
+    unpositioned: tuple[UnpositionedTrack, ...]
+    edges: tuple[MoodAxisEdge, ...]
+
+
+@dataclass(frozen=True)
 class ExplorerSnapshot:
     metadata: ExplorerMetadata
     tracks: tuple[ExplorerTrackDetail, ...]

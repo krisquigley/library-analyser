@@ -1,0 +1,12 @@
+Bundled runtime dependency for the offline localhost explorer graph.
+
+Package: 3d-force-graph
+Version: 1.80.0
+Source: https://www.npmjs.com/package/3d-force-graph / https://github.com/vasturiano/3d-force-graph
+License: MIT
+
+This minified browser bundle is served locally from package data so the personal
+explorer does not make CDN/runtime network calls. The bundle includes its own
+runtime dependencies from the upstream browser distribution, including Three.js
+(MIT) and helper packages used by 3d-force-graph. Preserve upstream copyright
+and license notices when redistributing.

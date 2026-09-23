@@ -1,36 +1,155 @@
 const controls=['tempo','harmony','energy','genre','mood'];
 let state={current_track_id:null};
-let graphModel={nodes:[],edges:[]};
-let visibleGraph={nodes:[],edges:[]};
-let camera={yaw:-0.65,pitch:0.35,distance:4.2,panX:0,panY:0};
-let drag=null;
+let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
+let visibleGraph={nodes:[],links:[],unpositioned:[]};
+let forceGraph=null;
+let framedGraphLayout=null;
+let renderedGraphSignature=null;
+let graphResizeObserver=null;
+let graphAxes=null;
+let graphAxesAnimating=false;
+let pendingGraphAxisSpec=[];
+let selectedGraphControls={mood:'',bpmMin:null,bpmMax:null,genres:[]};
 function text(el,value){el.textContent=value==null?'':String(value);return el;}
 async function api(path, options){const r=await fetch(path, options); if(!r.ok) throw new Error(await r.text()); return r.json();}
 function selectedControls(){const out={}; for(const n of controls){const el=document.querySelector(`[name=${n}]:checked`); out[n]=el?el.value:'off';} return out;}
 function controlQuery(){return controls.map(n=>{const mode=(selectedControls()[n]||'off'); return `control=${encodeURIComponent(`${n}:${mode}:1`)}`;}).join('&');}
 async function setCurrent(id){state=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id})}); await refresh();}
-async function refresh(){state=await api('/api/state'); const list=await api('/api/tracks?limit=all'); renderTracks(list.tracks); const projection=await api('/api/projection'); graphModel=buildGraphModel(list.tracks, projection); visibleGraph=applyGraphFilters(graphModel, selectedControls()); renderMap(visibleGraph); if(state.current_track_id){renderDetail(await api('/api/tracks/'+encodeURIComponent(state.current_track_id))); renderCandidates(await api('/api/candidates?'+controlQuery()));} else {renderInitialDetail(graphModel); renderCandidates({candidates:[]});}}
+function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGraphControls.mood) p.set('mood',selectedGraphControls.mood); const q=p.toString(); return q?'?'+q:'';}
+async function refresh(){state=await api('/api/state'); const list=await api('/api/tracks?limit=all'); renderTracks(list.tracks); const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); renderMap(visibleGraph); if(state.current_track_id){renderDetail(await api('/api/tracks/'+encodeURIComponent(state.current_track_id))); renderCandidates(await api('/api/candidates?'+controlQuery()));} else {renderInitialDetail(graphModel); renderCandidates({candidates:[]});}}
 function renderTracks(tracks){const ul=document.getElementById('tracks'); ul.replaceChildren(...tracks.map(t=>{const li=document.createElement('li'); li.className=t.handle===state.current_track_id?'current':''; const b=document.createElement('button'); text(b,t.display_label||t.handle); b.onclick=()=>setCurrent(t.handle); li.append(b); return li;}));}
-function renderInitialDetail(model){const root=document.getElementById('detail'); const h=document.createElement('h3'); text(h,'All-library 3D graph'); const p=document.createElement('p'); text(p,`Showing ${visibleGraph.nodes.length} of ${model.nodes.length} tracks. No starting track is selected; anchor-relative candidate controls apply only after you select a track.`); const help=document.createElement('p'); help.className='muted'; text(help,'Drag to orbit, Shift-drag/right-drag to pan, wheel to zoom. Click a node for details and optional candidate context. Missing-evidence and isolated tracks are shown with honest labels.'); root.replaceChildren(h,p,help);}
-function renderDetail(d){const root=document.getElementById('detail'); const parts=[document.createElement('h3'),document.createElement('p')]; text(parts[0],d.display_label||d.handle); text(parts[1],`Status: ${d.latest_run_status||'missing'} · Locations: ${d.available_locations}`); const reasons=document.createElement('p'); reasons.className='muted'; text(reasons,(d.reasons||[]).join('; ')); const fields=document.createElement('div'); for(const [name,f] of Object.entries(d.fields)){const div=document.createElement('div'); div.className='field'; text(div,`${name}: ${f.manual_text||JSON.stringify((f.automatic&&f.automatic.values)||f.summary_values)||f.effective_source}`); fields.append(div);} root.replaceChildren(...parts,reasons,fields);}
+function renderInitialDetail(model){const root=document.getElementById('detail'); const h=document.createElement('h3'); text(h,'All-library valence / arousal / BPM graph'); const p=document.createElement('p'); text(p,`Showing ${visibleGraph.nodes.length} positioned tracks and ${model.unpositioned.length} unpositioned tracks. X=native valence, Y=native arousal, Z=raw BPM (fixed 20 BPM per depth unit); selected mood ${model.selectedMood||'none'} only changes the score strip; no sample-relative clipping.`); const help=document.createElement('p'); help.className='muted'; text(help,'3d-force-graph is bundled locally. Fixed coordinates are scaled for readable display only. Drag to orbit, wheel to zoom, hover/click nodes and links for evidence. Sparse edges are axis-independent relatedness from existing summaries, not screen distance.'); const list=document.createElement('ul'); for(const u of model.unpositioned){const li=document.createElement('li'); text(li,`${u.display_label||u.track_id}: ${(u.reasons||[]).join('; ')}`); list.append(li);} root.replaceChildren(h,p,help,list);}
+function fieldDisplay(f){const a=f.automatic||{}; if(a.values&&a.values.length) return a.values; if(a.summary_values&&a.summary_values.length) return a.summary_values; return f.effective_source;}
+function renderDetail(d){const root=document.getElementById('detail'); const selected=graphModel.nodes.find(n=>n.id===d.handle); const score=document.createElement('p'); const selectedScore=selected?.moodScore; text(score,selectedScore?`Selected ${selectedScore.label} raw sigmoid mean score: ${selectedScore.raw} / 1 (not a calibrated probability).`:`Selected ${graphModel.selectedMood||'mood'} score: unavailable for this track.`); const parts=[document.createElement('h3'),document.createElement('p')]; text(parts[0],d.display_label||d.handle); text(parts[1],`Status: ${d.latest_run_status||'missing'} · Locations: ${d.available_locations}`); const reasons=document.createElement('p'); reasons.className='muted'; text(reasons,(d.reasons||[]).join('; ')); const fields=document.createElement('div'); for(const [name,f] of Object.entries(d.fields)){const div=document.createElement('div'); div.className='field'; text(div,`${name}: ${f.manual_text||JSON.stringify(fieldDisplay(f))}`); fields.append(div);} root.replaceChildren(...parts,score,reasons,fields);}
 function renderCandidates(data){const ol=document.getElementById('candidates'); ol.replaceChildren(...(data.candidates||[]).map(c=>{const li=document.createElement('li'); text(li,`${c.display_label||c.track_id} — ${c.tier} ${c.score??''}`); return li;}));}
-function buildGraphModel(tracks, projection){const details=new Map(tracks.map(t=>[t.handle||t.track_id,t])); const nodes=(projection.tracks||[]).map((p,index)=>{const d=details.get(p.track_id)||{}; const pos=stablePosition(p,index); const fields=d.fields||{}; const missing=controls.filter(name=>fieldMissing(fields,name,p)); const reasons=[...(d.reasons||[]),...(p.missing_reasons||[])]; return {id:p.track_id,label:d.display_label||p.track_id,position:pos,layoutState:p.layout_state||'projected',missingGroups:new Set(missing),evidenceLabel:evidenceLabel(d,p,reasons),availableLocations:d.available_locations||0,latestRunStatus:d.latest_run_status||null};}); const ids=new Set(nodes.map(n=>n.id)); const edges=(projection.edges||[]).filter(e=>ids.has(e.a)&&ids.has(e.b)).map(e=>({a:e.a,b:e.b,distance:e.distance,supportedGroupCount:e.supported_group_count||0})); return {nodes,edges,policyVersions:projection.policy_versions||{}};}
-function stablePosition(p,index){if(Number.isFinite(p.x)&&Number.isFinite(p.y)){return {x:Number(p.x),y:Number(p.y),z:Number.isFinite(p.z)?Number(p.z):fallbackZ(p,index)};} return isolatedPosition(p.track_id,index);}
-function fallbackZ(p,index){const missing=(p.missing_groups||[]).length; return Math.max(-1,Math.min(1,1-0.4*missing+(hashUnit(p.track_id,'z')-0.5)*0.08));}
-function isolatedPosition(id,index){const angle=hashUnit(id,'angle')*Math.PI*2; const radius=1.25+0.35*hashUnit(id,'radius'); return {x:Math.cos(angle)*radius,y:Math.sin(angle)*radius,z:-1.1-0.3*(index%3)};}
-function hashUnit(id,salt){let h=2166136261; const s=String(id)+salt; for(let i=0;i<s.length;i++){h^=s.charCodeAt(i); h=Math.imul(h,16777619);} return ((h>>>0)%1000000)/1000000;}
-function fieldMissing(fields,name,p){const fieldName=name==='tempo'?'bpm':(name==='harmony'?'key':(name==='genre'?'genres':name)); const f=fields[fieldName]; if(f && f.effective_source && f.effective_source!=='missing') return false; return (p.missing_groups||[]).includes(name) || !f || f.effective_source==='missing';}
-function evidenceLabel(detail,p,reasons){const labels=[]; if(!detail.latest_run_status) labels.push('No identity-linked analysis'); if(!detail.available_locations) labels.push('No available catalogue location'); if(p.layout_state==='missing') labels.push('Position uses deterministic isolated fallback: insufficient projection evidence'); for(const r of reasons){if(r && !labels.includes(r)) labels.push(r);} return labels.join('; ')||'Evidence-backed projection';}
-function applyGraphFilters(model, filters){const active=Object.entries(filters||{}).filter(([,mode])=>mode&&mode!=='off'); const nodes=model.nodes.filter(n=>active.every(([name,mode])=>mode==='soft'||!n.missingGroups.has(name))); const ids=new Set(nodes.map(n=>n.id)); return {nodes,edges:model.edges.filter(e=>ids.has(e.a)&&ids.has(e.b))};}
-function renderMap(data){const canvas=document.getElementById('map'), ctx=canvas.getContext('2d'); const w=canvas.width,h=canvas.height; ctx.clearRect(0,0,w,h); ctx.fillStyle='#fafafa'; ctx.fillRect(0,0,w,h); const projected=data.nodes.map(n=>({...n,screen:project(n.position,w,h)})).sort((a,b)=>a.screen.depth-b.screen.depth); ctx.lineWidth=1; for(const e of data.edges){const a=projected.find(n=>n.id===e.a), b=projected.find(n=>n.id===e.b); if(!a||!b) continue; ctx.strokeStyle='rgba(60,90,120,.28)'; ctx.beginPath(); ctx.moveTo(a.screen.x,a.screen.y); ctx.lineTo(b.screen.x,b.screen.y); ctx.stroke();} for(const n of projected){const current=n.id===state.current_track_id; const neighbour=isNeighbour(n.id); ctx.beginPath(); ctx.arc(n.screen.x,n.screen.y,current?7:(neighbour?6:4),0,Math.PI*2); ctx.fillStyle=current?'#d33':(neighbour?'#d9902f':(n.layoutState==='missing'?'#777':'#357')); ctx.fill(); if(current){ctx.strokeStyle='#111'; ctx.stroke();} } const info=document.getElementById('graph-info'); if(info) text(info,`${data.nodes.length} visible tracks · ${data.edges.length} induced similarity edges · coordinates stable until projection artifact refresh`);}
-function project(pos,w,h){const cy=Math.cos(camera.yaw), sy=Math.sin(camera.yaw), cp=Math.cos(camera.pitch), sp=Math.sin(camera.pitch); let x=pos.x, y=pos.y, z=pos.z; const x1=x*cy-z*sy, z1=x*sy+z*cy; const y1=y*cp-z1*sp, z2=y*sp+z1*cp; const scale=Math.min(w,h)*0.42/(camera.distance+z2); return {x:w/2+camera.panX+x1*scale,y:h/2+camera.panY-y1*scale,depth:z2};}
-function isNeighbour(id){if(!state.current_track_id) return false; return visibleGraph.edges.some(e=>(e.a===state.current_track_id&&e.b===id)||(e.b===state.current_track_id&&e.a===id));}
-function pickNode(x,y){let best=null,dist=Infinity; for(const n of visibleGraph.nodes){const p=project(n.position,document.getElementById('map').width,document.getElementById('map').height); const d=(p.x-x)**2+(p.y-y)**2; if(d<dist&&d<144){best=n; dist=d;}} return best;}
-function canvasPoint(e,rect,canvas){const cw=canvas.clientWidth||rect.width, ch=canvas.clientHeight||rect.height, bx=canvas.clientLeft||0, by=canvas.clientTop||0; const sx=canvas.width/cw, sy=canvas.height/ch; return {x:(e.clientX-rect.left-bx)*sx,y:(e.clientY-rect.top-by)*sy};}
-function orbitCamera(c,dx,dy){c.yaw+=dx*0.01; c.pitch=Math.max(-1.35,Math.min(1.35,c.pitch+dy*0.01)); return c;}
-function panCamera(c,dx,dy){c.panX+=dx; c.panY+=dy; return c;}
-function zoomCamera(c,delta){c.distance=Math.max(1.4,Math.min(12,c.distance+delta*0.01)); return c;}
-function buildControls(){const root=document.getElementById('controls'); for(const n of controls){const div=document.createElement('div'); div.append(text(document.createElement('span'),n+': ')); for(const m of ['off','soft','hard']){const label=document.createElement('label'), input=document.createElement('input'); input.type='radio'; input.name=n; input.value=m; input.checked=m==='off'; input.onchange=()=>{visibleGraph=applyGraphFilters(graphModel,selectedControls()); renderMap(visibleGraph); if(state.current_track_id) refresh(); else renderInitialDetail(graphModel);}; label.append(input,document.createTextNode(m)); div.append(label);} root.append(div);}}
-function wireCanvas(){const canvas=document.getElementById('map'); if(!canvas) return; const point=e=>canvasPoint(e,canvas.getBoundingClientRect(),canvas); canvas.onmousedown=e=>{const p=point(e); drag={x:p.x,y:p.y,pan:e.shiftKey||e.button===2,moved:false};}; canvas.oncontextmenu=e=>e.preventDefault(); canvas.onmousemove=e=>{if(!drag) return; const p=point(e), dx=p.x-drag.x, dy=p.y-drag.y; drag.moved=drag.moved||Math.abs(dx)+Math.abs(dy)>2; drag.pan?panCamera(camera,dx,dy):orbitCamera(camera,dx,dy); drag.x=p.x; drag.y=p.y; renderMap(visibleGraph);}; canvas.onmouseup=e=>{const was=drag; drag=null; if(was&&!was.moved){const p=point(e), n=pickNode(p.x,p.y); if(n) setCurrent(n.id);}}; canvas.onwheel=e=>{e.preventDefault(); zoomCamera(camera,e.deltaY); renderMap(visibleGraph);};}
+function buildGraphModel(tracks, projection){return buildMoodGraphModel({positioned:tracks||[],edges:(projection&&projection.edges)||[],unpositioned:[],available_moods:[],selected_mood:'',metadata:{}});}
+function applyGraphFilters(model, filters){return applyMoodGraphFilters(model,filters);}
+function orbitCamera(c,dx,dy){c.yaw=(c.yaw||0)+dx*0.01; c.pitch=(c.pitch||0)+dy*0.01; return c;}
+function panCamera(c,dx,dy){c.panX=(c.panX||0)+dx; c.panY=(c.panY||0)+dy; return c;}
+function zoomCamera(c,delta){c.distance=(c.distance||0)+delta*0.01; return c;}
+function canvasPoint(e,rect,canvas){const cw=canvas.clientWidth||rect.width, ch=canvas.clientHeight||rect.height, bx=canvas.clientLeft||0, by=canvas.clientTop||0; return {x:(e.clientX-rect.left-bx)*(canvas.width/cw),y:(e.clientY-rect.top-by)*(canvas.height/ch)};}
+function graphScale(){return 180;}
+function axisRange(positioned,axis){let min=Infinity,max=-Infinity; for(const n of positioned){const value=n[axis].raw; if(Number.isFinite(value)){min=Math.min(min,value); max=Math.max(max,value);}} return min===Infinity?null:[min,max];}
+function relativeAxis(value,range){return range&&range[0]!==range[1]?(value-range[0])/(range[1]-range[0]):0.5;}
+// Relative color only: musical coordinates remain native and are never clipped to a universal scale.
+function moodNodeColor(valence,arousal){const hue=215-195*valence, saturation=48+32*arousal, lightness=27+33*arousal; return `hsl(${hue} ${saturation}% ${lightness}%)`;}
+function graphColorLegend(model){const r=model.colorRanges||{}; const display=range=>range?`${range[0]} to ${range[1]}`:'no positioned values'; return `Color relative to this library: valence blue → orange/red (${display(r.valence)} native); arousal dark/dim → bright (${display(r.arousal)} native). Selected node is larger.`;}
+function buildMoodGraphModel(graph){const scale=graphScale(); const positioned=graph.positioned||[]; const colorRanges={valence:axisRange(positioned,'x'),arousal:axisRange(positioned,'y')}; const nodes=positioned.map(n=>({color:moodNodeColor(relativeAxis(n.x.raw,colorRanges.valence),relativeAxis(n.y.raw,colorRanges.arousal)),id:n.track_id,label:n.display_label||n.track_id,fx:n.x.normalized*scale,fy:n.y.normalized*scale,fz:n.z.normalized*scale*4,x:n.x.normalized*scale,y:n.y.normalized*scale,z:n.z.normalized*scale*4,axis:{x:n.x,y:n.y,z:n.z},moodScore:n.mood_score||null,bpm:n.bpm,genres:n.genres||[],genreThreshold:n.genre_threshold==null?0.5:n.genre_threshold,reasons:n.reasons||[]})); const ids=new Set(nodes.map(n=>n.id)); const links=(graph.edges||[]).filter(e=>ids.has(e.a)&&ids.has(e.b)).map(e=>({source:e.a,target:e.b,name:`relatedness ${e.score}: ${e.explanation||''}`,score:e.score,explanation:e.explanation,provenance:e.provenance,supportedGroupCount:e.supported_group_count})); const genreOptions=[...new Set(nodes.flatMap(n=>(n.genres||[]).map(g=>g[0])))].sort(); return {nodes,links,colorRanges,unpositioned:graph.unpositioned||[],availableMoods:graph.available_moods||[],selectedMood:graph.selected_mood||'',metadata:graph.metadata||{},genreOptions};}
+function applyMoodGraphFilters(model, filters){const nodes=model.nodes.filter(n=>passesGraphFilters(n,filters||{})); const ids=new Set(nodes.map(n=>n.id)); return {nodes,links:model.links.filter(e=>ids.has(String((e.source&&e.source.id)||e.source))&&ids.has(String((e.target&&e.target.id)||e.target))),unpositioned:model.unpositioned};}
+// Raw selected-label means, never display-normalized z or camera coordinates.
+function buildMoodStrip(data, selectedId){return data.nodes.filter(n=>n.moodScore!=null).map(n=>({id:n.id,label:n.label,score:n.moodScore.raw,position:n.moodScore.raw,selected:n.id===selectedId,description:`${n.label}: ${n.moodScore.label} ${n.moodScore.raw} / 1 (raw sigmoid mean score)`})).sort((a,b)=>a.score-b.score || (a.id<b.id?-1:a.id>b.id?1:0));}
+function passesGraphFilters(n,filters){if(filters.bpmMin!=null && (n.bpm==null || n.bpm<filters.bpmMin)) return false; if(filters.bpmMax!=null && (n.bpm==null || n.bpm>filters.bpmMax)) return false; const genres=filters.genres||[]; if(genres.length){const scores=Object.fromEntries(n.genres); if(!genres.some(g=>(scores[g]??-1)>=n.genreThreshold)) return false;} return true;}
+function graphDimensions(elem){const parent=elem&&elem.parentElement; const style=parent&&typeof getComputedStyle==='function'?getComputedStyle(parent):null; const trim=style?['paddingLeft','paddingRight','borderLeftWidth','borderRightWidth'].reduce((sum,name)=>sum+(parseFloat(style[name])||0),0):0; const width=Math.max(1,Math.floor(((parent&&parent.clientWidth)||elem.clientWidth||900)-trim)); const height=Math.max(1,Math.floor(elem.clientHeight||1040)); return {width,height};}
+function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); return size;}
+function observeGraphResize(elem){if(graphResizeObserver||!elem) return; const resize=()=>updateGraphSize(elem,forceGraph); if(typeof ResizeObserver!=='undefined'){graphResizeObserver=new ResizeObserver(resize); graphResizeObserver.observe(elem); if(elem.parentElement) graphResizeObserver.observe(elem.parentElement);} if(typeof window!=='undefined') window.addEventListener('resize',resize);}
+// Frame display coordinates only: musical-axis values and fixed node positions stay intact.
+function graphCameraFrame(nodes, size, fov){
+  const positioned=nodes.filter(n=>[n.x,n.y,n.z].every(Number.isFinite));
+  if(!positioned.length) return {position:{x:0,y:0,z:650},target:{x:0,y:0,z:0}};
+  const min={x:Infinity,y:Infinity,z:Infinity}, max={x:-Infinity,y:-Infinity,z:-Infinity};
+  for(const n of positioned) for(const axis of ['x','y','z']){min[axis]=Math.min(min[axis],n[axis]); max[axis]=Math.max(max[axis],n[axis]);}
+  const target={}, half={};
+  for(const axis of ['x','y','z']){target[axis]=(min[axis]+max[axis])/2; half[axis]=(max[axis]-min[axis])/2;}
+  const aspect=size.width>0&&size.height>0?size.width/size.height:1;
+  const tanHalfFov=Math.tan((Number.isFinite(fov)&&fov>0&&fov<180?fov:50)*Math.PI/360);
+  const radius=4, padding=1.2;
+  const distance=Math.max(40,half.z+radius+padding*Math.max((half.y+radius)/tanHalfFov,(half.x+radius)/(tanHalfFov*aspect)));
+  return {position:{x:target.x,y:target.y,z:target.z+distance},target};
+}
+// Axis coordinates are in the same fixed display space as node fx/fy/fz.
+// The offsets leave the origin outside the occupied node volume; they are not data minima.
+function graphAxisSpec(nodes){
+  const valid=nodes.filter(n=>['x','y','z'].every(k=>Number.isFinite(n[k])));
+  if(!valid.length) return [];
+  const min={},max={};
+  for(const key of ['x','y','z']){min[key]=Math.min(...valid.map(n=>n[key]));max[key]=Math.max(...valid.map(n=>n[key]));}
+  const start={x:min.x-18,y:min.y-18,z:min.z-18};
+  return [['x','X valence (native)','#ff7777',180],['y','Y arousal (native)','#76dfa0',180],['z','Z BPM','#84b9ff',36]].map(([key,label,color,units])=>{
+    const end={...start,[key]:Math.max(max[key]+18,start[key]+36)};
+    const format=n=>Number((n/units).toFixed(key==='z'?0:2)).toString();
+    return {key,label,color,start,end,references:[format(min[key]),format(max[key])]};
+  });
+}
+function disposeGraphAxes(group){
+  if(!group) return;
+  group.parent.remove(group);
+  for(const mesh of group.children){mesh.geometry.dispose();mesh.material.dispose();}
+  if(group.labels) for(const label of group.labels) label.remove();
+}
+// Vendor bundles THREE privately. Reuse constructors of its rendered node mesh, so
+// scene objects share that exact THREE instance without a second dependency/global.
+function syncGraphAxes(graph,spec,element){
+  const signature=JSON.stringify(spec);
+  if(graphAxes && graphAxes.graph===graph && graphAxes.signature===signature) return graphAxes.group;
+  const scene=graph.scene();
+  if(!spec.length){disposeGraphAxes(graphAxes?.group);graphAxes=null;return null;}
+  const findNode=obj=>obj.__graphObjType==='node' && obj.geometry && obj.material ? obj : (obj.children||[]).map(findNode).find(Boolean);
+  const sample=findNode(scene);
+  if(!sample){disposeGraphAxes(graphAxes?.group);graphAxes=null;return null;} // Objects may arrive one frame after graphData().
+  disposeGraphAxes(graphAxes?.group);
+  const group=new scene.constructor();
+  group.name='mood-xyz-axes';group.labels=[];
+  for(const axis of spec){
+    const mesh=new sample.constructor(new sample.geometry.constructor(1,8,6),new sample.material.constructor({color:axis.color,transparent:true,opacity:0.8,depthWrite:false}));
+    mesh.name='axis-'+axis.key;
+    mesh.raycast=()=>{}; // Not a track/link and never eligible for graph picking.
+    const length=axis.end[axis.key]-axis.start[axis.key];
+    const center={...axis.start,[axis.key]:axis.start[axis.key]+length/2};
+    mesh.position.set(center.x,center.y,center.z);
+    mesh.scale.set(axis.key==='x'?length/2:0.65,axis.key==='y'?length/2:0.65,axis.key==='z'?length/2:0.65);
+    group.add(mesh);
+    if(element){
+      for(const [content,position] of [[axis.label,axis.end],['data '+axis.references.join('–'),axis.start]]){
+        const label=document.createElement('span');label.className='graph-axis-label';label.textContent=content;
+        label.style.color=axis.color;element.append(label);group.labels.push(label);
+        label.axisPosition=position;
+      }
+    }
+  }
+  scene.add(group);graphAxes={graph,signature,group};
+  return group;
+}
+function placeGraphAxisLabels(graph){
+  if(!graphAxes?.group.labels?.length) return;
+  const elem=document.getElementById('graph3d');
+  for(const label of graphAxes.group.labels){
+    const p=graph.graph2ScreenCoords(label.axisPosition.x,label.axisPosition.y,label.axisPosition.z);
+    label.style.transform=`translate(${p.x}px,${p.y}px) translate(-50%,-50%)`;
+    label.style.display=Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.x>=0&&p.y>=0&&p.x<elem.clientWidth&&p.y<elem.clientHeight?'':'none';
+  }
+}
+function animateGraphAxes(){
+  if(forceGraph){syncGraphAxes(forceGraph,pendingGraphAxisSpec,document.getElementById('graph3d'));placeGraphAxisLabels(forceGraph);}
+  requestAnimationFrame(animateGraphAxes);
+}
+function renderMoodStrip(data){
+  const canvas=document.getElementById('mood-strip'), picker=document.getElementById('mood-strip-picker'), readout=document.getElementById('mood-strip-value');
+  if(!canvas||!picker||!readout) return;
+  const marks=buildMoodStrip(data,state.current_track_id), ctx=canvas.getContext('2d');
+  const width=Math.max(1,Math.floor(canvas.clientWidth||600)), height=70, pad=14;
+  canvas.width=width; canvas.height=height;
+  const x=m=>pad+(width-2*pad)*m.position;
+  ctx.clearRect(0,0,width,height); ctx.strokeStyle='#444'; ctx.beginPath();ctx.moveTo(pad,35);ctx.lineTo(width-pad,35);ctx.stroke();
+  // Stack tied/nearby pixels deterministically, keeping all marks visible in bounded canvas DOM.
+  const stack=new Map();
+  for(const mark of marks){const pixel=Math.round(x(mark)), level=stack.get(pixel)||0; stack.set(pixel,level+1); const y=level%2?35+5+Math.floor(level/2)*5:35-5-Math.floor(level/2)*5; mark.y=Math.max(5,Math.min(height-5,y)); if(mark.selected) continue; ctx.beginPath();ctx.arc(x(mark),mark.y,3,0,Math.PI*2);ctx.fillStyle='#164e8c';ctx.fill();}
+  for(const mark of marks.filter(m=>m.selected)){ctx.beginPath();ctx.arc(x(mark),mark.y,5,0,Math.PI*2);ctx.fillStyle='#b02212';ctx.fill();}
+  picker.max=String(Math.max(0,marks.length-1)); picker.disabled=!marks.length;
+  let index=marks.findIndex(m=>m.selected); if(index<0) index=0;
+  picker.value=String(index);
+  const show=()=>text(readout,marks.length?`${Number(picker.value)+1} / ${marks.length}: ${marks[Number(picker.value)].description}`:'No visible tracks have this selected mood score; tracks without it have no mark.');
+  picker.oninput=show; show();
+  canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
+}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(n=>n.id===state.current_track_id?4:1).linkLabel(linkLabel).linkOpacity(0.28).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score]),state.current_track_id]); if(signature!==renderedGraphSignature){forceGraph.graphData({nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links}); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of forceGraph.graphData().nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {renderCanvasFallback(data);} renderMoodStrip(data); const info=document.getElementById('graph-info'); if(info) text(info,`${data.nodes.length} positioned tracks · ${data.links.length} sparse relatedness edges · ${data.unpositioned.length} unpositioned · score strip mood ${graphModel.selectedMood||'n/a'} · ${graphColorLegend(graphModel)} · no CDN calls`);}
+function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${n.axis.x.raw} (${escapeHtml(n.axis.x.scale)})<br>arousal ${n.axis.y.raw} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${n.axis.z.raw} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${n.moodScore.raw} / 1`:'Selected mood score unavailable'}`;}
+function linkLabel(l){return escapeHtml(`score ${l.score}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
+function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
+function replaceCanvasWithGraphElement(){const old=document.getElementById('map'); const div=document.createElement('div'); div.id='graph3d'; if(old) old.replaceWith(div); return div;}
+function renderCanvasFallback(data){const canvas=document.getElementById('map')||document.createElement('canvas'); const size=graphDimensions(canvas); canvas.width=size.width; canvas.height=size.height; const ctx=canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#fafafa'; ctx.fillRect(0,0,canvas.width,canvas.height); for(const n of data.nodes){ctx.beginPath(); ctx.arc(canvas.width/2+n.fx,canvas.height/2-n.fy,n.id===state.current_track_id?9:5,0,Math.PI*2); ctx.fillStyle=n.color; ctx.fill();}}
+function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root); for(const n of controls){const div=document.createElement('div'); div.append(text(document.createElement('span'),n+': ')); for(const m of ['off','soft','hard']){const label=document.createElement('label'), input=document.createElement('input'); input.type='radio'; input.name=n; input.value=m; input.checked=m==='off'; input.onchange=()=>{if(state.current_track_id) refresh();}; label.append(input,document.createTextNode(m)); div.append(label);} root.append(div);}}
+function buildGraphControls(root){const fs=document.createElement('fieldset'); fs.id='graph-controls'; const legend=document.createElement('legend'); text(legend,'Graph filters and score display'); fs.append(legend); const mood=document.createElement('select'); mood.id='selected-mood'; mood.onchange=()=>{selectedGraphControls.mood=mood.value; refresh();}; fs.append(text(document.createElement('label'),'Score strip mood '),mood); const min=document.createElement('input'); min.id='bpm-min'; min.type='number'; min.placeholder='min BPM'; const max=document.createElement('input'); max.id='bpm-max'; max.type='number'; max.placeholder='max BPM'; for(const input of [min,max]) input.onchange=()=>{selectedGraphControls.bpmMin=min.value===''?null:Number(min.value); selectedGraphControls.bpmMax=max.value===''?null:Number(max.value); refresh();}; fs.append(min,max); const genres=document.createElement('select'); genres.id='genre-filter'; genres.multiple=true; genres.size=4; genres.onchange=()=>{selectedGraphControls.genres=Array.from(genres.selectedOptions).map(o=>o.value); refresh();}; fs.append(text(document.createElement('label'),' Genres ANY '),genres); const clear=document.createElement('button'); clear.type='button'; text(clear,'Clear graph filters'); clear.onclick=()=>{selectedGraphControls={mood:graphModel.selectedMood||'',bpmMin:null,bpmMax:null,genres:[]}; min.value=''; max.value=''; refresh();}; fs.append(clear); root.append(fs);}
+function syncGraphControlOptions(model){const mood=document.getElementById('selected-mood'); if(mood){const current=selectedGraphControls.mood||model.selectedMood||''; mood.replaceChildren(...(model.availableMoods.length?model.availableMoods:['']).map(m=>{const o=document.createElement('option'); o.value=m; text(o,m||'No supported moods'); o.selected=m===current; return o;})); selectedGraphControls.mood=current&&model.availableMoods.includes(current)?current:(model.selectedMood||'');} const genres=document.getElementById('genre-filter'); if(genres){const selected=new Set(selectedGraphControls.genres||[]); genres.replaceChildren(...model.genreOptions.map(g=>{const o=document.createElement('option'); o.value=g; text(o,g); o.selected=selected.has(g); return o;}));}}
+function wireCanvas(){/* 3d-force-graph owns orbit/pick controls. */}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=async()=>{state=await api('/api/undo',{method:'POST'}); refresh();}; document.getElementById('reset').onclick=async()=>{state=await api('/api/reset',{method:'POST'}); refresh();}; buildControls(); wireCanvas(); refresh().catch(e=>text(document.getElementById('detail'),e.message));}
-if(typeof module!=='undefined'){module.exports={buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,stablePosition,canvasPoint};}
+if(typeof module!=='undefined'){module.exports={graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame};}
