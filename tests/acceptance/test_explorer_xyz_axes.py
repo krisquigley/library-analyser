@@ -15,7 +15,7 @@ const nodes=[{x:36,y:54,z:4320},{x:126,y:90,z:4608}];
 const spec=graphAxisSpec(nodes);
 assert.deepStrictEqual(spec.map(a=>a.label),['X valence (native)','Y arousal (native)','Z BPM']);
 assert.deepStrictEqual(spec.map(a=>a.end[a.key]-a.start[a.key]),[126,72,324]);
-assert.deepStrictEqual(spec.map(a=>a.references),[['0.2','0.7'],['0.3','0.5'],['120','128']]);
+assert.deepStrictEqual(spec.map(a=>a.references),[['0.2','0.7'],['0.3','0.5'],['120.0','128.0']]);
 assert.deepStrictEqual(graphAxisSpec([...nodes].reverse()),spec);
 assert.deepStrictEqual(graphAxisSpec([]),[]);
 class Sphere {constructor(radius){this.radius=radius} dispose(){this.disposed=true}}
