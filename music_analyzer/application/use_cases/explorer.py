@@ -87,10 +87,11 @@ class BuildMoodAxisGraph:
                 'schema_version': int(raw_meta.get('schema_version', 0)),
                 'read_policy': str(raw_meta.get('read_policy', 'coherent_in_memory_snapshot')),
                 'track_count': len(records),
-                'coordinate_policy': 'fixed-mood-axis-v1',
-                'normalization_policy': 'documented-model-scale-linear-v1',
+                'coordinate_policy': 'fixed-valence-arousal-bpm-v1',
+                'normalization_policy': 'native-energy-and-fixed-bpm-20-per-unit-v1',
                 'energy_scale': 'Emomusic native valence/arousal regression coordinates retained when model provenance is compatible; no arbitrary clipping or DJ-energy interpretation',
-                'mood_scale': 'Jamendo mood/theme sigmoid labelled mean score, display normalized from [0,1] to [-1,1] when finite and in range',
+                'bpm_scale': 'Raw positive finite BPM, fixed display transform BPM / 20 (20 BPM per normalized unit); never octave-coerced or sample-refitted',
+                'mood_scale': 'Optional selected Jamendo mood/theme sigmoid labelled mean score on fixed [0,1] strip only; never a coordinate or visibility condition',
                 'genre_filter_policy': 'ANY selected genre with retained mean score >= finite threshold from stage provenance or 0.5 default',
                 'edge_policy': NEIGHBOUR_POLICY_VERSION,
                 'distance_policy': DISTANCE_POLICY_VERSION,
@@ -198,42 +199,38 @@ def _resolve_mood(requested, available):
 def _axis_node(record, detail, selected_mood):
     reasons = []
     energy = _summary_map(record, 'energy', reasons)
-    mood = _summary_map(record, 'mood', reasons)
+    energy_stage = _stage(record, 'energy')
     if dict(record.overrides).get('energy') is not None:
         reasons.append('energy: unresolved manual text override')
-    if dict(record.overrides).get('mood') is not None:
-        reasons.append('mood: unresolved manual text override')
-    energy_stage = _stage(record, 'energy')
-    mood_stage = _stage(record, 'mood')
-    if selected_mood == '':
-        reasons.append('mood: no supported labels available')
     if energy_stage is None or not _has_provenance_model(energy_stage.provenance, 'emomusic-msd-musicnn-2'):
         reasons.append('energy: incompatible model/scale for fixed valence/arousal axis')
-    if mood_stage is not None and not _has_provenance_model(mood_stage.provenance, 'mtg_jamendo_moodtheme-discogs-effnet-1'):
-        reasons.append('mood: incompatible model/scale for fixed mood axis')
     valence = energy.get('valence') if energy else None
     arousal = energy.get('arousal') if energy else None
-    z = mood.get(selected_mood) if mood and selected_mood else None
+    bpm = _bpm(record)
     if not _finite_number(valence): reasons.append('energy: missing valence')
     if not _finite_number(arousal): reasons.append('energy: missing arousal')
-    if mood is not None and not any(value != 0 for value in mood.values()): reasons.append('mood: zero vector is missing usable evidence')
-    if selected_mood and not _finite_number(z): reasons.append('mood: missing selected label ' + selected_mood)
-    if _finite_number(z) and not _score01(float(z)):
-        reasons.append('mood: selected label ' + selected_mood + ' outside supported [0,1] score scale')
+    if bpm is None: reasons.append('bpm: missing positive finite value')
     if reasons:
         return None, _uniq(reasons)
+    mood_stage = _stage(record, 'mood')
+    mood = _summary_map(record, 'mood', [])
+    selected_score = mood.get(selected_mood) if mood and selected_mood else None
+    mood_score = None
+    if (selected_score is not None and _score01(selected_score) and mood_stage is not None
+            and _has_provenance_model(mood_stage.provenance, 'mtg_jamendo_moodtheme-discogs-effnet-1')):
+        mood_score = AxisValue(selected_mood, selected_score, selected_score, 'sigmoid-score-[0,1]', mood_stage.provenance)
     energy_prov = energy_stage.provenance
-    mood_prov = mood_stage.provenance
     return MoodAxisNode(
         record.track_id,
         record.display_label,
         AxisValue('valence', float(valence), float(valence), 'native-emomusic-valence-regression', energy_prov),
         AxisValue('arousal', float(arousal), float(arousal), 'native-emomusic-arousal-regression', energy_prov),
-        AxisValue(selected_mood, float(z), _norm01(float(z)), 'sigmoid-score-[0,1]->[-1,1]', mood_prov),
-        _bpm(record),
+        AxisValue('BPM', bpm, bpm / 20.0, 'fixed-BPM/20-display-units', _stage(record, 'bpm').provenance),
+        bpm,
         tuple(sorted((_summary_map(record, 'genres', []) or {}).items())),
         detail.reasons,
         _genre_threshold(record),
+        mood_score,
     ), ()
 
 

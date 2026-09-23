@@ -90,17 +90,22 @@ class Explorer3DGraphAssetTests(unittest.TestCase):
 const assert = require('assert');
 const graph = require(process.argv[1]);
 const payload = {selected_mood:'relaxing', available_moods:['relaxing','heavy'], metadata:{}, unpositioned:[{track_id:'c',display_label:'Missing',reasons:['mood: no supported labels available']}], positioned:[
-  {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'relaxing', raw:0.9, normalized:0.8, scale:'sigmoid'}, bpm:120, genres:[['rock',0.6]], genre_threshold:0.5, reasons:[]},
-  {track_id:'b', display_label:'Beta', x:{raw:0.3, normalized:0.3, scale:'native'}, y:{raw:0.4, normalized:0.4, scale:'native'}, z:{label:'relaxing', raw:0.2, normalized:-0.6, scale:'sigmoid'}, bpm:130, genres:[['jazz',0.7]], genre_threshold:0.5, reasons:[]}
+  {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.9,normalized:0.9}, bpm:120, genres:[['rock',0.6]], genre_threshold:0.5, reasons:[]},
+  {track_id:'b', display_label:'Beta', x:{raw:0.3, normalized:0.3, scale:'native'}, y:{raw:0.4, normalized:0.4, scale:'native'}, z:{label:'BPM', raw:130, normalized:6.5, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.2,normalized:0.2}, bpm:130, genres:[['jazz',0.7]], genre_threshold:0.5, reasons:[]}
 ], edges:[{a:'a',b:'b',score:0.77,explanation:'axis-independent relatedness',supported_group_count:3}]};
 const model = graph.buildMoodGraphModel(payload);
 assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
 assert(model.nodes.every(n => Math.abs(n.x) > 1), 'render coordinates are scaled for browser visibility');
 const before = new Map(model.nodes.map(n => [n.id, JSON.stringify([n.x,n.y,n.z,n.fx,n.fy,n.fz])]));
 for (const node of model.nodes) {
-  assert.strictEqual(node.z, node.axis.z.normalized * 720, 'display mood depth should be four times the X/Y display scale');
+  assert.strictEqual(node.z, node.axis.z.normalized * 720, 'fixed BPM depth should retain four times the X/Y display scale');
   assert.strictEqual(node.fz, node.z, 'fixed simulation depth must match displayed depth');
 }
+assert.strictEqual(model.nodes[1].z-model.nodes[0].z, 360, '10 BPM must be visually substantial');
+const other = graph.buildMoodGraphModel({...payload,selected_mood:'heavy',positioned:payload.positioned.map(n=>({...n,mood_score:{label:'heavy',raw:0.5,normalized:0.5}}))});
+assert.deepStrictEqual(other.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]),model.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]));
+assert.deepStrictEqual(graph.graphCameraFrame(other.nodes,{width:900,height:700},50),graph.graphCameraFrame(model.nodes,{width:900,height:700},50));
+assert.deepStrictEqual(other.links,model.links);
 assert.deepStrictEqual(model.genreOptions, ['jazz','rock']);
 const visible = graph.applyMoodGraphFilters(model, {bpmMin:119,bpmMax:121,genres:['jazz']});
 assert.deepStrictEqual(visible.nodes.map(n => n.id), []);

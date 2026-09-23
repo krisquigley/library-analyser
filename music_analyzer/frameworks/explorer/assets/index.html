@@ -14,7 +14,7 @@
   </div>
   <div class="bottom-dock">
     <details class="panel legend"><summary>Graph legend &amp; status</summary><p id="graph-info" class="muted"></p></details>
-    <section class="panel mood-strip"><h2>Selected mood strength · fixed 0–1</h2><p class="muted strip-help">Raw Jamendo sigmoid mean, not a calibrated probability. Blue = visible tracks; red = selected. Click a mark or use the slider to inspect overlapping scores.</p><div class="mood-strip-axis"><span>0</span><span>0.5</span><span>1</span></div><canvas id="mood-strip" height="70" aria-label="Selected mood score distribution from zero to one"></canvas><label for="mood-strip-picker">Inspect sorted visible track</label><input id="mood-strip-picker" type="range" min="0" max="0" value="0"><output id="mood-strip-value" for="mood-strip-picker" aria-live="polite"></output></section>
+    <section class="panel mood-strip"><h2>Selected mood strength · fixed 0–1</h2><p class="muted strip-help">Raw Jamendo sigmoid mean, not a calibrated probability. Blue = visible tracks with a score; red = selected when a score exists. Tracks without the selected mood remain on the graph but have no strip mark. Click a mark or use the slider to inspect overlapping scores.</p><div class="mood-strip-axis"><span>0</span><span>0.5</span><span>1</span></div><canvas id="mood-strip" height="70" aria-label="Selected mood score distribution from zero to one"></canvas><label for="mood-strip-picker">Inspect sorted visible track</label><input id="mood-strip-picker" type="range" min="0" max="0" value="0"><output id="mood-strip-value" for="mood-strip-picker" aria-live="polite"></output></section>
   </div>
 </main>
 <script src="/vendor/3d-force-graph/3d-force-graph.min.js"></script>

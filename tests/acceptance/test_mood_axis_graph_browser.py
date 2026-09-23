@@ -30,7 +30,7 @@ class MoodAxisGraphBrowserSmoke(unittest.TestCase):
                 self.assertEqual(len(graph['unpositioned']), 1)
                 self.assertTrue(all(node['x']['label'] == 'valence' for node in graph['positioned']))
                 self.assertTrue(all(node['y']['label'] == 'arousal' for node in graph['positioned']))
-                self.assertTrue(all(node['z']['label'] == 'relaxing' for node in graph['positioned']))
+                self.assertTrue(all(node['z']['label'] == 'BPM' and node['mood_score']['label'] == 'relaxing' for node in graph['positioned']))
                 with urlopen(base + '/api/mood-axis-graph?mood=relaxing&bpm_min=119&bpm_max=121&genre=jazz', timeout=5) as response:
                     filtered = json.loads(response.read().decode('utf-8'))
                 self.assertEqual(filtered['positioned'], [])
@@ -62,8 +62,9 @@ class MoodAxisGraphBrowserSmoke(unittest.TestCase):
                     graph = json.loads(response.read().decode('utf-8'))
                 self.assertEqual(graph['selected_mood'], '')
                 self.assertEqual(graph['available_moods'], [])
-                self.assertEqual(graph['positioned'], [])
-                self.assertEqual({item['track_id'] for item in graph['unpositioned']}, set(ids))
+                self.assertEqual({item['track_id'] for item in graph['positioned']}, set(ids[:2]))
+                self.assertTrue(all(item['mood_score'] is None for item in graph['positioned']))
+                self.assertEqual({item['track_id'] for item in graph['unpositioned']}, {ids[2]})
                 with urlopen(base + '/api/tracks/' + first, timeout=5) as response:
                     detail = json.loads(response.read().decode('utf-8'))
                 self.assertEqual(detail['fields']['bpm']['automatic']['values'], [['bpm', 120.0]])
