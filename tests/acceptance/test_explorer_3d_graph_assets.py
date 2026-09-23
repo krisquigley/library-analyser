@@ -278,7 +278,8 @@ context.renderDetail({
     missing: {automatic: {values: []}, effective_source: 'missing'}
   }
 });
-const renderedFields = detail.children[3].children.map(node => node.textContent);
+assert(detail.children[2].textContent.startsWith('Selected mood score:'), 'selected score belongs near the title, ahead of verbose fields');
+const renderedFields = detail.children[4].children.map(node => node.textContent);
 assert(renderedFields.includes('bpm: human says fast'));
 assert(!renderedFields.some(line => line.includes('bpm: [["bpm",128]]')));
 assert(renderedFields.includes('energy: [["arousal",0.2],["valence",0.7]]'));
