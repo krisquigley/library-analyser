@@ -60,6 +60,38 @@ class MoodAxisGraphTests(unittest.TestCase):
         self.assertIn('energy: incompatible model/scale for fixed valence/arousal axis', reasons['sha256:' + 'a' * 64])
         self.assertIn('bpm: missing positive finite value', reasons['sha256:' + 'b' * 64])
 
+    def test_explicit_model_provenance_positions_energy_and_retains_mood_score(self):
+        base = track('a')
+        models = {'energy': 'emomusic-msd-musicnn-2',
+                  'mood': 'mtg_jamendo_moodtheme-discogs-effnet-1'}
+        stages = tuple(replace(stage, provenance=(('model', models[stage.stage]), *stage.provenance[1:]))
+                       if stage.stage in models else stage for stage in base.run.stages)
+        graph = BuildMoodAxisGraph(FakeRepo([replace(base, run=replace(base.run, stages=stages))])).execute('relaxing')
+        self.assertEqual(graph.unpositioned, ())
+        self.assertEqual((graph.positioned[0].x.raw, graph.positioned[0].y.raw, graph.positioned[0].z.raw),
+                         (0.25, 0.75, 120.0))
+        self.assertEqual(graph.positioned[0].mood_score.raw, 0.8)
+
+    def test_unrelated_model_names_in_explicit_or_other_provenance_are_not_supported(self):
+        base = track('a')
+        stages = tuple(replace(stage, provenance=(('model', 'other-' + stage.stage),
+                                                    ('source', 'emomusic-msd-musicnn-2' if stage.stage == 'energy'
+                                                     else 'mtg_jamendo_moodtheme-discogs-effnet-1')))
+                       if stage.stage in ('energy', 'mood') else stage for stage in base.run.stages)
+        graph = BuildMoodAxisGraph(FakeRepo([replace(base, run=replace(base.run, stages=stages))])).execute('relaxing')
+        self.assertEqual(graph.positioned, ())
+        self.assertIn('energy: incompatible model/scale for fixed valence/arousal axis', graph.unpositioned[0].reasons)
+        mood_only = tuple(replace(stage, provenance=(('model', 'other-mood'),
+                                                      ('source', 'mtg_jamendo_moodtheme-discogs-effnet-1')))
+                          if stage.stage == 'mood' else stage for stage in base.run.stages)
+        graph = BuildMoodAxisGraph(FakeRepo([replace(base, run=replace(base.run, stages=mood_only))])).execute('relaxing')
+        self.assertEqual(len(graph.positioned), 1)
+        self.assertIsNone(graph.positioned[0].mood_score)
+        conflicting = tuple(replace(stage, provenance=(('model', 'other-energy-model'), *stage.provenance))
+                            if stage.stage == 'energy' else stage for stage in base.run.stages)
+        graph = BuildMoodAxisGraph(FakeRepo([replace(base, run=replace(base.run, stages=conflicting))])).execute('relaxing')
+        self.assertEqual(graph.positioned, ())
+
     def test_mood_alias_validation_and_unsupported_label_lists_available(self):
         graph = BuildMoodAxisGraph(FakeRepo([track('a', mood=(('relaxing', 'heavy'), (0.1, 0.9)))])).execute('Relaxing')
         self.assertEqual(graph.selected_mood, 'relaxing')

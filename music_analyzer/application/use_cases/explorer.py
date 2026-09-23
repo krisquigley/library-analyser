@@ -305,6 +305,9 @@ def _score01(value):
 
 
 def _has_provenance_model(provenance, model_id):
+    explicit_models = [value for key, value in provenance if key == 'model']
+    if explicit_models:
+        return all(value == model_id for value in explicit_models)
     return any(key == model_id for key, _value in provenance)
 
 

@@ -1,10 +1,12 @@
 """In-scene axis coordinates and lifecycle, without a browser or audio database."""
+import shutil
 import subprocess
 import unittest
 from tests.acceptance.test_explorer_3d_graph_assets import APP_JS
 
 
 class GraphAxesTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node required for browser model tests')
     def test_axis_spec_and_scene_lifecycle(self):
         script = r'''
 const assert=require('assert');
