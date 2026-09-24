@@ -15,6 +15,17 @@ class MusicExporerPackagingAndCompatibilityTests(unittest.TestCase):
         self.assertIn('gauge', style.lower())
         self.assertTrue(package_assets.joinpath('vendor/3d-force-graph/3d-force-graph.min.js').is_file())
 
+    def test_standalone_and_analyzer_explorer_assets_remain_mirrored(self):
+        root = Path(__file__).resolve().parents[2]
+        analyzer_assets = root / 'music_analyzer/frameworks/explorer/assets'
+        standalone_assets = root / 'music_exporer/frameworks/explorer/assets'
+        for name in ['app.js', 'style.css']:
+            with self.subTest(asset=name):
+                self.assertEqual(
+                    analyzer_assets.joinpath(name).read_text(encoding='utf-8'),
+                    standalone_assets.joinpath(name).read_text(encoding='utf-8'),
+                )
+
     def test_legacy_analyzer_cli_documents_compatibility_route(self):
         result = subprocess.run(
             [sys.executable, '-m', 'music_analyzer', 'explorer', '--help'],

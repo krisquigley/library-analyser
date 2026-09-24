@@ -50,7 +50,7 @@ function syncSelectionEpoch(snapshot){
   return snapshot;
 }
 function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null;}
-async function applyHistorySelection(path){invalidateSelectionIntent(); state=syncSelectionEpoch(await api(path,{method:'POST'})); refresh();}
+async function applyHistorySelection(path){const token=++selectionRequestSeq; pendingSelectionIntent=null; const posted=syncSelectionEpoch(await api(path,{method:'POST'})); if(token!==selectionRequestSeq) return; state=posted; await refresh();}
 function text(el,value){el.textContent=value==null?'':String(value);return el;}
 async function api(path, options){const r=await fetch(path, options); if(!r.ok) throw new Error(await r.text()); return r.json();}
 function selectedControls(){const out={}; for(const n of controls){const el=document.querySelector(`[name=${n}]:checked`); out[n]=el?el.value:'off';} return out;}
