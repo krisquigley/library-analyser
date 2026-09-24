@@ -492,7 +492,7 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), null, 're
 postCurrent.resolve();
 await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), null, 'stale click POST continuation must not restore b after reset');
-assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', '']);
+assert.deepStrictEqual(fetches.filter(path => path === '/api/tracks/b'), [], 'stale click continuation must not fetch stale track detail after reset');
 assert(!elements.detail.children.some(node => node.textContent === 'Bee stale'), 'stale click detail must not render after reset');
 assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
 })().catch(error => { console.error(error); process.exit(1); });
