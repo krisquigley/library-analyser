@@ -3,7 +3,7 @@ import unittest
 from music_analyzer.application.dto.analysis import AnalysisReport, StageResult
 from music_analyzer.application.dto.explorer import ExplorerStoredTrack
 from music_analyzer.domain.analysis import ScoreSummary
-from music_exporer.interface_adapters.catalogue_contract import map_analyzer_track
+from music_explorer.interface_adapters.catalogue_contract import map_analyzer_track
 
 
 class CatalogueContractMappingTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class CatalogueContractMappingTests(unittest.TestCase):
         self.assertEqual(mapped.run.status, 'completed')
         self.assertEqual(mapped.run.stages[1].summary.labels, ('valence', 'arousal'))
         self.assertNotIn('/private/', repr(mapped))
-        self.assertEqual(type(mapped).__module__.split('.')[0], 'music_exporer')
+        self.assertEqual(type(mapped).__module__.split('.')[0], 'music_explorer')
 
 
 if __name__ == '__main__':

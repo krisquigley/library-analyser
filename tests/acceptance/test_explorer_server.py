@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-import music_exporer.frameworks.explorer.server as standalone_server
+import music_explorer.frameworks.explorer.server as standalone_server
 from music_analyzer.frameworks.explorer.server import create_server
 
 APP_ID = 0x4D414E41

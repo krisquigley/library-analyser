@@ -190,4 +190,4 @@ class ExplorerSnapshot:
 
     @property
     def snapshot(self):
-        return ExplorerReadModel('music-exporer', self.metadata.schema_version, self.metadata.track_count, self.metadata.read_policy)
+        return ExplorerReadModel('music-explorer', self.metadata.schema_version, self.metadata.track_count, self.metadata.read_policy)

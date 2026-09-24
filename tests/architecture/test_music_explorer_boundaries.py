@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[2] / 'music_exporer'
+ROOT = Path(__file__).resolve().parents[2] / 'music_explorer'
 ALLOWED_LAYERS = {
     'domain': {'domain'},
     'application': {'domain', 'application'},
@@ -34,7 +34,7 @@ def violations(source: str, module: str) -> list[str]:
             imports = [base + '.' + alias.name for alias in node.names]
         for name in imports:
             parts = name.split('.')
-            if parts[0] == 'music_exporer':
+            if parts[0] == 'music_explorer':
                 if len(parts) < 2 or parts[1] not in ALLOWED_LAYERS[layer]:
                     errors.append(name)
             elif parts[0] == 'music_analyzer' and layer in {'domain', 'application'}:
@@ -46,7 +46,7 @@ def violations(source: str, module: str) -> list[str]:
     return errors
 
 
-class MusicExporerBoundaryTests(unittest.TestCase):
+class MusicExplorerBoundaryTests(unittest.TestCase):
     def test_layers_exist(self):
         for layer in ALLOWED_LAYERS:
             with self.subTest(layer=layer):
@@ -59,7 +59,7 @@ class MusicExporerBoundaryTests(unittest.TestCase):
             relative = path.relative_to(ROOT)
             if len(relative.parts) == 1:
                 continue
-            module = 'music_exporer.' + '.'.join(relative.with_suffix('').parts)
+            module = 'music_explorer.' + '.'.join(relative.with_suffix('').parts)
             with self.subTest(path=str(relative)):
                 self.assertEqual(violations(path.read_text(encoding='utf-8'), module), [])
 
@@ -71,7 +71,7 @@ class MusicExporerBoundaryTests(unittest.TestCase):
             'from importlib import resources', 'import pathlib',
         ):
             with self.subTest(source=source):
-                self.assertTrue(violations(source, 'music_exporer.application.use_cases.example'))
+                self.assertTrue(violations(source, 'music_explorer.application.use_cases.example'))
 
 
 if __name__ == '__main__':
