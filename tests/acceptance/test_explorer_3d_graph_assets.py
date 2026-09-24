@@ -403,6 +403,57 @@ assert(fetches.includes('/api/tracks?limit=all'));
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for click/refresh race tests')
+    def test_refresh_after_click_before_post_resolves_preserves_latest_selection_intent(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}};
+(async () => {
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
+function response(payload){return {ok:true, json:async()=>payload};}
+function point(id){return {track_id:id, display_label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
+const postCurrent = deferred();
+const fetches = [];
+context.fetch = (path, options={}) => {
+  fetches.push(String(path));
+  if (path === '/api/current') return postCurrent.promise.then(() => response({current_track_id:'b'}));
+  if (path === '/api/state') return Promise.resolve(response({current_track_id:'a'}));
+  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]}));
+  if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('a'), point('b')], edges:[], selected_mood:'calm', available_moods:['calm']}));
+  if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (path === '/api/tracks/a') return Promise.resolve(response({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (String(path).startsWith('/api/candidates?control=tempo%3Aoff%3A1&control=harmony%3Aoff%3A1&control=energy%3Aoff%3A1&control=genre%3Aoff%3A1&control=mood%3Aoff%3A1')) {
+    const current = String(path).includes('current=b') ? 'cand-b' : 'cand-a';
+    return Promise.resolve(response({candidates:[{track_id:current, tier:'strong', score:0.8}]}));
+  }
+  return Promise.reject(new Error('unexpected fetch '+path));
+};
+function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
+const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+const rendered = [];
+context.renderMap = data => rendered.push(data.nodes.map(n => n.id));
+vm.runInContext('renderMap = globalThis.renderMap', context);
+const click = context.setCurrent('b');
+await Promise.resolve();
+const staleRefresh = context.refresh();
+await staleRefresh;
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'refresh must preserve optimistic latest click while POST is pending');
+assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', 'current']);
+postCurrent.resolve();
+await click;
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'POST response should remain latest selected track despite intervening refresh');
+assert(elements.detail.children[0].textContent === 'Bee', 'latest click detail must render after POST resolves');
+assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates must render after POST resolves');
+assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
+})().catch(error => { console.error(error); process.exit(1); });
+""";
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
     def test_undo_and_reset_still_force_complete_ui_refresh(self):
         app = APP_JS.read_text()
         self.assertIn("document.getElementById('undo').onclick=async()=>{state=await api('/api/undo',{method:'POST'}); refresh();};", app)
