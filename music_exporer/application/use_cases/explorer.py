@@ -343,7 +343,7 @@ def _features(record):
         summary_values = tuple(zip(stage.summary.labels, stage.summary.mean)) if stage and stage.summary else ()
         manual_text = manual.get(field)
         source = 'manual_text' if manual_text is not None else ('automatic' if automatic_values or summary_values else 'missing')
-        automatic = AutomaticEvidence(stage.values, summary_values, stage.summary.coverage if stage and stage.summary else None, stage.provenance if stage else (), stage.uncertainty if stage else '')
+        automatic = AutomaticEvidence(automatic_values, summary_values, stage.summary.coverage if stage and stage.summary else None, stage.provenance if stage else (), stage.uncertainty if stage else '')
         app_evidence = ExplorerFieldEvidence(field=field, automatic=automatic, manual_text=manual_text, effective_source=source, typed_override_status='unresolved' if manual_text is not None else 'absent')
         mapped[field] = FeatureEvidence(app_evidence.automatic_values, app_evidence.summary_values, app_evidence.manual_text, app_evidence.effective_source, app_evidence.provenance, app_evidence.uncertainty)
     return CandidateFeatures(record.track_id, mapped)
