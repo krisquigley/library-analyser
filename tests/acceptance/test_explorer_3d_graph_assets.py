@@ -279,6 +279,7 @@ assert.strictEqual(calls.length,3,'changed layout reframes');
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
 const context = {module:{exports:{}}, console, URLSearchParams};
+(async () => {
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
@@ -322,8 +323,9 @@ assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
 assert(detail.children[0].textContent === 'Bee', 'stale first detail must not overwrite latest selection');
 assert(candidates.children[0].textContent.includes('cand-b'), 'stale first candidates must not overwrite latest selection');
 assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
+})().catch(error => { console.error(error); process.exit(1); });
 """;
-        subprocess.run(['node', '--input-type=module', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
