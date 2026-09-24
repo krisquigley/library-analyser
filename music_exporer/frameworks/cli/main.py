@@ -14,7 +14,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.host != '127.0.0.1':
         parser.error('music-exporer binds 127.0.0.1 only in this local personal-use slice')
-    overrides = {'config_path': args.config} if args.config else {}
+    overrides = {'config': args.config} if args.config else {}
     if args.database:
         overrides['database'] = args.database
     settings = load_settings(**overrides)

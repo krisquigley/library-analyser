@@ -47,6 +47,32 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Invalid stored stage'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).read_track(tid)
 
+    def test_rejects_boolean_stage_summary_numbers(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + 'b' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, 'b' * 64, 10))
+            db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run', '', 'completed', ''))
+            db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run', tid))
+            payload = {
+                'stage': 'mood',
+                'provenance': [],
+                'uncertainty': '',
+                'values': [['valence', True]],
+                'summary': {
+                    'labels': ['valence'],
+                    'mean': [True],
+                    'minimum': [0.0],
+                    'maximum': [1.0],
+                    'coverage': 1.0,
+                },
+            }
+            db.execute('INSERT INTO stages VALUES(?,?,?)', ('run', 'mood', json.dumps(payload)))
+            db.commit(); db.close()
+            with self.assertRaisesRegex(AnalysisError, 'Invalid stored stage'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).read_track(tid)
+
 
 if __name__ == '__main__':
     unittest.main()
