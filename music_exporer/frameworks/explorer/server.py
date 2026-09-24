@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 import json
 from math import isfinite
+import threading
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from importlib import resources
@@ -35,22 +36,43 @@ class ExplorerState:
     def __init__(self, repository):
         self.repository = repository
         self.current_track_id = None
-        self.history: list[str] = []
+        self.history: list[str | None] = []
+        self.selection_token = 0
+        self._lock = threading.Lock()
 
-    def set_current(self, track_id: str):
+    def snapshot(self):
+        with self._lock:
+            return {'current_track_id': self.current_track_id, 'history': list(self.history)}
+
+    def set_current(self, track_id: str, selection_token: int | None = None):
         if track_id not in self.repository.track_ids():
             raise ValueError('Unknown explorer track')
-        if self.current_track_id != track_id:
-            self.history.append(self.current_track_id)
-        self.current_track_id = track_id
+        with self._lock:
+            if selection_token is not None:
+                if selection_token < self.selection_token:
+                    return self.snapshot_unlocked()
+                self.selection_token = selection_token
+            if self.current_track_id != track_id:
+                self.history.append(self.current_track_id)
+            self.current_track_id = track_id
+            return self.snapshot_unlocked()
+
+    def snapshot_unlocked(self):
+        return {'current_track_id': self.current_track_id, 'history': list(self.history)}
 
     def undo(self):
-        if self.history:
-            self.current_track_id = self.history.pop()
+        with self._lock:
+            if self.history:
+                self.current_track_id = self.history.pop()
+            self.selection_token += 1
+            return self.snapshot_unlocked()
 
     def reset(self):
-        self.current_track_id = None
-        self.history.clear()
+        with self._lock:
+            self.current_track_id = None
+            self.history.clear()
+            self.selection_token += 1
+            return self.snapshot_unlocked()
 
 
 def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765):
@@ -84,7 +106,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path in {'/app.js', '/style.css', '/vendor/3d-force-graph/3d-force-graph.min.js', '/vendor/3d-force-graph/NOTICE'}:
                 return self._asset(path[1:], 'text/javascript; charset=utf-8' if path.endswith('.js') else ('text/plain; charset=utf-8' if path.endswith('NOTICE') else 'text/css; charset=utf-8'))
             if path == '/api/state':
-                return self._json({'current_track_id': state.current_track_id, 'history': list(state.history)})
+                return self._json(state.snapshot())
             if path == '/api/tracks':
                 query = parse_qs(parsed.query)
                 raw_limit = query.get('limit', ['100'])[0]
@@ -125,12 +147,15 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 track_id = data.get('track_id')
                 if not isinstance(track_id, str):
                     raise ValueError('track_id is required')
-                state.set_current(track_id)
+                selection_token = data.get('selection_token')
+                if selection_token is not None and not isinstance(selection_token, int):
+                    raise ValueError('selection_token must be an integer')
+                snapshot = state.set_current(track_id, selection_token)
             elif parsed.path == '/api/undo':
-                state.undo()
+                snapshot = state.undo()
             else:
-                state.reset()
-            return self._json({'current_track_id': state.current_track_id, 'history': list(state.history)})
+                snapshot = state.reset()
+            return self._json(snapshot)
 
         def _body(self):
             length = int(self.headers.get('Content-Length', '0') or '0')

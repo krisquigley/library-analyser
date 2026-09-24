@@ -4,9 +4,11 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import music_exporer.frameworks.explorer.server as standalone_server
 from music_analyzer.frameworks.explorer.server import create_server
 
 APP_ID = 0x4D414E41
@@ -96,6 +98,40 @@ class ExplorerServerTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as raised:
             urlopen(too_large, timeout=5)
         self.assertEqual(raised.exception.code, 413)
+
+    def test_concurrent_current_posts_ignore_older_selection_tokens(self):
+        first_can_continue = threading.Event()
+        first_is_waiting = threading.Event()
+        original_set_current = standalone_server.ExplorerState.set_current
+
+        def pause_older_post_before_setting_current(state, track_id, selection_token=None):
+            if selection_token == 1:
+                first_is_waiting.set()
+                self.assertTrue(first_can_continue.wait(5), 'newer POST never reached the server')
+            return original_set_current(state, track_id, selection_token)
+
+        def post_current(track_id, token):
+            body = {'track_id': track_id, 'selection_token': token}
+            req = Request(self.base + '/api/current', data=json.dumps(body).encode(), method='POST', headers={'Content-Type': 'application/json'})
+            with urlopen(req, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                return json.loads(response.read().decode('utf-8'))
+
+        with patch.object(standalone_server.ExplorerState, 'set_current', pause_older_post_before_setting_current):
+            older_response = []
+            older_thread = threading.Thread(target=lambda: older_response.append(post_current(self.first, 1)))
+            older_thread.start()
+            self.assertTrue(first_is_waiting.wait(5), 'older POST did not reach the server')
+
+            newer_response = post_current(self.second, 2)
+            first_can_continue.set()
+            older_thread.join(5)
+
+        self.assertFalse(older_thread.is_alive())
+        self.assertEqual(newer_response['current_track_id'], self.second)
+        self.assertEqual(older_response[0]['current_track_id'], self.second)
+        self.assertEqual(older_response[0]['history'], [None])
+        self.assertEqual(self.get_json('/api/state')['current_track_id'], self.second)
 
     def test_static_assets_are_packaged_and_html_is_not_generated_from_labels(self):
         with urlopen(self.base + '/', timeout=5) as response:

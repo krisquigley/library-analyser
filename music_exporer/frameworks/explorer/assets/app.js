@@ -5,6 +5,7 @@ let visibleGraph={nodes:[],links:[],unpositioned:[]};
 let forceGraph=null;
 let framedGraphLayout=null;
 let renderedGraphSignature=null;
+let renderedGraphData={nodes:[],links:[]};
 let graphResizeObserver=null;
 let graphAxes=null;
 let graphAxesAnimating=false;
@@ -23,13 +24,15 @@ function updateSelectedTrackVisuals(){
   renderMoodStrip(visibleGraph);
 }
 async function refreshSelectionDependent(token){
+  if(token!==selectionRequestSeq) return;
   const selectedId=state.current_track_id;
   updateSelectedTrackVisuals();
   if(selectedId){
-    const [detail,candidates]=await Promise.all([api('/api/tracks/'+encodeURIComponent(selectedId)),api('/api/candidates?'+controlQuery())]);
+    const [detail,candidates]=await Promise.all([api('/api/tracks/'+encodeURIComponent(selectedId)),api('/api/candidates?'+controlQuery()+'&current='+encodeURIComponent(selectedId))]);
     if(token!==selectionRequestSeq || state.current_track_id!==selectedId) return;
     renderDetail(detail); renderCandidates(candidates); updateSelectedTrackVisuals();
   } else {
+    if(token!==selectionRequestSeq) return;
     renderInitialDetail(graphModel); renderCandidates({candidates:[]});
   }
 }
@@ -37,13 +40,13 @@ async function setCurrent(id){
   const token=++selectionRequestSeq;
   state={...state,current_track_id:id};
   updateSelectedTrackVisuals();
-  const posted=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id})});
+  const posted=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:token})});
   if(token!==selectionRequestSeq) return;
   state=posted;
   await refreshSelectionDependent(token);
 }
 function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGraphControls.mood) p.set('mood',selectedGraphControls.mood); const q=p.toString(); return q?'?'+q:'';}
-async function refresh(){const token=++selectionRequestSeq; state=await api('/api/state'); const list=await api('/api/tracks?limit=all'); renderTracks(list.tracks); const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); renderMap(visibleGraph); await refreshSelectionDependent(token);}
+async function refresh(){const token=++selectionRequestSeq; const refreshedState=await api('/api/state'); if(token!==selectionRequestSeq) return; const list=await api('/api/tracks?limit=all'); if(token!==selectionRequestSeq) return; const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); if(token!==selectionRequestSeq) return; state=refreshedState; renderTracks(list.tracks); graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); renderMap(visibleGraph); await refreshSelectionDependent(token);}
 function renderTracks(tracks){const ul=document.getElementById('tracks'); ul.replaceChildren(...tracks.map(t=>{const li=document.createElement('li'); li.dataset.trackId=t.handle; li.className=t.handle===state.current_track_id?'current':''; const b=document.createElement('button'); text(b,t.display_label||t.handle); b.onclick=()=>setCurrent(t.handle); li.append(b); return li;}));}
 function renderInitialDetail(model){const root=document.getElementById('detail'); const h=document.createElement('h3'); text(h,'All-library valence / arousal / BPM graph'); const p=document.createElement('p'); text(p,`Showing ${visibleGraph.nodes.length} positioned tracks and ${model.unpositioned.length} unpositioned tracks. X=native valence, Y=native arousal, Z=raw BPM (fixed 20 BPM per depth unit); selected mood ${model.selectedMood||'none'} only changes the score strip; no sample-relative clipping.`); const help=document.createElement('p'); help.className='muted'; text(help,'3d-force-graph is bundled locally. Fixed coordinates are scaled for readable display only. Drag to orbit, wheel to zoom, hover/click nodes and links for evidence. Sparse edges are axis-independent relatedness from existing summaries, not screen distance.'); const list=document.createElement('ul'); for(const u of model.unpositioned){const li=document.createElement('li'); text(li,`${u.display_label||u.track_id}: ${(u.reasons||[]).join('; ')}`); list.append(li);} root.replaceChildren(h,p,help,list);}
 function fieldDisplay(f){const a=f.automatic||{}; if(a.values&&a.values.length) return a.values; if(a.summary_values&&a.summary_values.length) return a.summary_values; return f.effective_source;}
@@ -216,7 +219,7 @@ function renderMoodStrip(data){
   picker.oninput=show; show();
   canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
 }
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(0.28).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){forceGraph.graphData({nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links}); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of forceGraph.graphData().nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {renderCanvasFallback(data);} renderMoodStrip(data); const info=document.getElementById('graph-info'); if(info) text(info,`${data.nodes.length} positioned tracks · ${data.links.length} sparse relatedness edges · ${data.unpositioned.length} unpositioned · score strip mood ${graphModel.selectedMood||'n/a'} · ${graphColorLegend(graphModel)} · no CDN calls`);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(0.28).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {renderCanvasFallback(data);} renderMoodStrip(data); const info=document.getElementById('graph-info'); if(info) text(info,`${data.nodes.length} positioned tracks · ${data.links.length} sparse relatedness edges · ${data.unpositioned.length} unpositioned · score strip mood ${graphModel.selectedMood||'n/a'} · ${graphColorLegend(graphModel)} · no CDN calls`);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
