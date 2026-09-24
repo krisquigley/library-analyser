@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 
-from music_exporer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ScoreSummary, StageResult
+from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ScoreSummary, StageResult
 
 APPLICATION_ID = 0x4D414E41
 

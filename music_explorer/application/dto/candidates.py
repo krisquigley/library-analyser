@@ -2,8 +2,8 @@
 from dataclasses import dataclass
 from typing import Mapping
 
-from music_exporer.domain.candidate_selection import CandidateExplanation, NoMatchDetail
-from music_exporer.application.dto.explorer import ExplorerMetadata
+from music_explorer.domain.candidate_selection import CandidateExplanation, NoMatchDetail
+from music_explorer.application.dto.explorer import ExplorerMetadata
 
 
 @dataclass(frozen=True)

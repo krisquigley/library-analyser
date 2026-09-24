@@ -1,5 +1,5 @@
 """Map analyzer-produced read-only catalogue contracts into explorer-owned DTOs."""
-from music_exporer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ScoreSummary, StageResult
+from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ScoreSummary, StageResult
 
 
 def map_analyzer_track(track) -> ExplorerStoredTrack:

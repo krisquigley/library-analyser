@@ -1,8 +1,8 @@
 """Application orchestration for Phase2 explorer candidate selection."""
-from music_exporer.application.dto.candidates import CandidateQuery, CandidateResultDto, CandidateSummaryDto
-from music_exporer.application.dto.explorer import AutomaticEvidence, ExplorerFieldEvidence, ExplorerMetadata
-from music_exporer.application.ports.explorer import ExplorerRepository
-from music_exporer.domain.candidate_selection import CandidateFeatures, FeatureEvidence, SelectionControl, SelectionRequest, rank_candidates
+from music_explorer.application.dto.candidates import CandidateQuery, CandidateResultDto, CandidateSummaryDto
+from music_explorer.application.dto.explorer import AutomaticEvidence, ExplorerFieldEvidence, ExplorerMetadata
+from music_explorer.application.ports.explorer import ExplorerRepository
+from music_explorer.domain.candidate_selection import CandidateFeatures, FeatureEvidence, SelectionControl, SelectionRequest, rank_candidates
 
 FEATURE_CONTRACT_VERSION = 'summary-derived-v1'
 OVERRIDE_POLICY_VERSION = 'manual-text-display-only-v1'

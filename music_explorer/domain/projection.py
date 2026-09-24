@@ -6,7 +6,7 @@ and its coordinates are never ranking inputs.
 from dataclasses import dataclass
 from math import isfinite, log, sqrt
 
-from music_exporer.domain.candidate_selection import CandidateFeatures, FeatureEvidence
+from music_explorer.domain.candidate_selection import CandidateFeatures, FeatureEvidence
 
 PROJECTION_POLICY_VERSION = 'anchor-distance-projection-v1'
 NEIGHBOUR_POLICY_VERSION = 'endpoint-local-exact-top-k-neighbours-v2'

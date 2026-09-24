@@ -1,7 +1,7 @@
 """Read-only explorer catalogue boundary."""
 from typing import Protocol
 
-from music_exporer.application.dto.explorer import ExplorerStoredTrack
+from music_explorer.application.dto.explorer import ExplorerStoredTrack
 
 
 class ExplorerRepository(Protocol):

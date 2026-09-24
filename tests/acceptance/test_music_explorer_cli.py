@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import patch
 
-from music_exporer.frameworks.cli import main as cli
+from music_explorer.frameworks.cli import main as cli
 
 
-class MusicExporerCLITests(unittest.TestCase):
+class MusicExplorerCLITests(unittest.TestCase):
     def test_standalone_entrypoint_builds_server_from_configured_database(self):
         created = []
         class FakeServer:

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from music_exporer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
+from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
 
 APP_ID = 0x4D414E41
 

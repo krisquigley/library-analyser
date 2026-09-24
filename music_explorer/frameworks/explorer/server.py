@@ -10,11 +10,11 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from importlib import resources
 from urllib.parse import parse_qs, unquote, urlparse
 
-from music_exporer.application.dto.candidates import CandidateQuery, SelectionControlDto
-from music_exporer.application.use_cases.candidates import SelectExplorerCandidates
-from music_exporer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks
-from music_exporer.application.use_cases.projection_artifacts import BuildLiveProjection
-from music_exporer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
+from music_explorer.application.dto.candidates import CandidateQuery, SelectionControlDto
+from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
+from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks
+from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection
+from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
 MAX_BODY = 64 * 1024
 
@@ -208,7 +208,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
         def _asset(self, name, content_type):
             if name not in {'index.html', 'app.js', 'style.css', 'vendor/3d-force-graph/3d-force-graph.min.js', 'vendor/3d-force-graph/NOTICE'}:
                 return self._json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
-            text = resources.files('music_exporer.frameworks.explorer.assets').joinpath(name).read_text(encoding='utf-8')
+            text = resources.files('music_explorer.frameworks.explorer.assets').joinpath(name).read_text(encoding='utf-8')
             payload = text.encode('utf-8')
             self.send_response(HTTPStatus.OK)
             self.send_header('Content-Type', content_type)

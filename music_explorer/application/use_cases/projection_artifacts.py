@@ -5,10 +5,10 @@ import json
 from math import isfinite
 import platform
 
-from music_exporer.application.ports.explorer import ExplorerRepository
-from music_exporer.application.ports.projection_artifacts import ProjectionArtifactStore
-from music_exporer.application.use_cases.candidates import _features
-from music_exporer.domain.projection import (
+from music_explorer.application.ports.explorer import ExplorerRepository
+from music_explorer.application.ports.projection_artifacts import ProjectionArtifactStore
+from music_explorer.application.use_cases.candidates import _features
+from music_explorer.domain.projection import (
     DISTANCE_POLICY_VERSION,
     NEIGHBOUR_POLICY_VERSION,
     PROJECTION_POLICY_VERSION,

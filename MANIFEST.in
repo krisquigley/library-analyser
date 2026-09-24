@@ -1,4 +1,4 @@
 include plans/music-analyzer-cli-plan.md
 recursive-include docs *.md
 recursive-include music_analyzer/frameworks/explorer/assets *.html *.js *.css
-recursive-include music_exporer/frameworks/explorer/assets *.html *.js *.css NOTICE
+recursive-include music_explorer/frameworks/explorer/assets *.html *.js *.css NOTICE

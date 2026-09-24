@@ -1,6 +1,6 @@
 from math import isfinite
 
-from music_exporer.application.dto.explorer import (
+from music_explorer.application.dto.explorer import (
     AutomaticEvidence,
     AxisValue,
     ExplorerFieldEvidence,
@@ -12,9 +12,9 @@ from music_exporer.application.dto.explorer import (
     MoodAxisNode,
     UnpositionedTrack,
 )
-from music_exporer.application.ports.explorer import ExplorerRepository
-from music_exporer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, _bounded_edges, symmetric_feature_distance
-from music_exporer.domain.review import FIELDS
+from music_explorer.application.ports.explorer import ExplorerRepository
+from music_explorer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, _bounded_edges, symmetric_feature_distance
+from music_explorer.domain.review import FIELDS
 
 
 class ListExplorerTracks:
@@ -333,7 +333,7 @@ def _uniq(items):
 
 
 def _features(record):
-    from music_exporer.domain.candidate_selection import CandidateFeatures, FeatureEvidence
+    from music_explorer.domain.candidate_selection import CandidateFeatures, FeatureEvidence
     mapped = {}
     stages = {stage.stage: stage for stage in record.run.stages} if record.run else {}
     manual = dict(record.overrides)

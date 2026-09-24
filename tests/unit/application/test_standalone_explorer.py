@@ -1,7 +1,7 @@
 import unittest
 
-from music_exporer.application.dto.explorer import AnalysisReport, ExplorerMetadata, ExplorerStoredTrack, StageResult
-from music_exporer.application.use_cases.explorer import ListExplorerTracks
+from music_explorer.application.dto.explorer import AnalysisReport, ExplorerMetadata, ExplorerStoredTrack, StageResult
+from music_explorer.application.use_cases.explorer import ListExplorerTracks
 
 
 class FakeExplorerRepository:
