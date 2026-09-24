@@ -40,7 +40,7 @@ from music_analyzer.interface_adapters.presenters.doctor import present_doctor
 from music_analyzer.application.use_cases.projection_artifacts import PrepareProjectionArtifact, RefreshProjectionArtifact
 from music_analyzer.infrastructure.filesystem.projection_artifacts import FileProjectionArtifactStore
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
-from music_analyzer.frameworks.explorer.server import create_server
+from music_exporer.frameworks.explorer.server import create_server
 
 
 from music_analyzer.application.use_cases.review import ReviewTracks
@@ -182,10 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     add_configuration_options(export)
     export.add_argument('--format', choices=('json', 'csv', 'markdown'), required=True)
     export.add_argument('--output', required=True)
-    explorer = commands.add_parser('explorer', help='Start the personal read-only localhost journey explorer.')
+    explorer = commands.add_parser('explorer', help='Compatibility route: start the music-exporer read-only localhost journey explorer.')
     add_configuration_options(explorer)
     explorer.add_argument('--host', default='127.0.0.1', help='Bind host; default 127.0.0.1.')
-    explorer.add_argument('--port', type=int, default=8765, help='Bind port; default 8765.')
+    explorer.add_argument('--port', type=int, default=8765, help='Bind port; default 8765. Compatibility route for music-exporer.')
     projection = commands.add_parser('prepare-projection', help='Prepare or refresh the read-only explorer projection artifact.')
     add_configuration_options(projection)
     projection.add_argument('--artifact', required=True, help='Projection artifact JSON path, separate from the analysis database.')
