@@ -68,7 +68,7 @@ class ExplorerMetadata:
     schema_version: int
     read_policy: str
     track_count: int
-    feature_contract_version: str = 'analyzer-summary-derived-v1'
+    feature_contract_version: str = 'summary-derived-v1'
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,7 @@ schemas.
 """
 from contextlib import contextmanager
 import json
+from math import isfinite
 from pathlib import Path
 import re
 import sqlite3
@@ -23,8 +24,23 @@ class AnalysisError(Exception):
 def stage_from_mapping(data):
     summary = data.get('summary')
     if summary is not None:
-        summary = ScoreSummary(tuple(summary.get('labels', ())), tuple(summary.get('mean', ())), tuple(summary.get('minimum', ())), tuple(summary.get('maximum', ())), float(summary.get('coverage', 0)), bool(summary.get('provisional', True)), str(summary.get('uncertainty', 'Raw scores are not calibrated; unsampled audio may differ.')))
-    return StageResult(str(data['stage']), tuple(tuple(item) for item in data.get('provenance', ())), str(data.get('uncertainty', '')), tuple(tuple(item) for item in data.get('values', ())), (), summary)
+        summary = ScoreSummary(tuple(summary['labels']), tuple(summary['mean']), tuple(summary['minimum']), tuple(summary['maximum']), float(summary['coverage']), bool(summary.get('provisional', True)), str(summary.get('uncertainty', 'Raw scores are not calibrated; unsampled audio may differ.')))
+        if (not summary.labels or any(not isinstance(label, str) for label in summary.labels)
+                or any(len(values) != len(summary.labels) or not all(isinstance(value, (int, float)) and isfinite(value) for value in values)
+                       for values in (summary.mean, summary.minimum, summary.maximum))
+                or not isfinite(summary.coverage) or not 0 < summary.coverage <= 1):
+            raise ValueError('Invalid summary')
+    for name in ('provenance', 'values'):
+        pairs = data.get(name, ())
+        if not isinstance(pairs, (list, tuple)):
+            raise ValueError('Invalid ' + name)
+        for pair in pairs:
+            if (not isinstance(pair, (list, tuple)) or len(pair) != 2 or not isinstance(pair[0], str)
+                    or not (isinstance(pair[1], str) or (name == 'values' and isinstance(pair[1], (int, float)) and isfinite(pair[1])))):
+                raise ValueError('Invalid ' + name)
+    if not isinstance(data['stage'], str) or not isinstance(data['uncertainty'], str):
+        raise ValueError('Invalid stage text')
+    return StageResult(data['stage'], tuple(tuple(item) for item in data['provenance']), data['uncertainty'], tuple(tuple(item) for item in data.get('values', ())), (), summary)
 
 _SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 _TRACK_ID_RE = re.compile(r'^sha256:[0-9a-f]{64}$')

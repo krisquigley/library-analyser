@@ -50,6 +50,25 @@ class ProjectionArtifactResult:
     warning: str | None = None
 
 
+
+
+@dataclass(frozen=True)
+class LiveProjectionResult:
+    policy_versions: dict[str, str]
+    tracks: tuple[dict[str, object], ...]
+    edges: tuple[dict[str, object], ...]
+
+
+class BuildLiveProjection:
+    def __init__(self, repository: ExplorerRepository, k: int = 10):
+        self.repository = repository
+        self.k = k
+
+    def execute(self):
+        artifact = _build_artifact(self.repository, ProjectionParameters(self.k, False), None)
+        return LiveProjectionResult(artifact['policy_versions'], artifact['tracks'], artifact['edges'])
+
+
 class PrepareProjectionArtifact:
     def __init__(self, repository: ExplorerRepository, store: ProjectionArtifactStore, k: int = 10):
         self.repository = repository

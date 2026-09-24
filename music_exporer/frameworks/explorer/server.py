@@ -12,8 +12,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from music_exporer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_exporer.application.use_cases.candidates import SelectExplorerCandidates
 from music_exporer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks
-from music_exporer.application.use_cases.projection_artifacts import _build_artifact
-from music_exporer.domain.projection import ProjectionParameters
+from music_exporer.application.use_cases.projection_artifacts import BuildLiveProjection
 from music_exporer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
 MAX_BODY = 64 * 1024
@@ -105,8 +104,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 result = SelectExplorerCandidates(repository).execute(CandidateQuery(current, controls, limit=limit))
                 return self._json(_to_json(result))
             if path == '/api/projection':
-                artifact = _build_artifact(repository, ProjectionParameters(10, False), None)
-                return self._json(_to_json({'policy_versions': artifact['policy_versions'], 'tracks': artifact['tracks'], 'edges': artifact['edges']}))
+                projection = BuildLiveProjection(repository).execute()
+                return self._json(_to_json(projection))
             if path == '/api/mood-axis-graph':
                 query = parse_qs(parsed.query)
                 mood = query.get('mood', [None])[0]
