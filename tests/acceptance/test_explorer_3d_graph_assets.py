@@ -454,10 +454,56 @@ assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for reset race tests')
+    def test_reset_invalidates_in_flight_click_post_continuation(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}};
+(async () => {
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
+function response(payload){return {ok:true, json:async()=>payload};}
+function point(id){return {track_id:id, display_label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
+const postCurrent = deferred();
+const fetches = [];
+context.fetch = (path, options={}) => {
+  fetches.push(String(path));
+  if (path === '/api/current') return postCurrent.promise.then(() => response({current_track_id:'b'}));
+  if (path === '/api/reset') return Promise.resolve(response({current_track_id:null}));
+  if (path === '/api/state') return Promise.resolve(response({current_track_id:null}));
+  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]}));
+  if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('a'), point('b')], edges:[], selected_mood:'calm', available_moods:['calm']}));
+  if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (String(path).startsWith('/api/candidates?')) return Promise.resolve(response({candidates:[{track_id:'cand-b', tier:'stale', score:0.8}]}));
+  return Promise.reject(new Error('unexpected fetch '+path));
+};
+function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
+const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p'), controls: element('div'), undo: element('button'), reset: element('button')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+context.refresh = () => Promise.resolve();
+vm.runInContext('refresh = globalThis.refresh', context);
+vm.runInContext("if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');}", context);
+const click = context.setCurrent('b');
+await Promise.resolve();
+await elements.reset.onclick();
+assert.strictEqual(vm.runInContext('state.current_track_id', context), null, 'reset should clear selection while click POST is pending');
+postCurrent.resolve();
+await click;
+assert.strictEqual(vm.runInContext('state.current_track_id', context), null, 'stale click POST continuation must not restore b after reset');
+assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', '']);
+assert(!elements.detail.children.some(node => node.textContent === 'Bee stale'), 'stale click detail must not render after reset');
+assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
     def test_undo_and_reset_still_force_complete_ui_refresh(self):
         app = APP_JS.read_text()
-        self.assertIn("document.getElementById('undo').onclick=async()=>{state=await api('/api/undo',{method:'POST'}); refresh();};", app)
-        self.assertIn("document.getElementById('reset').onclick=async()=>{state=await api('/api/reset',{method:'POST'}); refresh();};", app)
+        self.assertIn("function applyHistorySelection(path){invalidateSelectionIntent(); state=await api(path,{method:'POST'}); refresh();}", app)
+        self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo');", app)
+        self.assertIn("document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');", app)
 
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
