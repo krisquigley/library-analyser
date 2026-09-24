@@ -272,6 +272,59 @@ assert.strictEqual(calls.length,3,'changed layout reframes');
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for selection behavior tests')
+    def test_selection_only_fetches_detail_candidates_and_keeps_graph_data(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console, URLSearchParams};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
+function response(payload){return {ok:true, json:async()=>payload};}
+const detailA = deferred(), candidatesA = deferred();
+const fetches = [];
+context.fetch = (path, options={}) => {
+  fetches.push(String(path));
+  if (path === '/api/current') {
+    const body = JSON.parse(options.body);
+    return Promise.resolve(response({current_track_id: body.track_id}));
+  }
+  if (path === '/api/tracks/a') return detailA.promise.then(payload => response(payload));
+  if (path === '/api/candidates?control=tempo%3Aoff%3A1&control=harmony%3Aoff%3A1&control=energy%3Aoff%3A1&control=genre%3Aoff%3A1&control=mood%3Aoff%3A1') return candidatesA.promise.then(payload => response(payload));
+  if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  return Promise.resolve(response({candidates:[{track_id:'cand-b', tier:'strong', score:0.8}]}));
+};
+function element(tag){return {tag, textContent:'', className:'', dataset:{}, style:{}, children:[], setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};}
+const detail = element('section'), candidates = element('ol');
+const rows = ['a','b'].map(id => ({dataset:{trackId:id}, className:''}));
+context.document = {createElement: element, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return rows;}, getElementById(id){return id === 'detail' ? detail : id === 'candidates' ? candidates : null;}};
+const graphCalls = [];
+const graph = {nodeVal(fn){this.value = fn; return this;}, refresh(){this.refreshed = (this.refreshed || 0) + 1; return this;}, graphData(data){graphCalls.push(data); return {nodes:[]};}};
+context.graph = graph;
+vm.runInContext("state={current_track_id:null}; graphModel={nodes:[{id:'a',label:'A',moodScore:null},{id:'b',label:'B',moodScore:null}],links:[],unpositioned:[],selectedMood:'calm',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]}; forceGraph=graph;", context);
+const first = context.setCurrent('a');
+await Promise.resolve();
+const second = context.setCurrent('b');
+await second;
+detailA.resolve({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
+candidatesA.resolve({candidates:[{track_id:'cand-a', tier:'stale', score:0.1}]});
+await first;
+assert.deepStrictEqual(fetches.filter(u => u === '/api/tracks?limit=all' || u.startsWith('/api/mood-axis-graph')), []);
+assert(fetches.includes('/api/current'));
+assert(fetches.includes('/api/tracks/a'));
+assert(fetches.includes('/api/tracks/b'));
+assert.strictEqual(graphCalls.length, 0, 'selection-only changes must not replace forceGraph.graphData');
+assert.strictEqual(graph.value({id:'b'}), 4);
+assert.strictEqual(graph.value({id:'a'}), 1);
+assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
+assert(detail.children[0].textContent === 'Bee', 'stale first detail must not overwrite latest selection');
+assert(candidates.children[0].textContent.includes('cand-b'), 'stale first candidates must not overwrite latest selection');
+assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
+""";
+        subprocess.run(['node', '--input-type=module', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
         self.assertIn('#detail .score-gauge{position:relative;width:39px;height:39px;', style)
