@@ -28,11 +28,14 @@ def _finite_number(value):
 def stage_from_mapping(data):
     summary = data.get('summary')
     if summary is not None:
-        summary = ScoreSummary(tuple(summary['labels']), tuple(summary['mean']), tuple(summary['minimum']), tuple(summary['maximum']), float(summary['coverage']), bool(summary.get('provisional', True)), str(summary.get('uncertainty', 'Raw scores are not calibrated; unsampled audio may differ.')))
+        coverage = summary['coverage']
+        if not _finite_number(coverage):
+            raise ValueError('Invalid summary')
+        summary = ScoreSummary(tuple(summary['labels']), tuple(summary['mean']), tuple(summary['minimum']), tuple(summary['maximum']), float(coverage), bool(summary.get('provisional', True)), str(summary.get('uncertainty', 'Raw scores are not calibrated; unsampled audio may differ.')))
         if (not summary.labels or any(not isinstance(label, str) for label in summary.labels)
                 or any(len(values) != len(summary.labels) or not all(_finite_number(value) for value in values)
                        for values in (summary.mean, summary.minimum, summary.maximum))
-                or not _finite_number(summary.coverage) or not 0 < summary.coverage <= 1):
+                or not 0 < summary.coverage <= 1):
             raise ValueError('Invalid summary')
     for name in ('provenance', 'values'):
         pairs = data.get(name, ())
