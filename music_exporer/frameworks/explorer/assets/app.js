@@ -5,19 +5,92 @@ let visibleGraph={nodes:[],links:[],unpositioned:[]};
 let forceGraph=null;
 let framedGraphLayout=null;
 let renderedGraphSignature=null;
+let renderedGraphData={nodes:[],links:[]};
 let graphResizeObserver=null;
 let graphAxes=null;
 let graphAxesAnimating=false;
 let pendingGraphAxisSpec=[];
 let selectedGraphControls={mood:'',bpmMin:null,bpmMax:null,genres:[]};
+let selectionRequestSeq=0;
+const selectionPostSeqKey='music-explorer-selection-post-seq';
+let selectionPostSeq=loadSelectionPostSeq();
+let selectionEpoch=0;
+let refreshRequestSeq=0;
+let selectionDetailRequestSeq=0;
+let pendingSelectionIntent=null;
+function sessionStorageNumber(key){
+  try{
+    if(typeof sessionStorage!=='undefined'){
+      const value=Number(sessionStorage.getItem(key)||'0');
+      return Number.isFinite(value)&&value>0?Math.floor(value):0;
+    }
+  }catch(_error){}
+  return 0;
+}
+function loadSelectionPostSeq(){return sessionStorageNumber(selectionPostSeqKey);}
+function storeSelectionPostSeq(value){
+  try{if(typeof sessionStorage!=='undefined') sessionStorage.setItem(selectionPostSeqKey,String(value));}catch(_error){}
+}
+function nextSelectionPostSeq(){selectionPostSeq+=1; storeSelectionPostSeq(selectionPostSeq); return selectionPostSeq;}
+function resetSelectionPostSeq(){selectionPostSeq=0; storeSelectionPostSeq(selectionPostSeq);}
+function selectionClientId(){
+  const key='music-explorer-selection-client-id';
+  try{
+    if(typeof sessionStorage!=='undefined'){
+      let id=sessionStorage.getItem(key);
+      if(!id){id='tab-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2); sessionStorage.setItem(key,id);}
+      return id;
+    }
+  }catch(_error){}
+  if(!selectionClientId.fallback) selectionClientId.fallback='tab-'+Math.random().toString(36).slice(2);
+  return selectionClientId.fallback;
+}
+function syncSelectionEpoch(snapshot){
+  if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
+  return snapshot;
+}
+function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null;}
+async function applyHistorySelection(path){const token=++selectionRequestSeq; pendingSelectionIntent=null; const posted=syncSelectionEpoch(await api(path,{method:'POST'})); if(token!==selectionRequestSeq) return; state=posted; await refresh();}
 function text(el,value){el.textContent=value==null?'':String(value);return el;}
 async function api(path, options){const r=await fetch(path, options); if(!r.ok) throw new Error(await r.text()); return r.json();}
 function selectedControls(){const out={}; for(const n of controls){const el=document.querySelector(`[name=${n}]:checked`); out[n]=el?el.value:'off';} return out;}
 function controlQuery(){return controls.map(n=>{const mode=(selectedControls()[n]||'off'); return `control=${encodeURIComponent(`${n}:${mode}:1`)}`;}).join('&');}
-async function setCurrent(id){state=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id})}); await refresh();}
+function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
+function updateSelectedTrackVisuals(){
+  if(typeof document!=='undefined') for(const li of document.querySelectorAll('#tracks li[data-track-id]')) li.className=li.dataset.trackId===state.current_track_id?'current':'';
+  if(forceGraph){forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh();}
+  else if(visibleGraph.nodes.length) renderCanvasFallback(visibleGraph);
+  renderMoodStrip(visibleGraph);
+}
+async function refreshSelectionDependent(token){
+  if(token!==selectionRequestSeq) return;
+  const detailToken=++selectionDetailRequestSeq;
+  const selectedId=state.current_track_id;
+  updateSelectedTrackVisuals();
+  if(selectedId){
+    const [detail,candidates]=await Promise.all([api('/api/tracks/'+encodeURIComponent(selectedId)),api('/api/candidates?'+controlQuery()+'&current='+encodeURIComponent(selectedId))]);
+    if(token!==selectionRequestSeq || detailToken!==selectionDetailRequestSeq || state.current_track_id!==selectedId) return;
+    renderDetail(detail); renderCandidates(candidates); updateSelectedTrackVisuals();
+  } else {
+    if(token!==selectionRequestSeq || detailToken!==selectionDetailRequestSeq) return;
+    renderInitialDetail(graphModel); renderCandidates({candidates:[]});
+  }
+}
+async function setCurrent(id){
+  const token=++selectionRequestSeq;
+  const postToken=nextSelectionPostSeq();
+  pendingSelectionIntent=id;
+  state={...state,current_track_id:id};
+  updateSelectedTrackVisuals();
+  const posted=syncSelectionEpoch(await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})}));
+  if(token!==selectionRequestSeq) return;
+  state=posted;
+  pendingSelectionIntent=null;
+  await refreshSelectionDependent(token);
+}
 function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGraphControls.mood) p.set('mood',selectedGraphControls.mood); const q=p.toString(); return q?'?'+q:'';}
-async function refresh(){state=await api('/api/state'); const list=await api('/api/tracks?limit=all'); renderTracks(list.tracks); const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); renderMap(visibleGraph); if(state.current_track_id){renderDetail(await api('/api/tracks/'+encodeURIComponent(state.current_track_id))); renderCandidates(await api('/api/candidates?'+controlQuery()));} else {renderInitialDetail(graphModel); renderCandidates({candidates:[]});}}
-function renderTracks(tracks){const ul=document.getElementById('tracks'); ul.replaceChildren(...tracks.map(t=>{const li=document.createElement('li'); li.className=t.handle===state.current_track_id?'current':''; const b=document.createElement('button'); text(b,t.display_label||t.handle); b.onclick=()=>setCurrent(t.handle); li.append(b); return li;}));}
+async function refresh(){const refreshToken=++refreshRequestSeq; const token=selectionRequestSeq; const refreshedState=syncSelectionEpoch(await api('/api/state')); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; const list=await api('/api/tracks?limit=all'); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; state={...refreshedState,current_track_id:pendingSelectionIntent||refreshedState.current_track_id}; renderTracks(list.tracks); graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); renderMap(visibleGraph); await refreshSelectionDependent(token);}
+function renderTracks(tracks){const ul=document.getElementById('tracks'); ul.replaceChildren(...tracks.map(t=>{const li=document.createElement('li'); li.dataset.trackId=t.handle; li.className=t.handle===state.current_track_id?'current':''; const b=document.createElement('button'); text(b,t.display_label||t.handle); b.onclick=()=>setCurrent(t.handle); li.append(b); return li;}));}
 function renderInitialDetail(model){const root=document.getElementById('detail'); const h=document.createElement('h3'); text(h,'All-library valence / arousal / BPM graph'); const p=document.createElement('p'); text(p,`Showing ${visibleGraph.nodes.length} positioned tracks and ${model.unpositioned.length} unpositioned tracks. X=native valence, Y=native arousal, Z=raw BPM (fixed 20 BPM per depth unit); selected mood ${model.selectedMood||'none'} only changes the score strip; no sample-relative clipping.`); const help=document.createElement('p'); help.className='muted'; text(help,'3d-force-graph is bundled locally. Fixed coordinates are scaled for readable display only. Drag to orbit, wheel to zoom, hover/click nodes and links for evidence. Sparse edges are axis-independent relatedness from existing summaries, not screen distance.'); const list=document.createElement('ul'); for(const u of model.unpositioned){const li=document.createElement('li'); text(li,`${u.display_label||u.track_id}: ${(u.reasons||[]).join('; ')}`); list.append(li);} root.replaceChildren(h,p,help,list);}
 function fieldDisplay(f){const a=f.automatic||{}; if(a.values&&a.values.length) return a.values; if(a.summary_values&&a.summary_values.length) return a.summary_values; return f.effective_source;}
 // Detail is a presentation of retained evidence, not a graph filter or analysis threshold.
@@ -189,7 +262,7 @@ function renderMoodStrip(data){
   picker.oninput=show; show();
   canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
 }
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(n=>n.id===state.current_track_id?4:1).linkLabel(linkLabel).linkOpacity(0.28).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score]),state.current_track_id]); if(signature!==renderedGraphSignature){forceGraph.graphData({nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links}); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of forceGraph.graphData().nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {renderCanvasFallback(data);} renderMoodStrip(data); const info=document.getElementById('graph-info'); if(info) text(info,`${data.nodes.length} positioned tracks · ${data.links.length} sparse relatedness edges · ${data.unpositioned.length} unpositioned · score strip mood ${graphModel.selectedMood||'n/a'} · ${graphColorLegend(graphModel)} · no CDN calls`);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(0.28).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {renderCanvasFallback(data);} renderMoodStrip(data); const info=document.getElementById('graph-info'); if(info) text(info,`${data.nodes.length} positioned tracks · ${data.links.length} sparse relatedness edges · ${data.unpositioned.length} unpositioned · score strip mood ${graphModel.selectedMood||'n/a'} · ${graphColorLegend(graphModel)} · no CDN calls`);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
@@ -199,5 +272,5 @@ function buildControls(){const root=document.getElementById('controls'); buildGr
 function buildGraphControls(root){const fs=document.createElement('fieldset'); fs.id='graph-controls'; const legend=document.createElement('legend'); text(legend,'Graph filters and score display'); fs.append(legend); const mood=document.createElement('select'); mood.id='selected-mood'; mood.onchange=()=>{selectedGraphControls.mood=mood.value; refresh();}; fs.append(text(document.createElement('label'),'Score strip mood '),mood); const min=document.createElement('input'); min.id='bpm-min'; min.type='number'; min.placeholder='min BPM'; const max=document.createElement('input'); max.id='bpm-max'; max.type='number'; max.placeholder='max BPM'; for(const input of [min,max]) input.onchange=()=>{selectedGraphControls.bpmMin=min.value===''?null:Number(min.value); selectedGraphControls.bpmMax=max.value===''?null:Number(max.value); refresh();}; fs.append(min,max); const genres=document.createElement('select'); genres.id='genre-filter'; genres.multiple=true; genres.size=4; genres.onchange=()=>{selectedGraphControls.genres=Array.from(genres.selectedOptions).map(o=>o.value); refresh();}; fs.append(text(document.createElement('label'),' Genres ANY '),genres); const clear=document.createElement('button'); clear.type='button'; text(clear,'Clear graph filters'); clear.onclick=()=>{selectedGraphControls={mood:graphModel.selectedMood||'',bpmMin:null,bpmMax:null,genres:[]}; min.value=''; max.value=''; refresh();}; fs.append(clear); root.append(fs);}
 function syncGraphControlOptions(model){const mood=document.getElementById('selected-mood'); if(mood){const current=selectedGraphControls.mood||model.selectedMood||''; mood.replaceChildren(...(model.availableMoods.length?model.availableMoods:['']).map(m=>{const o=document.createElement('option'); o.value=m; text(o,m||'No supported moods'); o.selected=m===current; return o;})); selectedGraphControls.mood=current&&model.availableMoods.includes(current)?current:(model.selectedMood||'');} const genres=document.getElementById('genre-filter'); if(genres){const selected=new Set(selectedGraphControls.genres||[]); genres.replaceChildren(...model.genreOptions.map(g=>{const o=document.createElement('option'); o.value=g; text(o,g); o.selected=selected.has(g); return o;}));}}
 function wireCanvas(){/* 3d-force-graph owns orbit/pick controls. */}
-if(typeof document!=='undefined'){document.getElementById('undo').onclick=async()=>{state=await api('/api/undo',{method:'POST'}); refresh();}; document.getElementById('reset').onclick=async()=>{state=await api('/api/reset',{method:'POST'}); refresh();}; buildControls(); wireCanvas(); refresh().catch(e=>text(document.getElementById('detail'),e.message));}
-if(typeof module!=='undefined'){module.exports={detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame};}
+if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset'); buildControls(); wireCanvas(); refresh().catch(e=>text(document.getElementById('detail'),e.message));}
+if(typeof module!=='undefined'){module.exports={detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,selectionClientId,syncSelectionEpoch};}

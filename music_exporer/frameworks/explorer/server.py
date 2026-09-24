@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 import json
 from math import isfinite
+import threading
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from importlib import resources
@@ -35,22 +36,70 @@ class ExplorerState:
     def __init__(self, repository):
         self.repository = repository
         self.current_track_id = None
-        self.history: list[str] = []
+        self.history: list[str | None] = []
+        self.selection_epoch = 0
+        self._selection_tokens_by_client: dict[str, int] = {}
+        self._lock = threading.Lock()
 
-    def set_current(self, track_id: str):
+    def snapshot(self):
+        with self._lock:
+            return self.snapshot_unlocked()
+
+    def set_current(
+        self,
+        track_id: str,
+        selection_token: int | None = None,
+        selection_epoch: int | None = None,
+        selection_client_id: str | None = None,
+    ):
         if track_id not in self.repository.track_ids():
             raise ValueError('Unknown explorer track')
-        if self.current_track_id != track_id:
-            self.history.append(self.current_track_id)
-        self.current_track_id = track_id
+        with self._lock:
+            if not self._accept_selection_unlocked(selection_token, selection_epoch, selection_client_id):
+                return self.snapshot_unlocked()
+            if self.current_track_id != track_id:
+                self.history.append(self.current_track_id)
+            self.current_track_id = track_id
+            return self.snapshot_unlocked()
+
+    def _accept_selection_unlocked(
+        self,
+        selection_token: int | None,
+        selection_epoch: int | None,
+        selection_client_id: str | None,
+    ):
+        if selection_token is None and selection_epoch is None and selection_client_id is None:
+            return True
+        if selection_epoch != self.selection_epoch:
+            return False
+        previous_token = self._selection_tokens_by_client.get(selection_client_id, 0)
+        if selection_token <= previous_token:
+            return False
+        self._selection_tokens_by_client[selection_client_id] = selection_token
+        return True
+
+    def snapshot_unlocked(self):
+        return {
+            'current_track_id': self.current_track_id,
+            'history': list(self.history),
+            'selection_epoch': self.selection_epoch,
+        }
 
     def undo(self):
-        if self.history:
-            self.current_track_id = self.history.pop()
+        with self._lock:
+            if self.history:
+                self.current_track_id = self.history.pop()
+            self.selection_epoch += 1
+            self._selection_tokens_by_client.clear()
+            return self.snapshot_unlocked()
 
     def reset(self):
-        self.current_track_id = None
-        self.history.clear()
+        with self._lock:
+            self.current_track_id = None
+            self.history.clear()
+            self.selection_epoch += 1
+            self._selection_tokens_by_client.clear()
+            return self.snapshot_unlocked()
 
 
 def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765):
@@ -84,7 +133,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path in {'/app.js', '/style.css', '/vendor/3d-force-graph/3d-force-graph.min.js', '/vendor/3d-force-graph/NOTICE'}:
                 return self._asset(path[1:], 'text/javascript; charset=utf-8' if path.endswith('.js') else ('text/plain; charset=utf-8' if path.endswith('NOTICE') else 'text/css; charset=utf-8'))
             if path == '/api/state':
-                return self._json({'current_track_id': state.current_track_id, 'history': list(state.history)})
+                return self._json(state.snapshot())
             if path == '/api/tracks':
                 query = parse_qs(parsed.query)
                 raw_limit = query.get('limit', ['100'])[0]
@@ -125,12 +174,24 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 track_id = data.get('track_id')
                 if not isinstance(track_id, str):
                     raise ValueError('track_id is required')
-                state.set_current(track_id)
+                selection_token = data.get('selection_token')
+                if selection_token is not None and not isinstance(selection_token, int):
+                    raise ValueError('selection_token must be an integer')
+                selection_epoch = data.get('selection_epoch')
+                if selection_epoch is not None and not isinstance(selection_epoch, int):
+                    raise ValueError('selection_epoch must be an integer')
+                selection_client_id = data.get('selection_client_id')
+                if selection_client_id is not None and not isinstance(selection_client_id, str):
+                    raise ValueError('selection_client_id must be a string')
+                has_protocol_field = selection_token is not None or selection_epoch is not None or selection_client_id is not None
+                if has_protocol_field and (selection_token is None or selection_epoch is None or not selection_client_id):
+                    raise ValueError('selection_token, selection_epoch, and selection_client_id are required together')
+                snapshot = state.set_current(track_id, selection_token, selection_epoch, selection_client_id)
             elif parsed.path == '/api/undo':
-                state.undo()
+                snapshot = state.undo()
             else:
-                state.reset()
-            return self._json({'current_track_id': state.current_track_id, 'history': list(state.history)})
+                snapshot = state.reset()
+            return self._json(snapshot)
 
         def _body(self):
             length = int(self.headers.get('Content-Length', '0') or '0')
