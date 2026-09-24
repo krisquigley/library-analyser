@@ -14,8 +14,9 @@ dependencies = []
 music-analyzer = "music_analyzer.frameworks.cli.main:main"
 
 [tool.setuptools.packages.find]
-include = ["music_analyzer*"]
+include = ["music_analyzer*", "music_exporer*"]
 
 [tool.setuptools.package-data]
 "music_analyzer.infrastructure.models" = ["data/manifest.json", "data/LICENSE"]
 "music_analyzer.frameworks.explorer" = ["assets/index.html", "assets/app.js", "assets/style.css", "assets/vendor/3d-force-graph/3d-force-graph.min.js", "assets/vendor/3d-force-graph/NOTICE"]
+"music_exporer.frameworks.explorer" = ["assets/index.html", "assets/app.js", "assets/style.css", "assets/vendor/3d-force-graph/3d-force-graph.min.js", "assets/vendor/3d-force-graph/NOTICE"]
