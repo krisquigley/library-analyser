@@ -297,6 +297,46 @@ assert.doesNotThrow(() => context.renderMap({nodes:[{...node,moodScore:{label:'c
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for selection token protocol tests')
+    def test_click_posts_epoch_scoped_tab_token_and_syncs_epoch_after_reset(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}, Date, Math,
+  sessionStorage:{data:{}, getItem(k){return this.data[k]||null;}, setItem(k,v){this.data[k]=v;}}
+};
+(async () => {
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function response(payload){return {ok:true, json:async()=>payload};}
+const bodies=[];
+context.fetch = (path, options={}) => {
+  if (path === '/api/current') { bodies.push(JSON.parse(options.body)); return Promise.resolve(response({current_track_id: JSON.parse(options.body).track_id, selection_epoch:7})); }
+  if (path === '/api/reset') return Promise.resolve(response({current_track_id:null, selection_epoch:8}));
+  if (path === '/api/tracks/a' || path === '/api/tracks/b') return Promise.resolve(response({handle:path.slice(-1), display_label:path.slice(-1).toUpperCase(), latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (String(path).startsWith('/api/candidates?')) return Promise.resolve(response({candidates:[]}));
+  return Promise.resolve(response({}));
+};
+function element(tag){return {tag, textContent:'', className:'', dataset:{}, style:{}, children:[], setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children=nodes;}};}
+const elements = {detail: element('section'), candidates: element('ol')};
+context.document = {createElement: element, querySelector(){return null;}, querySelectorAll(){return [];}, getElementById(id){return elements[id] || element(id);}};
+context.refresh = () => Promise.resolve();
+vm.runInContext("state={current_track_id:null,selection_epoch:7}; selectionEpoch=7; graphModel={nodes:[],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:[],links:[],unpositioned:[]}; refresh = globalThis.refresh;", context);
+await context.setCurrent('a');
+assert.strictEqual(bodies[0].selection_epoch, 7);
+assert.strictEqual(bodies[0].selection_token, 1);
+assert(/^tab-/.test(bodies[0].selection_client_id), 'tab-scoped client id is sent');
+await context.applyHistorySelection('/api/reset');
+await context.setCurrent('b');
+assert.strictEqual(bodies[1].selection_epoch, 8, 'reset response epoch is used by next click');
+assert.strictEqual(bodies[1].selection_token, 1, 'token restarts within the fresh epoch for fast reload/tab clicks');
+assert.strictEqual(bodies[1].selection_client_id, bodies[0].selection_client_id, 'same tab keeps stable client id');
+})().catch(error => { console.error(error); process.exit(1); });
+""";
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selection behavior tests')
     def test_selection_only_fetches_detail_candidates_and_keeps_graph_data(self):
         script = r"""
@@ -501,7 +541,9 @@ assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
 
     def test_undo_and_reset_still_force_complete_ui_refresh(self):
         app = APP_JS.read_text()
-        self.assertIn("function applyHistorySelection(path){invalidateSelectionIntent(); state=await api(path,{method:'POST'}); refresh();}", app)
+        self.assertIn("async function applyHistorySelection(path){invalidateSelectionIntent(); state=syncSelectionEpoch(await api(path,{method:'POST'})); refresh();}", app)
+        self.assertIn("selection_epoch:selectionEpoch", app)
+        self.assertIn("selection_client_id:selectionClientId()", app)
         self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo');", app)
         self.assertIn("document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');", app)
 

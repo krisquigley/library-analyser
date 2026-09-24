@@ -12,10 +12,28 @@ let graphAxesAnimating=false;
 let pendingGraphAxisSpec=[];
 let selectedGraphControls={mood:'',bpmMin:null,bpmMax:null,genres:[]};
 let selectionRequestSeq=0;
+let selectionPostSeq=0;
+let selectionEpoch=0;
 let refreshRequestSeq=0;
 let pendingSelectionIntent=null;
+function selectionClientId(){
+  const key='music-explorer-selection-client-id';
+  try{
+    if(typeof sessionStorage!=='undefined'){
+      let id=sessionStorage.getItem(key);
+      if(!id){id='tab-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2); sessionStorage.setItem(key,id);}
+      return id;
+    }
+  }catch(_error){}
+  if(!selectionClientId.fallback) selectionClientId.fallback='tab-'+Math.random().toString(36).slice(2);
+  return selectionClientId.fallback;
+}
+function syncSelectionEpoch(snapshot){
+  if(snapshot && typeof snapshot.selection_epoch==='number' && snapshot.selection_epoch!==selectionEpoch){selectionEpoch=snapshot.selection_epoch; selectionPostSeq=0;}
+  return snapshot;
+}
 function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null;}
-async function applyHistorySelection(path){invalidateSelectionIntent(); state=await api(path,{method:'POST'}); refresh();}
+async function applyHistorySelection(path){invalidateSelectionIntent(); state=syncSelectionEpoch(await api(path,{method:'POST'})); refresh();}
 function text(el,value){el.textContent=value==null?'':String(value);return el;}
 async function api(path, options){const r=await fetch(path, options); if(!r.ok) throw new Error(await r.text()); return r.json();}
 function selectedControls(){const out={}; for(const n of controls){const el=document.querySelector(`[name=${n}]:checked`); out[n]=el?el.value:'off';} return out;}
@@ -42,17 +60,18 @@ async function refreshSelectionDependent(token){
 }
 async function setCurrent(id){
   const token=++selectionRequestSeq;
+  const postToken=++selectionPostSeq;
   pendingSelectionIntent=id;
   state={...state,current_track_id:id};
   updateSelectedTrackVisuals();
-  const posted=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:token})});
+  const posted=syncSelectionEpoch(await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})}));
   if(token!==selectionRequestSeq) return;
   state={...posted,current_track_id:id};
   pendingSelectionIntent=null;
   await refreshSelectionDependent(token);
 }
 function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGraphControls.mood) p.set('mood',selectedGraphControls.mood); const q=p.toString(); return q?'?'+q:'';}
-async function refresh(){const refreshToken=++refreshRequestSeq; const token=selectionRequestSeq; const refreshedState=await api('/api/state'); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; const list=await api('/api/tracks?limit=all'); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; state={...refreshedState,current_track_id:pendingSelectionIntent||refreshedState.current_track_id}; renderTracks(list.tracks); graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); renderMap(visibleGraph); await refreshSelectionDependent(token);}
+async function refresh(){const refreshToken=++refreshRequestSeq; const token=selectionRequestSeq; const refreshedState=syncSelectionEpoch(await api('/api/state')); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; const list=await api('/api/tracks?limit=all'); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; state={...refreshedState,current_track_id:pendingSelectionIntent||refreshedState.current_track_id}; renderTracks(list.tracks); graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); renderMap(visibleGraph); await refreshSelectionDependent(token);}
 function renderTracks(tracks){const ul=document.getElementById('tracks'); ul.replaceChildren(...tracks.map(t=>{const li=document.createElement('li'); li.dataset.trackId=t.handle; li.className=t.handle===state.current_track_id?'current':''; const b=document.createElement('button'); text(b,t.display_label||t.handle); b.onclick=()=>setCurrent(t.handle); li.append(b); return li;}));}
 function renderInitialDetail(model){const root=document.getElementById('detail'); const h=document.createElement('h3'); text(h,'All-library valence / arousal / BPM graph'); const p=document.createElement('p'); text(p,`Showing ${visibleGraph.nodes.length} positioned tracks and ${model.unpositioned.length} unpositioned tracks. X=native valence, Y=native arousal, Z=raw BPM (fixed 20 BPM per depth unit); selected mood ${model.selectedMood||'none'} only changes the score strip; no sample-relative clipping.`); const help=document.createElement('p'); help.className='muted'; text(help,'3d-force-graph is bundled locally. Fixed coordinates are scaled for readable display only. Drag to orbit, wheel to zoom, hover/click nodes and links for evidence. Sparse edges are axis-independent relatedness from existing summaries, not screen distance.'); const list=document.createElement('ul'); for(const u of model.unpositioned){const li=document.createElement('li'); text(li,`${u.display_label||u.track_id}: ${(u.reasons||[]).join('; ')}`); list.append(li);} root.replaceChildren(h,p,help,list);}
 function fieldDisplay(f){const a=f.automatic||{}; if(a.values&&a.values.length) return a.values; if(a.summary_values&&a.summary_values.length) return a.summary_values; return f.effective_source;}
@@ -236,4 +255,4 @@ function buildGraphControls(root){const fs=document.createElement('fieldset'); f
 function syncGraphControlOptions(model){const mood=document.getElementById('selected-mood'); if(mood){const current=selectedGraphControls.mood||model.selectedMood||''; mood.replaceChildren(...(model.availableMoods.length?model.availableMoods:['']).map(m=>{const o=document.createElement('option'); o.value=m; text(o,m||'No supported moods'); o.selected=m===current; return o;})); selectedGraphControls.mood=current&&model.availableMoods.includes(current)?current:(model.selectedMood||'');} const genres=document.getElementById('genre-filter'); if(genres){const selected=new Set(selectedGraphControls.genres||[]); genres.replaceChildren(...model.genreOptions.map(g=>{const o=document.createElement('option'); o.value=g; text(o,g); o.selected=selected.has(g); return o;}));}}
 function wireCanvas(){/* 3d-force-graph owns orbit/pick controls. */}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset'); buildControls(); wireCanvas(); refresh().catch(e=>text(document.getElementById('detail'),e.message));}
-if(typeof module!=='undefined'){module.exports={detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame};}
+if(typeof module!=='undefined'){module.exports={detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,selectionClientId,syncSelectionEpoch};}

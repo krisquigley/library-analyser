@@ -37,41 +37,68 @@ class ExplorerState:
         self.repository = repository
         self.current_track_id = None
         self.history: list[str | None] = []
-        self.selection_token = 0
+        self.selection_epoch = 0
+        self._selection_tokens_by_client: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def snapshot(self):
         with self._lock:
-            return {'current_track_id': self.current_track_id, 'history': list(self.history)}
+            return self.snapshot_unlocked()
 
-    def set_current(self, track_id: str, selection_token: int | None = None):
+    def set_current(
+        self,
+        track_id: str,
+        selection_token: int | None = None,
+        selection_epoch: int | None = None,
+        selection_client_id: str | None = None,
+    ):
         if track_id not in self.repository.track_ids():
             raise ValueError('Unknown explorer track')
         with self._lock:
-            if selection_token is not None:
-                if selection_token <= self.selection_token:
-                    return self.snapshot_unlocked()
-                self.selection_token = selection_token
+            if not self._accept_selection_unlocked(selection_token, selection_epoch, selection_client_id):
+                return self.snapshot_unlocked()
             if self.current_track_id != track_id:
                 self.history.append(self.current_track_id)
             self.current_track_id = track_id
             return self.snapshot_unlocked()
 
+    def _accept_selection_unlocked(
+        self,
+        selection_token: int | None,
+        selection_epoch: int | None,
+        selection_client_id: str | None,
+    ):
+        if selection_token is None and selection_epoch is None and selection_client_id is None:
+            return True
+        if selection_epoch != self.selection_epoch:
+            return False
+        previous_token = self._selection_tokens_by_client.get(selection_client_id, 0)
+        if selection_token <= previous_token:
+            return False
+        self._selection_tokens_by_client[selection_client_id] = selection_token
+        return True
+
     def snapshot_unlocked(self):
-        return {'current_track_id': self.current_track_id, 'history': list(self.history)}
+        return {
+            'current_track_id': self.current_track_id,
+            'history': list(self.history),
+            'selection_epoch': self.selection_epoch,
+        }
 
     def undo(self):
         with self._lock:
             if self.history:
                 self.current_track_id = self.history.pop()
-            self.selection_token += 1
+            self.selection_epoch += 1
+            self._selection_tokens_by_client.clear()
             return self.snapshot_unlocked()
 
     def reset(self):
         with self._lock:
             self.current_track_id = None
             self.history.clear()
-            self.selection_token += 1
+            self.selection_epoch += 1
+            self._selection_tokens_by_client.clear()
             return self.snapshot_unlocked()
 
 
@@ -150,7 +177,16 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 selection_token = data.get('selection_token')
                 if selection_token is not None and not isinstance(selection_token, int):
                     raise ValueError('selection_token must be an integer')
-                snapshot = state.set_current(track_id, selection_token)
+                selection_epoch = data.get('selection_epoch')
+                if selection_epoch is not None and not isinstance(selection_epoch, int):
+                    raise ValueError('selection_epoch must be an integer')
+                selection_client_id = data.get('selection_client_id')
+                if selection_client_id is not None and not isinstance(selection_client_id, str):
+                    raise ValueError('selection_client_id must be a string')
+                has_protocol_field = selection_token is not None or selection_epoch is not None or selection_client_id is not None
+                if has_protocol_field and (selection_token is None or selection_epoch is None or not selection_client_id):
+                    raise ValueError('selection_token, selection_epoch, and selection_client_id are required together')
+                snapshot = state.set_current(track_id, selection_token, selection_epoch, selection_client_id)
             elif parsed.path == '/api/undo':
                 snapshot = state.undo()
             else:

@@ -64,10 +64,12 @@ class ExplorerServerTests(unittest.TestCase):
             self.assertEqual(response.headers.get_content_type(), 'application/json')
             return json.loads(response.read().decode('utf-8'))
 
-    def post_current(self, track_id, selection_token=None):
+    def post_current(self, track_id, selection_token=None, selection_epoch=None, selection_client_id='test-tab'):
         body = {'track_id': track_id}
         if selection_token is not None:
             body['selection_token'] = selection_token
+            body['selection_epoch'] = self.get_json('/api/state')['selection_epoch'] if selection_epoch is None else selection_epoch
+            body['selection_client_id'] = selection_client_id
         return self.post_json('/api/current', body)
 
     def test_api_lists_details_candidates_state_and_projection(self):
@@ -111,50 +113,75 @@ class ExplorerServerTests(unittest.TestCase):
             urlopen(too_large, timeout=5)
         self.assertEqual(raised.exception.code, 413)
 
-    def test_delayed_click_matching_reset_token_does_not_restore_selection(self):
+    def test_delayed_click_from_before_reset_epoch_does_not_restore_selection(self):
+        old_epoch = self.get_json('/api/state')['selection_epoch']
         self.post_json('/api/reset')
 
-        delayed = self.post_current(self.first, 1)
+        delayed = self.post_current(self.first, 1, selection_epoch=old_epoch)
 
         self.assertIsNone(delayed['current_track_id'])
         self.assertEqual(delayed['history'], [])
         self.assertIsNone(self.get_json('/api/state')['current_track_id'])
 
-    def test_delayed_click_matching_undo_token_does_not_restore_selection(self):
-        self.post_current(self.first)
-        self.post_current(self.second)
+    def test_delayed_click_from_before_undo_epoch_does_not_restore_selection(self):
+        old_epoch = self.get_json('/api/state')['selection_epoch']
+        self.post_current(self.first, 1, selection_epoch=old_epoch)
+        self.post_current(self.second, 2, selection_epoch=old_epoch)
         self.post_json('/api/undo')
 
-        delayed = self.post_current(self.second, 1)
+        delayed = self.post_current(self.second, 3, selection_epoch=old_epoch)
 
         self.assertEqual(delayed['current_track_id'], self.first)
         self.assertEqual(delayed['history'], [None])
         self.assertEqual(self.get_json('/api/state')['current_track_id'], self.first)
 
-    def test_valid_click_after_reset_and_undo_tokens_is_accepted(self):
-        self.post_json('/api/reset')
-        after_reset = self.post_current(self.second, 2)
+    def test_fresh_tab_token_one_after_reset_and_undo_is_accepted(self):
+        reset_state = self.post_json('/api/reset')
+        after_reset = self.post_current(self.second, 1, selection_epoch=reset_state['selection_epoch'], selection_client_id='fresh-after-reset')
         self.assertEqual(after_reset['current_track_id'], self.second)
 
-        self.post_json('/api/undo')
-        after_undo = self.post_current(self.first, 4)
+        undo_state = self.post_json('/api/undo')
+        after_undo = self.post_current(self.first, 1, selection_epoch=undo_state['selection_epoch'], selection_client_id='fresh-after-undo')
 
         self.assertEqual(after_undo['current_track_id'], self.first)
         self.assertEqual(self.get_json('/api/state')['current_track_id'], self.first)
+
+    def test_independent_fresh_tabs_can_each_use_token_one_in_same_epoch(self):
+        epoch = self.get_json('/api/state')['selection_epoch']
+        first_tab = self.post_current(self.first, 1, selection_epoch=epoch, selection_client_id='tab-a')
+        second_tab = self.post_current(self.second, 1, selection_epoch=epoch, selection_client_id='tab-b')
+
+        self.assertEqual(first_tab['current_track_id'], self.first)
+        self.assertEqual(second_tab['current_track_id'], self.second)
+        self.assertEqual(self.get_json('/api/state')['current_track_id'], self.second)
+
+
+    def test_tokened_click_requires_complete_epoch_protocol(self):
+        epoch = self.get_json('/api/state')['selection_epoch']
+        with self.assertRaises(HTTPError) as missing_epoch:
+            req = Request(self.base + '/api/current', data=json.dumps({'track_id': self.first, 'selection_token': 1, 'selection_client_id': 'tab'}).encode(), method='POST', headers={'Content-Type': 'application/json'})
+            urlopen(req, timeout=5)
+        self.assertEqual(missing_epoch.exception.code, 400)
+        with self.assertRaises(HTTPError) as missing_client:
+            req = Request(self.base + '/api/current', data=json.dumps({'track_id': self.first, 'selection_token': 1, 'selection_epoch': epoch}).encode(), method='POST', headers={'Content-Type': 'application/json'})
+            urlopen(req, timeout=5)
+        self.assertEqual(missing_client.exception.code, 400)
 
     def test_concurrent_current_posts_ignore_older_selection_tokens(self):
         first_can_continue = threading.Event()
         first_is_waiting = threading.Event()
         original_set_current = standalone_server.ExplorerState.set_current
 
-        def pause_older_post_before_setting_current(state, track_id, selection_token=None):
+        epoch = self.get_json('/api/state')['selection_epoch']
+
+        def pause_older_post_before_setting_current(state, track_id, selection_token=None, selection_epoch=None, selection_client_id=None):
             if selection_token == 1:
                 first_is_waiting.set()
                 self.assertTrue(first_can_continue.wait(5), 'newer POST never reached the server')
-            return original_set_current(state, track_id, selection_token)
+            return original_set_current(state, track_id, selection_token, selection_epoch, selection_client_id)
 
         def post_current(track_id, token):
-            body = {'track_id': track_id, 'selection_token': token}
+            body = {'track_id': track_id, 'selection_token': token, 'selection_epoch': epoch, 'selection_client_id': 'race-tab'}
             req = Request(self.base + '/api/current', data=json.dumps(body).encode(), method='POST', headers={'Content-Type': 'application/json'})
             with urlopen(req, timeout=5) as response:
                 self.assertEqual(response.status, 200)
