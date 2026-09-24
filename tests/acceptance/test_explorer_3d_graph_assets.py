@@ -327,6 +327,11 @@ assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+    def test_undo_and_reset_still_force_complete_ui_refresh(self):
+        app = APP_JS.read_text()
+        self.assertIn("document.getElementById('undo').onclick=async()=>{state=await api('/api/undo',{method:'POST'}); refresh();};", app)
+        self.assertIn("document.getElementById('reset').onclick=async()=>{state=await api('/api/reset',{method:'POST'}); refresh();};", app)
+
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
         self.assertIn('#detail .score-gauge{position:relative;width:39px;height:39px;', style)
