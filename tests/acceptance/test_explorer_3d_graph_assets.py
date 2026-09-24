@@ -313,7 +313,7 @@ vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 function response(payload){return {ok:true, json:async()=>payload};}
 const bodies=[];
 context.fetch = (path, options={}) => {
-  if (path === '/api/current') { bodies.push(JSON.parse(options.body)); return Promise.resolve(response({current_track_id: JSON.parse(options.body).track_id, selection_epoch:7})); }
+  if (path === '/api/current') { bodies.push(JSON.parse(options.body)); return Promise.resolve(response({current_track_id: JSON.parse(options.body).track_id, selection_epoch: bodies.length === 1 ? 7 : 8})); }
   if (path === '/api/reset') return Promise.resolve(response({current_track_id:null, selection_epoch:8}));
   if (path === '/api/tracks/a' || path === '/api/tracks/b') return Promise.resolve(response({handle:path.slice(-1), display_label:path.slice(-1).toUpperCase(), latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (String(path).startsWith('/api/candidates?')) return Promise.resolve(response({candidates:[]}));
@@ -332,11 +332,56 @@ assert(/^tab-/.test(bodies[0].selection_client_id), 'tab-scoped client id is sen
 await context.applyHistorySelection('/api/reset');
 await context.setCurrent('b');
 assert.strictEqual(bodies[1].selection_epoch, 8, 'reset response epoch is used by next click');
-assert.strictEqual(bodies[1].selection_token, 1, 'token restarts within the fresh epoch for fast reload/tab clicks');
+assert.strictEqual(bodies[1].selection_token, 2, 'same tab keeps monotonically increasing tokens across reload-safe session state');
 assert.strictEqual(bodies[1].selection_client_id, bodies[0].selection_client_id, 'same tab keeps stable client id');
 })().catch(error => { console.error(error); process.exit(1); });
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for selection rejection behavior tests')
+    def test_rejected_selection_snapshot_does_not_override_optimistic_click(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}, Date, Math,
+  sessionStorage:{data:{}, getItem(k){return this.data[k]||null;}, setItem(k,v){this.data[k]=v;}}
+};
+(async () => {
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function response(payload){return {ok:true, json:async()=>payload};}
+const fetches=[];
+let resolveCurrent;
+const currentResponse = new Promise(resolve => { resolveCurrent = resolve; });
+context.fetch = (path, options={}) => {
+  fetches.push(String(path));
+  if (path === '/api/current') return currentResponse.then(() => response({current_track_id:'server-current', selection_epoch:0, selection_accepted:false}));
+  if (path === '/api/tracks/client-click') return Promise.resolve(response({handle:'client-click', display_label:'Client Click', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (path === '/api/tracks/server-current') return Promise.resolve(response({handle:'server-current', display_label:'Server Current', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (String(path).startsWith('/api/candidates?')) return Promise.resolve(response({candidates:[]}));
+  throw new Error('unexpected fetch '+path);
+};
+function canvasContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}
+function element(tag){return {tag, textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:600, clientHeight:70, width:0, height:0, getContext(){return canvasContext();}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children=nodes;}};}
+const detail = element('section');
+const elements = {detail, candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output')};
+const rows = ['client-click','server-current'].map(id => ({dataset:{trackId:id}, className:''}));
+context.document = {createElement: element, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return rows;}, getElementById(id){return elements[id] || element(id);}};
+vm.runInContext("state={current_track_id:'server-current'}; selectionEpoch=0; graphModel={nodes:[{id:'client-click',moodScore:null},{id:'server-current',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
+const click = context.setCurrent('client-click');
+await Promise.resolve();
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'client-click', 'selection is optimistic before the server responds');
+resolveCurrent();
+await click;
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'rejected/stale server snapshot must restore the accepted server selection');
+assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
+assert(fetches.includes('/api/tracks/server-current'), 'detail fetch follows the accepted server snapshot after rejection');
+assert.strictEqual(detail.children[0].textContent, 'Server Current');
+})().catch(error => { console.error(error); process.exit(1); });
+""";
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selection behavior tests')
     def test_selection_only_fetches_detail_candidates_and_keeps_graph_data(self):

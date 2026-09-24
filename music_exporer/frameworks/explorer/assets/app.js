@@ -12,10 +12,26 @@ let graphAxesAnimating=false;
 let pendingGraphAxisSpec=[];
 let selectedGraphControls={mood:'',bpmMin:null,bpmMax:null,genres:[]};
 let selectionRequestSeq=0;
-let selectionPostSeq=0;
+const selectionPostSeqKey='music-explorer-selection-post-seq';
+let selectionPostSeq=loadSelectionPostSeq();
 let selectionEpoch=0;
 let refreshRequestSeq=0;
 let pendingSelectionIntent=null;
+function sessionStorageNumber(key){
+  try{
+    if(typeof sessionStorage!=='undefined'){
+      const value=Number(sessionStorage.getItem(key)||'0');
+      return Number.isFinite(value)&&value>0?Math.floor(value):0;
+    }
+  }catch(_error){}
+  return 0;
+}
+function loadSelectionPostSeq(){return sessionStorageNumber(selectionPostSeqKey);}
+function storeSelectionPostSeq(value){
+  try{if(typeof sessionStorage!=='undefined') sessionStorage.setItem(selectionPostSeqKey,String(value));}catch(_error){}
+}
+function nextSelectionPostSeq(){selectionPostSeq+=1; storeSelectionPostSeq(selectionPostSeq); return selectionPostSeq;}
+function resetSelectionPostSeq(){selectionPostSeq=0; storeSelectionPostSeq(selectionPostSeq);}
 function selectionClientId(){
   const key='music-explorer-selection-client-id';
   try{
@@ -29,7 +45,7 @@ function selectionClientId(){
   return selectionClientId.fallback;
 }
 function syncSelectionEpoch(snapshot){
-  if(snapshot && typeof snapshot.selection_epoch==='number' && snapshot.selection_epoch!==selectionEpoch){selectionEpoch=snapshot.selection_epoch; selectionPostSeq=0;}
+  if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
   return snapshot;
 }
 function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null;}
@@ -60,14 +76,14 @@ async function refreshSelectionDependent(token){
 }
 async function setCurrent(id){
   const token=++selectionRequestSeq;
-  const postToken=++selectionPostSeq;
+  const postToken=nextSelectionPostSeq();
   pendingSelectionIntent=id;
   state={...state,current_track_id:id};
   updateSelectedTrackVisuals();
   const posted=syncSelectionEpoch(await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})}));
   if(token!==selectionRequestSeq) return;
-  state={...posted,current_track_id:id};
-  pendingSelectionIntent=null;
+  state=posted;
+  if(posted.current_track_id===id) pendingSelectionIntent=null;
   await refreshSelectionDependent(token);
 }
 function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGraphControls.mood) p.set('mood',selectedGraphControls.mood); const q=p.toString(); return q?'?'+q:'';}
