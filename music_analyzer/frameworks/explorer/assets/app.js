@@ -83,7 +83,7 @@ async function setCurrent(id){
   const posted=syncSelectionEpoch(await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})}));
   if(token!==selectionRequestSeq) return;
   state=posted;
-  if(posted.current_track_id===id) pendingSelectionIntent=null;
+  pendingSelectionIntent=null;
   await refreshSelectionDependent(token);
 }
 function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGraphControls.mood) p.set('mood',selectedGraphControls.mood); const q=p.toString(); return q?'?'+q:'';}

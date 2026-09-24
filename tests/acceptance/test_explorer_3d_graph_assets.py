@@ -383,6 +383,52 @@ assert.strictEqual(detail.children[0].textContent, 'Server Current');
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for selection rejection refresh tests')
+    def test_refresh_after_rejected_selection_uses_authoritative_server_selection(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}, Date, Math,
+  sessionStorage:{data:{}, getItem(k){return this.data[k]||null;}, setItem(k,v){this.data[k]=v;}}
+};
+(async () => {
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function response(payload){return {ok:true, json:async()=>payload};}
+function point(id){return {track_id:id, display_label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
+const fetches = [];
+context.fetch = (path, options={}) => {
+  fetches.push(String(path));
+  if (path === '/api/current') return Promise.resolve(response({current_track_id:'server-current', selection_epoch:2, selection_accepted:false}));
+  if (path === '/api/state') return Promise.resolve(response({current_track_id:'server-current', selection_epoch:2}));
+  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'client-click', display_label:'Client Click'},{handle:'server-current', display_label:'Server Current'}]}));
+  if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('client-click'), point('server-current')], edges:[], selected_mood:'calm', available_moods:['calm']}));
+  if (path === '/api/tracks/client-click') return Promise.resolve(response({handle:'client-click', display_label:'Client Click', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (path === '/api/tracks/server-current') return Promise.resolve(response({handle:'server-current', display_label:'Server Current', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (String(path).startsWith('/api/candidates?')) {
+    const current = String(path).includes('current=server-current') ? 'server-candidate' : 'client-candidate';
+    return Promise.resolve(response({candidates:[{track_id:current, tier:'strong', score:0.8}]}));
+  }
+  return Promise.reject(new Error('unexpected fetch '+path));
+};
+function canvasContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}
+function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return canvasContext();}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
+const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+vm.runInContext("state={current_track_id:'server-current'}; selectionEpoch=1; graphModel={nodes:[{id:'client-click',moodScore:null},{id:'server-current',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
+await context.setCurrent('client-click');
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'rejected POST restores authoritative server selection');
+await context.refresh();
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'refresh after rejection must not overlay the rejected click intent');
+assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', 'current']);
+assert(elements.detail.children[0].textContent === 'Server Current', 'detail follows authoritative server selection after refresh');
+assert(elements.candidates.children[0].textContent.includes('server-candidate'), 'candidates follow authoritative server selection after refresh');
+assert(fetches.includes('/api/current') && fetches.includes('/api/state'));
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selection behavior tests')
     def test_selection_only_fetches_detail_candidates_and_keeps_graph_data(self):
         script = r"""
