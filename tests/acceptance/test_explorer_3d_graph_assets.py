@@ -319,8 +319,9 @@ context.fetch = (path, options={}) => {
   if (String(path).startsWith('/api/candidates?')) return Promise.resolve(response({candidates:[]}));
   return Promise.resolve(response({}));
 };
-function element(tag){return {tag, textContent:'', className:'', dataset:{}, style:{}, children:[], setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children=nodes;}};}
-const elements = {detail: element('section'), candidates: element('ol')};
+function canvasContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}
+function element(tag){return {tag, textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:600, clientHeight:70, width:0, height:0, getContext(){return canvasContext();}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children=nodes;}};}
+const elements = {detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output')};
 context.document = {createElement: element, querySelector(){return null;}, querySelectorAll(){return [];}, getElementById(id){return elements[id] || element(id);}};
 context.refresh = () => Promise.resolve();
 vm.runInContext("state={current_track_id:null,selection_epoch:7}; selectionEpoch=7; graphModel={nodes:[],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:[],links:[],unpositioned:[]}; refresh = globalThis.refresh;", context);
