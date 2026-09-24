@@ -12,6 +12,7 @@ dependencies = []
 
 [project.scripts]
 music-analyzer = "music_analyzer.frameworks.cli.main:main"
+music-exporer = "music_exporer.frameworks.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["music_analyzer*", "music_exporer*"]
