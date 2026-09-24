@@ -49,7 +49,7 @@ class ExplorerState:
             raise ValueError('Unknown explorer track')
         with self._lock:
             if selection_token is not None:
-                if selection_token < self.selection_token:
+                if selection_token <= self.selection_token:
                     return self.snapshot_unlocked()
                 self.selection_token = selection_token
             if self.current_track_id != track_id:

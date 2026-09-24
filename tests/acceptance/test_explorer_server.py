@@ -58,6 +58,18 @@ class ExplorerServerTests(unittest.TestCase):
             self.assertEqual(response.headers.get_content_type(), 'application/json')
             return json.loads(response.read().decode('utf-8'))
 
+    def post_json(self, path, body=None):
+        req = Request(self.base + path, data=json.dumps(body or {}).encode(), method='POST', headers={'Content-Type': 'application/json'})
+        with urlopen(req, timeout=5) as response:
+            self.assertEqual(response.headers.get_content_type(), 'application/json')
+            return json.loads(response.read().decode('utf-8'))
+
+    def post_current(self, track_id, selection_token=None):
+        body = {'track_id': track_id}
+        if selection_token is not None:
+            body['selection_token'] = selection_token
+        return self.post_json('/api/current', body)
+
     def test_api_lists_details_candidates_state_and_projection(self):
         state = self.get_json('/api/state')
         self.assertIsNone(state['current_track_id'])
@@ -98,6 +110,37 @@ class ExplorerServerTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as raised:
             urlopen(too_large, timeout=5)
         self.assertEqual(raised.exception.code, 413)
+
+    def test_delayed_click_matching_reset_token_does_not_restore_selection(self):
+        self.post_json('/api/reset')
+
+        delayed = self.post_current(self.first, 1)
+
+        self.assertIsNone(delayed['current_track_id'])
+        self.assertEqual(delayed['history'], [])
+        self.assertIsNone(self.get_json('/api/state')['current_track_id'])
+
+    def test_delayed_click_matching_undo_token_does_not_restore_selection(self):
+        self.post_current(self.first)
+        self.post_current(self.second)
+        self.post_json('/api/undo')
+
+        delayed = self.post_current(self.second, 1)
+
+        self.assertEqual(delayed['current_track_id'], self.first)
+        self.assertEqual(delayed['history'], [None])
+        self.assertEqual(self.get_json('/api/state')['current_track_id'], self.first)
+
+    def test_valid_click_after_reset_and_undo_tokens_is_accepted(self):
+        self.post_json('/api/reset')
+        after_reset = self.post_current(self.second, 2)
+        self.assertEqual(after_reset['current_track_id'], self.second)
+
+        self.post_json('/api/undo')
+        after_undo = self.post_current(self.first, 4)
+
+        self.assertEqual(after_undo['current_track_id'], self.first)
+        self.assertEqual(self.get_json('/api/state')['current_track_id'], self.first)
 
     def test_concurrent_current_posts_ignore_older_selection_tokens(self):
         first_can_continue = threading.Event()
