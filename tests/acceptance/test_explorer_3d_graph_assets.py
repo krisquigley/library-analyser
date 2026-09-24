@@ -536,6 +536,66 @@ assert(fetches.includes('/api/tracks?limit=all'));
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for same-selection detail race tests')
+    def test_older_selection_detail_cannot_overwrite_newer_full_refresh_for_same_selection(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}};
+(async () => {
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
+function response(payload){return {ok:true, json:async()=>payload};}
+function point(id){return {track_id:id, display_label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
+const olderDetail = deferred(), olderCandidates = deferred();
+let trackDetailRequests = 0, candidateRequests = 0;
+const fetches = [];
+context.fetch = (path, options={}) => {
+  fetches.push(String(path));
+  if (path === '/api/current') return Promise.resolve(response({current_track_id:'a'}));
+  if (path === '/api/state') return Promise.resolve(response({current_track_id:'a'}));
+  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'}]}));
+  if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('a')], edges:[], selected_mood:'calm', available_moods:['calm']}));
+  if (path === '/api/tracks/a') {
+    trackDetailRequests += 1;
+    return trackDetailRequests === 1
+      ? olderDetail.promise.then(payload => response(payload))
+      : Promise.resolve(response({handle:'a', display_label:'Fresh detail', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  }
+  if (String(path).startsWith('/api/candidates?control=tempo%3Aoff%3A1&control=harmony%3Aoff%3A1&control=energy%3Aoff%3A1&control=genre%3Aoff%3A1&control=mood%3Aoff%3A1')) {
+    candidateRequests += 1;
+    return candidateRequests === 1
+      ? olderCandidates.promise.then(payload => response(payload))
+      : Promise.resolve(response({candidates:[{track_id:'fresh-candidate', tier:'strong', score:0.9}]}));
+  }
+  return Promise.reject(new Error('unexpected fetch '+path));
+};
+function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
+const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+vm.runInContext("state={current_track_id:'a'}; selectionEpoch=1; graphModel={nodes:[{id:'a',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
+const olderRefresh = context.refresh();
+await Promise.resolve();
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a', 'older refresh observed the selected track while detail is pending');
+const newerRefresh = context.refresh();
+await newerRefresh;
+assert.strictEqual(elements.detail.children[0].textContent, 'Fresh detail', 'newer full refresh renders current detail first');
+assert(elements.candidates.children[0].textContent.includes('fresh-candidate'), 'newer full refresh renders current candidates first');
+olderDetail.resolve({handle:'a', display_label:'Stale delayed detail', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
+olderCandidates.resolve({candidates:[{track_id:'stale-candidate', tier:'stale', score:0.1}]});
+await olderRefresh;
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a');
+assert.strictEqual(elements.detail.children[0].textContent, 'Fresh detail', 'older delayed detail for same selected id must not overwrite newer refresh detail');
+assert(elements.candidates.children[0].textContent.includes('fresh-candidate'), 'older delayed candidates for same selected id must not overwrite newer refresh candidates');
+assert.strictEqual(trackDetailRequests, 2);
+assert.strictEqual(candidateRequests, 2);
+assert.strictEqual(fetches.filter(path => path === '/api/state').length, 2);
+assert(!fetches.includes('/api/current'), 'non-selection refreshes reproduce the same-selected-id detail race without a click');
+})().catch(error => { console.error(error); process.exit(1); });
+""";
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for click/refresh race tests')
     def test_refresh_after_click_before_post_resolves_preserves_latest_selection_intent(self):
         script = r"""

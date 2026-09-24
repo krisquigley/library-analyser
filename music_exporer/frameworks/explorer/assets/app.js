@@ -16,6 +16,7 @@ const selectionPostSeqKey='music-explorer-selection-post-seq';
 let selectionPostSeq=loadSelectionPostSeq();
 let selectionEpoch=0;
 let refreshRequestSeq=0;
+let selectionDetailRequestSeq=0;
 let pendingSelectionIntent=null;
 function sessionStorageNumber(key){
   try{
@@ -63,14 +64,15 @@ function updateSelectedTrackVisuals(){
 }
 async function refreshSelectionDependent(token){
   if(token!==selectionRequestSeq) return;
+  const detailToken=++selectionDetailRequestSeq;
   const selectedId=state.current_track_id;
   updateSelectedTrackVisuals();
   if(selectedId){
     const [detail,candidates]=await Promise.all([api('/api/tracks/'+encodeURIComponent(selectedId)),api('/api/candidates?'+controlQuery()+'&current='+encodeURIComponent(selectedId))]);
-    if(token!==selectionRequestSeq || state.current_track_id!==selectedId) return;
+    if(token!==selectionRequestSeq || detailToken!==selectionDetailRequestSeq || state.current_track_id!==selectedId) return;
     renderDetail(detail); renderCandidates(candidates); updateSelectedTrackVisuals();
   } else {
-    if(token!==selectionRequestSeq) return;
+    if(token!==selectionRequestSeq || detailToken!==selectionDetailRequestSeq) return;
     renderInitialDetail(graphModel); renderCandidates({candidates:[]});
   }
 }
