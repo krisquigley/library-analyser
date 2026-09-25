@@ -6,15 +6,14 @@
 <main class="overlay">
   <div class="left-dock">
     <header class="brand"><h1>Track Journey Explorer</h1><p>Personal read-only localhost view</p></header>
-    <details id="tracks-panel" class="panel" open><summary>Tracks</summary><ul id="tracks"></ul></details>
-    <details id="candidate-panel" class="panel" open><summary>Candidate controls &amp; results</summary><p class="muted">Anchor-relative candidates use the selected track; initial graph shows the whole library.</p><div id="controls"></div><ol id="candidates"></ol></details>
+    <details id="tracks-panel" class="panel" open><summary>Tracks</summary><label for="track-search">Search tracks by title or artist</label><input id="track-search" type="search" autocomplete="off"><div id="tracks"></div></details>
+    <details id="candidate-panel" class="panel" open><summary>Candidates</summary><p class="muted">Anchor-relative candidates use the selected track; initial graph shows the whole library.</p><div id="controls"></div><ol id="candidates"></ol></details>
   </div>
   <div class="right-dock">
     <details id="detail-panel" class="panel" open><summary>Current / graph notes</summary><div id="detail"></div><div class="actions"><button id="undo">Undo selection</button><button id="reset">Clear selection</button></div></details>
   </div>
   <div class="bottom-dock">
-    <details class="panel legend"><summary>Graph legend &amp; status</summary><p id="graph-info" class="muted"></p></details>
-    <section class="panel mood-strip"><h2>Selected mood strength · fixed 0–1</h2><p class="muted strip-help">Raw Jamendo sigmoid mean, not a calibrated probability. Blue = visible tracks with a score; red = selected when a score exists. Tracks without the selected mood remain on the graph but have no strip mark. Click a mark or use the slider to inspect overlapping scores.</p><div class="mood-strip-axis"><span>0</span><span>0.5</span><span>1</span></div><canvas id="mood-strip" height="70" aria-label="Selected mood score distribution from zero to one"></canvas><label for="mood-strip-picker">Inspect sorted visible track</label><input id="mood-strip-picker" type="range" min="0" max="0" value="0"><output id="mood-strip-value" for="mood-strip-picker" aria-live="polite"></output></section>
+    <section class="panel mood-strip"><h2>Selected mood strength</h2><div class="mood-strip-axis"><span>0</span><span>0.5</span><span>1</span></div><canvas id="mood-strip" height="70" aria-label="Selected mood score distribution from zero to one"></canvas><label for="mood-strip-picker">Inspect sorted visible track</label><input id="mood-strip-picker" type="range" min="0" max="0" value="0"><output id="mood-strip-value" for="mood-strip-picker" aria-live="polite"></output></section>
   </div>
 </main>
 <script src="/vendor/3d-force-graph/3d-force-graph.min.js"></script>

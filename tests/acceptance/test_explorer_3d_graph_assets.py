@@ -163,7 +163,7 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
                 self.assertIn('syncGraphControlOptions', source[source.index('module.exports'):])
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for graph control DOM tests')
-    def test_graph_filters_are_separate_from_mood_tracker_control(self):
+    def test_graph_filters_are_separate_from_mood_tracker_and_bpm_inputs_have_labels(self):
         script = r"""
 const assert = require('assert');
 const app = require(process.argv[1]);
@@ -192,6 +192,11 @@ assert(moodControls, 'independent mood tracker fieldset exists');
 assert(!findById(graphControls, 'selected-mood'), 'selected mood select is not inside graph filters');
 assert.strictEqual(findById(moodControls, 'selected-mood').tagName, 'SELECT');
 assert.match(graphControls.innerText, /Graph filters/);
+for (const [id, name] of [['bpm-min', 'Minimum BPM'], ['bpm-max', 'Maximum BPM']]) {
+  const input = findById(graphControls, id);
+  assert(input, `${id} input exists`);
+  assert.strictEqual(input.attributes['aria-label'], name, `${id} needs a persistent accessible name independent of its placeholder`);
+}
 assert.doesNotMatch(graphControls.innerText, /mood/i, 'filter copy must not present mood as a graph filter');
 assert.match(moodControls.innerText, /Selected mood strength/i);
 app.setGraphModelForTesting({availableMoods:['relaxing','heavy'],selectedMood:'relaxing',genreOptions:['jazz','rock'],nodes:[],links:[],unpositioned:[]});
@@ -268,23 +273,89 @@ assert.deepStrictEqual(data.links.map(alpha), [0.18,0.45,0.72,0.18]);
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
-                self.assertIn('graphRelatednessLegend', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+                self.assertIn('graphRelatednessLegend', source)
                 subprocess.run(['node', '-e', script, str(app), str(app.parent / 'vendor/3d-force-graph/3d-force-graph.min.js')], check=True, cwd=REPO_ROOT)
 
-    def test_detail_panel_source_places_graph_key_with_current_track_notes(self):
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for tracks table tests')
+    def test_tracks_render_as_searchable_title_artist_table(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  return {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', value:'', textContent:'', onclick:null, oninput:null,
+    append(...nodes){this.children.push(...nodes);},
+    replaceChildren(...nodes){this.children=[...nodes]; this.textContent='';},
+    setAttribute(name,value){this.attributes[name]=String(value);},
+    getAttribute(name){return this.attributes[name] || null;},
+    removeAttribute(name){delete this.attributes[name];},
+    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
+  };
+}
+const tracks = makeElement('div');
+const search = makeElement('input');
+const elements = {tracks, 'track-search': search};
+global.document = {createElement: makeElement, getElementById(id){return elements[id] || null;}, querySelectorAll(){return [];}};
+app.setStateForTesting({current_track_id:'two'});
+app.renderTracks([
+  {handle:'one', display_label:'Filename One.flac', title:'Bright Song', artist:'Alice'},
+  {handle:'two', display_label:'Filename Two.flac', title:'Quiet Tune', artist:'Bob'},
+  {handle:'three', display_label:'Fallback.flac', artist:'Unknown artist'}
+]);
+assert.strictEqual(tracks.children[0].tagName, 'TABLE');
+const table = tracks.children[0];
+assert.strictEqual(table.children[0].children[0].children[0].textContent, 'Title');
+assert.strictEqual(table.children[0].children[0].children[1].textContent, 'Artist');
+const tbody = table.children[1];
+assert.strictEqual(tbody.children.length, 3);
+assert.strictEqual(tbody.children[1].className, 'current');
+assert.strictEqual(tbody.children[1].children[0].children[0].getAttribute('aria-current'), 'true');
+assert.strictEqual(tbody.children[0].children[0].children[0].getAttribute('aria-current'), null);
+assert(tbody.children[0].innerText.includes('Bright Song') && tbody.children[0].innerText.includes('Alice'));
+assert(tbody.children[2].innerText.includes('Fallback.flac') && tbody.children[2].innerText.includes('Unknown artist'));
+search.value = 'alice'; search.oninput();
+assert.deepStrictEqual(tbody.children.map(row => row.hidden), [false, true, true]);
+search.value = 'QUIET'; search.oninput();
+assert.deepStrictEqual(tbody.children.map(row => row.hidden), [true, false, true]);
+search.value = 'Filename'; search.oninput();
+assert.deepStrictEqual(tbody.children.map(row => row.hidden), [true, true, true], 'search only matches title and artist');
+assert(tracks.innerText.includes('No tracks match your search'));
+search.value = ''; search.oninput();
+assert.deepStrictEqual(tbody.children.map(row => row.hidden), [false, false, false]);
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for metadata DOM tests')
+    def test_metadata_is_flat_deduplicated_and_escaped(self):
+        script = r"""
+const assert=require('assert'), app=require(process.argv[1]);
+global.document={createElement:tag=>({tag,textContent:'',children:[],append(...children){this.children.push(...children)}})};
+const metadata=app.renderTrackMetadata({common:[['title','Song'],['album artist','Band']],tags:[['TITLE',['Other']],['ALBUM_ARTIST',['Other Band']],['comment',['<script>']],['genre',['Rock']],['genre',['Jazz']],['TRACKNUMBER',['4']],['TPE2',['Other Band']]],warnings:['diagnostic warning']});
+assert.deepStrictEqual(metadata.children.map(n=>n.textContent), ['Title: Song','Album artist: Band','Comment: <script>','Genre: Rock','Track number: 4']);
+assert(!metadata.children.some(n=>n.tag==='details' || n.tag==='h4'));
+assert.strictEqual(app.renderTrackMetadata({}).children[0].textContent,'No embedded textual metadata found');
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+    def test_detail_panel_source_removes_diagnostics_and_graph_key_from_current_track(self):
         source = APP_JS.read_text(encoding='utf-8')
-        self.assertIn('function graphStatusText', source)
-        self.assertIn('function graphStatusParagraph', source)
-        self.assertIn('Current track', source)
-        self.assertIn('Display label:', source)
-        self.assertIn('Stable identifier:', source)
-        self.assertIn('Graph key / status', source)
-        self.assertIn('Graph key and status are shown in Current / graph notes.', source)
+        self.assertNotIn('function graphStatusText', source)
+        self.assertNotIn('function graphStatusParagraph', source)
+        self.assertIn('Current Track', source)
+        detail_source = source[source.index('function renderDetail'):source.index('function renderCandidates')]
+        self.assertNotIn('Display label:', detail_source)
+        self.assertNotIn('Stable identifier:', detail_source)
+        self.assertNotIn('Status:', detail_source)
+        self.assertNotIn('Locations:', detail_source)
+        self.assertNotIn('Graph key / status', detail_source)
+        self.assertNotIn('Graph key and status are shown in Current / graph notes.', source)
         self.assertIn('renderDetail', source[source.index('module.exports'):])
         self.assertIn('renderInitialDetail', source[source.index('module.exports'):])
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for detail panel behavior tests')
-    def test_detail_panel_embeds_current_track_data_and_graph_key(self):
+    def test_detail_panel_omits_current_track_diagnostics_and_standalone_graph_key(self):
         script = r"""
 const assert = require('assert');
 const app = require(process.argv[1]);
@@ -309,23 +380,24 @@ assert.deepStrictEqual(visible.nodes.map(n=>n.id), ['track-2']);
 assert.strictEqual(visible.links.length, 0);
 app.renderDetail({handle:'track-1', display_label:'Alpha.flac', latest_run_status:'completed', available_locations:1, reasons:['ready'], fields:{}});
 let text = elements.detail.innerText;
-assert(text.indexOf('Current track') < text.indexOf('Selected relaxing raw sigmoid mean score'), 'current track identity starts the selected detail panel');
-assert(text.includes('Display label: Alpha.flac'), text);
-assert(text.includes('Stable identifier: track-1'), text);
-assert(text.includes('Graph key / status'), text);
-assert(text.includes('1 positioned tracks · 0 sparse relatedness edges · 1 unpositioned'), text);
-assert(text.includes('Color relative to this library'), text);
-assert(text.includes('-2.0 to 3.0 native') && text.includes('10.0 to 30.0 native'), text);
-assert(text.includes('Selected node is larger.'), text);
-assert.strictEqual(elements['graph-info'].textContent, 'Graph key and status are shown in Current / graph notes.');
+assert(text.includes('Current Track'), text);
+assert(!text.includes('Display label:'), text);
+assert(!text.includes('Stable identifier:'), text);
+assert(!text.includes('Graph key / status'), text);
+assert(!text.includes('positioned tracks ·'), text);
+assert(!text.includes('Color relative to this library'), text);
+assert.strictEqual(elements['graph-info'].textContent, '');
 app.renderInitialDetail(graphModel);
 text = elements.detail.innerText;
 assert(text.includes('All-library valence / arousal / BPM graph'), text);
 assert(text.includes('Showing 1 positioned tracks and 1 unpositioned tracks'), text);
-assert(text.includes('Graph key / status'), text);
-assert(text.includes('1 positioned tracks · 0 sparse relatedness edges · 1 unpositioned'), text);
-assert(text.includes('-2.0 to 3.0 native') && text.includes('10.0 to 30.0 native'), text);
+assert(!text.includes('Graph key / status'), text);
+assert(!text.includes('positioned tracks ·'), text);
+assert(!text.includes('Color relative to this library'), text);
 assert(text.includes('3d-force-graph is bundled locally'), text);
+assert(!text.includes('fixed 20 BPM'), text);
+assert(!text.includes('selected mood'), text);
+assert(!text.includes('sample-relative'), text);
 assert(text.includes('Missing: no mood'), text);
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
@@ -396,8 +468,7 @@ vm.runInContext('graphModel=buildMoodGraphModel('+JSON.stringify({positioned,sel
 context.renderMap(model);
 assert.strictEqual(color(model.nodes[0]),model.nodes[0].color,'selection must not replace color');
 assert(size(model.nodes[0])>size(model.nodes[1]),'selection should be larger');
-assert(info.textContent.includes('relative to this library'));
-assert(info.textContent.includes('-2.0 to 3.0'));
+assert.strictEqual(info.textContent, '', 'removed graph status panel must not be updated');
 vm.runInContext("selectedGraphControls={mood:'heavy',bpmMin:100,bpmMax:140,genres:['jazz']}",context);
 assert.strictEqual(context.graphQueryFromControls(),'?mood=heavy','fetch full mood library before local filtering');
 """
@@ -555,7 +626,7 @@ function element(tag){return {tag, textContent:'', className:'', dataset:{}, sty
 const detail = element('section');
 const elements = {detail, candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output')};
 const rows = ['client-click','server-current'].map(id => ({dataset:{trackId:id}, className:''}));
-context.document = {createElement: element, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return rows;}, getElementById(id){return elements[id] || element(id);}};
+context.document = {createElement: element, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return rows;}, getElementById(id){return elements[id] || element(id);}};
 vm.runInContext("state={current_track_id:'server-current'}; selectionEpoch=0; graphModel={nodes:[{id:'client-click',moodScore:null},{id:'server-current',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
 const click = context.setCurrent('client-click');
 await Promise.resolve();
@@ -565,7 +636,7 @@ await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'rejected/stale server snapshot must restore the accepted server selection');
 assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
 assert(fetches.includes('/api/tracks/server-current'), 'detail fetch follows the accepted server snapshot after rejection');
-assert(detail.children.some(child => child.textContent.includes('Server Current')));
+assert(detail.children.some(child => child.textContent.includes('Current Track')));
 })().catch(error => { console.error(error); process.exit(1); });
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
@@ -601,15 +672,15 @@ context.fetch = (path, options={}) => {
 };
 function canvasContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return canvasContext();}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
-const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
 vm.runInContext("state={current_track_id:'server-current'}; selectionEpoch=1; graphModel={nodes:[{id:'client-click',moodScore:null},{id:'server-current',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
 await context.setCurrent('client-click');
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'rejected POST restores authoritative server selection');
 await context.refresh();
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'refresh after rejection must not overlay the rejected click intent');
-assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', 'current']);
-assert(elements.detail.children.some(child => child.textContent.includes('Server Current')), 'detail follows authoritative server selection after refresh');
+assert.deepStrictEqual(elements.tracks.children[0].children[1].children.map(row => row.className), ['', 'current']);
+assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'detail follows authoritative server selection after refresh');
 assert(elements.candidates.children[0].textContent.includes('server-candidate'), 'candidates follow authoritative server selection after refresh');
 assert(fetches.includes('/api/current') && fetches.includes('/api/state'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -637,14 +708,14 @@ context.fetch = (path, options={}) => {
     return Promise.resolve(response({current_track_id: body.track_id}));
   }
   if (path === '/api/tracks/a') return detailA.promise.then(payload => response(payload));
-  if (String(path).startsWith('/api/candidates?control=tempo%3Aoff%3A1&control=harmony%3Aoff%3A1&control=energy%3Aoff%3A1&control=genre%3Aoff%3A1&control=mood%3Aoff%3A1')) return candidatesA.promise.then(payload => response(payload));
+  if (String(path).startsWith('/api/candidates?')) return candidatesA.promise.then(payload => response(payload));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   return Promise.resolve(response({candidates:[{track_id:'cand-b', tier:'strong', score:0.8}]}));
 };
 function element(tag){return {tag, textContent:'', className:'', dataset:{}, style:{}, children:[], setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};}
 const detail = element('section'), candidates = element('ol');
 const rows = ['a','b'].map(id => ({dataset:{trackId:id}, className:''}));
-context.document = {createElement: element, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return rows;}, getElementById(id){return id === 'detail' ? detail : id === 'candidates' ? candidates : null;}};
+context.document = {createElement: element, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return rows;}, getElementById(id){return id === 'detail' ? detail : id === 'candidates' ? candidates : null;}};
 const graphCalls = [];
 const graph = {nodeVal(fn){this.value = fn; return this;}, refresh(){this.refreshed = (this.refreshed || 0) + 1; return this;}, graphData(data){graphCalls.push(data); return {nodes:[]};}};
 context.graph = graph;
@@ -664,7 +735,7 @@ assert.strictEqual(graphCalls.length, 0, 'selection-only changes must not replac
 assert.strictEqual(graph.value({id:'b'}), 4);
 assert.strictEqual(graph.value({id:'a'}), 1);
 assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
-assert(detail.children.some(child => child.textContent.includes('Bee')), 'stale first detail must not overwrite latest selection');
+assert(detail.children.some(child => child.textContent.includes('Current Track')), 'stale first detail must not overwrite latest selection');
 assert(candidates.children[0].textContent.includes('cand-b'), 'stale first candidates must not overwrite latest selection');
 assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
 })().catch(error => { console.error(error); process.exit(1); });
@@ -694,12 +765,12 @@ context.fetch = (path, options={}) => {
   if (path === '/api/current') return Promise.resolve(response({current_track_id:'b'}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (path === '/api/tracks/a') return detailA.promise.then(payload => response(payload));
-  if (String(path).startsWith('/api/candidates?control=tempo%3Aoff%3A1&control=harmony%3Aoff%3A1&control=energy%3Aoff%3A1&control=genre%3Aoff%3A1&control=mood%3Aoff%3A1')) return candidatesA.promise.then(payload => response(payload));
+  if (String(path).startsWith('/api/candidates?')) return candidatesA.promise.then(payload => response(payload));
   return Promise.resolve(response({candidates:[{track_id:'cand-b', tier:'strong', score:0.8}]}));
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
-const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
 const rendered = [];
 context.renderMap = data => rendered.push(data.nodes.map(n => n.id));
 vm.runInContext('renderMap = globalThis.renderMap', context);
@@ -716,7 +787,7 @@ await stale;
 assert.strictEqual(context.state.current_track_id, 'b', 'stale refresh state must not overwrite newer selection state');
 assert.deepStrictEqual(elements.tracks.children.map(row => row.dataset.trackId), [], 'stale refresh must not render stale track list');
 assert.deepStrictEqual(rendered, [], 'stale refresh must not render stale graph data');
-assert(detail.children.some(child => child.textContent.includes('Bee')), 'stale refresh detail must not overwrite latest selection detail');
+assert(detail.children.some(child => child.textContent.includes('Current Track')), 'stale refresh detail must not overwrite latest selection detail');
 assert(candidates.children[0].textContent.includes('cand-b'), 'stale refresh candidates must not overwrite latest selection candidates');
 assert(fetches.includes('/api/tracks?limit=all'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -751,7 +822,7 @@ context.fetch = (path, options={}) => {
       ? olderDetail.promise.then(payload => response(payload))
       : Promise.resolve(response({handle:'a', display_label:'Fresh detail', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   }
-  if (String(path).startsWith('/api/candidates?control=tempo%3Aoff%3A1&control=harmony%3Aoff%3A1&control=energy%3Aoff%3A1&control=genre%3Aoff%3A1&control=mood%3Aoff%3A1')) {
+  if (String(path).startsWith('/api/candidates?current=a')) {
     candidateRequests += 1;
     return candidateRequests === 1
       ? olderCandidates.promise.then(payload => response(payload))
@@ -760,8 +831,8 @@ context.fetch = (path, options={}) => {
   return Promise.reject(new Error('unexpected fetch '+path));
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
-const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
 vm.runInContext("state={current_track_id:'a'}; selectionEpoch=1; graphModel={nodes:[{id:'a',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
 const olderRefresh = context.refresh();
 await Promise.resolve();
@@ -806,15 +877,15 @@ context.fetch = (path, options={}) => {
   if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('a'), point('b')], edges:[], selected_mood:'calm', available_moods:['calm']}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (path === '/api/tracks/a') return Promise.resolve(response({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
-  if (String(path).startsWith('/api/candidates?control=tempo%3Aoff%3A1&control=harmony%3Aoff%3A1&control=energy%3Aoff%3A1&control=genre%3Aoff%3A1&control=mood%3Aoff%3A1')) {
+  if (String(path).startsWith('/api/candidates?current=')) {
     const current = String(path).includes('current=b') ? 'cand-b' : 'cand-a';
     return Promise.resolve(response({candidates:[{track_id:current, tier:'strong', score:0.8}]}));
   }
   return Promise.reject(new Error('unexpected fetch '+path));
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
-const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
 const rendered = [];
 context.renderMap = data => rendered.push(data.nodes.map(n => n.id));
 vm.runInContext('renderMap = globalThis.renderMap', context);
@@ -823,11 +894,11 @@ await Promise.resolve();
 const staleRefresh = context.refresh();
 await staleRefresh;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'refresh must preserve optimistic latest click while POST is pending');
-assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', 'current']);
+assert.deepStrictEqual(elements.tracks.children[0].children[1].children.map(row => row.className), ['', 'current']);
 postCurrent.resolve();
 await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'POST response should remain latest selected track despite intervening refresh');
-assert(elements.detail.children.some(child => child.textContent.includes('Bee')), 'latest click detail must render after POST resolves');
+assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'latest click detail must render after POST resolves');
 assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates must render after POST resolves');
 assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -862,8 +933,8 @@ context.fetch = (path, options={}) => {
   return Promise.reject(new Error('unexpected fetch '+path));
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
-const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p'), controls: element('div'), undo: element('button'), reset: element('button')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p'), controls: element('div'), undo: element('button'), reset: element('button')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
 vm.runInContext("if(typeof document!=='undefined'){document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');}", context);
 const reset = elements.reset.onclick();
 await Promise.resolve();
@@ -879,7 +950,7 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'sta
 stateFetch.resolve();
 await reset;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'stale reset history refresh must preserve later click selection');
-assert(elements.detail.children.some(child => child.textContent.includes('Bee')), 'latest click detail remains rendered after stale reset response');
+assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'latest click detail remains rendered after stale reset response');
 assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates remain rendered after stale reset response');
 assert(fetches.includes('/api/reset') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -912,8 +983,8 @@ context.fetch = (path, options={}) => {
   return Promise.reject(new Error('unexpected fetch '+path));
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
-const elements = {tracks: element('ul'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p'), controls: element('div'), undo: element('button'), reset: element('button')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks li[data-track-id]'); return elements.tracks.children;}, getElementById(id){return elements[id] || null;}};
+const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p'), controls: element('div'), undo: element('button'), reset: element('button')};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
 context.refresh = () => Promise.resolve();
 vm.runInContext('refresh = globalThis.refresh', context);
 vm.runInContext("if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');}", context);
@@ -955,7 +1026,7 @@ assert(!legend.includes('undefined'), legend);
             self.assertIn('.min', source)
             self.assertIn('.max', source)
 
-    def test_initial_detail_includes_graph_key_and_status_without_selection(self):
+    def test_initial_detail_omits_graph_key_and_status_without_selection(self):
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
@@ -968,16 +1039,17 @@ context.document = {createElement: element, getElementById(id){return id === 'de
 vm.runInContext("visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}]}", context);
 context.renderInitialDetail({nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}], colorRanges:{valence:[-1,1], arousal:[0,2]}, selectedMood:'calm'});
 const rendered = (function all(node){return [node.textContent,...(node.children||[]).flatMap(all)];})(detail).join(' ');
-assert(rendered.includes('1 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), rendered);
-assert(rendered.includes('Graph key / status'), rendered);
-assert(rendered.includes('Color relative to this library'), rendered);
+assert(rendered.includes('All-library valence / arousal / BPM graph'), rendered);
+assert(!rendered.includes('Graph key / status'), rendered);
+assert(!rendered.includes('Color relative to this library'), rendered);
 """
         if shutil.which('node'):
             subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
         else:
             source = APP_JS.read_text(encoding='utf-8')
-            self.assertIn('Graph key / status', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
-            self.assertIn('graphStatusParagraph(visibleGraph)', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+            initial_source = source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')]
+            self.assertNotIn('Graph key / status', initial_source)
+            self.assertNotIn('graphStatusParagraph(visibleGraph)', initial_source)
 
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
@@ -1013,9 +1085,9 @@ render({
   instruments:auto([['guitar',0.9],['piano',0.1],['drums',0.2]], [['mtg_jamendo_instrument-discogs-effnet-1','hash']]),
   absent:{automatic:{values:[]},effective_source:'missing',missing_reason:'stage absent'}
 });
-assert(detail.children.some(child => child.textContent.startsWith('Selected mood score:')), 'selected score stays near title');
+assert(detail.children.some(child => child.textContent==='Current Track'), 'current track heading remains');
 let rendered = nodes().map(n => n.textContent).join(' ');
-assert(rendered.includes('Status: failed') && rendered.includes('evidence pending'));
+assert(!rendered.includes('Status: failed') && rendered.includes('evidence pending'));
 assert(rendered.includes('mid') && rendered.includes('high') && rendered.includes('tie') && !rendered.includes('low') && !rendered.includes('out'));
 assert(rendered.includes('middle') && rendered.includes('above') && !rendered.includes('zero'));
 assert(rendered.includes('guitar') && rendered.includes('drums') && !rendered.includes('piano'));

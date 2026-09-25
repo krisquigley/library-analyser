@@ -137,6 +137,8 @@ class ExplorerTrackDetail:
     latest_run_id: str | None
     latest_run_status: str | None
     latest_run_detail: str
+    title: str
+    artist: str
     fields: Mapping[str, ExplorerFieldEvidence]
     reasons: tuple[str, ...]
     metadata: TrackMetadata = TrackMetadata()

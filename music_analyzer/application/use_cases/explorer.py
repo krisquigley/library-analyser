@@ -164,10 +164,44 @@ def _map_track(track):
         latest_run_id=track.run.run_id if track.run else None,
         latest_run_status=track.run.status if track.run else None,
         latest_run_detail='',
+        title=_track_title(track),
+        artist=_track_artist(track),
         fields=fields,
         reasons=tuple(reasons),
         metadata=track.metadata,
     )
+
+
+_COMMON_TAG_KEYS = {
+    'title': ('title',),
+    'artist': ('artist', 'artists'),
+}
+
+
+def _metadata_value(metadata, semantic):
+    wanted = _COMMON_TAG_KEYS[semantic]
+    for key, value in metadata.common:
+        if str(key).strip().lower().replace(' ', '_') in wanted:
+            if isinstance(value, tuple):
+                joined = '; '.join(str(v).strip() for v in value if str(v).strip())
+                if joined:
+                    return joined
+            elif str(value).strip():
+                return str(value).strip()
+    for key, values in metadata.tags:
+        if str(key).strip().lower().replace(' ', '_') in wanted:
+            joined = '; '.join(str(v).strip() for v in (values or ()) if str(v).strip())
+            if joined:
+                return joined
+    return None
+
+
+def _track_title(track):
+    return _metadata_value(track.metadata, 'title') or track.display_label or track.track_id
+
+
+def _track_artist(track):
+    return _metadata_value(track.metadata, 'artist') or 'Unknown artist'
 
 
 def _available_moods(records):

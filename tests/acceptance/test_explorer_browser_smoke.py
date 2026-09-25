@@ -34,8 +34,8 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     page.goto(f'http://127.0.0.1:{server.server_port}/')
                     page.wait_for_function("document.querySelector('#selected-mood').options.length > 1")
                     page.wait_for_function('graphModel.nodes.length === 2 && !!forceGraph')
-                    page.get_by_role('button', name='Alpha.flac').click()
-                    page.get_by_text('Selected heavy raw sigmoid mean score', exact=False).wait_for()
+                    page.get_by_role('button', name='Alpha').click()
+                    page.get_by_role('heading', name='Current Track').wait_for()
                     before = page.evaluate("""() => {
                         forceGraph.cameraPosition({x:99,y:88,z:777},{x:20,y:30,z:40},0);
                         return {ids:graphModel.nodes.map(n=>n.id), positions:graphModel.nodes.map(n=>[n.x,n.y,n.z]),
@@ -45,7 +45,7 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     page.wait_for_timeout(150)
                     before['camera'] = page.evaluate('forceGraph.cameraPosition()')
                     page.locator('#selected-mood').select_option('relaxing')
-                    page.get_by_text('Selected relaxing raw sigmoid mean score', exact=False).wait_for()
+                    page.wait_for_function("graphModel.selectedMood === 'relaxing'")
                     after = page.evaluate("""() => ({ids:graphModel.nodes.map(n=>n.id),
                         positions:graphModel.nodes.map(n=>[n.x,n.y,n.z]), edges:graphModel.links.map(l=>[typeof l.source==='object'?l.source.id:l.source,typeof l.target==='object'?l.target.id:l.target]),
                         camera:forceGraph.cameraPosition(), layout:framedGraphLayout,
@@ -79,8 +79,16 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     page = browser.new_page()
                     page.goto(f'http://127.0.0.1:{server.server_port}/')
                     page.get_by_role('button', name='First & Friend.flac').wait_for()
+                    self.assertEqual(page.locator('#tracks th').all_text_contents(), ['Title', 'Artist'])
+                    self.assertEqual(page.get_by_role('searchbox', name='Search tracks by title or artist').count(), 1)
+                    page.get_by_role('searchbox', name='Search tracks by title or artist').fill('SECOND')
+                    self.assertEqual(page.locator('#tracks tbody tr:visible').count(), 1)
+                    page.get_by_role('searchbox', name='Search tracks by title or artist').fill('')
                     page.get_by_role('button', name='Second.flac').click()
-                    page.get_by_text('Status: completed').wait_for()
+                    page.get_by_role('heading', name='Current Track').wait_for()
+                    self.assertEqual(page.get_by_text('Graph key / status').count(), 0)
+                    self.assertEqual(page.get_by_text('Graph legend & status').count(), 0)
+                    self.assertEqual(page.locator('#mood-strip-picker').count(), 1)
                     current = page.evaluate("fetch('/api/state').then(r=>r.json())")
                     self.assertEqual(current['current_track_id'], second)
                     scene = page.locator('#graph3d canvas').evaluate("""canvas => {
