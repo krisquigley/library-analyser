@@ -173,18 +173,21 @@ function makeElement(tag){
 const elements = {detail: makeElement('div'), 'graph-info': makeElement('p')};
 global.document = {getElementById: id => elements[id] || null, createElement: makeElement};
 const graphModel = app.buildMoodGraphModel({selected_mood:'relaxing', positioned:[
-  {track_id:'track-1', display_label:'Alpha.flac', x:{raw:-2,normalized:0,scale:'native'}, y:{raw:10,normalized:0,scale:'native'}, z:{raw:120,normalized:6,label:'BPM',scale:'raw'}, mood_score:{label:'relaxing',raw:0.85}, bpm:120, genres:[], reasons:[]},
-  {track_id:'track-2', display_label:'Beta.flac', x:{raw:3,normalized:1,scale:'native'}, y:{raw:30,normalized:1,scale:'native'}, z:{raw:140,normalized:7,label:'BPM',scale:'raw'}, mood_score:{label:'relaxing',raw:0.15}, bpm:140, genres:[], reasons:[]}
+  {track_id:'track-1', display_label:'Alpha.flac', x:{raw:-2,normalized:0,scale:'native'}, y:{raw:10,normalized:0,scale:'native'}, z:{raw:120,normalized:6,label:'BPM',scale:'raw'}, mood_score:{label:'relaxing',raw:0.85}, bpm:120, genres:[['rock',0.9]], genre_threshold:0.5, reasons:[]},
+  {track_id:'track-2', display_label:'Beta.flac', x:{raw:3,normalized:1,scale:'native'}, y:{raw:30,normalized:1,scale:'native'}, z:{raw:140,normalized:7,label:'BPM',scale:'raw'}, mood_score:{label:'relaxing',raw:0.15}, bpm:140, genres:[['jazz',0.9]], genre_threshold:0.5, reasons:[]}
 ], edges:[{a:'track-1', b:'track-2', score:0.5}], unpositioned:[{track_id:'missing', display_label:'Missing', reasons:['no mood']}], available_moods:['relaxing']});
 app.setGraphModelForTesting(graphModel);
-app.setVisibleGraphForTesting({nodes: graphModel.nodes, links: graphModel.links, unpositioned: graphModel.unpositioned});
+const visible = app.applyMoodGraphFilters(graphModel, {bpmMin:130, genres:['jazz']});
+app.setVisibleGraphForTesting(visible);
+assert.deepStrictEqual(visible.nodes.map(n=>n.id), ['track-2']);
+assert.strictEqual(visible.links.length, 0);
 app.renderDetail({handle:'track-1', display_label:'Alpha.flac', latest_run_status:'completed', available_locations:1, reasons:['ready'], fields:{}});
 let text = elements.detail.innerText;
 assert(text.indexOf('Current track') < text.indexOf('Selected relaxing raw sigmoid mean score'), 'current track identity starts the selected detail panel');
 assert(text.includes('Display label: Alpha.flac'), text);
 assert(text.includes('Stable identifier: track-1'), text);
 assert(text.includes('Graph key / status'), text);
-assert(text.includes('2 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), text);
+assert(text.includes('1 positioned tracks · 0 sparse relatedness edges · 1 unpositioned'), text);
 assert(text.includes('Color relative to this library'), text);
 assert(text.includes('-2.0 to 3.0 native') && text.includes('10.0 to 30.0 native'), text);
 assert(text.includes('Selected node is larger.'), text);
@@ -192,8 +195,10 @@ assert.strictEqual(elements['graph-info'].textContent, 'Graph key and status are
 app.renderInitialDetail(graphModel);
 text = elements.detail.innerText;
 assert(text.includes('All-library valence / arousal / BPM graph'), text);
+assert(text.includes('Showing 1 positioned tracks and 1 unpositioned tracks'), text);
 assert(text.includes('Graph key / status'), text);
-assert(text.includes('2 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), text);
+assert(text.includes('1 positioned tracks · 0 sparse relatedness edges · 1 unpositioned'), text);
+assert(text.includes('-2.0 to 3.0 native') && text.includes('10.0 to 30.0 native'), text);
 assert(text.includes('3d-force-graph is bundled locally'), text);
 assert(text.includes('Missing: no mood'), text);
 """
@@ -834,7 +839,7 @@ vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 function element(tag){return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};}
 const detail = element('section');
 context.document = {createElement: element, getElementById(id){return id === 'detail' ? detail : null;}};
-context.visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[]};
+vm.runInContext("visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}]}", context);
 context.renderInitialDetail({nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}], colorRanges:{valence:[-1,1], arousal:[0,2]}, selectedMood:'calm'});
 const rendered = (function all(node){return [node.textContent,...(node.children||[]).flatMap(all)];})(detail).join(' ');
 assert(rendered.includes('1 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), rendered);
@@ -846,7 +851,7 @@ assert(rendered.includes('Color relative to this library'), rendered);
         else:
             source = APP_JS.read_text(encoding='utf-8')
             self.assertIn('Graph key / status', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
-            self.assertIn('graphStatusParagraph(model)', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+            self.assertIn('graphStatusParagraph(visibleGraph)', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
 
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
