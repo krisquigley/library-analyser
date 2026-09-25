@@ -1,6 +1,7 @@
 import unittest
 
 from music_analyzer.application.dto.analysis import AnalysisReport, StageResult
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.explorer import ExplorerMetadata, ExplorerStoredTrack
 from music_analyzer.application.use_cases.explorer import GetExplorerTrackDetail, ListExplorerTracks
 
@@ -16,6 +17,7 @@ class FakeExplorerRepository:
                 available_locations=1,
                 run=AnalysisReport('new-failed', 'failed', (StageResult('bpm', (), 'uncertain', (('bpm', 120.0),)),), 'decode failed'),
                 overrides=(('bpm', 'about 128 maybe'),),
+                metadata=TrackMetadata(common=(('title', 'Tagged Song'),), tags=(('TITLE', ('Tagged Song',)),)),
             ),
             ExplorerStoredTrack(
                 track_id='sha256:' + 'b' * 64,
@@ -69,6 +71,11 @@ class ExplorerUseCaseTests(unittest.TestCase):
         self.assertNotIn('/private/music', repr(first))
         self.assertNotIn('raw_predictions', repr(first))
         self.assertIn('Latest run: failed', first.reasons)
+
+    def test_detail_preserves_persisted_embedded_metadata(self):
+        report = GetExplorerTrackDetail(self.reader).execute('sha256:' + 'a' * 64)
+        self.assertEqual(report.metadata.common, (('title', 'Tagged Song'),))
+        self.assertEqual(report.metadata.tags, (('TITLE', ('Tagged Song',)),))
 
     def test_detail_preserves_missing_identity_linked_evidence_and_unavailable_location(self):
         report = GetExplorerTrackDetail(self.reader).execute('sha256:' + 'b' * 64)

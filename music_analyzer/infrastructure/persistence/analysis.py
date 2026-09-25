@@ -1,4 +1,4 @@
-"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 -> v4 migrations.
+"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 -> v4 -> v5 migrations.
 
 Existing unrelated schemas are rejected before any persistent pragma or DDL.
 Exact-file catalogue identity; each explicit analysis request is still a new run.
@@ -43,7 +43,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if db.execute('PRAGMA user_version').fetchone()[0] == 1:
                 self._validate(db, 1)
@@ -63,13 +63,42 @@ class SQLiteAnalysisRepository:
                 db.execute('CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id))')
                 db.execute('CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field))')
                 db.execute('PRAGMA user_version=4')
+            if db.execute('PRAGMA user_version').fetchone()[0] == 4:
+                self._validate(db, 4)
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='track_metadata'").fetchone():
+                    self._ensure_track_metadata_primary_key(db)
+                else:
+                    db.execute('CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
+                db.execute('PRAGMA user_version=5')
             self._validate(db)
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
             raise AnalysisError('Refusing Mixxx-named or symlink database path')
 
-    def _validate(self, db, version=4):
+    def _has_single_column_primary_key(self, table_info, column):
+        pk_columns = tuple(row[1] for row in sorted((row for row in table_info if row[5]), key=lambda row: row[5]))
+        return pk_columns == (column,)
+
+    def _valid_track_metadata_constraints(self, db, table_info):
+        return (self._has_single_column_primary_key(table_info, 'track_id')
+                and all(row[3] for row in table_info if row[1] in ('common_json', 'tags_json', 'warnings_json'))
+                and any(row[2] == 'tracks' and row[3] == 'track_id' and row[4] == 'id'
+                        for row in db.execute('PRAGMA foreign_key_list(track_metadata)')))
+
+    def _ensure_track_metadata_primary_key(self, db):
+        table_info = tuple(db.execute('PRAGMA table_info(track_metadata)'))
+        if self._valid_track_metadata_constraints(db, table_info):
+            return
+        duplicate = db.execute('SELECT track_id FROM track_metadata GROUP BY track_id HAVING count(*) > 1 LIMIT 1').fetchone()
+        if duplicate:
+            raise AnalysisError('Duplicate track metadata prevents schema migration')
+        db.execute('ALTER TABLE track_metadata RENAME TO track_metadata_v4')
+        db.execute('CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
+        db.execute('INSERT INTO track_metadata(track_id, common_json, tags_json, warnings_json) SELECT track_id, common_json, tags_json, warnings_json FROM track_metadata_v4')
+        db.execute('DROP TABLE track_metadata_v4')
+
+    def _validate(self, db, version=5):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
                 or db.execute('PRAGMA user_version').fetchone()[0] != version):
             raise AnalysisError('Analysis database identity/version changed')
@@ -78,12 +107,28 @@ class SQLiteAnalysisRepository:
             columns_by_table = {**columns_by_table, 'batch_jobs': ('track_id', 'fingerprint', 'state', 'attempts', 'run_id', 'detail')}
         if version >= 4:
             columns_by_table = {**columns_by_table, 'run_tracks': ('run_id', 'track_id'), 'overrides': ('track_id', 'field', 'value')}
+        if version >= 5:
+            columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
-        if objects != {(name, 'table') for name in columns_by_table}:
+        expected = {(name, 'table') for name in columns_by_table}
+        if version in (2, 3):
+            migration_tables = {'batch_jobs', 'run_tracks', 'overrides', 'track_metadata'} if version == 2 else {'run_tracks', 'overrides', 'track_metadata'}
+            expected = {item for item in expected if item[0] not in migration_tables}
+            objects = {item for item in objects if item[0] not in migration_tables}
+        if version == 4:
+            has_track_metadata = ('track_metadata', 'table') in objects
+            objects = {item for item in objects if item[0] != 'track_metadata'}
+            if has_track_metadata:
+                columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
+        if objects != expected:
             raise AnalysisError('Unexpected analysis database schema')
         for table, columns in columns_by_table.items():
-            if tuple(row[1] for row in db.execute(f'PRAGMA table_info({table})')) != columns:
+            table_info = tuple(db.execute(f'PRAGMA table_info({table})'))
+            if tuple(row[1] for row in table_info) != columns:
                 raise AnalysisError('Unexpected analysis database columns')
+            if version >= 5 and table == 'track_metadata' and not self._valid_track_metadata_constraints(db, table_info):
+                raise AnalysisError('Unexpected analysis database constraints')
+
 
     @contextmanager
     def _connection(self):
@@ -142,6 +187,8 @@ class SQLiteAnalysisRepository:
                 db.execute('INSERT INTO locations VALUES(?,?,?,?,1) ON CONFLICT(path) DO UPDATE SET track_id=excluded.track_id,mtime_ns=excluded.mtime_ns,format=excluded.format,available=1',
                            (file.location, identity.track_id, file.mtime_ns, file.format))
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
+                db.execute('INSERT INTO track_metadata VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET common_json=excluded.common_json,tags_json=excluded.tags_json,warnings_json=excluded.warnings_json',
+                           (identity.track_id, json.dumps(file.metadata.common, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.tags, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.warnings, ensure_ascii=False, allow_nan=False)))
             if inventory.complete:
                 for (path,) in db.execute('SELECT path FROM scan_roots WHERE root=?', (inventory.root,)):
                     if path not in seen:
@@ -190,7 +237,18 @@ class SQLiteAnalysisRepository:
                         raise AnalysisError('Invalid stored stage: ' + str(error)) from error
                 run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
             overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
-            return StoredTrack(*track, locations, run, overrides)
+            metadata = self._read_metadata(db, track_id)
+            return StoredTrack(*track, locations, run, overrides, metadata)
+
+    def _read_metadata(self, db, track_id):
+        from music_analyzer.application.dto.catalogue import TrackMetadata
+        row = db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone()
+        if not row:
+            return TrackMetadata()
+        try:
+            return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(row[0])), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(row[1])), tuple(str(x) for x in json.loads(row[2])))
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise AnalysisError('Invalid stored metadata') from error
 
     def set_override(self, track_id, field, value):
         with self._transaction() as db:

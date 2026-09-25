@@ -56,7 +56,18 @@ class ReviewRepositoryTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.path))
         with closing(sqlite3.connect(self.path)) as db, db:
             self.assertEqual(db.execute('SELECT * FROM stages').fetchall(), before)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
+
+    def test_v4_migration_rejects_malformed_existing_track_metadata_table(self):
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute('DROP TABLE track_metadata')
+            db.execute('CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY, common_json TEXT NOT NULL)')
+            db.execute('PRAGMA user_version=4')
+        with self.assertRaisesRegex(Exception, 'Unexpected analysis database'):
+            SQLiteAnalysisRepository(str(self.path))
+        with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 4)
+            self.assertEqual(tuple(row[1] for row in db.execute('PRAGMA table_info(track_metadata)')), ('track_id', 'common_json'))
 
     def test_bad_payload_fails_honestly_and_legacy_raw_optional(self):
         run = self.repo.start(AudioSource('fake', self.track))

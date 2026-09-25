@@ -76,7 +76,7 @@ class CatalogueTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.db))
         SQLiteAnalysisRepository(str(self.db))
         with closing(sqlite3.connect(self.db)) as db, db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (4,))
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (5,))
             self.assertEqual(db.execute('SELECT result FROM stages').fetchone()[0], '{"provenance":"unchanged Unicode é"}')
 
     def test_malformed_v1_not_partially_migrated(self):
@@ -124,3 +124,19 @@ class CatalogueTests(unittest.TestCase):
             result = files.inventory(str(self.root), ScanLimits(max_file_bytes=10, max_total_bytes=10))
         self.assertEqual(read.call_count, 1)
         self.assertFalse(result.complete)
+
+    def test_metadata_reader_race_is_rejected_without_persisting_mismatched_identity(self):
+        class ReplacingMetadataReader:
+            def read(self, location):
+                Path(location).write_bytes(b'replaced bytes')
+                from music_analyzer.application.dto.catalogue import TrackMetadata
+                return TrackMetadata(common=(('title', 'wrong bytes'),))
+
+        (self.root/'race.flac').write_bytes(b'original bytes')
+        repo = SQLiteAnalysisRepository(str(self.db))
+        result = ScanLibrary(LocalInventory(ReplacingMetadataReader()), repo).execute(str(self.root))
+
+        self.assertFalse(result.files)
+        self.assertEqual(len(result.issues), 1)
+        self.assertIn('File changed while hashing; scan again', result.issues[0].detail)
+        self.assertFalse(tuple(repo.track_ids()))

@@ -25,9 +25,10 @@ CREATE TABLE scan_roots(root TEXT NOT NULL, path TEXT NOT NULL REFERENCES locati
 CREATE TABLE batch_jobs(track_id TEXT PRIMARY KEY REFERENCES tracks(id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')), attempts INTEGER NOT NULL CHECK(attempts >= 0), run_id TEXT, detail TEXT NOT NULL);
 CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
 CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
+CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
 ''')
     db.execute(f'PRAGMA application_id={APP_ID}')
-    db.execute('PRAGMA user_version=4')
+    db.execute('PRAGMA user_version=5')
     ids = []
     rows = (
         ('1', 'Alpha.flac', 120.0, 'C major', 0.2, 0.7, (0.8, 0.2), (0.9, 0.1)),
@@ -40,6 +41,7 @@ CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT 
         db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, tid.split(':')[1], 10))
         available = 0 if suffix == '3' else 1
         db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/music/' + label, tid, 1, 'flac', available))
+        db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (tid, json.dumps([['title', label.removesuffix('.flac')]]), json.dumps([['TITLE', [label.removesuffix('.flac')]]]), json.dumps([])))
         if bpm is not None:
             run_id = 'run-' + suffix
             db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', (run_id, '/music/' + label, 'completed', ''))
@@ -141,6 +143,66 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
             self.assertIn('function canvasPoint', source)
             self.assertIn('canvasPoint', source[source.index('module.exports'):])
             self.assertIn('module.exports', source)
+
+
+    def test_detail_panel_source_places_graph_key_with_current_track_notes(self):
+        source = APP_JS.read_text(encoding='utf-8')
+        self.assertIn('function graphStatusText', source)
+        self.assertIn('function graphStatusParagraph', source)
+        self.assertIn('Current track', source)
+        self.assertIn('Display label:', source)
+        self.assertIn('Stable identifier:', source)
+        self.assertIn('Graph key / status', source)
+        self.assertIn('Graph key and status are shown in Current / graph notes.', source)
+        self.assertIn('renderDetail', source[source.index('module.exports'):])
+        self.assertIn('renderInitialDetail', source[source.index('module.exports'):])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for detail panel behavior tests')
+    def test_detail_panel_embeds_current_track_data_and_graph_key(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  return {tagName: tag.toUpperCase(), children: [], attributes: {}, dataset: {}, className: '', textContent: '',
+    append(...nodes){this.children.push(...nodes);},
+    replaceChildren(...nodes){this.children = [...nodes]; this.textContent = '';},
+    setAttribute(name, value){this.attributes[name] = String(value);},
+    get innerText(){return [this.textContent, ...this.children.map(c => c.innerText || c.textContent || '')].filter(Boolean).join('\n');}
+  };
+}
+const elements = {detail: makeElement('div'), 'graph-info': makeElement('p')};
+global.document = {getElementById: id => elements[id] || null, createElement: makeElement};
+const graphModel = app.buildMoodGraphModel({selected_mood:'relaxing', positioned:[
+  {track_id:'track-1', display_label:'Alpha.flac', x:{raw:-2,normalized:0,scale:'native'}, y:{raw:10,normalized:0,scale:'native'}, z:{raw:120,normalized:6,label:'BPM',scale:'raw'}, mood_score:{label:'relaxing',raw:0.85}, bpm:120, genres:[['rock',0.9]], genre_threshold:0.5, reasons:[]},
+  {track_id:'track-2', display_label:'Beta.flac', x:{raw:3,normalized:1,scale:'native'}, y:{raw:30,normalized:1,scale:'native'}, z:{raw:140,normalized:7,label:'BPM',scale:'raw'}, mood_score:{label:'relaxing',raw:0.15}, bpm:140, genres:[['jazz',0.9]], genre_threshold:0.5, reasons:[]}
+], edges:[{a:'track-1', b:'track-2', score:0.5}], unpositioned:[{track_id:'missing', display_label:'Missing', reasons:['no mood']}], available_moods:['relaxing']});
+app.setGraphModelForTesting(graphModel);
+const visible = app.applyMoodGraphFilters(graphModel, {bpmMin:130, genres:['jazz']});
+app.setVisibleGraphForTesting(visible);
+assert.deepStrictEqual(visible.nodes.map(n=>n.id), ['track-2']);
+assert.strictEqual(visible.links.length, 0);
+app.renderDetail({handle:'track-1', display_label:'Alpha.flac', latest_run_status:'completed', available_locations:1, reasons:['ready'], fields:{}});
+let text = elements.detail.innerText;
+assert(text.indexOf('Current track') < text.indexOf('Selected relaxing raw sigmoid mean score'), 'current track identity starts the selected detail panel');
+assert(text.includes('Display label: Alpha.flac'), text);
+assert(text.includes('Stable identifier: track-1'), text);
+assert(text.includes('Graph key / status'), text);
+assert(text.includes('1 positioned tracks · 0 sparse relatedness edges · 1 unpositioned'), text);
+assert(text.includes('Color relative to this library'), text);
+assert(text.includes('-2.0 to 3.0 native') && text.includes('10.0 to 30.0 native'), text);
+assert(text.includes('Selected node is larger.'), text);
+assert.strictEqual(elements['graph-info'].textContent, 'Graph key and status are shown in Current / graph notes.');
+app.renderInitialDetail(graphModel);
+text = elements.detail.innerText;
+assert(text.includes('All-library valence / arousal / BPM graph'), text);
+assert(text.includes('Showing 1 positioned tracks and 1 unpositioned tracks'), text);
+assert(text.includes('Graph key / status'), text);
+assert(text.includes('1 positioned tracks · 0 sparse relatedness edges · 1 unpositioned'), text);
+assert(text.includes('-2.0 to 3.0 native') && text.includes('10.0 to 30.0 native'), text);
+assert(text.includes('3d-force-graph is bundled locally'), text);
+assert(text.includes('Missing: no mood'), text);
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for color behavior tests')
     def test_library_relative_color_legend_and_selection_survive_filters_and_mood_changes(self):
@@ -377,7 +439,7 @@ await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'rejected/stale server snapshot must restore the accepted server selection');
 assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
 assert(fetches.includes('/api/tracks/server-current'), 'detail fetch follows the accepted server snapshot after rejection');
-assert.strictEqual(detail.children[0].textContent, 'Server Current');
+assert(detail.children.some(child => child.textContent.includes('Server Current')));
 })().catch(error => { console.error(error); process.exit(1); });
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
@@ -421,7 +483,7 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-c
 await context.refresh();
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'refresh after rejection must not overlay the rejected click intent');
 assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', 'current']);
-assert(elements.detail.children[0].textContent === 'Server Current', 'detail follows authoritative server selection after refresh');
+assert(elements.detail.children.some(child => child.textContent.includes('Server Current')), 'detail follows authoritative server selection after refresh');
 assert(elements.candidates.children[0].textContent.includes('server-candidate'), 'candidates follow authoritative server selection after refresh');
 assert(fetches.includes('/api/current') && fetches.includes('/api/state'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -476,7 +538,7 @@ assert.strictEqual(graphCalls.length, 0, 'selection-only changes must not replac
 assert.strictEqual(graph.value({id:'b'}), 4);
 assert.strictEqual(graph.value({id:'a'}), 1);
 assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
-assert(detail.children[0].textContent === 'Bee', 'stale first detail must not overwrite latest selection');
+assert(detail.children.some(child => child.textContent.includes('Bee')), 'stale first detail must not overwrite latest selection');
 assert(candidates.children[0].textContent.includes('cand-b'), 'stale first candidates must not overwrite latest selection');
 assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
 })().catch(error => { console.error(error); process.exit(1); });
@@ -528,7 +590,7 @@ await stale;
 assert.strictEqual(context.state.current_track_id, 'b', 'stale refresh state must not overwrite newer selection state');
 assert.deepStrictEqual(elements.tracks.children.map(row => row.dataset.trackId), [], 'stale refresh must not render stale track list');
 assert.deepStrictEqual(rendered, [], 'stale refresh must not render stale graph data');
-assert(detail.children[0].textContent === 'Bee', 'stale refresh detail must not overwrite latest selection detail');
+assert(detail.children.some(child => child.textContent.includes('Bee')), 'stale refresh detail must not overwrite latest selection detail');
 assert(candidates.children[0].textContent.includes('cand-b'), 'stale refresh candidates must not overwrite latest selection candidates');
 assert(fetches.includes('/api/tracks?limit=all'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -580,13 +642,13 @@ await Promise.resolve();
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a', 'older refresh observed the selected track while detail is pending');
 const newerRefresh = context.refresh();
 await newerRefresh;
-assert.strictEqual(elements.detail.children[0].textContent, 'Fresh detail', 'newer full refresh renders current detail first');
+assert(elements.detail.children.some(child => child.textContent.includes('Fresh detail')), 'newer full refresh renders current detail first');
 assert(elements.candidates.children[0].textContent.includes('fresh-candidate'), 'newer full refresh renders current candidates first');
 olderDetail.resolve({handle:'a', display_label:'Stale delayed detail', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
 olderCandidates.resolve({candidates:[{track_id:'stale-candidate', tier:'stale', score:0.1}]});
 await olderRefresh;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a');
-assert.strictEqual(elements.detail.children[0].textContent, 'Fresh detail', 'older delayed detail for same selected id must not overwrite newer refresh detail');
+assert(elements.detail.children.some(child => child.textContent.includes('Fresh detail')), 'older delayed detail for same selected id must not overwrite newer refresh detail');
 assert(elements.candidates.children[0].textContent.includes('fresh-candidate'), 'older delayed candidates for same selected id must not overwrite newer refresh candidates');
 assert.strictEqual(trackDetailRequests, 2);
 assert.strictEqual(candidateRequests, 2);
@@ -639,7 +701,7 @@ assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', 
 postCurrent.resolve();
 await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'POST response should remain latest selected track despite intervening refresh');
-assert(elements.detail.children[0].textContent === 'Bee', 'latest click detail must render after POST resolves');
+assert(elements.detail.children.some(child => child.textContent.includes('Bee')), 'latest click detail must render after POST resolves');
 assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates must render after POST resolves');
 assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -691,7 +753,7 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'sta
 stateFetch.resolve();
 await reset;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'stale reset history refresh must preserve later click selection');
-assert(elements.detail.children[0].textContent === 'Bee', 'latest click detail remains rendered after stale reset response');
+assert(elements.detail.children.some(child => child.textContent.includes('Bee')), 'latest click detail remains rendered after stale reset response');
 assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates remain rendered after stale reset response');
 assert(fetches.includes('/api/reset') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -751,6 +813,46 @@ assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
         self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo');", app)
         self.assertIn("document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');", app)
 
+    def test_graph_color_legend_handles_ranged_axis_objects(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const legend = app.graphColorLegend({colorRanges:{valence:{min:-0.5,max:0.75}, arousal:{min:0.1,max:1.9}}});
+assert(legend.includes('-0.5 to 0.8 native'), legend);
+assert(legend.includes('0.1 to 1.9 native'), legend);
+assert(!legend.includes('undefined'), legend);
+"""
+        if shutil.which('node'):
+            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        else:
+            source = APP_JS.read_text(encoding='utf-8')
+            self.assertIn('.min', source)
+            self.assertIn('.max', source)
+
+    def test_initial_detail_includes_graph_key_and_status_without_selection(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function element(tag){return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};}
+const detail = element('section');
+context.document = {createElement: element, getElementById(id){return id === 'detail' ? detail : null;}};
+vm.runInContext("visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}]}", context);
+context.renderInitialDetail({nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}], colorRanges:{valence:[-1,1], arousal:[0,2]}, selectedMood:'calm'});
+const rendered = (function all(node){return [node.textContent,...(node.children||[]).flatMap(all)];})(detail).join(' ');
+assert(rendered.includes('1 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), rendered);
+assert(rendered.includes('Graph key / status'), rendered);
+assert(rendered.includes('Color relative to this library'), rendered);
+"""
+        if shutil.which('node'):
+            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        else:
+            source = APP_JS.read_text(encoding='utf-8')
+            self.assertIn('Graph key / status', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+            self.assertIn('graphStatusParagraph(visibleGraph)', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
         self.assertIn('#detail .score-gauge{position:relative;width:39px;height:39px;', style)
@@ -770,7 +872,7 @@ function element(tag){
   return {tag, textContent:'', className:'', style:{}, setAttribute(){}, children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};
 }
 const detail = element('section');
-context.document = {createElement: element, getElementById(id){assert.strictEqual(id, 'detail'); return detail;}};
+context.document = {createElement: element, getElementById(id){return id === 'detail' ? detail : null;}};
 const auto = (pairs, provenance=[], key='summary_values') => ({automatic:{values:[],summary_values:[],provenance,[key]:pairs},effective_source:'automatic'});
 const render = fields => context.renderDetail({handle:'track-1', display_label:'<track>',latest_run_status:'failed',available_locations:1,reasons:['evidence pending'], fields});
 const all = node => [node,...node.children.flatMap(all)];
@@ -785,7 +887,7 @@ render({
   instruments:auto([['guitar',0.9],['piano',0.1],['drums',0.2]], [['mtg_jamendo_instrument-discogs-effnet-1','hash']]),
   absent:{automatic:{values:[]},effective_source:'missing',missing_reason:'stage absent'}
 });
-assert(detail.children[2].textContent.startsWith('Selected mood score:'), 'selected score stays near title');
+assert(detail.children.some(child => child.textContent.startsWith('Selected mood score:')), 'selected score stays near title');
 let rendered = nodes().map(n => n.textContent).join(' ');
 assert(rendered.includes('Status: failed') && rendered.includes('evidence pending'));
 assert(rendered.includes('mid') && rendered.includes('high') && rendered.includes('tie') && !rendered.includes('low') && !rendered.includes('out'));

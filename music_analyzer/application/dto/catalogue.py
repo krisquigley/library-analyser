@@ -14,11 +14,19 @@ class ScanLimits:
 
 
 @dataclass(frozen=True)
+class TrackMetadata:
+    common: tuple[tuple[str, str | tuple[str, ...]], ...] = ()
+    tags: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ScannedFile:
     location: str
     identity: FileIdentity
     mtime_ns: int
     format: str
+    metadata: TrackMetadata = TrackMetadata()
 
 
 @dataclass(frozen=True)

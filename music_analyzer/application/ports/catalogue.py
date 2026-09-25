@@ -1,5 +1,5 @@
 from typing import Protocol
-from music_analyzer.application.dto.catalogue import Inventory, ScanLimits
+from music_analyzer.application.dto.catalogue import Inventory, ScanLimits, TrackMetadata
 
 
 class FileInventory(Protocol):
@@ -10,3 +10,7 @@ class FileInventory(Protocol):
 class Catalogue(Protocol):
     def register(self, inventory: Inventory) -> tuple[str, ...]: ...
     def locations(self, track_id: str) -> tuple[str, ...]: ...
+
+
+class MetadataReader(Protocol):
+    def read(self, location: str) -> TrackMetadata: ...

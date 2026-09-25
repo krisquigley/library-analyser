@@ -12,6 +12,7 @@ import re
 import sqlite3
 
 from music_analyzer.application.dto.analysis import AnalysisError, AnalysisReport
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.explorer import ExplorerStoredTrack
 from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID
 from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_mapping
@@ -70,6 +71,12 @@ _EXPECTED_SCHEMA = {
     },
     'overrides': {
         'columns': ((('track_id', 'TEXT', True, 1), ('field', 'TEXT', True, 2), ('value', 'TEXT', True, 0)),),
+        'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
+        'unique_indexes': (),
+        'checks': ((),),
+    },
+    'track_metadata': {
+        'columns': ((('track_id', 'TEXT', False, 1), ('common_json', 'TEXT', True, 0), ('tags_json', 'TEXT', True, 0), ('warnings_json', 'TEXT', True, 0)),),
         'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
         'unique_indexes': (),
         'checks': ((),),
@@ -148,7 +155,17 @@ class ReadOnlyExplorerSQLiteRepository:
                     raise AnalysisError('Invalid stored stage: ' + str(error)) from error
             run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
         overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
-        return ExplorerStoredTrack(track[0], track[1], track[2], display_label, len(locations), run, overrides)
+        metadata = self._read_metadata(db, track_id)
+        return ExplorerStoredTrack(track[0], track[1], track[2], display_label, len(locations), run, overrides, metadata)
+
+    def _read_metadata(self, db, track_id):
+        row = db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone()
+        if not row:
+            return TrackMetadata()
+        try:
+            return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(row[0])), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(row[1])), tuple(str(x) for x in json.loads(row[2])))
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise AnalysisError('Invalid stored metadata') from error
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
@@ -182,7 +199,7 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def _validate(self, db):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
-                or db.execute('PRAGMA user_version').fetchone()[0] != 4):
+                or db.execute('PRAGMA user_version').fetchone()[0] != 5):
             raise AnalysisError('Not a supported music-analyzer analysis database')
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         if objects != {(name, 'table') for name in _EXPECTED_SCHEMA}:
