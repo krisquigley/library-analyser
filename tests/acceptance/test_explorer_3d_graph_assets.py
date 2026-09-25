@@ -163,7 +163,7 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
                 self.assertIn('syncGraphControlOptions', source[source.index('module.exports'):])
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for graph control DOM tests')
-    def test_graph_filters_are_separate_from_mood_tracker_control(self):
+    def test_graph_filters_are_separate_from_mood_tracker_and_bpm_inputs_have_labels(self):
         script = r"""
 const assert = require('assert');
 const app = require(process.argv[1]);
@@ -192,6 +192,11 @@ assert(moodControls, 'independent mood tracker fieldset exists');
 assert(!findById(graphControls, 'selected-mood'), 'selected mood select is not inside graph filters');
 assert.strictEqual(findById(moodControls, 'selected-mood').tagName, 'SELECT');
 assert.match(graphControls.innerText, /Graph filters/);
+for (const [id, name] of [['bpm-min', 'Minimum BPM'], ['bpm-max', 'Maximum BPM']]) {
+  const input = findById(graphControls, id);
+  assert(input, `${id} input exists`);
+  assert.strictEqual(input.attributes['aria-label'], name, `${id} needs a persistent accessible name independent of its placeholder`);
+}
 assert.doesNotMatch(graphControls.innerText, /mood/i, 'filter copy must not present mood as a graph filter');
 assert.match(moodControls.innerText, /Selected mood strength/i);
 app.setGraphModelForTesting({availableMoods:['relaxing','heavy'],selectedMood:'relaxing',genreOptions:['jazz','rock'],nodes:[],links:[],unpositioned:[]});
