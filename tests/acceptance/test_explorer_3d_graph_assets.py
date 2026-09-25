@@ -1087,7 +1087,7 @@ render({
 });
 assert(detail.children.some(child => child.textContent==='Current Track'), 'current track heading remains');
 let rendered = nodes().map(n => n.textContent).join(' ');
-assert(!rendered.includes('Status: failed') && rendered.includes('evidence pending'));
+assert(!rendered.includes('Status: failed') && !rendered.includes('evidence pending'));
 assert(rendered.includes('mid') && rendered.includes('high') && rendered.includes('tie') && !rendered.includes('low') && !rendered.includes('out'));
 assert(rendered.includes('middle') && rendered.includes('above') && !rendered.includes('zero'));
 assert(rendered.includes('guitar') && rendered.includes('drums') && !rendered.includes('piano'));

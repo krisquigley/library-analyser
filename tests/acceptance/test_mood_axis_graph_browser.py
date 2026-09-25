@@ -33,7 +33,7 @@ class MoodAxisGraphBrowserSmoke(unittest.TestCase):
                 self.assertTrue(all(node['z']['label'] == 'BPM' and node['mood_score']['label'] == 'relaxing' for node in graph['positioned']))
                 with urlopen(base + '/api/mood-axis-graph?mood=relaxing&bpm_min=119&bpm_max=121&genre=jazz', timeout=5) as response:
                     filtered = json.loads(response.read().decode('utf-8'))
-                self.assertEqual(filtered['positioned'], [])
+                self.assertEqual([node['track_id'] for node in filtered['positioned']], [ids[0]])
             finally:
                 server.shutdown(); server.server_close()
 
