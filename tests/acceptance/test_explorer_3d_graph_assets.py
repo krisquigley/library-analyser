@@ -145,6 +145,30 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
             self.assertIn('module.exports', source)
 
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for relatedness alpha tests')
+    def test_relatedness_link_alpha_reflects_clamped_score_and_notes_explain_it(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+assert.strictEqual(app.relatednessLinkAlpha({score:0}), 0.18);
+assert.strictEqual(app.relatednessLinkAlpha({score:1}), 0.72);
+assert.strictEqual(app.relatednessLinkAlpha({score:-2}), 0.18);
+assert.strictEqual(app.relatednessLinkAlpha({score:2}), 0.72);
+assert.strictEqual(app.relatednessLinkAlpha({}), 0.18);
+assert.strictEqual(app.relatednessLinkAlpha({score:'not-a-number'}), 0.18);
+assert(app.relatednessLinkAlpha({score:0.9}) > app.relatednessLinkAlpha({score:0.2}));
+assert.strictEqual(app.graphRelatednessLegend(), 'Link alpha reflects axis-independent relatedness strength from existing stored summaries; higher-score links are more opaque.');
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+    def test_graph_source_configures_force_graph_with_variable_relatedness_alpha(self):
+        source = APP_JS.read_text(encoding='utf-8')
+        self.assertIn('function relatednessLinkAlpha', source)
+        self.assertIn('.linkOpacity(relatednessLinkAlpha)', source)
+        self.assertNotIn('.linkOpacity(0.28)', source)
+        self.assertIn('graphRelatednessLegend', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+        self.assertIn('relatednessLinkAlpha', source[source.index('module.exports'):])
+
     def test_detail_panel_source_places_graph_key_with_current_track_notes(self):
         source = APP_JS.read_text(encoding='utf-8')
         self.assertIn('function graphStatusText', source)
