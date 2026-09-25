@@ -65,12 +65,12 @@ async function refreshSelectionDependent(token){
   const selectedId=state.current_track_id;
   updateSelectedTrackVisuals();
   if(selectedId){
-    const [detail,candidates]=await Promise.all([api('/api/tracks/'+encodeURIComponent(selectedId)),api('/api/candidates?current='+encodeURIComponent(selectedId))]);
+    const detail=await api('/api/tracks/'+encodeURIComponent(selectedId));
     if(token!==selectionRequestSeq || detailToken!==selectionDetailRequestSeq || state.current_track_id!==selectedId) return;
-    renderDetail(detail); renderCandidates(candidates); updateSelectedTrackVisuals();
+    renderDetail(detail); updateSelectedTrackVisuals();
   } else {
     if(token!==selectionRequestSeq || detailToken!==selectionDetailRequestSeq) return;
-    renderInitialDetail(graphModel); renderCandidates({candidates:[]});
+    renderInitialDetail(graphModel);
   }
 }
 async function setCurrent(id){
@@ -150,7 +150,6 @@ function canonicalMetadataKey(key){const normalized=String(key||'').trim().toLow
 function metadataValueText(value){return Array.isArray(value)?value.filter(v=>String(v).trim()).join('; '):String(value==null?'':value).trim();}
 function renderTrackMetadata(metadata){const section=document.createElement('section'); section.className='field track-metadata'; const common=metadata&&Array.isArray(metadata.common)?metadata.common:[]; const tags=metadata&&Array.isArray(metadata.tags)?metadata.tags:[];  const seen=new Set(); let rendered=0; const appendRow=(key,value)=>{const canonical=canonicalMetadataKey(key); const valueText=metadataValueText(value); if(!valueText||seen.has(canonical)) return; seen.add(canonical); rendered++; section.append(text(document.createElement('p'),`${metadataLabels[canonical]||key}: ${valueText}`));}; for(const [k,v] of common) appendRow(k,v); for(const [k,vals] of tags) appendRow(k,vals||[]); if(!rendered) section.append(text(document.createElement('p'),'No embedded textual metadata found'));  return section;}
 function renderDetail(d){const root=document.getElementById('detail'); const heading=document.createElement('h3'); text(heading,'Current Track'); const fields=document.createElement('div'); fields.append(renderTrackMetadata(d.metadata)); for(const [name,f] of Object.entries(d.fields||{})) fields.append(renderDetailField(name,f)); root.replaceChildren(heading,fields);}
-function renderCandidates(data){const ol=document.getElementById('candidates'); if(!ol) return; ol.replaceChildren(...(data.candidates||[]).map(c=>{const li=document.createElement('li'); text(li,`${c.display_label||c.track_id} — ${c.tier} ${c.score==null?'':displayNumber(c.score)}`); return li;}));}
 function buildGraphModel(tracks, projection){return buildMoodGraphModel({positioned:tracks||[],edges:(projection&&projection.edges)||[],unpositioned:[],available_moods:[],selected_mood:'',metadata:{}});}
 function applyGraphFilters(model, filters){return applyMoodGraphFilters(model,filters);}
 function orbitCamera(c,dx,dy){c.yaw=(c.yaw||0)+dx*0.01; c.pitch=(c.pitch||0)+dy*0.01; return c;}
