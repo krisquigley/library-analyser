@@ -145,6 +145,75 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
             self.assertIn('module.exports', source)
 
 
+    def test_graph_filter_source_separates_mood_tracker_control(self):
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                source = app.read_text(encoding='utf-8')
+                controls_source = source[source.index('function buildGraphControls'):source.index('function syncGraphControlOptions')]
+                graph_fieldset_source = controls_source[controls_source.index("fs.id='graph-controls'"):controls_source.index("root.append(fs)")]
+                self.assertIn("moodFs.id='mood-tracker-controls'", controls_source)
+                self.assertIn('Selected mood strength', controls_source)
+                self.assertNotIn("mood.id='selected-mood'", graph_fieldset_source)
+                self.assertNotIn('Score strip mood', graph_fieldset_source)
+                self.assertIn("clear.id='clear-graph-filters'", graph_fieldset_source)
+                self.assertNotIn('mood:graphModel.selectedMood', graph_fieldset_source)
+                self.assertIn('clearGraphFilters', source[source.index('module.exports'):])
+                self.assertIn('getGraphControlsForTesting', source[source.index('module.exports'):])
+                self.assertIn('buildGraphControls', source[source.index('module.exports'):])
+                self.assertIn('syncGraphControlOptions', source[source.index('module.exports'):])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for graph control DOM tests')
+    def test_graph_filters_are_separate_from_mood_tracker_control(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  const el = {tagName: tag.toUpperCase(), children: [], parentElement: null, attributes: {}, dataset: {}, id: '', value: '', selectedOptions: [], multiple: false, size: 0, type: '', placeholder: '', textContent: '', onchange: null, onclick: null,
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children = []; this.append(...nodes);},
+    setAttribute(name, value){this.attributes[name] = String(value);},
+    get innerText(){return [this.textContent, ...this.children.map(c => c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
+  };
+  return el;
+}
+function findById(root, id){
+  if (root.id === id) return root;
+  for (const child of root.children || []) { const found = child && typeof child === 'object' ? findById(child, id) : null; if (found) return found; }
+  return null;
+}
+const elements = {};
+global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text), innerText: String(text)}), getElementById: id => elements[id] || null};
+const root = makeElement('div');
+app.buildGraphControls(root);
+const graphControls = findById(root, 'graph-controls');
+const moodControls = findById(root, 'mood-tracker-controls');
+assert(graphControls, 'graph filter fieldset exists');
+assert(moodControls, 'independent mood tracker fieldset exists');
+assert(!findById(graphControls, 'selected-mood'), 'selected mood select is not inside graph filters');
+assert.strictEqual(findById(moodControls, 'selected-mood').tagName, 'SELECT');
+assert.match(graphControls.innerText, /Graph filters/);
+assert.doesNotMatch(graphControls.innerText, /mood/i, 'filter copy must not present mood as a graph filter');
+assert.match(moodControls.innerText, /Selected mood strength/i);
+app.setGraphModelForTesting({availableMoods:['relaxing','heavy'],selectedMood:'relaxing',genreOptions:['jazz','rock'],nodes:[],links:[],unpositioned:[]});
+app.syncGraphControlOptions({availableMoods:['relaxing','heavy'],selectedMood:'relaxing',genreOptions:['jazz','rock']});
+const mood = findById(root, 'selected-mood');
+const genres = findById(root, 'genre-filter');
+assert(mood.onchange, 'mood tracker has a change handler');
+assert(genres.onchange, 'genre filter has a change handler');
+assert(findById(root, 'clear-graph-filters').onclick, 'clear graph filters button is wired');
+app.setGraphControlsForTesting({mood:'heavy', bpmMin:90, bpmMax:150, genres:['jazz']});
+assert.strictEqual(app.graphQueryFromControls(), '?mood=heavy');
+assert.deepStrictEqual(app.getGraphControlsForTesting().genres, ['jazz']);
+app.clearGraphFilters();
+assert.strictEqual(app.getGraphControlsForTesting().mood, 'heavy', 'clearing graph filters preserves independent mood tracker selection');
+assert.deepStrictEqual(app.getGraphControlsForTesting().genres, []);
+assert.strictEqual(app.getGraphControlsForTesting().bpmMin, null);
+assert.strictEqual(app.graphQueryFromControls(), '?mood=heavy');
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for relatedness alpha tests')
     def test_relatedness_link_alpha_reflects_clamped_score_and_notes_explain_it(self):
         script = r"""
