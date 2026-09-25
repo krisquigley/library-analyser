@@ -72,6 +72,20 @@ class ExplorerUseCaseTests(unittest.TestCase):
         self.assertNotIn('raw_predictions', repr(first))
         self.assertIn('Latest run: failed', first.reasons)
 
+    def test_list_exposes_title_and_artist_summary_from_metadata_with_fallbacks(self):
+        report = ListExplorerTracks(self.reader).execute(limit=10)
+        self.assertEqual(report.tracks[0].title, 'Tagged Song')
+        self.assertEqual(report.tracks[0].artist, 'Unknown artist')
+        self.assertEqual(report.tracks[1].title, 'sha256:' + 'b' * 64)
+        self.assertEqual(report.tracks[1].artist, 'Unknown artist')
+        self.reader.records = (self.reader.records[0], ExplorerStoredTrack(
+            track_id='sha256:' + 'c' * 64, sha256='c' * 64, size=123,
+            display_label='Fallback.flac', available_locations=1, run=None,
+            metadata=TrackMetadata(tags=(('TITLE', ('Tag Song',)), ('ARTIST', ('Tag Artist',)))),
+        ))
+        tagged = ListExplorerTracks(self.reader).execute(limit=10).tracks[1]
+        self.assertEqual((tagged.title, tagged.artist), ('Tag Song', 'Tag Artist'))
+
     def test_detail_preserves_persisted_embedded_metadata(self):
         report = GetExplorerTrackDetail(self.reader).execute('sha256:' + 'a' * 64)
         self.assertEqual(report.metadata.common, (('title', 'Tagged Song'),))
