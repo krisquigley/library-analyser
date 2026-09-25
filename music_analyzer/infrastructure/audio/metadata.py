@@ -11,6 +11,8 @@ _MAX_VALUE_CHARS = 4096
 _MAX_TOTAL_CHARS = 256 * 1024
 _BINARY_HINTS = ('apic', 'covr', 'metadata_block_picture', 'picture', 'artwork')
 _LYRICS_HINTS = ('lyrics', 'unsyncedlyrics', 'synclyrics')
+_PRIVATE_OPAQUE_ID3_FRAMES = {'priv', 'geob', 'ufid'}
+_LYRICS_ID3_FRAMES = {'uslt', 'sylt'}
 _COMMON_ALIASES = {
     'title': ('title', '\xa9nam', 'tit2'),
     'artist': ('artist', '\xa9art', 'tpe1'),
@@ -52,10 +54,14 @@ class MutagenMetadataReader:
             folded = key.lower()
             if not key:
                 continue
+            frame_id = _id3_frame_id(key)
+            if frame_id in _PRIVATE_OPAQUE_ID3_FRAMES:
+                warnings.append(f'{key}: private/opaque metadata omitted')
+                continue
             if any(hint in folded for hint in _BINARY_HINTS):
                 warnings.append(f'{key}: embedded artwork/binary metadata omitted')
                 continue
-            if any(hint in folded for hint in _LYRICS_HINTS):
+            if frame_id in _LYRICS_ID3_FRAMES or any(hint in folded for hint in _LYRICS_HINTS):
                 warnings.append(f'{key}: lyrics omitted pending explicit privacy/size policy')
                 continue
             values = []
@@ -92,6 +98,10 @@ class MutagenMetadataReader:
 
 def _clean_key(value: str) -> str:
     return ' '.join(value.replace('\x00', '').strip().split())[:128]
+
+
+def _id3_frame_id(key: str) -> str:
+    return key.split(':', 1)[0].strip().lower()
 
 
 def _clean_value(value) -> str | None:

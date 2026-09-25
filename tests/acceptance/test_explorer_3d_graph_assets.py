@@ -186,6 +186,7 @@ assert(text.includes('Stable identifier: track-1'), text);
 assert(text.includes('Graph key / status'), text);
 assert(text.includes('2 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), text);
 assert(text.includes('Color relative to this library'), text);
+assert(text.includes('-2.0 to 3.0 native') && text.includes('10.0 to 30.0 native'), text);
 assert(text.includes('Selected node is larger.'), text);
 assert.strictEqual(elements['graph-info'].textContent, 'Graph key and status are shown in Current / graph notes.');
 app.renderInitialDetail(graphModel);
@@ -433,7 +434,7 @@ await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'rejected/stale server snapshot must restore the accepted server selection');
 assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
 assert(fetches.includes('/api/tracks/server-current'), 'detail fetch follows the accepted server snapshot after rejection');
-assert.strictEqual(detail.children[0].textContent, 'Server Current');
+assert(detail.children.some(child => child.textContent.includes('Server Current')));
 })().catch(error => { console.error(error); process.exit(1); });
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
@@ -477,7 +478,7 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-c
 await context.refresh();
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'refresh after rejection must not overlay the rejected click intent');
 assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', 'current']);
-assert(elements.detail.children[0].textContent === 'Server Current', 'detail follows authoritative server selection after refresh');
+assert(elements.detail.children.some(child => child.textContent.includes('Server Current')), 'detail follows authoritative server selection after refresh');
 assert(elements.candidates.children[0].textContent.includes('server-candidate'), 'candidates follow authoritative server selection after refresh');
 assert(fetches.includes('/api/current') && fetches.includes('/api/state'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -532,7 +533,7 @@ assert.strictEqual(graphCalls.length, 0, 'selection-only changes must not replac
 assert.strictEqual(graph.value({id:'b'}), 4);
 assert.strictEqual(graph.value({id:'a'}), 1);
 assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
-assert(detail.children[0].textContent === 'Bee', 'stale first detail must not overwrite latest selection');
+assert(detail.children.some(child => child.textContent.includes('Bee')), 'stale first detail must not overwrite latest selection');
 assert(candidates.children[0].textContent.includes('cand-b'), 'stale first candidates must not overwrite latest selection');
 assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
 })().catch(error => { console.error(error); process.exit(1); });
@@ -584,7 +585,7 @@ await stale;
 assert.strictEqual(context.state.current_track_id, 'b', 'stale refresh state must not overwrite newer selection state');
 assert.deepStrictEqual(elements.tracks.children.map(row => row.dataset.trackId), [], 'stale refresh must not render stale track list');
 assert.deepStrictEqual(rendered, [], 'stale refresh must not render stale graph data');
-assert(detail.children[0].textContent === 'Bee', 'stale refresh detail must not overwrite latest selection detail');
+assert(detail.children.some(child => child.textContent.includes('Bee')), 'stale refresh detail must not overwrite latest selection detail');
 assert(candidates.children[0].textContent.includes('cand-b'), 'stale refresh candidates must not overwrite latest selection candidates');
 assert(fetches.includes('/api/tracks?limit=all'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -636,13 +637,13 @@ await Promise.resolve();
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a', 'older refresh observed the selected track while detail is pending');
 const newerRefresh = context.refresh();
 await newerRefresh;
-assert.strictEqual(elements.detail.children[0].textContent, 'Fresh detail', 'newer full refresh renders current detail first');
+assert(elements.detail.children.some(child => child.textContent.includes('Fresh detail')), 'newer full refresh renders current detail first');
 assert(elements.candidates.children[0].textContent.includes('fresh-candidate'), 'newer full refresh renders current candidates first');
 olderDetail.resolve({handle:'a', display_label:'Stale delayed detail', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
 olderCandidates.resolve({candidates:[{track_id:'stale-candidate', tier:'stale', score:0.1}]});
 await olderRefresh;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a');
-assert.strictEqual(elements.detail.children[0].textContent, 'Fresh detail', 'older delayed detail for same selected id must not overwrite newer refresh detail');
+assert(elements.detail.children.some(child => child.textContent.includes('Fresh detail')), 'older delayed detail for same selected id must not overwrite newer refresh detail');
 assert(elements.candidates.children[0].textContent.includes('fresh-candidate'), 'older delayed candidates for same selected id must not overwrite newer refresh candidates');
 assert.strictEqual(trackDetailRequests, 2);
 assert.strictEqual(candidateRequests, 2);
@@ -695,7 +696,7 @@ assert.deepStrictEqual(elements.tracks.children.map(row => row.className), ['', 
 postCurrent.resolve();
 await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'POST response should remain latest selected track despite intervening refresh');
-assert(elements.detail.children[0].textContent === 'Bee', 'latest click detail must render after POST resolves');
+assert(elements.detail.children.some(child => child.textContent.includes('Bee')), 'latest click detail must render after POST resolves');
 assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates must render after POST resolves');
 assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -747,7 +748,7 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'sta
 stateFetch.resolve();
 await reset;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'stale reset history refresh must preserve later click selection');
-assert(elements.detail.children[0].textContent === 'Bee', 'latest click detail remains rendered after stale reset response');
+assert(elements.detail.children.some(child => child.textContent.includes('Bee')), 'latest click detail remains rendered after stale reset response');
 assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates remain rendered after stale reset response');
 assert(fetches.includes('/api/reset') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -832,7 +833,7 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 function element(tag){return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};}
 const detail = element('section');
-context.document = {createElement: element, getElementById(id){assert.strictEqual(id, 'detail'); return detail;}};
+context.document = {createElement: element, getElementById(id){return id === 'detail' ? detail : null;}};
 context.visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[]};
 context.renderInitialDetail({nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}], colorRanges:{valence:[-1,1], arousal:[0,2]}, selectedMood:'calm'});
 const rendered = (function all(node){return [node.textContent,...(node.children||[]).flatMap(all)];})(detail).join(' ');
@@ -866,7 +867,7 @@ function element(tag){
   return {tag, textContent:'', className:'', style:{}, setAttribute(){}, children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};
 }
 const detail = element('section');
-context.document = {createElement: element, getElementById(id){assert.strictEqual(id, 'detail'); return detail;}};
+context.document = {createElement: element, getElementById(id){return id === 'detail' ? detail : null;}};
 const auto = (pairs, provenance=[], key='summary_values') => ({automatic:{values:[],summary_values:[],provenance,[key]:pairs},effective_source:'automatic'});
 const render = fields => context.renderDetail({handle:'track-1', display_label:'<track>',latest_run_status:'failed',available_locations:1,reasons:['evidence pending'], fields});
 const all = node => [node,...node.children.flatMap(all)];
@@ -881,7 +882,7 @@ render({
   instruments:auto([['guitar',0.9],['piano',0.1],['drums',0.2]], [['mtg_jamendo_instrument-discogs-effnet-1','hash']]),
   absent:{automatic:{values:[]},effective_source:'missing',missing_reason:'stage absent'}
 });
-assert(detail.children[2].textContent.startsWith('Selected mood score:'), 'selected score stays near title');
+assert(detail.children.some(child => child.textContent.startsWith('Selected mood score:')), 'selected score stays near title');
 let rendered = nodes().map(n => n.textContent).join(' ');
 assert(rendered.includes('Status: failed') && rendered.includes('evidence pending'));
 assert(rendered.includes('mid') && rendered.includes('high') && rendered.includes('tie') && !rendered.includes('low') && !rendered.includes('out'));

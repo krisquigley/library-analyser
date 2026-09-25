@@ -65,7 +65,9 @@ class SQLiteAnalysisRepository:
                 db.execute('PRAGMA user_version=4')
             if db.execute('PRAGMA user_version').fetchone()[0] == 4:
                 self._validate(db, 4)
-                if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='track_metadata'").fetchone():
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='track_metadata'").fetchone():
+                    self._ensure_track_metadata_primary_key(db)
+                else:
                     db.execute('CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
                 db.execute('PRAGMA user_version=5')
             self._validate(db)
@@ -73,6 +75,28 @@ class SQLiteAnalysisRepository:
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
             raise AnalysisError('Refusing Mixxx-named or symlink database path')
+
+    def _has_single_column_primary_key(self, table_info, column):
+        pk_columns = tuple(row[1] for row in sorted((row for row in table_info if row[5]), key=lambda row: row[5]))
+        return pk_columns == (column,)
+
+    def _valid_track_metadata_constraints(self, db, table_info):
+        return (self._has_single_column_primary_key(table_info, 'track_id')
+                and all(row[3] for row in table_info if row[1] in ('common_json', 'tags_json', 'warnings_json'))
+                and any(row[2] == 'tracks' and row[3] == 'track_id' and row[4] == 'id'
+                        for row in db.execute('PRAGMA foreign_key_list(track_metadata)')))
+
+    def _ensure_track_metadata_primary_key(self, db):
+        table_info = tuple(db.execute('PRAGMA table_info(track_metadata)'))
+        if self._valid_track_metadata_constraints(db, table_info):
+            return
+        duplicate = db.execute('SELECT track_id FROM track_metadata GROUP BY track_id HAVING count(*) > 1 LIMIT 1').fetchone()
+        if duplicate:
+            raise AnalysisError('Duplicate track metadata prevents schema migration')
+        db.execute('ALTER TABLE track_metadata RENAME TO track_metadata_v4')
+        db.execute('CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
+        db.execute('INSERT INTO track_metadata(track_id, common_json, tags_json, warnings_json) SELECT track_id, common_json, tags_json, warnings_json FROM track_metadata_v4')
+        db.execute('DROP TABLE track_metadata_v4')
 
     def _validate(self, db, version=5):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
@@ -99,8 +123,12 @@ class SQLiteAnalysisRepository:
         if objects != expected:
             raise AnalysisError('Unexpected analysis database schema')
         for table, columns in columns_by_table.items():
-            if tuple(row[1] for row in db.execute(f'PRAGMA table_info({table})')) != columns:
+            table_info = tuple(db.execute(f'PRAGMA table_info({table})'))
+            if tuple(row[1] for row in table_info) != columns:
                 raise AnalysisError('Unexpected analysis database columns')
+            if version >= 5 and table == 'track_metadata' and not self._valid_track_metadata_constraints(db, table_info):
+                raise AnalysisError('Unexpected analysis database constraints')
+
 
     @contextmanager
     def _connection(self):

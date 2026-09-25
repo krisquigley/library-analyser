@@ -30,6 +30,34 @@ class MutagenMetadataReaderTests(unittest.TestCase):
         self.assertIn('APIC:cover: embedded artwork/binary metadata omitted', metadata.warnings)
         self.assertIn('lyrics: lyrics omitted pending explicit privacy/size policy', metadata.warnings)
 
+    def test_omits_private_opaque_and_lyrics_id3_frames_before_stringifying_values(self):
+        class SecretValue:
+            def __str__(self):
+                raise AssertionError('private ID3 value should not be stringified')
+
+        class FakeAudio:
+            tags = {
+                'TIT2': ['Tagged Song'],
+                'PRIV:owner': SecretValue(),
+                'GEOB:blob': SecretValue(),
+                'UFID:owner': SecretValue(),
+                'USLT::eng': SecretValue(),
+                'SYLT::eng': SecretValue(),
+            }
+
+        fake_mutagen = types.SimpleNamespace(File=lambda location, easy=False: FakeAudio())
+        with patch.dict(sys.modules, {'mutagen': fake_mutagen}):
+            metadata = MutagenMetadataReader().read('/music/tagged.mp3')
+
+        self.assertIn(('title', 'Tagged Song'), metadata.common)
+        self.assertIn(('TIT2', ('Tagged Song',)), metadata.tags)
+        self.assertFalse(any(key.startswith(('PRIV', 'GEOB', 'UFID', 'USLT', 'SYLT')) for key, _ in metadata.tags))
+        self.assertTrue(any('PRIV:owner' in warning and 'private/opaque' in warning for warning in metadata.warnings))
+        self.assertTrue(any('GEOB:blob' in warning and 'private/opaque' in warning for warning in metadata.warnings))
+        self.assertTrue(any('UFID:owner' in warning and 'private/opaque' in warning for warning in metadata.warnings))
+        self.assertTrue(any('USLT::eng' in warning and 'lyrics' in warning for warning in metadata.warnings))
+        self.assertTrue(any('SYLT::eng' in warning and 'lyrics' in warning for warning in metadata.warnings))
+
     def test_normalizes_native_mp4_album_artist_and_track_number_atoms(self):
         class FakeAudio:
             tags = {

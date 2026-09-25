@@ -166,6 +166,7 @@ def _map_track(track):
         latest_run_detail='',
         fields=fields,
         reasons=tuple(reasons),
+        metadata=track.metadata,
     )
 
 
