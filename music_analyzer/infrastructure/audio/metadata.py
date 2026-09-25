@@ -90,6 +90,10 @@ class MutagenMetadataReader:
             collected = []
             for alias in aliases:
                 collected.extend(lower.get(alias, ()))
+            if field == 'comment':
+                for key, values in lower.items():
+                    if ':' in key and _id3_frame_id(key) == 'comm':
+                        collected.extend(values)
             if collected:
                 unique = tuple(dict.fromkeys(collected))
                 common.append((field, unique[0] if len(unique) == 1 else unique))

@@ -58,6 +58,32 @@ class MutagenMetadataReaderTests(unittest.TestCase):
         self.assertTrue(any('USLT::eng' in warning and 'lyrics' in warning for warning in metadata.warnings))
         self.assertTrue(any('SYLT::eng' in warning and 'lyrics' in warning for warning in metadata.warnings))
 
+    def test_normalizes_mutagen_id3_comment_frames_with_language_and_descriptors(self):
+        from mutagen.id3 import COMM, ID3, TIT2
+
+        tags = ID3()
+        tags.add(TIT2(encoding=3, text=['Tagged Song']))
+        tags.add(COMM(encoding=3, lang='eng', desc='', text=['short comment']))
+        tags.add(COMM(encoding=3, lang='fra', desc='liner', text=['liner note']))
+        audio = types.SimpleNamespace(tags=tags)
+        fake_mutagen = types.SimpleNamespace(File=lambda location, easy=False: audio)
+        with patch.dict(sys.modules, {'mutagen': fake_mutagen}):
+            metadata = MutagenMetadataReader().read('/music/tagged.mp3')
+
+        self.assertIn(('comment', ('short comment', 'liner note')), metadata.common)
+        self.assertIn(('COMM::eng', ('short comment',)), metadata.tags)
+        self.assertIn(('COMM:liner:fra', ('liner note',)), metadata.tags)
+        self.assertIn(('title', 'Tagged Song'), metadata.common)
+
+    def test_normalizes_bare_id3_comment_without_matching_unrelated_prefix(self):
+        audio = types.SimpleNamespace(tags={'COMM': ['bare comment'], 'COMMERCIAL': ['not a comment']})
+        fake_mutagen = types.SimpleNamespace(File=lambda location, easy=False: audio)
+        with patch.dict(sys.modules, {'mutagen': fake_mutagen}):
+            metadata = MutagenMetadataReader().read('/music/tagged.mp3')
+
+        self.assertIn(('comment', 'bare comment'), metadata.common)
+        self.assertIn(('COMMERCIAL', ('not a comment',)), metadata.tags)
+
     def test_normalizes_native_mp4_album_artist_and_track_number_atoms(self):
         class FakeAudio:
             tags = {
