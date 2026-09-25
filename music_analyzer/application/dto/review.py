@@ -1,6 +1,7 @@
 """Persistence-independent review snapshots; absent evidence stays absent."""
 from dataclasses import dataclass
 from music_analyzer.application.dto.analysis import AnalysisReport
+from music_analyzer.application.dto.catalogue import TrackMetadata
 
 
 @dataclass(frozen=True)
@@ -11,6 +12,7 @@ class StoredTrack:
     locations: tuple[str, ...]
     run: AnalysisReport | None
     overrides: tuple[tuple[str, str], ...] = ()
+    metadata: TrackMetadata = TrackMetadata()
 
 
 @dataclass(frozen=True)

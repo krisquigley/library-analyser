@@ -4,6 +4,13 @@ from typing import Mapping
 
 
 @dataclass(frozen=True)
+class TrackMetadata:
+    common: tuple[tuple[str, str | tuple[str, ...]], ...] = ()
+    tags: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ScoreSummary:
     labels: tuple[str, ...]
     mean: tuple[float, ...]
@@ -60,6 +67,7 @@ class ExplorerStoredTrack:
     available_locations: int
     run: AnalysisReport | None
     overrides: tuple[tuple[str, str], ...] = ()
+    metadata: TrackMetadata = TrackMetadata()
 
 
 @dataclass(frozen=True)
@@ -131,6 +139,7 @@ class ExplorerTrackDetail:
     latest_run_detail: str
     fields: Mapping[str, ExplorerFieldEvidence]
     reasons: tuple[str, ...]
+    metadata: TrackMetadata = TrackMetadata()
 
 
 @dataclass(frozen=True)

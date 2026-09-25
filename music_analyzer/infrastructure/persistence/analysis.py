@@ -1,4 +1,4 @@
-"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 -> v4 migrations.
+"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 -> v4 -> v5 migrations.
 
 Existing unrelated schemas are rejected before any persistent pragma or DDL.
 Exact-file catalogue identity; each explicit analysis request is still a new run.
@@ -43,7 +43,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if db.execute('PRAGMA user_version').fetchone()[0] == 1:
                 self._validate(db, 1)
@@ -63,13 +63,17 @@ class SQLiteAnalysisRepository:
                 db.execute('CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id))')
                 db.execute('CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field))')
                 db.execute('PRAGMA user_version=4')
+            if db.execute('PRAGMA user_version').fetchone()[0] == 4:
+                self._validate(db, 4)
+                db.execute('CREATE TABLE IF NOT EXISTS track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
+                db.execute('PRAGMA user_version=5')
             self._validate(db)
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
             raise AnalysisError('Refusing Mixxx-named or symlink database path')
 
-    def _validate(self, db, version=4):
+    def _validate(self, db, version=5):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
                 or db.execute('PRAGMA user_version').fetchone()[0] != version):
             raise AnalysisError('Analysis database identity/version changed')
@@ -78,6 +82,12 @@ class SQLiteAnalysisRepository:
             columns_by_table = {**columns_by_table, 'batch_jobs': ('track_id', 'fingerprint', 'state', 'attempts', 'run_id', 'detail')}
         if version >= 4:
             columns_by_table = {**columns_by_table, 'run_tracks': ('run_id', 'track_id'), 'overrides': ('track_id', 'field', 'value')}
+        if version >= 5:
+            columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
+        if version < 5:
+            existing = {name for name, typ in db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") if typ == 'table'}
+            if 'track_metadata' in existing:
+                columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         if objects != {(name, 'table') for name in columns_by_table}:
             raise AnalysisError('Unexpected analysis database schema')
@@ -142,6 +152,8 @@ class SQLiteAnalysisRepository:
                 db.execute('INSERT INTO locations VALUES(?,?,?,?,1) ON CONFLICT(path) DO UPDATE SET track_id=excluded.track_id,mtime_ns=excluded.mtime_ns,format=excluded.format,available=1',
                            (file.location, identity.track_id, file.mtime_ns, file.format))
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
+                db.execute('INSERT INTO track_metadata VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET common_json=excluded.common_json,tags_json=excluded.tags_json,warnings_json=excluded.warnings_json',
+                           (identity.track_id, json.dumps(file.metadata.common, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.tags, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.warnings, ensure_ascii=False, allow_nan=False)))
             if inventory.complete:
                 for (path,) in db.execute('SELECT path FROM scan_roots WHERE root=?', (inventory.root,)):
                     if path not in seen:
@@ -190,7 +202,18 @@ class SQLiteAnalysisRepository:
                         raise AnalysisError('Invalid stored stage: ' + str(error)) from error
                 run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
             overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
-            return StoredTrack(*track, locations, run, overrides)
+            metadata = self._read_metadata(db, track_id)
+            return StoredTrack(*track, locations, run, overrides, metadata)
+
+    def _read_metadata(self, db, track_id):
+        from music_analyzer.application.dto.catalogue import TrackMetadata
+        row = db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone()
+        if not row:
+            return TrackMetadata()
+        try:
+            return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(row[0])), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(row[1])), tuple(str(x) for x in json.loads(row[2])))
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise AnalysisError('Invalid stored metadata') from error
 
     def set_override(self, track_id, field, value):
         with self._transaction() as db:

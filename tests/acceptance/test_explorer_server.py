@@ -25,9 +25,10 @@ CREATE TABLE scan_roots(root TEXT NOT NULL, path TEXT NOT NULL REFERENCES locati
 CREATE TABLE batch_jobs(track_id TEXT PRIMARY KEY REFERENCES tracks(id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')), attempts INTEGER NOT NULL CHECK(attempts >= 0), run_id TEXT, detail TEXT NOT NULL);
 CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
 CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
+CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
 ''')
     db.execute(f'PRAGMA application_id={APP_ID}')
-    db.execute('PRAGMA user_version=4')
+    db.execute('PRAGMA user_version=5')
     first = 'sha256:' + '1' * 64
     second = 'sha256:' + '2' * 64
     for tid, label, bpm in ((first, 'First & Friend.flac', 120.0), (second, 'Second.flac', 124.0)):

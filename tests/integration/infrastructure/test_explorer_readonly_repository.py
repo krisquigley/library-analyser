@@ -27,9 +27,10 @@ def create_db(path):
     CREATE TABLE batch_jobs(track_id TEXT PRIMARY KEY REFERENCES tracks(id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')), attempts INTEGER NOT NULL CHECK(attempts >= 0), run_id TEXT, detail TEXT NOT NULL);
     CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
     CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
+    CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
     ''')
         db.execute(f'PRAGMA application_id={APP_ID}')
-        db.execute('PRAGMA user_version=4')
+        db.execute('PRAGMA user_version=5')
         return db
     except Exception:
         db.close()
@@ -126,7 +127,7 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Invalid stored stage'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).read_track(tid)
 
-    def test_rejects_v4_schema_with_expected_names_but_missing_constraints(self):
+    def test_rejects_v5_schema_with_expected_names_but_missing_constraints(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             with closing(sqlite3.connect(path)) as db, db:
@@ -141,12 +142,12 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             CREATE TABLE overrides(track_id, field, value);
             ''')
                 db.execute(f'PRAGMA application_id={APP_ID}')
-                db.execute('PRAGMA user_version=4')
+                db.execute('PRAGMA user_version=5')
                 db.execute('INSERT INTO tracks VALUES(?,?,?)', ('not-a-sha-id', 'not-sha', 'not-int'))
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
-    def test_rejects_v4_schema_with_invalid_track_identity_and_size_values(self):
+    def test_rejects_v5_schema_with_invalid_track_identity_and_size_values(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             db = create_db(path)

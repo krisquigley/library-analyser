@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from music_analyzer.application.dto.analysis import AnalysisReport
+from music_analyzer.application.dto.catalogue import TrackMetadata
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class ExplorerStoredTrack:
     available_locations: int
     run: AnalysisReport | None
     overrides: tuple[tuple[str, str], ...] = ()
+    metadata: TrackMetadata = TrackMetadata()
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,7 @@ class ExplorerTrackDetail:
     latest_run_detail: str
     fields: Mapping[str, ExplorerFieldEvidence]
     reasons: tuple[str, ...]
+    metadata: TrackMetadata = TrackMetadata()
 
 
 @dataclass(frozen=True)

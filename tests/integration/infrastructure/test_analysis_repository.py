@@ -6,6 +6,8 @@ import tempfile
 import unittest
 
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
+from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
+from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository, APPLICATION_ID
 
 
@@ -23,13 +25,28 @@ class AnalysisRepositoryTests(unittest.TestCase):
         repository.finish(run, 'failed', 'key: unavailable')
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA application_id').fetchone()[0], APPLICATION_ID)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 4)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
             self.assertEqual(db.execute('SELECT location,status,detail FROM runs').fetchone(),
                              ('/music/空 白.flac', 'failed', 'key: unavailable'))
             stage = json.loads(db.execute('SELECT result FROM stages').fetchone()[0])
             self.assertEqual(stage['provenance'], [['algorithm', 'test-fake']])
             self.assertEqual(stage['values'], [['bpm', 120.0]])
         SQLiteAnalysisRepository(str(self.path))  # valid reopen, no destructive recovery
+
+
+    def test_register_persists_embedded_track_metadata_without_migration_backfill_io(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        metadata = TrackMetadata(
+            common=(('title', 'Tagged Title'), ('artist', ('One', 'Two'))),
+            tags=(('TITLE', ('Tagged Title',)), ('custom:rating', ('5',))),
+            warnings=(('APIC: embedded artwork/binary metadata omitted'),),
+        )
+        inventory = Inventory('/music', (ScannedFile('/music/song.flac', FileIdentity('a' * 64, 123), 1, 'flac', metadata),), (), True)
+        repository.register(inventory)
+        track = repository.read_track('sha256:' + 'a' * 64)
+        self.assertEqual(track.metadata, metadata)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM track_metadata').fetchone()[0], 1)
 
     def test_rejects_foreign_empty_identified_and_future_databases_without_modification(self):
         for setup in ('CREATE TABLE library (id INTEGER)', 'PRAGMA application_id=123',

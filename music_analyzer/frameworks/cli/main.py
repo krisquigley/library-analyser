@@ -16,6 +16,7 @@ from music_analyzer.interface_adapters.presenters.batch import present_batch
 
 from music_analyzer.application.use_cases.scan_library import ScanLibrary, ResolveTrack
 from music_analyzer.application.dto.catalogue import ScanLimits
+from music_analyzer.infrastructure.audio.metadata import MutagenMetadataReader
 from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
 from music_analyzer.interface_adapters.presenters.catalogue import present_scan
 from music_analyzer.application.use_cases.analyze_track import AnalyzeTrack
@@ -227,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == 'scan':
             limits = ScanLimits(args.max_entries, args.max_file_bytes, args.max_total_bytes)
             settings = load_settings(**overrides)
-            report = ScanLibrary(LocalInventory(), SQLiteAnalysisRepository(settings.database)).execute(args.root, limits)
+            report = ScanLibrary(LocalInventory(MutagenMetadataReader()), SQLiteAnalysisRepository(settings.database)).execute(args.root, limits)
             output = present_scan(report, as_json=args.json)
             ready = report.complete
         elif args.command == 'status':

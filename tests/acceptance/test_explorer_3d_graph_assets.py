@@ -25,9 +25,10 @@ CREATE TABLE scan_roots(root TEXT NOT NULL, path TEXT NOT NULL REFERENCES locati
 CREATE TABLE batch_jobs(track_id TEXT PRIMARY KEY REFERENCES tracks(id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')), attempts INTEGER NOT NULL CHECK(attempts >= 0), run_id TEXT, detail TEXT NOT NULL);
 CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
 CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
+CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
 ''')
     db.execute(f'PRAGMA application_id={APP_ID}')
-    db.execute('PRAGMA user_version=4')
+    db.execute('PRAGMA user_version=5')
     ids = []
     rows = (
         ('1', 'Alpha.flac', 120.0, 'C major', 0.2, 0.7, (0.8, 0.2), (0.9, 0.1)),
@@ -40,6 +41,7 @@ CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT 
         db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, tid.split(':')[1], 10))
         available = 0 if suffix == '3' else 1
         db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/music/' + label, tid, 1, 'flac', available))
+        db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (tid, json.dumps([['title', label.removesuffix('.flac')]]), json.dumps([['TITLE', [label.removesuffix('.flac')]]]), json.dumps([])))
         if bpm is not None:
             run_id = 'run-' + suffix
             db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', (run_id, '/music/' + label, 'completed', ''))
@@ -141,6 +143,60 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
             self.assertIn('function canvasPoint', source)
             self.assertIn('canvasPoint', source[source.index('module.exports'):])
             self.assertIn('module.exports', source)
+
+
+    def test_detail_panel_source_places_graph_key_with_current_track_notes(self):
+        source = APP_JS.read_text(encoding='utf-8')
+        self.assertIn('function graphStatusText', source)
+        self.assertIn('function graphStatusParagraph', source)
+        self.assertIn('Current track', source)
+        self.assertIn('Display label:', source)
+        self.assertIn('Stable identifier:', source)
+        self.assertIn('Graph key / status', source)
+        self.assertIn('Graph key and status are shown in Current / graph notes.', source)
+        self.assertIn('renderDetail', source[source.index('module.exports'):])
+        self.assertIn('renderInitialDetail', source[source.index('module.exports'):])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for detail panel behavior tests')
+    def test_detail_panel_embeds_current_track_data_and_graph_key(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  return {tagName: tag.toUpperCase(), children: [], attributes: {}, dataset: {}, className: '', textContent: '',
+    append(...nodes){this.children.push(...nodes);},
+    replaceChildren(...nodes){this.children = [...nodes]; this.textContent = '';},
+    setAttribute(name, value){this.attributes[name] = String(value);},
+    get innerText(){return [this.textContent, ...this.children.map(c => c.innerText || c.textContent || '')].filter(Boolean).join('\n');}
+  };
+}
+const elements = {detail: makeElement('div'), 'graph-info': makeElement('p')};
+global.document = {getElementById: id => elements[id] || null, createElement: makeElement};
+const graphModel = app.buildMoodGraphModel({selected_mood:'relaxing', positioned:[
+  {track_id:'track-1', display_label:'Alpha.flac', x:{raw:-2,normalized:0,scale:'native'}, y:{raw:10,normalized:0,scale:'native'}, z:{raw:120,normalized:6,label:'BPM',scale:'raw'}, mood_score:{label:'relaxing',raw:0.85}, bpm:120, genres:[], reasons:[]},
+  {track_id:'track-2', display_label:'Beta.flac', x:{raw:3,normalized:1,scale:'native'}, y:{raw:30,normalized:1,scale:'native'}, z:{raw:140,normalized:7,label:'BPM',scale:'raw'}, mood_score:{label:'relaxing',raw:0.15}, bpm:140, genres:[], reasons:[]}
+], edges:[{a:'track-1', b:'track-2', score:0.5}], unpositioned:[{track_id:'missing', display_label:'Missing', reasons:['no mood']}], available_moods:['relaxing']});
+app.setGraphModelForTesting(graphModel);
+app.setVisibleGraphForTesting({nodes: graphModel.nodes, links: graphModel.links, unpositioned: graphModel.unpositioned});
+app.renderDetail({handle:'track-1', display_label:'Alpha.flac', latest_run_status:'completed', available_locations:1, reasons:['ready'], fields:{}});
+let text = elements.detail.innerText;
+assert(text.indexOf('Current track') < text.indexOf('Selected relaxing raw sigmoid mean score'), 'current track identity starts the selected detail panel');
+assert(text.includes('Display label: Alpha.flac'), text);
+assert(text.includes('Stable identifier: track-1'), text);
+assert(text.includes('Graph key / status'), text);
+assert(text.includes('2 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), text);
+assert(text.includes('Color relative to this library'), text);
+assert(text.includes('Selected node is larger.'), text);
+assert.strictEqual(elements['graph-info'].textContent, 'Graph key and status are shown in Current / graph notes.');
+app.renderInitialDetail(graphModel);
+text = elements.detail.innerText;
+assert(text.includes('All-library valence / arousal / BPM graph'), text);
+assert(text.includes('Graph key / status'), text);
+assert(text.includes('2 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), text);
+assert(text.includes('3d-force-graph is bundled locally'), text);
+assert(text.includes('Missing: no mood'), text);
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for color behavior tests')
     def test_library_relative_color_legend_and_selection_survive_filters_and_mood_changes(self):

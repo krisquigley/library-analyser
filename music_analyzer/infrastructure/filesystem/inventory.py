@@ -5,11 +5,14 @@ from pathlib import Path
 import stat
 
 from music_analyzer.domain.catalogue import FileIdentity
-from music_analyzer.application.dto.catalogue import Inventory, ScanIssue, ScannedFile, ScanLimits
+from music_analyzer.application.dto.catalogue import Inventory, ScanIssue, ScannedFile, ScanLimits, TrackMetadata
 
 
 class LocalInventory:
     extensions = {'.flac', '.mp3', '.m4a', '.wav', '.ogg', '.opus', '.aiff', '.aif'}
+
+    def __init__(self, metadata_reader=None):
+        self.metadata_reader = metadata_reader
 
     def _path(self, value):
         path = Path(os.path.abspath(value))
@@ -38,7 +41,8 @@ class LocalInventory:
             key = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
             if key(before) != key(after) or key(after) != key(current) or count != after.st_size:
                 raise ValueError('File changed while hashing; scan again')
-            return ScannedFile(str(path), FileIdentity(digest.hexdigest(), count), after.st_mtime_ns, path.suffix.lower().lstrip('.'))
+            metadata = self.metadata_reader.read(str(path)) if self.metadata_reader else None
+            return ScannedFile(str(path), FileIdentity(digest.hexdigest(), count), after.st_mtime_ns, path.suffix.lower().lstrip('.'), metadata or TrackMetadata())
 
     def inventory(self, root, limits):
         root = self._path(root)

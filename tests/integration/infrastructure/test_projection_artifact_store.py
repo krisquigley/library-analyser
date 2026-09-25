@@ -191,7 +191,7 @@ def _write_projection_ready_database(db_path, audio_path):
     with closing(sqlite3.connect(db_path)) as db, db:
         db.executescript(f"""
             PRAGMA application_id={APPLICATION_ID};
-            PRAGMA user_version=4;
+            PRAGMA user_version=5;
             CREATE TABLE tracks(id TEXT PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, size INTEGER NOT NULL);
             CREATE TABLE locations(path TEXT PRIMARY KEY, track_id TEXT NOT NULL REFERENCES tracks(id), mtime_ns INTEGER NOT NULL, format TEXT NOT NULL, available INTEGER NOT NULL CHECK(available IN (0,1)));
             CREATE TABLE scan_roots(root TEXT NOT NULL, path TEXT NOT NULL REFERENCES locations(path), PRIMARY KEY(root,path));
@@ -200,6 +200,7 @@ def _write_projection_ready_database(db_path, audio_path):
             CREATE TABLE batch_jobs(track_id TEXT PRIMARY KEY REFERENCES tracks(id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')), attempts INTEGER NOT NULL CHECK(attempts >= 0), run_id TEXT, detail TEXT NOT NULL);
             CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
             CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
+            CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
         """)
         db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '1' * 64, 123))
         db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', (str(audio_path), tid, 1, 'flac', 1))

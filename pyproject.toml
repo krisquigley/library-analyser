@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Local music analyser: experimental catalogue, analysis and review CLI"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["mutagen>=1.47,<2"]
 
 [project.scripts]
 music-analyzer = "music_analyzer.frameworks.cli.main:main"

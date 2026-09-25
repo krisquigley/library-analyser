@@ -29,7 +29,7 @@ class BatchQueueTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(tuple(db.execute('SELECT * FROM stages')), before)
             self.assertEqual(db.execute('SELECT id FROM tracks').fetchone(), ('a',))
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 4)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
 
     def test_restart_recovers_running_and_preserves_completed(self):
         queue = SQLiteBatchQueue(self.path)
