@@ -42,6 +42,9 @@ class LocalInventory:
             if key(before) != key(after) or key(after) != key(current) or count != after.st_size:
                 raise ValueError('File changed while hashing; scan again')
             metadata = self.metadata_reader.read(str(path)) if self.metadata_reader else None
+            current_after_metadata = path.stat(follow_symlinks=False)
+            if key(after) != key(current_after_metadata):
+                raise ValueError('File changed while hashing; scan again')
             return ScannedFile(str(path), FileIdentity(digest.hexdigest(), count), after.st_mtime_ns, path.suffix.lower().lstrip('.'), metadata or TrackMetadata())
 
     def inventory(self, root, limits):

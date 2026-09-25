@@ -15,8 +15,8 @@ _COMMON_ALIASES = {
     'title': ('title', '\xa9nam', 'tit2'),
     'artist': ('artist', '\xa9art', 'tpe1'),
     'album': ('album', '\xa9alb', 'talb'),
-    'album_artist': ('albumartist', 'album artist', 'aalbumartist', '\xa9aart', 'tpe2'),
-    'track_number': ('tracknumber', 'track number', 'trck'),
+    'album_artist': ('albumartist', 'album artist', 'aalbumartist', 'aart', '\xa9aart', 'tpe2'),
+    'track_number': ('tracknumber', 'track number', 'trkn', 'trck'),
     'disc_number': ('discnumber', 'disc number', 'disk', 'tpos'),
     'date': ('date', 'year', '\xa9day', 'tdrc'),
     'genre': ('genre', '\xa9gen', 'tcon'),
@@ -97,7 +97,12 @@ def _clean_key(value: str) -> str:
 def _clean_value(value) -> str | None:
     if isinstance(value, bytes):
         return None
-    text = str(value).replace('\x00', '').strip()
+    if (isinstance(value, tuple) and len(value) == 2
+            and all(isinstance(part, int) and part >= 0 for part in value)):
+        current, total = value
+        text = f'{current}/{total}' if total else str(current)
+    else:
+        text = str(value).replace('\x00', '').strip()
     if not text:
         return None
     return ' '.join(text.split())

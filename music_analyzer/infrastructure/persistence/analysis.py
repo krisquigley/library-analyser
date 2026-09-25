@@ -65,7 +65,8 @@ class SQLiteAnalysisRepository:
                 db.execute('PRAGMA user_version=4')
             if db.execute('PRAGMA user_version').fetchone()[0] == 4:
                 self._validate(db, 4)
-                db.execute('CREATE TABLE IF NOT EXISTS track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='track_metadata'").fetchone():
+                    db.execute('CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
                 db.execute('PRAGMA user_version=5')
             self._validate(db)
 
@@ -84,12 +85,18 @@ class SQLiteAnalysisRepository:
             columns_by_table = {**columns_by_table, 'run_tracks': ('run_id', 'track_id'), 'overrides': ('track_id', 'field', 'value')}
         if version >= 5:
             columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
-        if version < 5:
-            existing = {name for name, typ in db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") if typ == 'table'}
-            if 'track_metadata' in existing:
-                columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
-        if objects != {(name, 'table') for name in columns_by_table}:
+        expected = {(name, 'table') for name in columns_by_table}
+        if version in (2, 3):
+            migration_tables = {'batch_jobs', 'run_tracks', 'overrides', 'track_metadata'} if version == 2 else {'run_tracks', 'overrides', 'track_metadata'}
+            expected = {item for item in expected if item[0] not in migration_tables}
+            objects = {item for item in objects if item[0] not in migration_tables}
+        if version == 4:
+            has_track_metadata = ('track_metadata', 'table') in objects
+            objects = {item for item in objects if item[0] != 'track_metadata'}
+            if has_track_metadata:
+                columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
+        if objects != expected:
             raise AnalysisError('Unexpected analysis database schema')
         for table, columns in columns_by_table.items():
             if tuple(row[1] for row in db.execute(f'PRAGMA table_info({table})')) != columns:

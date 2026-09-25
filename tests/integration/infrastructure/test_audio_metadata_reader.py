@@ -30,6 +30,22 @@ class MutagenMetadataReaderTests(unittest.TestCase):
         self.assertIn('APIC:cover: embedded artwork/binary metadata omitted', metadata.warnings)
         self.assertIn('lyrics: lyrics omitted pending explicit privacy/size policy', metadata.warnings)
 
+    def test_normalizes_native_mp4_album_artist_and_track_number_atoms(self):
+        class FakeAudio:
+            tags = {
+                'aART': ['Album Artist'],
+                'trkn': [(3, 12)],
+            }
+
+        fake_mutagen = types.SimpleNamespace(File=lambda location, easy=False: FakeAudio())
+        with patch.dict(sys.modules, {'mutagen': fake_mutagen}):
+            metadata = MutagenMetadataReader().read('/music/tagged.m4a')
+
+        self.assertIn(('album_artist', 'Album Artist'), metadata.common)
+        self.assertIn(('track_number', '3/12'), metadata.common)
+        self.assertIn(('aART', ('Album Artist',)), metadata.tags)
+        self.assertIn(('trkn', ('3/12',)), metadata.tags)
+
 
 if __name__ == '__main__':
     unittest.main()

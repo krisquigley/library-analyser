@@ -807,6 +807,46 @@ assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
         self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo');", app)
         self.assertIn("document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');", app)
 
+    def test_graph_color_legend_handles_ranged_axis_objects(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const legend = app.graphColorLegend({colorRanges:{valence:{min:-0.5,max:0.75}, arousal:{min:0.1,max:1.9}}});
+assert(legend.includes('-0.5 to 0.8 native'), legend);
+assert(legend.includes('0.1 to 1.9 native'), legend);
+assert(!legend.includes('undefined'), legend);
+"""
+        if shutil.which('node'):
+            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        else:
+            source = APP_JS.read_text(encoding='utf-8')
+            self.assertIn('.min', source)
+            self.assertIn('.max', source)
+
+    def test_initial_detail_includes_graph_key_and_status_without_selection(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const context = {module:{exports:{}}, console};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function element(tag){return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};}
+const detail = element('section');
+context.document = {createElement: element, getElementById(id){assert.strictEqual(id, 'detail'); return detail;}};
+context.visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[]};
+context.renderInitialDetail({nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}], colorRanges:{valence:[-1,1], arousal:[0,2]}, selectedMood:'calm'});
+const rendered = (function all(node){return [node.textContent,...(node.children||[]).flatMap(all)];})(detail).join(' ');
+assert(rendered.includes('1 positioned tracks · 1 sparse relatedness edges · 1 unpositioned'), rendered);
+assert(rendered.includes('Graph key / status'), rendered);
+assert(rendered.includes('Color relative to this library'), rendered);
+"""
+        if shutil.which('node'):
+            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        else:
+            source = APP_JS.read_text(encoding='utf-8')
+            self.assertIn('Graph key / status', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+            self.assertIn('graphStatusParagraph(model)', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
         self.assertIn('#detail .score-gauge{position:relative;width:39px;height:39px;', style)
