@@ -59,7 +59,12 @@ class MutagenMetadataReaderTests(unittest.TestCase):
         self.assertTrue(any('SYLT::eng' in warning and 'lyrics' in warning for warning in metadata.warnings))
 
     def test_normalizes_mutagen_id3_comment_frames_with_language_and_descriptors(self):
-        from mutagen.id3 import COMM, ID3, TIT2
+        try:
+            from mutagen.id3 import COMM, ID3, TIT2
+        except ModuleNotFoundError as error:
+            if error.name != 'mutagen':
+                raise
+            self.skipTest('mutagen is not installed in the dependency-free test environment')
 
         tags = ID3()
         tags.add(TIT2(encoding=3, text=['Tagged Song']))
