@@ -161,13 +161,46 @@ assert.strictEqual(app.graphRelatednessLegend(), 'Link alpha reflects axis-indep
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
-    def test_graph_source_configures_force_graph_with_variable_relatedness_alpha(self):
-        source = APP_JS.read_text(encoding='utf-8')
-        self.assertIn('function relatednessLinkAlpha', source)
-        self.assertIn('.linkOpacity(relatednessLinkAlpha)', source)
-        self.assertNotIn('.linkOpacity(0.28)', source)
-        self.assertIn('graphRelatednessLegend', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
-        self.assertIn('relatednessLinkAlpha', source[source.index('module.exports'):])
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for force graph configuration tests')
+    def test_force_graph_receives_per_link_rgba_and_numeric_global_opacity(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const bundle = fs.readFileSync(process.argv[2], 'utf8');
+// Verify the bundled renderer actually multiplies its numeric global opacity by the
+// alpha parsed from the per-link color; a callback in linkOpacity becomes NaN.
+assert(bundle.includes('e.linkOpacity*mf(c)'), 'vendored bundle must multiply global opacity by color alpha');
+assert(bundle.includes('linkColor:{default:"color"}'));
+const context = {module:{exports:{}}, console, URLSearchParams};
+vm.createContext(context);
+vm.runInContext(source, context);
+const settings = {};
+const graph = new Proxy({}, {get(_, key) {
+  if (key === 'camera') return () => ({fov:60});
+  return value => { settings[key] = value; return graph; };
+}});
+context.ForceGraph3D = () => () => graph;
+context.document = {getElementById:id => id === 'graph3d' ? {clientWidth:900,clientHeight:500} : null};
+const data = {nodes:[{id:'a',x:0,y:0,z:0},{id:'b',x:1,y:1,z:1}],links:[
+  {source:'a',target:'b',score:-2},{source:'a',target:'b',score:0.5},
+  {source:'a',target:'b',score:2},{source:'a',target:'b',score:'bad'}],unpositioned:[]};
+context.renderMap(data);
+assert.strictEqual(typeof settings.linkOpacity, 'number', 'bundled graph expects numeric global opacity');
+assert.strictEqual(settings.linkOpacity, 1);
+assert.strictEqual(typeof settings.linkColor, 'function');
+const alpha = link => {
+  const color = settings.linkColor(link);
+  assert(/^rgba\(\d+,\d+,\d+,0\.\d+\)$/.test(color), color);
+  return Number(color.slice(color.lastIndexOf(',')+1, -1)) * settings.linkOpacity;
+};
+assert.deepStrictEqual(data.links.map(alpha), [0.18,0.45,0.72,0.18]);
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                source = app.read_text(encoding='utf-8')
+                self.assertIn('graphRelatednessLegend', source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')])
+                subprocess.run(['node', '-e', script, str(app), str(app.parent / 'vendor/3d-force-graph/3d-force-graph.min.js')], check=True, cwd=REPO_ROOT)
 
     def test_detail_panel_source_places_graph_key_with_current_track_notes(self):
         source = APP_JS.read_text(encoding='utf-8')
