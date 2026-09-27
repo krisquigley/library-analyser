@@ -161,7 +161,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 graph = BuildMoodAxisGraph(repository).execute(mood)
                 bpm_min = _optional_float(query.get('bpm_min', [None])[0])
                 bpm_max = _optional_float(query.get('bpm_max', [None])[0])
-                genres = tuple(g for value in query.get('genre', ()) for g in value.split(',') if g)
+                genres = tuple(g for g in query.get('genre', ()) if g)
                 return self._json(_to_json(FilterMoodAxisGraph().execute(graph, bpm_min, bpm_max, genres)))
             return self._json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
 

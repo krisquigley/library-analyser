@@ -31,7 +31,7 @@ class ExplorerViewportLayoutTests(unittest.TestCase):
         html = Elements()
         html.feed((ASSETS / 'index.html').read_text())
         self.assertIn('graph-viewport', html.ancestors['map'])
-        for element in ('tracks', 'detail', 'undo', 'reset', 'controls', 'candidates',
+        for element in ('tracks', 'detail', 'undo', 'reset', 'controls',
                         'mood-strip', 'mood-strip-picker', 'mood-strip-value'):
             self.assertIn('overlay', html.ancestors[element][2], element)
         for element in ('tracks-panel', 'candidate-panel', 'detail-panel'):

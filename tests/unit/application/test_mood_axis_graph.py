@@ -124,9 +124,9 @@ class MoodAxisGraphTests(unittest.TestCase):
         self.assertEqual(len(graph.unpositioned), 4)
 
     def test_filters_bpm_bounds_genre_any_clear_and_coordinates_stable(self):
-        graph = BuildMoodAxisGraph(FakeRepo([track('a', bpm=100, genres=(('rock','jazz'), (0.6,0.1))), track('b', bpm=130, genres=(('rock','jazz'), (0.1,0.7)))])).execute('relaxing')
+        graph = BuildMoodAxisGraph(FakeRepo([track('a', bpm=100, genres=(('rock','jazz'), (0.6,0.2))), track('b', bpm=130, genres=(('rock','jazz'), (0.1,0.7)))])).execute('relaxing')
         filtered = FilterMoodAxisGraph().execute(graph, bpm_min=90, bpm_max=110, genres=('jazz',))
-        self.assertEqual([n.track_id for n in filtered.positioned], [])
+        self.assertEqual([n.track_id for n in filtered.positioned], ['sha256:' + 'a' * 64])
         filtered = FilterMoodAxisGraph().execute(graph, bpm_min=90, bpm_max=110, genres=('rock',))
         self.assertEqual([n.track_id for n in filtered.positioned], ['sha256:' + 'a' * 64])
         cleared = FilterMoodAxisGraph().execute(graph)

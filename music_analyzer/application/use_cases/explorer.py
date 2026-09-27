@@ -92,7 +92,7 @@ class BuildMoodAxisGraph:
                 'energy_scale': 'Emomusic native valence/arousal regression coordinates retained when model provenance is compatible; no arbitrary clipping or DJ-energy interpretation',
                 'bpm_scale': 'Raw positive finite BPM, fixed display transform BPM / 20 (20 BPM per normalized unit); never octave-coerced or sample-refitted',
                 'mood_scale': 'Optional selected Jamendo mood/theme sigmoid labelled mean score on fixed [0,1] strip only; never a coordinate or visibility condition',
-                'genre_filter_policy': 'ANY selected genre with retained mean score >= finite threshold from stage provenance or 0.5 default',
+                'genre_filter_policy': 'ANY selected genre with finite retained mean score > 0.1 (detail display cutoff, not provisional classification cutoff)',
                 'edge_policy': NEIGHBOUR_POLICY_VERSION,
                 'distance_policy': DISTANCE_POLICY_VERSION,
                 'sparse_k': self.sparse_k,
@@ -289,7 +289,7 @@ def _passes_filters(node, bpm_min, bpm_max, genres):
         return False
     if genres:
         scores = dict(node.genres)
-        return any(scores.get(genre, -1.0) >= node.genre_threshold for genre in genres)
+        return any(scores.get(genre, 0.0) > 0.1 for genre in genres)
     return True
 
 

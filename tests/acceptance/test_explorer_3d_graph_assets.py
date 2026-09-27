@@ -344,7 +344,7 @@ assert.strictEqual(app.renderTrackMetadata({}).children[0].textContent,'No embed
         self.assertNotIn('function graphStatusText', source)
         self.assertNotIn('function graphStatusParagraph', source)
         self.assertIn('Current Track', source)
-        detail_source = source[source.index('function renderDetail'):source.index('function renderCandidates')]
+        detail_source = source[source.index('function renderDetail'):source.index('function renderTrackMetadata')]
         self.assertNotIn('Display label:', detail_source)
         self.assertNotIn('Stable identifier:', detail_source)
         self.assertNotIn('Status:', detail_source)
@@ -681,15 +681,46 @@ await context.refresh();
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'refresh after rejection must not overlay the rejected click intent');
 assert.deepStrictEqual(elements.tracks.children[0].children[1].children.map(row => row.className), ['', 'current']);
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'detail follows authoritative server selection after refresh');
-assert(elements.candidates.children[0].textContent.includes('server-candidate'), 'candidates follow authoritative server selection after refresh');
+assert(!fetches.some(path => path.startsWith('/api/candidates')), 'refresh does not request removed candidate list');
 assert(fetches.includes('/api/current') && fetches.includes('/api/state'));
 })().catch(error => { console.error(error); process.exit(1); });
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for selection detail regression tests')
+    def test_selected_detail_does_not_depend_on_removed_candidates_endpoint(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+(async () => {
+const context = {module:{exports:{}}, console, URLSearchParams};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function response(payload){return {ok:true, json:async()=>payload};}
+const fetches = [];
+context.fetch = path => {
+  fetches.push(String(path));
+  if (path === '/api/tracks/a') return Promise.resolve(response({handle:'a', display_label:'Track A', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
+  if (String(path).startsWith('/api/candidates')) return Promise.reject(new Error('candidates unavailable'));
+  throw new Error('unexpected fetch '+path);
+};
+function element(tag){return {tag, textContent:'', className:'', dataset:{}, style:{}, children:[], setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children=nodes;}};}
+const detail = element('section');
+context.document = {createElement: element, querySelectorAll(){return [];}, getElementById(id){return id==='detail'?detail:null;}};
+vm.runInContext("state={current_track_id:'a'}; graphModel={nodes:[],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:[],links:[],unpositioned:[]};", context);
+await context.refreshSelectionDependent(0);
+assert(fetches.includes('/api/tracks/a'), 'selected detail is fetched');
+assert(!fetches.some(path => path.startsWith('/api/candidates')), 'removed list endpoint is not requested');
+assert(detail.children.some(child => child.textContent.includes('Current Track')), 'detail renders even when candidates are unavailable');
+})().catch(error => {console.error(error); process.exit(1);});
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selection behavior tests')
-    def test_selection_only_fetches_detail_candidates_and_keeps_graph_data(self):
+    def test_selection_only_fetches_detail_and_keeps_graph_data(self):
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
@@ -699,7 +730,7 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
 function response(payload){return {ok:true, json:async()=>payload};}
-const detailA = deferred(), candidatesA = deferred();
+const detailA = deferred();
 const fetches = [];
 context.fetch = (path, options={}) => {
   fetches.push(String(path));
@@ -708,9 +739,8 @@ context.fetch = (path, options={}) => {
     return Promise.resolve(response({current_track_id: body.track_id}));
   }
   if (path === '/api/tracks/a') return detailA.promise.then(payload => response(payload));
-  if (String(path).startsWith('/api/candidates?')) return candidatesA.promise.then(payload => response(payload));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
-  return Promise.resolve(response({candidates:[{track_id:'cand-b', tier:'strong', score:0.8}]}));
+  throw new Error('unexpected fetch '+path);
 };
 function element(tag){return {tag, textContent:'', className:'', dataset:{}, style:{}, children:[], setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};}
 const detail = element('section'), candidates = element('ol');
@@ -721,11 +751,11 @@ const graph = {nodeVal(fn){this.value = fn; return this;}, refresh(){this.refres
 context.graph = graph;
 vm.runInContext("state={current_track_id:null}; graphModel={nodes:[{id:'a',label:'A',moodScore:null},{id:'b',label:'B',moodScore:null}],links:[],unpositioned:[],selectedMood:'calm',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]}; forceGraph=graph;", context);
 const first = context.setCurrent('a');
-await Promise.resolve();
+for(let i=0;i<8 && !fetches.includes('/api/tracks/a');i++) await Promise.resolve();
+assert(fetches.includes('/api/tracks/a'), 'first detail request is in flight');
 const second = context.setCurrent('b');
 await second;
 detailA.resolve({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
-candidatesA.resolve({candidates:[{track_id:'cand-a', tier:'stale', score:0.1}]});
 await first;
 assert.deepStrictEqual(fetches.filter(u => u === '/api/tracks?limit=all' || u.startsWith('/api/mood-axis-graph')), []);
 assert(fetches.includes('/api/current'));
@@ -736,7 +766,7 @@ assert.strictEqual(graph.value({id:'b'}), 4);
 assert.strictEqual(graph.value({id:'a'}), 1);
 assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
 assert(detail.children.some(child => child.textContent.includes('Current Track')), 'stale first detail must not overwrite latest selection');
-assert(candidates.children[0].textContent.includes('cand-b'), 'stale first candidates must not overwrite latest selection');
+assert(!fetches.some(path => path.startsWith('/api/candidates')), 'selection does not request removed candidate list');
 assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
 })().catch(error => { console.error(error); process.exit(1); });
 """;
@@ -755,7 +785,7 @@ function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}
 function response(payload){return {ok:true, json:async()=>payload};}
 function point(id){return {id, label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
 const refreshState = deferred(), refreshList = deferred(), refreshGraph = deferred();
-const detailA = deferred(), candidatesA = deferred();
+const detailA = deferred();
 const fetches = [];
 context.fetch = (path, options={}) => {
   fetches.push(String(path));
@@ -765,8 +795,7 @@ context.fetch = (path, options={}) => {
   if (path === '/api/current') return Promise.resolve(response({current_track_id:'b'}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (path === '/api/tracks/a') return detailA.promise.then(payload => response(payload));
-  if (String(path).startsWith('/api/candidates?')) return candidatesA.promise.then(payload => response(payload));
-  return Promise.resolve(response({candidates:[{track_id:'cand-b', tier:'strong', score:0.8}]}));
+  throw new Error('unexpected fetch '+path);
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
@@ -777,18 +806,18 @@ vm.runInContext('renderMap = globalThis.renderMap', context);
 const stale = context.refresh();
 refreshState.resolve({current_track_id:'a'});
 refreshList.resolve({tracks:[{handle:'a', display_label:'Aye'}]});
-await Promise.resolve();
+for(let i=0;i<8 && !fetches.includes('/api/tracks?limit=all');i++) await Promise.resolve();
+assert(fetches.includes('/api/tracks?limit=all'), 'stale refresh reached the list request');
 const latest = context.setCurrent('b');
 await latest;
 refreshGraph.resolve({positioned:[point('a')], edges:[], selected_mood:'calm', available_moods:['calm']});
 detailA.resolve({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
-candidatesA.resolve({candidates:[{track_id:'cand-a', tier:'stale', score:0.1}]});
 await stale;
-assert.strictEqual(context.state.current_track_id, 'b', 'stale refresh state must not overwrite newer selection state');
+assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'stale refresh state must not overwrite newer selection state');
 assert.deepStrictEqual(elements.tracks.children.map(row => row.dataset.trackId), [], 'stale refresh must not render stale track list');
 assert.deepStrictEqual(rendered, [], 'stale refresh must not render stale graph data');
-assert(detail.children.some(child => child.textContent.includes('Current Track')), 'stale refresh detail must not overwrite latest selection detail');
-assert(candidates.children[0].textContent.includes('cand-b'), 'stale refresh candidates must not overwrite latest selection candidates');
+assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'stale refresh detail must not overwrite latest selection detail');
+assert(!fetches.some(path => path.startsWith('/api/candidates')), 'selection does not request removed candidate list');
 assert(fetches.includes('/api/tracks?limit=all'));
 })().catch(error => { console.error(error); process.exit(1); });
 """;
@@ -807,8 +836,8 @@ vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
 function response(payload){return {ok:true, json:async()=>payload};}
 function point(id){return {track_id:id, display_label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
-const olderDetail = deferred(), olderCandidates = deferred();
-let trackDetailRequests = 0, candidateRequests = 0;
+const olderDetail = deferred();
+let trackDetailRequests = 0;
 const fetches = [];
 context.fetch = (path, options={}) => {
   fetches.push(String(path));
@@ -822,12 +851,6 @@ context.fetch = (path, options={}) => {
       ? olderDetail.promise.then(payload => response(payload))
       : Promise.resolve(response({handle:'a', display_label:'Fresh detail', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   }
-  if (String(path).startsWith('/api/candidates?current=a')) {
-    candidateRequests += 1;
-    return candidateRequests === 1
-      ? olderCandidates.promise.then(payload => response(payload))
-      : Promise.resolve(response({candidates:[{track_id:'fresh-candidate', tier:'strong', score:0.9}]}));
-  }
   return Promise.reject(new Error('unexpected fetch '+path));
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
@@ -840,15 +863,12 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a', 'old
 const newerRefresh = context.refresh();
 await newerRefresh;
 assert(elements.detail.children.some(child => child.textContent.includes('Fresh detail')), 'newer full refresh renders current detail first');
-assert(elements.candidates.children[0].textContent.includes('fresh-candidate'), 'newer full refresh renders current candidates first');
 olderDetail.resolve({handle:'a', display_label:'Stale delayed detail', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
-olderCandidates.resolve({candidates:[{track_id:'stale-candidate', tier:'stale', score:0.1}]});
 await olderRefresh;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a');
 assert(elements.detail.children.some(child => child.textContent.includes('Fresh detail')), 'older delayed detail for same selected id must not overwrite newer refresh detail');
-assert(elements.candidates.children[0].textContent.includes('fresh-candidate'), 'older delayed candidates for same selected id must not overwrite newer refresh candidates');
 assert.strictEqual(trackDetailRequests, 2);
-assert.strictEqual(candidateRequests, 2);
+assert(!fetches.some(path => path.startsWith('/api/candidates')), 'refreshes do not request removed candidate list');
 assert.strictEqual(fetches.filter(path => path === '/api/state').length, 2);
 assert(!fetches.includes('/api/current'), 'non-selection refreshes reproduce the same-selected-id detail race without a click');
 })().catch(error => { console.error(error); process.exit(1); });
@@ -899,7 +919,7 @@ postCurrent.resolve();
 await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'POST response should remain latest selected track despite intervening refresh');
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'latest click detail must render after POST resolves');
-assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates must render after POST resolves');
+assert(!fetches.some(path => path.startsWith('/api/candidates')), 'click does not request removed candidate list');
 assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
 """;
@@ -951,7 +971,7 @@ stateFetch.resolve();
 await reset;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'stale reset history refresh must preserve later click selection');
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'latest click detail remains rendered after stale reset response');
-assert(elements.candidates.children[0].textContent.includes('cand-b'), 'latest click candidates remain rendered after stale reset response');
+assert(!fetches.some(path => path.startsWith('/api/candidates')), 'stale reset does not request removed candidate list');
 assert(fetches.includes('/api/reset') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
 """;
@@ -1087,7 +1107,7 @@ render({
 });
 assert(detail.children.some(child => child.textContent==='Current Track'), 'current track heading remains');
 let rendered = nodes().map(n => n.textContent).join(' ');
-assert(!rendered.includes('Status: failed') && rendered.includes('evidence pending'));
+assert(!rendered.includes('Status: failed') && !rendered.includes('evidence pending'));
 assert(rendered.includes('mid') && rendered.includes('high') && rendered.includes('tie') && !rendered.includes('low') && !rendered.includes('out'));
 assert(rendered.includes('middle') && rendered.includes('above') && !rendered.includes('zero'));
 assert(rendered.includes('guitar') && rendered.includes('drums') && !rendered.includes('piano'));
