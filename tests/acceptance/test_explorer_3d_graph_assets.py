@@ -650,7 +650,7 @@ assert(detail.children.some(child => child.textContent.includes('Current Track')
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
-const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}, Date, Math,
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(cb){Promise.resolve().then(cb);}, Date, Math,
   sessionStorage:{data:{}, getItem(k){return this.data[k]||null;}, setItem(k,v){this.data[k]=v;}}
 };
 (async () => {
@@ -780,10 +780,13 @@ assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
-const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}};
+const frames = [];
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(cb){frames.push(cb);}};
 (async () => {
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+function runNextFrame(){assert(frames.length, 'expected an animation frame callback'); frames.shift()();}
+async function waitForFetch(path){for(let i=0;i<20 && !fetches.includes(path);i++) await Promise.resolve(); assert(fetches.includes(path), `expected fetch ${path}`);}
 function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
 function response(payload){return {ok:true, json:async()=>payload};}
 function point(id){return {id, label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
@@ -807,9 +810,13 @@ const rendered = [];
 context.renderMap = data => rendered.push(data.nodes.map(n => n.id));
 vm.runInContext('renderMap = globalThis.renderMap', context);
 const stale = context.refresh();
+assert.deepStrictEqual(fetches, [], 'full refresh waits for the initial paint frame before fetching');
+runNextFrame();
+await waitForFetch('/api/state');
 refreshState.resolve({current_track_id:'a'});
+await waitForFetch('/api/tracks?limit=all');
 refreshList.resolve({tracks:[{handle:'a', display_label:'Aye'}]});
-for(let i=0;i<8 && !fetches.includes('/api/tracks?limit=all');i++) await Promise.resolve();
+await waitForFetch('/api/mood-axis-graph');
 assert(fetches.includes('/api/tracks?limit=all'), 'stale refresh reached the list request');
 const latest = context.setCurrent('b');
 await latest;
@@ -832,7 +839,7 @@ assert(fetches.includes('/api/tracks?limit=all'));
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
-const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}};
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(cb){Promise.resolve().then(cb);}};
 (async () => {
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
@@ -883,7 +890,7 @@ assert(!fetches.includes('/api/current'), 'non-selection refreshes reproduce the
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
-const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}};
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(cb){Promise.resolve().then(cb);}};
 (async () => {
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
@@ -933,7 +940,7 @@ assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
-const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(){}};
+const context = {module:{exports:{}}, console, URLSearchParams, requestAnimationFrame(cb){Promise.resolve().then(cb);}};
 (async () => {
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
@@ -1190,6 +1197,7 @@ function makeElement(tag){
     classList: {add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c)},
     append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
     replaceChildren(...nodes){this.children = []; this.append(...nodes);},
+    replaceWith(node){if(this.parentElement){const siblings=this.parentElement.children; const index=siblings.indexOf(this); if(index >= 0) siblings.splice(index, 1, node); if(node && typeof node === 'object') node.parentElement = this.parentElement;}},
     setAttribute(name, value){this.attributes[name] = String(value);}, removeAttribute(name){delete this.attributes[name];},
     getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}, stroke(){}, moveTo(){}, lineTo(){}, set fillStyle(_v){}, set strokeStyle(_v){}};},
     querySelector(){return null;}
@@ -1201,20 +1209,21 @@ elements.map.parentElement = makeElement('div');
 global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
 const frames = [];
 global.requestAnimationFrame = cb => frames.push(cb);
+function runNextFrame(){assert(frames.length, 'expected an animation frame callback'); frames.shift()();}
+async function waitFor(condition, message){for(let i=0;i<20;i++){if(condition()) return; await Promise.resolve();} assert(condition(), message);}
 const calls = [];
 const graph = {selected_mood:'', available_moods:[], metadata:{}, unpositioned:[], positioned:[{track_id:'a',display_label:'Alpha',x:{raw:0.5,normalized:0.5,scale:'native'},y:{raw:0.4,normalized:0.4,scale:'native'},z:{label:'BPM',raw:120,normalized:6,scale:'fixed'},mood_score:null,bpm:120,genres:[],reasons:[]}], edges:[]};
 global.fetch = async path => { calls.push(String(path)); return {ok:true, json: async () => path === '/api/state' ? {current_track_id:null} : path.startsWith('/api/tracks') ? {tracks:[{handle:'a',title:'Alpha',artist:'Artist'}]} : graph}; };
 (async () => {
   const promise = app.refresh();
   assert.match(elements['loading-status'].textContent, /Preparing/);
-  await Promise.resolve();
   assert.deepStrictEqual(calls, [], 'loading status must be paintable before network fetches start');
-  frames.shift()();
-  for (let i = 0; i < 8 && !/Rendering graph/.test(elements['loading-status'].textContent); i++) await Promise.resolve();
+  runNextFrame();
+  await waitFor(() => calls.length === 3 && /Rendering graph/.test(elements['loading-status'].textContent), 'refresh should fetch data and announce graph rendering after the first frame');
   assert.deepStrictEqual(calls, ['/api/state','/api/tracks?limit=all','/api/mood-axis-graph']);
   assert.match(elements['loading-status'].textContent, /Rendering graph: 1 positioned tracks/);
   assert.strictEqual(elements.map.width, 0, 'graph rendering waits for a frame after announcing the phase');
-  frames.shift()();
+  runNextFrame();
   await promise;
   assert(elements['library-loading'].classList.contains('done'));
   assert.strictEqual(elements['library-loading'].attributes['aria-busy'], 'false');
@@ -1232,22 +1241,33 @@ const elements = {};
 for (const id of ['library-loading','loading-status','loading-error','loading-retry','tracks','detail','map']) { elements[id] = makeElement(id === 'map' ? 'canvas' : 'div'); elements[id].id = id; }
 elements.map.parentElement = makeElement('div');
 global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
-global.requestAnimationFrame = cb => cb();
+const frames = [];
+global.requestAnimationFrame = cb => frames.push(cb);
+function runNextFrame(){assert(frames.length, 'expected an animation frame callback'); frames.shift()();}
+async function waitForPending(count){for(let i=0;i<20 && pending.length<count;i++) await Promise.resolve(); assert.strictEqual(pending.length, count, `expected ${count} pending fetches`);}
 const pending = [];
 global.fetch = path => new Promise((resolve, reject) => pending.push({path: String(path), resolve, reject}));
 const ok = body => ({ok:true, json: async () => body});
 const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [], selected_mood: '', metadata: {}};
 (async () => {
-  const first = app.refresh(); await Promise.resolve(); await Promise.resolve();
-  const second = app.refresh(); await Promise.resolve(); await Promise.resolve();
+  const first = app.refresh();
+  assert.strictEqual(pending.length, 0, 'first refresh waits for the paint frame before fetching');
+  runNextFrame();
+  await waitForPending(1);
+  const second = app.refresh();
+  assert.strictEqual(pending.length, 1, 'newer refresh also waits for its paint frame before fetching');
+  runNextFrame();
+  await waitForPending(2);
   pending[0].resolve(ok({current_track_id:'old'}));
   await first;
   assert(!elements['library-loading'].classList.contains('done'), 'stale refresh must not hide newer loading');
-  pending[1].resolve(ok({current_track_id:null})); await Promise.resolve(); await Promise.resolve();
-  pending[2].resolve(ok({tracks:[]})); await Promise.resolve(); await Promise.resolve();
+  pending[1].resolve(ok({current_track_id:null})); await waitForPending(3);
+  pending[2].resolve(ok({tracks:[]})); await waitForPending(4);
   pending[3].resolve(ok(graph)); await second;
   assert(elements['library-loading'].classList.contains('done'), 'newest refresh may clear loading');
-  const failing = app.refresh().catch(error => error); await Promise.resolve(); await Promise.resolve();
+  const failing = app.refresh().catch(error => error);
+  runNextFrame();
+  await waitForPending(5);
   pending[4].reject(new Error('network down'));
   const error = await failing;
   assert.match(error.message, /network down/);
