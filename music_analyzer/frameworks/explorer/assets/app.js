@@ -88,6 +88,11 @@ function clearLoading(refreshToken){
   if(retry) retry.hidden=true;
   return true;
 }
+function abortStaleRefresh(refreshToken,selectionToken){
+  if(refreshToken!==refreshRequestSeq) return true;
+  if(selectionToken!==selectionRequestSeq){clearLoading(refreshToken); return true;}
+  return false;
+}
 async function api(path, options){const r=await fetch(path, options); if(!r.ok) throw new Error(await r.text()); return r.json();}
 function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
 function updateSelectedTrackVisuals(){
@@ -129,16 +134,16 @@ async function refresh(){
   try{
     setLoadingPhase(refreshToken,'Preparing library view');
     await nextFrame();
-    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    if(abortStaleRefresh(refreshToken,token)) return;
     setLoadingPhase(refreshToken,'Loading library state');
     const refreshedState=syncSelectionEpoch(await api('/api/state'));
-    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    if(abortStaleRefresh(refreshToken,token)) return;
     setLoadingPhase(refreshToken,'Loading tracks');
     const list=await api('/api/tracks?limit=all');
-    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    if(abortStaleRefresh(refreshToken,token)) return;
     setLoadingPhase(refreshToken,'Loading graph');
     const graph=await api('/api/mood-axis-graph'+graphQueryFromControls());
-    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    if(abortStaleRefresh(refreshToken,token)) return;
     state={...refreshedState,current_track_id:pendingSelectionIntent||refreshedState.current_track_id};
     setLoadingPhase(refreshToken,'Rendering tracks',`${(list.tracks||[]).length} tracks loaded`);
     renderTracks(list.tracks);
@@ -147,12 +152,13 @@ async function refresh(){
     visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls);
     setLoadingPhase(refreshToken,'Rendering graph',`${visibleGraph.nodes.length} positioned tracks`);
     await nextFrame();
-    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    if(abortStaleRefresh(refreshToken,token)) return;
     renderMap(visibleGraph);
     await refreshSelectionDependent(token);
-    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    if(abortStaleRefresh(refreshToken,token)) return;
     clearLoading(refreshToken);
   }catch(error){
+    if(abortStaleRefresh(refreshToken,token)) return;
     setLoadingError(refreshToken,error&&error.message?error.message:error);
     throw error;
   }
