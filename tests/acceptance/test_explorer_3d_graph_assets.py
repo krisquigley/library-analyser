@@ -389,18 +389,21 @@ assert(!text.includes('Color relative to this library'), text);
 assert.strictEqual(elements['graph-info'].textContent, '');
 app.renderInitialDetail(graphModel);
 text = elements.detail.innerText;
-assert(text.includes('All-library valence / arousal / BPM graph'), text);
-assert(text.includes('Showing 1 positioned tracks and 1 unpositioned tracks'), text);
+assert.strictEqual(text, '', text);
+assert(!text.includes('All-library valence / arousal / BPM graph'), text);
+assert(!text.includes('Showing 1 positioned tracks and 1 unpositioned tracks'), text);
 assert(!text.includes('Graph key / status'), text);
 assert(!text.includes('positioned tracks ·'), text);
 assert(!text.includes('Color relative to this library'), text);
-assert(text.includes('3d-force-graph is bundled locally'), text);
+assert(!text.includes('3d-force-graph is bundled locally'), text);
 assert(!text.includes('fixed 20 BPM'), text);
 assert(!text.includes('selected mood'), text);
 assert(!text.includes('sample-relative'), text);
-assert(text.includes('Missing: no mood'), text);
+assert(!text.includes('Missing: no mood'), text);
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for color behavior tests')
     def test_library_relative_color_legend_and_selection_survive_filters_and_mood_changes(self):
@@ -1046,30 +1049,39 @@ assert(!legend.includes('undefined'), legend);
             self.assertIn('.min', source)
             self.assertIn('.max', source)
 
-    def test_initial_detail_omits_graph_key_and_status_without_selection(self):
+    def test_initial_detail_is_empty_without_selection_in_both_explorer_packages(self):
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
 const context = {module:{exports:{}}, console};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-function element(tag){return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}};}
+function element(tag){return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes; this.textContent = '';}};}
 const detail = element('section');
 context.document = {createElement: element, getElementById(id){return id === 'detail' ? detail : null;}};
-vm.runInContext("visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}]}", context);
-context.renderInitialDetail({nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', reasons:['missing bpm']}], colorRanges:{valence:[-1,1], arousal:[0,2]}, selectedMood:'calm'});
+vm.runInContext("visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', display_label:'Missing', reasons:['missing bpm']}]}", context);
+context.renderInitialDetail({nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', display_label:'Missing', reasons:['missing bpm']}], colorRanges:{valence:[-1,1], arousal:[0,2]}, selectedMood:'calm'});
 const rendered = (function all(node){return [node.textContent,...(node.children||[]).flatMap(all)];})(detail).join(' ');
-assert(rendered.includes('All-library valence / arousal / BPM graph'), rendered);
+assert.strictEqual(rendered.trim(), '', rendered);
+assert(!rendered.includes('All-library valence / arousal / BPM graph'), rendered);
+assert(!rendered.includes('Showing'), rendered);
+assert(!rendered.includes('missing bpm'), rendered);
+assert(!rendered.includes('Missing'), rendered);
 assert(!rendered.includes('Graph key / status'), rendered);
 assert(!rendered.includes('Color relative to this library'), rendered);
 """
         if shutil.which('node'):
-            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+            for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+                with self.subTest(app=app):
+                    subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
         else:
-            source = APP_JS.read_text(encoding='utf-8')
-            initial_source = source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')]
-            self.assertNotIn('Graph key / status', initial_source)
-            self.assertNotIn('graphStatusParagraph(visibleGraph)', initial_source)
+            for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+                source = app.read_text(encoding='utf-8')
+                initial_source = source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')]
+                self.assertNotIn('Graph key / status', initial_source)
+                self.assertNotIn('graphStatusParagraph(visibleGraph)', initial_source)
+                self.assertNotIn('All-library valence / arousal / BPM graph', initial_source)
+                self.assertNotIn('unpositioned', initial_source)
 
     def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
