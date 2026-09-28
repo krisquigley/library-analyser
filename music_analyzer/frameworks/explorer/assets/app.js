@@ -17,6 +17,9 @@ let selectionEpoch=0;
 let refreshRequestSeq=0;
 let selectionDetailRequestSeq=0;
 let pendingSelectionIntent=null;
+let loadingRefreshToken=0;
+let lastRefreshError=null;
+let hasCompletedInitialRefresh=false;
 function sessionStorageNumber(key){
   try{
     if(typeof sessionStorage!=='undefined'){
@@ -51,6 +54,40 @@ function syncSelectionEpoch(snapshot){
 function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null;}
 async function applyHistorySelection(path){const token=++selectionRequestSeq; pendingSelectionIntent=null; const posted=syncSelectionEpoch(await api(path,{method:'POST'})); if(token!==selectionRequestSeq) return; state=posted; await refresh();}
 function text(el,value){el.textContent=value==null?'':String(value);return el;}
+function nextFrame(){return new Promise(resolve=>{if(typeof requestAnimationFrame==='function') requestAnimationFrame(()=>resolve()); else setTimeout(resolve,0);});}
+function loadingElements(){return {surface:typeof document!=='undefined'?(document.getElementById('library-loading')||document.getElementById('loading-surface')):null,status:typeof document!=='undefined'?document.getElementById('loading-status'):null,error:typeof document!=='undefined'?document.getElementById('loading-error'):null,retry:typeof document!=='undefined'?document.getElementById('loading-retry'):null};}
+function setLoadingClass(surface,state){if(!surface) return; if(surface.classList){surface.classList.remove('active'); surface.classList.remove('refresh'); surface.classList.remove('error'); surface.classList.remove('done'); if(state) surface.classList.add(state);} else surface.className=state?'loading-surface '+state:'loading-surface';}
+function setLoadingPhase(refreshToken,phase,detail){
+  if(refreshToken!==refreshRequestSeq) return false;
+  loadingRefreshToken=refreshToken;
+  lastRefreshError=null;
+  const {surface,status,error,retry}=loadingElements();
+  if(surface){surface.hidden=false; setLoadingClass(surface,hasCompletedInitialRefresh?'refresh':'active'); surface.setAttribute('aria-busy','true');}
+  if(status){text(status,detail?`${phase}: ${detail}`:phase); status.removeAttribute('role'); status.setAttribute('role','status');}
+  if(error){error.hidden=true; text(error,'');}
+  if(retry) retry.hidden=true;
+  return true;
+}
+function setLoadingError(refreshToken,message){
+  if(refreshToken!==refreshRequestSeq) return false;
+  lastRefreshError=String(message||'Loading failed');
+  const {surface,status,error,retry}=loadingElements();
+  if(surface){surface.hidden=false; setLoadingClass(surface,'error'); surface.setAttribute('aria-busy','false');}
+  if(status) text(status,'Unable to load library');
+  if(error){error.hidden=false; error.setAttribute('role','alert'); text(error,lastRefreshError);}
+  if(retry){retry.hidden=false; retry.onclick=()=>refresh().catch(()=>{});}
+  return true;
+}
+function clearLoading(refreshToken){
+  if(refreshToken!==refreshRequestSeq) return false;
+  const {surface,status,error,retry}=loadingElements();
+  if(surface){surface.setAttribute('aria-busy','false'); setLoadingClass(surface,'done'); surface.hidden=true;}
+  hasCompletedInitialRefresh=true;
+  if(status) text(status,'Library loaded');
+  if(error){error.hidden=true; text(error,'');}
+  if(retry) retry.hidden=true;
+  return true;
+}
 async function api(path, options){const r=await fetch(path, options); if(!r.ok) throw new Error(await r.text()); return r.json();}
 function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
 function updateSelectedTrackVisuals(){
@@ -86,7 +123,40 @@ async function setCurrent(id){
   await refreshSelectionDependent(token);
 }
 function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGraphControls.mood) p.set('mood',selectedGraphControls.mood); const q=p.toString(); return q?'?'+q:'';}
-async function refresh(){const refreshToken=++refreshRequestSeq; const token=selectionRequestSeq; const refreshedState=syncSelectionEpoch(await api('/api/state')); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; const list=await api('/api/tracks?limit=all'); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return; state={...refreshedState,current_track_id:pendingSelectionIntent||refreshedState.current_track_id}; renderTracks(list.tracks); graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); renderMap(visibleGraph); await refreshSelectionDependent(token);}
+async function refresh(){
+  const refreshToken=++refreshRequestSeq;
+  const token=selectionRequestSeq;
+  try{
+    setLoadingPhase(refreshToken,'Preparing library view');
+    await nextFrame();
+    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    setLoadingPhase(refreshToken,'Loading library state');
+    const refreshedState=syncSelectionEpoch(await api('/api/state'));
+    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    setLoadingPhase(refreshToken,'Loading tracks');
+    const list=await api('/api/tracks?limit=all');
+    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    setLoadingPhase(refreshToken,'Loading graph');
+    const graph=await api('/api/mood-axis-graph'+graphQueryFromControls());
+    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    state={...refreshedState,current_track_id:pendingSelectionIntent||refreshedState.current_track_id};
+    setLoadingPhase(refreshToken,'Rendering tracks',`${(list.tracks||[]).length} tracks loaded`);
+    renderTracks(list.tracks);
+    graphModel=buildMoodGraphModel(graph);
+    syncGraphControlOptions(graphModel);
+    visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls);
+    setLoadingPhase(refreshToken,'Rendering graph',`${visibleGraph.nodes.length} positioned tracks`);
+    await nextFrame();
+    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    renderMap(visibleGraph);
+    await refreshSelectionDependent(token);
+    if(refreshToken!==refreshRequestSeq || token!==selectionRequestSeq) return;
+    clearLoading(refreshToken);
+  }catch(error){
+    setLoadingError(refreshToken,error&&error.message?error.message:error);
+    throw error;
+  }
+}
 function trackTitle(t){return t.title||t.display_label||t.handle;}
 function trackArtist(t){return t.artist||'Unknown artist';}
 function renderTracks(tracks){const root=document.getElementById('tracks'); if(!root) return; const table=document.createElement('table'); table.className='tracks-table'; const thead=document.createElement('thead'); const headRow=document.createElement('tr'); for(const label of ['Title','Artist']) headRow.append(text(document.createElement('th'),label)); thead.append(headRow); const tbody=document.createElement('tbody'); const empty=document.createElement('p'); empty.id='track-search-empty'; empty.className='muted'; empty.setAttribute('role','status'); text(empty,'No tracks match your search'); empty.hidden=true; const rows=tracks.map(t=>{const row=document.createElement('tr'); row.dataset.trackId=t.handle; row.dataset.title=trackTitle(t); row.dataset.artist=trackArtist(t); row.className=t.handle===state.current_track_id?'current':''; const titleCell=document.createElement('td'); const button=document.createElement('button'); text(button,trackTitle(t)); button.onclick=()=>setCurrent(t.handle); if(row.className) button.setAttribute('aria-current','true'); titleCell.append(button); const artistCell=text(document.createElement('td'),trackArtist(t)); row.append(titleCell,artistCell); return row;}); tbody.replaceChildren(...rows); table.append(thead,tbody); root.replaceChildren(table,empty); const search=document.getElementById('track-search'); if(search){search.oninput=()=>filterTrackRows(search.value,tbody,empty); filterTrackRows(search.value,tbody,empty);}}
@@ -280,10 +350,10 @@ function clearGraphFilters(){selectedGraphControls={...selectedGraphControls,bpm
 function buildGraphControls(root){const moodFs=document.createElement('fieldset'); moodFs.id='mood-tracker-controls'; const moodLegend=document.createElement('legend'); text(moodLegend,'Selected mood strength'); moodFs.append(moodLegend); const mood=document.createElement('select'); mood.id='selected-mood'; mood.onchange=()=>{selectedGraphControls.mood=mood.value; refresh();}; moodFs.append(text(document.createElement('label'),'Mood tracker score label '),mood); root.append(moodFs); const fs=document.createElement('fieldset'); fs.id='graph-controls'; const legend=document.createElement('legend'); text(legend,'Graph filters'); fs.append(legend); const min=document.createElement('input'); min.id='bpm-min'; min.type='number'; min.placeholder='min BPM'; min.setAttribute('aria-label','Minimum BPM'); const max=document.createElement('input'); max.id='bpm-max'; max.type='number'; max.placeholder='max BPM'; max.setAttribute('aria-label','Maximum BPM'); for(const input of [min,max]) input.onchange=()=>{selectedGraphControls.bpmMin=min.value===''?null:Number(min.value); selectedGraphControls.bpmMax=max.value===''?null:Number(max.value); refresh();}; fs.append(min,max); const genres=document.createElement('select'); genres.id='genre-filter'; genres.multiple=true; genres.size=4; genres.onchange=()=>{selectedGraphControls.genres=Array.from(genres.selectedOptions).map(o=>o.value); refresh();}; fs.append(text(document.createElement('label'),' Genres ANY '),genres); const clear=document.createElement('button'); clear.id='clear-graph-filters'; clear.type='button'; text(clear,'Clear graph filters'); clear.onclick=()=>{clearGraphFilters(); min.value=''; max.value=''; refresh();}; fs.append(clear); root.append(fs);}
 function syncGraphControlOptions(model){const mood=document.getElementById('selected-mood'); if(mood){const current=selectedGraphControls.mood||model.selectedMood||''; mood.replaceChildren(...(model.availableMoods.length?model.availableMoods:['']).map(m=>{const o=document.createElement('option'); o.value=m; text(o,m||'No supported moods'); o.selected=m===current; return o;})); selectedGraphControls.mood=current&&model.availableMoods.includes(current)?current:(model.selectedMood||'');} const genres=document.getElementById('genre-filter'); if(genres){const selected=new Set(selectedGraphControls.genres||[]); genres.replaceChildren(...model.genreOptions.map(g=>{const o=document.createElement('option'); o.value=g; text(o,g); o.selected=selected.has(g); return o;}));}}
 function wireCanvas(){/* 3d-force-graph owns orbit/pick controls. */}
-if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset'); buildControls(); wireCanvas(); refresh().catch(e=>text(document.getElementById('detail'),e.message));}
+if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); wireCanvas(); refresh().catch(()=>{});}
 function setGraphModelForTesting(model){graphModel=model;}
 function setStateForTesting(next){state={...state,...next};}
 function setVisibleGraphForTesting(model){visibleGraph=model;}
 function setGraphControlsForTesting(controls){selectedGraphControls={...selectedGraphControls,...controls,genres:[...((controls&&controls.genres)||selectedGraphControls.genres||[])]};}
 function getGraphControlsForTesting(){return {...selectedGraphControls,genres:[...(selectedGraphControls.genres||[])]};}
-if(typeof module!=='undefined'){module.exports={detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,selectionClientId,syncSelectionEpoch,renderInitialDetail,renderDetail,renderTrackMetadata,setGraphModelForTesting,setVisibleGraphForTesting,setStateForTesting,renderTracks,graphRelatednessLegend,relatednessLinkAlpha,buildGraphControls,syncGraphControlOptions,clearGraphFilters,setGraphControlsForTesting,getGraphControlsForTesting};}
+if(typeof module!=='undefined'){module.exports={refresh,setLoadingPhase,setLoadingError,clearLoading,nextFrame,detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,selectionClientId,syncSelectionEpoch,renderInitialDetail,renderDetail,renderTrackMetadata,setGraphModelForTesting,setVisibleGraphForTesting,setStateForTesting,renderTracks,graphRelatednessLegend,relatednessLinkAlpha,buildGraphControls,syncGraphControlOptions,clearGraphFilters,setGraphControlsForTesting,getGraphControlsForTesting};}

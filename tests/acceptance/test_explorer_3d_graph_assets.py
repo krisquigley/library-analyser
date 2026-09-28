@@ -1178,5 +1178,87 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
             self.assertIn('fieldDisplay', source[source.index('module.exports'):])
 
 
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for loading screen DOM tests')
+    def test_loading_screen_yields_before_fetch_rendering_graph_and_reports_honest_stages(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  const classes = new Set();
+  return {tagName: tag.toUpperCase(), children: [], parentElement: null, attributes: {}, dataset: {}, style: {}, id: '', hidden: false, value: '', selectedOptions: [], textContent: '', onclick: null, clientWidth: 900, clientHeight: 700, width: 0, height: 0,
+    classList: {add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c)},
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children = []; this.append(...nodes);},
+    setAttribute(name, value){this.attributes[name] = String(value);}, removeAttribute(name){delete this.attributes[name];},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}, stroke(){}, moveTo(){}, lineTo(){}, set fillStyle(_v){}, set strokeStyle(_v){}};},
+    querySelector(){return null;}
+  };
+}
+const elements = {};
+for (const id of ['library-loading','loading-status','loading-error','loading-retry','tracks','detail','map']) { elements[id] = makeElement(id === 'map' ? 'canvas' : 'div'); elements[id].id = id; }
+elements.map.parentElement = makeElement('div');
+global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
+const frames = [];
+global.requestAnimationFrame = cb => frames.push(cb);
+const calls = [];
+const graph = {selected_mood:'', available_moods:[], metadata:{}, unpositioned:[], positioned:[{track_id:'a',display_label:'Alpha',x:{raw:0.5,normalized:0.5,scale:'native'},y:{raw:0.4,normalized:0.4,scale:'native'},z:{label:'BPM',raw:120,normalized:6,scale:'fixed'},mood_score:null,bpm:120,genres:[],reasons:[]}], edges:[]};
+global.fetch = async path => { calls.push(String(path)); return {ok:true, json: async () => path === '/api/state' ? {current_track_id:null} : path.startsWith('/api/tracks') ? {tracks:[{handle:'a',title:'Alpha',artist:'Artist'}]} : graph}; };
+(async () => {
+  const promise = app.refresh();
+  assert.match(elements['loading-status'].textContent, /Preparing/);
+  await Promise.resolve();
+  assert.deepStrictEqual(calls, [], 'loading status must be paintable before network fetches start');
+  frames.shift()();
+  for (let i = 0; i < 8 && !/Rendering graph/.test(elements['loading-status'].textContent); i++) await Promise.resolve();
+  assert.deepStrictEqual(calls, ['/api/state','/api/tracks?limit=all','/api/mood-axis-graph']);
+  assert.match(elements['loading-status'].textContent, /Rendering graph: 1 positioned tracks/);
+  assert.strictEqual(elements.map.width, 0, 'graph rendering waits for a frame after announcing the phase');
+  frames.shift()();
+  await promise;
+  assert(elements['library-loading'].classList.contains('done'));
+  assert.strictEqual(elements['library-loading'].attributes['aria-busy'], 'false');
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for loading screen DOM tests')
+    def test_stale_refresh_and_errors_do_not_clear_newer_loading_and_retry_is_accessible(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){const classes = new Set(); return {tagName: tag.toUpperCase(), children: [], parentElement: null, attributes: {}, dataset: {}, style: {}, id: '', hidden: false, value: '', textContent: '', onclick: null, clientWidth: 900, clientHeight: 700, width: 0, height: 0, classList: {add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c)}, append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }}, replaceChildren(...nodes){this.children = []; this.append(...nodes);}, setAttribute(name, value){this.attributes[name] = String(value);}, removeAttribute(name){delete this.attributes[name];}, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}, stroke(){}, moveTo(){}, lineTo(){}};}, querySelector(){return null;}};}
+const elements = {};
+for (const id of ['library-loading','loading-status','loading-error','loading-retry','tracks','detail','map']) { elements[id] = makeElement(id === 'map' ? 'canvas' : 'div'); elements[id].id = id; }
+elements.map.parentElement = makeElement('div');
+global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
+global.requestAnimationFrame = cb => cb();
+const pending = [];
+global.fetch = path => new Promise((resolve, reject) => pending.push({path: String(path), resolve, reject}));
+const ok = body => ({ok:true, json: async () => body});
+const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [], selected_mood: '', metadata: {}};
+(async () => {
+  const first = app.refresh(); await Promise.resolve(); await Promise.resolve();
+  const second = app.refresh(); await Promise.resolve(); await Promise.resolve();
+  pending[0].resolve(ok({current_track_id:'old'}));
+  await first;
+  assert(!elements['library-loading'].classList.contains('done'), 'stale refresh must not hide newer loading');
+  pending[1].resolve(ok({current_track_id:null})); await Promise.resolve(); await Promise.resolve();
+  pending[2].resolve(ok({tracks:[]})); await Promise.resolve(); await Promise.resolve();
+  pending[3].resolve(ok(graph)); await second;
+  assert(elements['library-loading'].classList.contains('done'), 'newest refresh may clear loading');
+  const failing = app.refresh().catch(error => error); await Promise.resolve(); await Promise.resolve();
+  pending[4].reject(new Error('network down'));
+  const error = await failing;
+  assert.match(error.message, /network down/);
+  assert.strictEqual(elements['library-loading'].attributes['aria-busy'], 'false');
+  assert.match(elements['loading-status'].textContent, /Unable to load/);
+  assert.strictEqual(elements['loading-retry'].hidden, false);
+  assert.strictEqual(typeof elements['loading-retry'].onclick, 'function');
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+
 if __name__ == '__main__':
     unittest.main()
