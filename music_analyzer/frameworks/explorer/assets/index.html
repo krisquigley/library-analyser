@@ -3,6 +3,14 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Track Journey Explorer</title><link rel="stylesheet" href="/style.css"></head>
 <body>
 <div id="graph-viewport" aria-label="Library-wide 3D graph"><canvas id="map"></canvas></div>
+<section id="loading-surface" class="loading-surface" aria-busy="true" aria-labelledby="loading-title">
+  <div class="loading-card">
+    <h2 id="loading-title">Loading library</h2>
+    <p id="loading-status" role="status" aria-live="polite">Preparing library view</p>
+    <p id="loading-error" role="alert" hidden></p>
+    <button id="loading-retry" type="button" hidden>Retry loading library</button>
+  </div>
+</section>
 <main class="overlay">
   <div class="left-dock">
     <header class="brand"><h1>Track Journey Explorer</h1><p>Personal read-only localhost view</p></header>
