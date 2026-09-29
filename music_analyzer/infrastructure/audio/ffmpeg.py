@@ -76,6 +76,6 @@ class FFmpegDecoder:
                 yield DecodedAudio(str(output), duration, 44100,
                                    identity.hexdigest() + ':' + pcm_identity)
         except subprocess.TimeoutExpired as error:
-            raise AnalysisError('FFmpeg decoding exceeded 120 seconds; no partial audio retained') from error
+            raise AnalysisError('FFmpeg decoding exceeded the bounded timeout; no partial audio retained') from error
         except OSError as error:
             raise AnalysisError(f'Unable to decode local audio: {error}') from error
