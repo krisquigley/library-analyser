@@ -129,7 +129,7 @@ class CatalogueTests(unittest.TestCase):
         class DurationMetadataReader:
             def read(self, location):
                 from music_analyzer.application.dto.catalogue import TrackMetadata
-                return TrackMetadata(duration_seconds=1199.5)
+                return TrackMetadata(duration_seconds=1199.5, duration_source='mutagen')
 
         (self.root/'timed.flac').write_bytes(b'audio bytes')
         repo = SQLiteAnalysisRepository(str(self.db))
@@ -137,7 +137,7 @@ class CatalogueTests(unittest.TestCase):
 
         self.assertEqual(result.files[0].metadata.duration_seconds, 1199.5)
         with closing(sqlite3.connect(self.db)) as db:
-            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio').fetchone(), (1199.5, '', 'eligible', ''))
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio').fetchone(), (1199.5, 'mutagen', 'eligible', ''))
 
     def test_metadata_reader_race_is_rejected_without_persisting_mismatched_identity(self):
         class ReplacingMetadataReader:

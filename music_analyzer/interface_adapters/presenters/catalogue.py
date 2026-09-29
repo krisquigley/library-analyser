@@ -1,6 +1,17 @@
 import json
 from dataclasses import asdict
-from music_analyzer.domain.catalogue import duration_exclusion_reason
+
+from music_analyzer.domain.library_duration_policy import DurationVerification, active_library_duration_policy
+
+
+def _duration_reason_and_unknown(metadata):
+    source = getattr(metadata, 'duration_source', '')
+    seconds = getattr(metadata, 'duration_seconds', None)
+    decision = active_library_duration_policy(DurationVerification(seconds, source) if source else None)
+    if decision.active:
+        return '', False
+    unknown = source not in {'mutagen', 'ffprobe'} or seconds is None
+    return decision.warning or '', unknown
 
 
 def present_scan(report, as_json=False):
@@ -9,10 +20,10 @@ def present_scan(report, as_json=False):
     unknown = []
     for file, original in zip(payload['files'], report.files):
         file['track_id'] = original.identity.track_id
-        reason = duration_exclusion_reason(original.metadata.duration_seconds)
+        reason, is_unknown = _duration_reason_and_unknown(original.metadata)
         if reason:
             file['active_exclusion_reason'] = reason
-            (unknown if original.metadata.duration_seconds is None else excluded).append((original, reason))
+            (unknown if is_unknown else excluded).append((original, reason))
     payload['active_exclusion_count'] = len(excluded)
     payload['duration_unknown_count'] = len(unknown)
     if as_json:

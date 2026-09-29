@@ -48,17 +48,21 @@ class ScanLibraryDurationPolicyTests(unittest.TestCase):
         too_long = File('/music/long.flac', self.identity('b'), metadata=Metadata(1200.1, 'ffprobe'))
         unknown = File('/music/unknown.flac', self.identity('c'), metadata=Metadata(None, 'mutagen'))
         textual_tag = File('/music/textual.flac', self.identity('d'), metadata=Metadata(30.0, 'textual-tag'))
+        blank_numeric = File('/music/blank.flac', self.identity('f'), metadata=Metadata(30.0, ''))
+        zero = File('/music/zero.flac', self.identity('0'), metadata=Metadata(0.0, 'mutagen'))
         repo = Catalogue()
 
-        report = ScanLibrary(Files(Inventory('/music', (included, too_long, unknown, textual_tag), (), True)), repo).execute('/music')
+        report = ScanLibrary(Files(Inventory('/music', (included, too_long, unknown, textual_tag, blank_numeric, zero), (), True)), repo).execute('/music')
 
-        self.assertEqual(tuple(file.location for file in repo.registered.files), ('/music/exact.flac', '/music/long.flac', '/music/unknown.flac', '/music/textual.flac'))
+        self.assertEqual(tuple(file.location for file in repo.registered.files), ('/music/exact.flac', '/music/long.flac', '/music/unknown.flac', '/music/textual.flac', '/music/blank.flac', '/music/zero.flac'))
         self.assertTrue(repo.registered.complete, 'scan registers catalogue identities/locations; active views filter eligibility')
         by_location = {file.location: file for file in report.files}
         self.assertEqual(by_location['/music/exact.flac'].metadata.warnings, ())
         self.assertTrue(any('>1200.0s' in warning for warning in by_location['/music/long.flac'].metadata.warnings))
         self.assertTrue(any('duration unverified' in warning for warning in by_location['/music/unknown.flac'].metadata.warnings))
         self.assertTrue(any('duration unverified' in warning for warning in by_location['/music/textual.flac'].metadata.warnings))
+        self.assertTrue(any('duration unverified' in warning for warning in by_location['/music/blank.flac'].metadata.warnings))
+        self.assertTrue(any('duration invalid' in warning for warning in by_location['/music/zero.flac'].metadata.warnings))
         self.assertEqual(report.missing, ('old-location',))
 
     def test_scan_issues_are_preserved_while_registering_unverified_identity_for_history(self):

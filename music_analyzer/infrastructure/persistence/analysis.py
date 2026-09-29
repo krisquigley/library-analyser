@@ -11,15 +11,47 @@ import sqlite3
 from uuid import uuid4
 
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
-from music_analyzer.domain.catalogue import duration_exclusion_reason
+from music_analyzer.domain.library_duration_policy import (
+    DurationVerification,
+    TRUSTED_DURATION_SOURCES,
+    UNKNOWN_DURATION_REASON,
+    active_library_duration_policy,
+)
+
+
+def _duration_decision(duration_seconds, source=''):
+    return active_library_duration_policy(DurationVerification(duration_seconds, source) if source else None)
 
 
 def _duration_eligibility_reason(duration_seconds, source=''):
-    # Empty source is accepted for legacy/internal callers that can only supply
-    # a measured numeric duration. Explicit non-measured/textual sources fail closed.
-    if source and source not in {'mutagen', 'ffprobe'}:
-        return 'Duration unknown; rescan with a readable measured audio duration before active-library use'
-    return duration_exclusion_reason(duration_seconds)
+    return _duration_decision(duration_seconds, source).warning or ''
+
+
+def _duration_status(duration_seconds, source=''):
+    decision = _duration_decision(duration_seconds, source)
+    if decision.active:
+        return 'eligible'
+    if source in TRUSTED_DURATION_SOURCES and duration_seconds is not None:
+        return 'excluded'
+    return 'unknown'
+
+
+def _coalesced_duration(file, files):
+    same_identity = tuple(candidate for candidate in files if candidate.identity.track_id == file.identity.track_id)
+    trusted = []
+    for candidate in same_identity:
+        source = getattr(candidate.metadata, 'duration_source', '')
+        seconds = candidate.metadata.duration_seconds
+        if source in TRUSTED_DURATION_SOURCES and _duration_decision(seconds, source).active:
+            trusted.append((float(seconds), source))
+    distinct = {seconds for seconds, _source in trusted}
+    if len(distinct) > 1:
+        raise AnalysisError('Conflicting trusted duration measurements for duplicate track identity; scan again')
+    if trusted:
+        seconds, source = sorted(trusted, key=lambda item: (item[0], item[1]))[0]
+        return seconds, source
+    return file.metadata.duration_seconds, getattr(file.metadata, 'duration_source', '')
+
 
 APPLICATION_ID = 0x4D414E41
 _COLUMNS = {
@@ -92,7 +124,7 @@ class SQLiteAnalysisRepository:
                     duration_source TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('eligible','excluded','unknown')),
                     reason TEXT NOT NULL)""")
-                db.execute("INSERT INTO track_audio(track_id,duration_seconds,duration_source,status,reason) SELECT id,NULL,'','unknown','Duration unknown; rescan with a readable measured audio duration before active-library use' FROM tracks")
+                db.execute("INSERT INTO track_audio(track_id,duration_seconds,duration_source,status,reason) SELECT id,NULL,'','unknown',? FROM tracks", (UNKNOWN_DURATION_REASON,))
                 for sql in _ACTIVE_VIEWS.values():
                     db.execute(sql)
                 db.execute('PRAGMA user_version=6')
@@ -173,7 +205,7 @@ class SQLiteAnalysisRepository:
     def _validate_track_audio_rows(self, db):
         for track_id, duration, source, status, reason in db.execute('SELECT track_id,duration_seconds,duration_source,status,reason FROM track_audio'):
             expected_reason = _duration_eligibility_reason(duration, source)
-            expected_status = 'eligible' if expected_reason == '' else ('unknown' if duration is None else 'excluded')
+            expected_status = _duration_status(duration, source)
             if status != expected_status or reason != expected_reason:
                 raise AnalysisError('Unexpected analysis database rows')
 
@@ -240,10 +272,9 @@ class SQLiteAnalysisRepository:
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
                 db.execute('INSERT INTO track_metadata VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET common_json=excluded.common_json,tags_json=excluded.tags_json,warnings_json=excluded.warnings_json',
                            (identity.track_id, json.dumps(file.metadata.common, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.tags, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.warnings, ensure_ascii=False, allow_nan=False)))
-                duration = file.metadata.duration_seconds
-                source = getattr(file.metadata, 'duration_source', '')
+                duration, source = _coalesced_duration(file, inventory.files)
                 reason = _duration_eligibility_reason(duration, source)
-                status = 'eligible' if reason == '' else ('unknown' if duration is None else 'excluded')
+                status = _duration_status(duration, source)
                 db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET duration_seconds=excluded.duration_seconds,duration_source=excluded.duration_source,status=excluded.status,reason=excluded.reason',
                            (identity.track_id, duration, source, status, reason))
             if inventory.complete:

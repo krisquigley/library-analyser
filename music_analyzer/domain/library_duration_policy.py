@@ -9,7 +9,9 @@ from music_analyzer.domain.analysis import finite
 
 
 ACTIVE_LIBRARY_MAX_DURATION_SECONDS = 1200.0
-_MEASURED_DURATION_SOURCES = {'mutagen', 'ffprobe'}
+TRUSTED_DURATION_SOURCES = {'mutagen', 'ffprobe'}
+UNKNOWN_DURATION_REASON = 'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata'
+INVALID_DURATION_REASON = 'duration invalid; excluded from active library until mutagen/ffprobe verifies a positive finite duration; rescan audio metadata'
 
 
 @dataclass(frozen=True)
@@ -31,12 +33,10 @@ def active_library_duration_policy(verification: DurationVerification | None) ->
     ffprobe probe. Exactly 1200.0 seconds is allowed; values strictly greater
     than 1200.0 seconds are excluded.
     """
-    if (verification is None or verification.source not in _MEASURED_DURATION_SOURCES
-            or verification.seconds is None or not finite(verification.seconds) or verification.seconds <= 0):
-        return ActiveLibraryDurationDecision(
-            False,
-            'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata',
-        )
+    if verification is None or verification.source not in TRUSTED_DURATION_SOURCES or verification.seconds is None:
+        return ActiveLibraryDurationDecision(False, UNKNOWN_DURATION_REASON)
+    if not finite(verification.seconds) or verification.seconds <= 0:
+        return ActiveLibraryDurationDecision(False, INVALID_DURATION_REASON)
     if verification.seconds > ACTIVE_LIBRARY_MAX_DURATION_SECONDS:
         return ActiveLibraryDurationDecision(
             False,

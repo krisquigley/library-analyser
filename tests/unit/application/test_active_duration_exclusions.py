@@ -14,15 +14,15 @@ TOO_LONG = 'sha256:' + 'b' * 64
 UNKNOWN = 'sha256:' + 'c' * 64
 
 
-def record(track_id, duration):
+def record(track_id, duration, source):
     return ExplorerStoredTrack(track_id, track_id.split(':', 1)[1], 1, track_id[-6:] + '.flac', 1,
                                AnalysisReport('run-' + track_id[-1], 'completed', ()), (),
-                               TrackMetadata(duration_seconds=duration))
+                               TrackMetadata(duration_seconds=duration, duration_source=source))
 
 
 class ExplorerRepo:
     def __init__(self):
-        self.records = (record(INCLUDED, 1200.0), record(TOO_LONG, 1200.01), record(UNKNOWN, None))
+        self.records = (record(INCLUDED, 1200.0, 'mutagen'), record(TOO_LONG, 1200.01, 'mutagen'), record(UNKNOWN, None, ''))
 
     def metadata(self):
         return {'application_id': 0x4D414E41, 'schema_version': 6, 'read_policy': 'bounded_read_transaction'}
@@ -63,9 +63,9 @@ class ActiveDurationExclusionTests(unittest.TestCase):
         self.assertEqual(listed.metadata.track_count, 1)
 
         long_detail = GetExplorerTrackDetail(repo).execute(TOO_LONG)
-        self.assertIn('Excluded from active library: Duration 1200.010s exceeds active-library limit of 1200.0s', long_detail.reasons)
+        self.assertIn('Excluded from active library: duration 1200.010s >1200.0s; excluded from active library; rescan metadata or choose a shorter file', long_detail.reasons)
         unknown_detail = GetExplorerTrackDetail(repo).execute(UNKNOWN)
-        self.assertIn('Excluded from active library: Duration unknown; rescan with a readable measured audio duration before active-library use', unknown_detail.reasons)
+        self.assertIn('Excluded from active library: duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata', unknown_detail.reasons)
 
     def test_batch_uses_active_tracks_and_selected_track_cannot_bypass_with_retry_or_force(self):
         queue = BatchQueue()

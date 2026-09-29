@@ -44,10 +44,18 @@ class AnalyzeCLITests(unittest.TestCase):
 
     def test_setup_error_is_json_without_claiming_a_run(self):
         from music_analyzer.application.dto.analysis import AnalysisError
-        with patch('music_analyzer.frameworks.cli.main.build_analysis', side_effect=AnalysisError('TensorFlow required')):
+        with patch('music_analyzer.frameworks.cli.main.build_analysis', side_effect=AnalysisError('TensorFlow required')), patch('music_analyzer.frameworks.cli.main.MutagenMetadataReader.read', return_value=TrackMetadata(duration_seconds=60.0, duration_source='mutagen')):
             out = io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(main(['analyze', '--file', 'x', '--json']), 1)
             data = json.loads(out.getvalue())
             self.assertIsNone(data['run_id'])
             self.assertIn('TensorFlow', data['detail'])
+
+    def test_explicit_file_duration_preflight_runs_before_analysis_build(self):
+        with patch('music_analyzer.frameworks.cli.main.MutagenMetadataReader.read', return_value=TrackMetadata(duration_seconds=60.0, duration_source='')), patch('music_analyzer.frameworks.cli.main.build_analysis') as build:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(main(['analyze', '--file', '/tmp/example.flac', '--json']), 1)
+            build.assert_not_called()
+            self.assertIn('not eligible', json.loads(out.getvalue())['detail'])

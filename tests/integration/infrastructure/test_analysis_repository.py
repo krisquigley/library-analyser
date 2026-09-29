@@ -142,17 +142,17 @@ class AnalysisRepositoryTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT path,track_id,available FROM locations').fetchone(), ('/music/old.flac', track_id, 1))
             self.assertEqual(db.execute('SELECT state,attempts,run_id,detail FROM batch_jobs').fetchone(), ('failed', 2, 'run', 'keep'))
             self.assertEqual(db.execute('SELECT field,value FROM overrides').fetchone(), ('key', 'C'))
-            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (track_id,)).fetchone(), (None, '', 'unknown', 'Duration unknown; rescan with a readable measured audio duration before active-library use'))
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (track_id,)).fetchone(), (None, '', 'unknown', 'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata'))
             self.assertEqual(db.execute('SELECT count(*) FROM active_tracks').fetchone()[0], 0)
 
     def test_register_backfills_existing_track_duration_eligibility_without_changing_identity(self):
         repository = SQLiteAnalysisRepository(str(self.path))
         identity = FileIdentity('c' * 64, 123)
-        repository.register(Inventory('/music', (ScannedFile('/music/song.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=None)),), (), True))
-        repository.register(Inventory('/music', (ScannedFile('/music/song.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=1200.0)),), (), True))
+        repository.register(Inventory('/music', (ScannedFile('/music/song.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=None, duration_source='mutagen')),), (), True))
+        repository.register(Inventory('/music', (ScannedFile('/music/song.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=1200.0, duration_source='mutagen')),), (), True))
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM tracks').fetchone()[0], 1)
-            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone(), (1200.0, '', 'eligible', ''))
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone(), (1200.0, 'mutagen', 'eligible', ''))
             self.assertEqual(db.execute('SELECT id FROM active_tracks').fetchone(), (identity.track_id,))
 
     def test_register_marks_long_and_unknown_tracks_inactive_but_preserves_locations(self):
@@ -160,14 +160,61 @@ class AnalysisRepositoryTests(unittest.TestCase):
         long_id = FileIdentity('d' * 64, 123)
         unknown_id = FileIdentity('e' * 64, 123)
         repository.register(Inventory('/music', (
-            ScannedFile('/music/long.flac', long_id, 1, 'flac', TrackMetadata(duration_seconds=1200.001)),
+            ScannedFile('/music/long.flac', long_id, 1, 'flac', TrackMetadata(duration_seconds=1200.001, duration_source='ffprobe')),
             ScannedFile('/music/unknown.flac', unknown_id, 1, 'flac', TrackMetadata(warnings=('duration unavailable; excluded from active library',))),
         ), (), True))
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM locations').fetchone()[0], 2)
-            self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (long_id.track_id,)).fetchone(), ('excluded', 'Duration 1200.001s exceeds active-library limit of 1200.0s'))
-            self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (unknown_id.track_id,)).fetchone(), ('unknown', 'Duration unknown; rescan with a readable measured audio duration before active-library use'))
+            self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (long_id.track_id,)).fetchone(), ('excluded', 'duration 1200.001s >1200.0s; excluded from active library; rescan metadata or choose a shorter file'))
+            self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (unknown_id.track_id,)).fetchone(), ('unknown', 'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata'))
             self.assertEqual(db.execute('SELECT count(*) FROM active_locations').fetchone()[0], 0)
+
+    def test_register_fails_closed_for_numeric_blank_source_and_zero_duration(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        blank_id = FileIdentity('1' * 64, 123)
+        zero_id = FileIdentity('2' * 64, 123)
+
+        repository.register(Inventory('/music', (
+            ScannedFile('/music/blank.flac', blank_id, 1, 'flac', TrackMetadata(duration_seconds=119.0, duration_source='')),
+            ScannedFile('/music/zero.flac', zero_id, 1, 'flac', TrackMetadata(duration_seconds=0.0, duration_source='mutagen')),
+        ), (), True))
+
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status FROM track_audio WHERE track_id=?', (blank_id.track_id,)).fetchone(), (119.0, '', 'unknown'))
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status FROM track_audio WHERE track_id=?', (zero_id.track_id,)).fetchone(), (0.0, 'mutagen', 'excluded'))
+            self.assertEqual(db.execute('SELECT count(*) FROM active_tracks').fetchone()[0], 0)
+
+    def test_duplicate_same_identity_coalesces_trusted_duration_regardless_scan_order(self):
+        identity = FileIdentity('3' * 64, 123)
+        for files in (
+            (
+                ScannedFile('/music/trusted.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=300.0, duration_source='mutagen')),
+                ScannedFile('/music/transient-failure.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=None, duration_source='')),
+            ),
+            (
+                ScannedFile('/music/transient-failure.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=None, duration_source='')),
+                ScannedFile('/music/trusted.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=300.0, duration_source='mutagen')),
+            ),
+        ):
+            self.path.unlink(missing_ok=True)
+            repository = SQLiteAnalysisRepository(str(self.path))
+            repository.register(Inventory('/music', files, (), True))
+            with closing(sqlite3.connect(self.path)) as db:
+                self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone(), (300.0, 'mutagen', 'eligible', ''))
+                self.assertEqual(db.execute('SELECT count(*) FROM locations WHERE track_id=?', (identity.track_id,)).fetchone()[0], 2)
+
+    def test_register_rejects_conflicting_trusted_duplicate_durations(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = FileIdentity('4' * 64, 123)
+
+        with self.assertRaisesRegex(AnalysisError, 'Conflicting trusted duration'):
+            repository.register(Inventory('/music', (
+                ScannedFile('/music/one.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=10.0, duration_source='mutagen')),
+                ScannedFile('/music/two.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=11.0, duration_source='ffprobe')),
+            ), (), True))
+
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertFalse(db.execute('SELECT 1 FROM track_audio').fetchone())
 
     def test_register_rejects_duplicate_track_identity_race_before_audio_backfill(self):
         repository = SQLiteAnalysisRepository(str(self.path))

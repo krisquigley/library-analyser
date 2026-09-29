@@ -270,12 +270,12 @@ def main(argv: list[str] | None = None) -> int:
             output, ready = present_batch(jobs, args.json, queue.ineligible_tracks()), not any(j.state == 'failed' for j in jobs)
         elif args.command == 'analyze':
             if args.file:
-                analysis = build_analysis(**overrides)
                 metadata = MutagenMetadataReader().read(args.file)
                 reason = active_exclusion_reason(metadata)
                 if reason:
                     raise ValueError('Explicit file is not eligible for active-library analysis: ' + reason)
                 source = AudioSource(args.file)
+                analysis = build_analysis(**overrides)
             else:
                 settings = load_settings(**overrides)
                 queue = SQLiteBatchQueue(settings.database)
