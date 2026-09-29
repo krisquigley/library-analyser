@@ -170,6 +170,17 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
+    def test_rejects_track_missing_track_audio_row_instead_of_trusting_active_view_inner_join(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + '8' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '8' * 64, 10))
+            db.execute('DELETE FROM track_audio WHERE track_id=?', (tid,))
+            db.commit(); db.close()
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
     def test_rejects_tampered_track_audio_rows_instead_of_trusting_active_view_status(self):
         for audio_update in (
             (119.0, '', 'eligible', ''),

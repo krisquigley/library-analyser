@@ -310,6 +310,9 @@ class ReadOnlyExplorerSQLiteRepository:
                     or track_id != f'sha256:{sha256}'
                     or not isinstance(size, int) or size < 0):
                 raise AnalysisError('Unexpected analysis database rows')
+        missing_audio = db.execute('SELECT 1 FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE a.track_id IS NULL LIMIT 1').fetchone()
+        if missing_audio:
+            raise AnalysisError('Unexpected analysis database rows')
         for duration, source, status, reason in db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio'):
             if status != _expected_audio_status(duration, source) or reason != _duration_warning(duration, source):
                 raise AnalysisError('Unexpected analysis database rows')

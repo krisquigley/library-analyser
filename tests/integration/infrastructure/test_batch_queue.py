@@ -15,7 +15,9 @@ class BatchQueueTests(unittest.TestCase):
         self.path = str(Path(self.temp.name) / 'analysis.sqlite')
         self.repo = SQLiteAnalysisRepository(self.path)
         with closing(sqlite3.connect(self.path)) as db:
-            db.execute("INSERT INTO tracks VALUES('a','hash',1)"); db.commit()
+            db.execute("INSERT INTO tracks VALUES('a','hash',1)")
+            db.execute("INSERT INTO track_audio VALUES('a',120.0,'mutagen','eligible','')")
+            db.commit()
 
     def test_v2_migration_preserves_runs_stages_and_catalogue(self):
         run = self.repo.start(AudioSource('fixture'))
@@ -59,6 +61,30 @@ class BatchQueueTests(unittest.TestCase):
         queue = SQLiteBatchQueue(self.path)
         self.assertEqual(queue.status(), ())
         with self.assertRaises(AnalysisError): queue.put_job(BatchJob('a', 'fp', 'oops'))
+
+    def test_ineligible_tracks_treats_missing_audio_row_as_ineligible(self):
+        missing = 'sha256:' + '8' * 64
+        eligible = 'sha256:' + '9' * 64
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute('DELETE FROM tracks')
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (missing, '8' * 64, 10))
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (eligible, '9' * 64, 10))
+            db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/music/missing.flac', missing, 1, 'flac', 1))
+            db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/music/eligible.flac', eligible, 1, 'flac', 1))
+            db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (eligible, 120.0, 'mutagen', 'eligible', ''))
+            db.commit()
+
+        class MissingAudioTolerantBatchQueue(SQLiteBatchQueue):
+            def __init__(self, path):
+                self._path = Path(path).absolute()
+                self._check_path()
+
+            def _validate(self, db, version=6):
+                pass
+
+        self.assertEqual(MissingAudioTolerantBatchQueue(self.path).ineligible_tracks(), {
+            missing: 'missing track audio eligibility row; rescan audio metadata',
+        })
 
     def test_worker_run_is_bound_before_stages_and_recovered(self):
         queue = SQLiteBatchQueue(self.path)

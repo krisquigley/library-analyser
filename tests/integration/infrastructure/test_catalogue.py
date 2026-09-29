@@ -7,7 +7,9 @@ from unittest.mock import patch
 from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository, APPLICATION_ID
 from music_analyzer.application.use_cases.scan_library import ScanLibrary, ResolveTrack
+from music_analyzer.application.dto.analysis import AnalysisError
 from music_analyzer.application.dto.catalogue import ScanLimits
+from music_analyzer.domain.catalogue import FileIdentity
 
 
 class CatalogueTests(unittest.TestCase):
@@ -154,3 +156,12 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(len(result.issues), 1)
         self.assertIn('File changed while hashing; scan again', result.issues[0].detail)
         self.assertFalse(tuple(repo.track_ids()))
+
+    def test_reopens_fail_closed_when_track_audio_row_is_missing(self):
+        SQLiteAnalysisRepository(str(self.db))
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            identity = FileIdentity('7' * 64, 70)
+            connection.execute('INSERT INTO tracks VALUES(?,?,?)', (identity.track_id, identity.sha256, identity.size))
+
+        with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+            SQLiteAnalysisRepository(str(self.db))

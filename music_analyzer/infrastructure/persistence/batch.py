@@ -54,7 +54,13 @@ class SQLiteBatchQueue(SQLiteAnalysisRepository):
 
     def ineligible_tracks(self):
         with self._transaction() as db:
-            return {track_id: reason for track_id, reason in db.execute("SELECT DISTINCT l.track_id,a.reason FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status!='eligible' ORDER BY l.track_id")}
+            return {track_id: reason for track_id, reason in db.execute("""
+                SELECT DISTINCT l.track_id,COALESCE(a.reason,'missing track audio eligibility row; rescan audio metadata')
+                FROM locations l
+                LEFT JOIN track_audio a ON a.track_id=l.track_id
+                WHERE l.available=1 AND (a.track_id IS NULL OR a.status!='eligible')
+                ORDER BY l.track_id
+            """)}
 
     def get_job(self, track_id):
         with self._transaction() as db:

@@ -31,6 +31,17 @@ CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.a
 
 
 class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
+    def test_rejects_missing_track_audio_row_for_each_track(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + '8' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '8' * 64, 10))
+            db.commit(); db.close()
+
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
     def test_rejects_tampered_track_audio_rows_instead_of_trusting_active_view_status(self):
         for audio_update in (
             (119.0, '', 'eligible', ''),

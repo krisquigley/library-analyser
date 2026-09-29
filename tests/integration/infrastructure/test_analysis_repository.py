@@ -230,6 +230,32 @@ class AnalysisRepositoryTests(unittest.TestCase):
             self.assertFalse(db.execute('SELECT 1 FROM track_audio').fetchone())
             self.assertFalse(db.execute('SELECT 1 FROM locations').fetchone())
 
+    def test_register_rejects_trusted_duplicate_duration_when_one_value_is_invalid_in_any_order(self):
+        identity = FileIdentity('6' * 64, 123)
+        invalid_values = (0.0, float('nan'), float('inf'), float('-inf'), 1300.0)
+        for invalid in invalid_values:
+            for files in (
+                (
+                    ScannedFile('/music/valid.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=300.0, duration_source='mutagen')),
+                    ScannedFile('/music/invalid.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=invalid, duration_source='ffprobe')),
+                ),
+                (
+                    ScannedFile('/music/invalid.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=invalid, duration_source='ffprobe')),
+                    ScannedFile('/music/valid.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=300.0, duration_source='mutagen')),
+                ),
+            ):
+                with self.subTest(invalid=invalid, order=tuple(file.location for file in files)):
+                    self.path.unlink(missing_ok=True)
+                    repository = SQLiteAnalysisRepository(str(self.path))
+
+                    with self.assertRaisesRegex(AnalysisError, 'Conflicting trusted duration'):
+                        repository.register(Inventory('/music', files, (), True))
+
+                    with closing(sqlite3.connect(self.path)) as db:
+                        self.assertFalse(db.execute('SELECT 1 FROM track_audio').fetchone())
+                        self.assertFalse(db.execute('SELECT 1 FROM locations').fetchone())
+                        self.assertFalse(db.execute('SELECT 1 FROM track_metadata').fetchone())
+
     def test_register_rejects_duplicate_track_identity_race_before_audio_backfill(self):
         repository = SQLiteAnalysisRepository(str(self.path))
         first = ScannedFile('/music/one.flac', FileIdentity('f' * 64, 1), 1, 'flac', TrackMetadata(duration_seconds=60))

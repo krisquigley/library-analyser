@@ -40,6 +40,7 @@ def _duration_status(duration_seconds, source=''):
 def _coalesced_duration(file, files):
     same_identity = tuple(candidate for candidate in files if candidate.identity.track_id == file.identity.track_id)
     trusted = []
+    invalid_trusted = False
     for candidate in same_identity:
         source = getattr(candidate.metadata, 'duration_source', '')
         seconds = candidate.metadata.duration_seconds
@@ -47,8 +48,10 @@ def _coalesced_duration(file, files):
             seconds = float(seconds)
             if isfinite(seconds) and seconds > 0:
                 trusted.append((seconds, source))
+            else:
+                invalid_trusted = True
     distinct = {seconds for seconds, _source in trusted}
-    if len(distinct) > 1:
+    if len(distinct) > 1 or (invalid_trusted and trusted):
         raise AnalysisError('Conflicting trusted duration measurements for duplicate track identity; scan again')
     if trusted:
         seconds, source = sorted(trusted, key=lambda item: (item[0], item[1]))[0]
@@ -206,6 +209,8 @@ class SQLiteAnalysisRepository:
             self._validate_track_audio_rows(db)
 
     def _validate_track_audio_rows(self, db):
+        if db.execute('SELECT 1 FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE a.track_id IS NULL LIMIT 1').fetchone():
+            raise AnalysisError('Unexpected analysis database rows')
         for track_id, duration, source, status, reason in db.execute('SELECT track_id,duration_seconds,duration_source,status,reason FROM track_audio'):
             expected_reason = _duration_eligibility_reason(duration, source)
             expected_status = _duration_status(duration, source)
