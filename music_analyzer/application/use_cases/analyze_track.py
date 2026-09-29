@@ -1,6 +1,6 @@
 from music_analyzer.application.dto.analysis import AnalysisError, AnalysisReport, AudioSource
 from music_analyzer.application.ports.analysis import AudioDecoder, AnalysisEngine, AnalysisRepository
-from music_analyzer.domain.analysis import finite
+from music_analyzer.domain.analysis import MAX_ANALYSIS_DURATION_SECONDS, finite
 
 
 class AnalyzeTrack:
@@ -14,8 +14,10 @@ class AnalyzeTrack:
         self._decoder, self._engine, self._repository = decoder, engine, repository
 
     def execute(self, source: AudioSource, max_duration: float = 900) -> AnalysisReport:
-        if not finite(max_duration) or not 0 < max_duration <= 3600:
-            raise ValueError('Maximum duration must be positive and at most 3600 seconds')
+        if not finite(max_duration) or not 0 < max_duration <= MAX_ANALYSIS_DURATION_SECONDS:
+            raise ValueError(
+                f'Maximum duration must be positive and at most {MAX_ANALYSIS_DURATION_SECONDS} seconds'
+            )
         run_id = self._repository.start(source)
         results = []
         current = 'decode'

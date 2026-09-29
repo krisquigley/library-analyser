@@ -3,6 +3,7 @@ import unittest
 
 from music_analyzer.application.use_cases.analyze_track import AnalyzeTrack
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, DecodedAudio, StageResult
+from music_analyzer.domain.analysis import MAX_ANALYSIS_DURATION_SECONDS
 
 
 class Decoder:
@@ -84,9 +85,17 @@ class AnalyzeTrackTests(unittest.TestCase):
                 self.assertEqual(use_case.execute(self.source).status, status)
             self.assertEqual(self.events[-1][1], status)
 
+    def test_domain_max_duration_is_accepted_and_routed_to_decoder(self):
+        report = self.build().execute(self.source, max_duration=MAX_ANALYSIS_DURATION_SECONDS)
+        self.assertEqual(report.status, 'completed')
+        self.assertIn(('decode', self.source, MAX_ANALYSIS_DURATION_SECONDS), self.events)
+
     def test_invalid_limit_has_no_side_effects(self):
-        for value in (0, -1, float('inf'), float('nan'), True, 3601):
-            with self.assertRaises(ValueError):
+        for value in (0, -1, float('inf'), float('nan'), True, MAX_ANALYSIS_DURATION_SECONDS + 1):
+            with self.assertRaisesRegex(
+                ValueError,
+                f'Maximum duration must be positive and at most {MAX_ANALYSIS_DURATION_SECONDS} seconds',
+            ):
                 self.build().execute(self.source, max_duration=value)
         self.assertEqual(self.events, [])
 
