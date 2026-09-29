@@ -14,11 +14,26 @@ import sqlite3
 from music_analyzer.application.dto.analysis import AnalysisError, AnalysisReport
 from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.explorer import ExplorerStoredTrack
+from music_analyzer.domain.library_duration_policy import DurationVerification, TRUSTED_DURATION_SOURCES, active_library_duration_policy
 from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID
 from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_mapping
 
 _SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 _TRACK_ID_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
+
+
+def _duration_decision(duration_seconds, source):
+    return active_library_duration_policy(DurationVerification(duration_seconds, source) if source else None)
+
+
+def _expected_audio_status(duration_seconds, source):
+    decision = _duration_decision(duration_seconds, source)
+    if decision.active:
+        return 'eligible'
+    if source in TRUSTED_DURATION_SOURCES and duration_seconds is not None:
+        return 'excluded'
+    return 'unknown'
+
 
 _EXPECTED_SCHEMA = {
     'runs': {
@@ -254,6 +269,10 @@ class ReadOnlyExplorerSQLiteRepository:
                     or not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256)
                     or track_id != f'sha256:{sha256}'
                     or not isinstance(size, int) or size < 0):
+                raise AnalysisError('Unexpected analysis database rows')
+        for duration, source, status, reason in db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio'):
+            decision = _duration_decision(duration, source)
+            if status != _expected_audio_status(duration, source) or reason != (decision.warning or ''):
                 raise AnalysisError('Unexpected analysis database rows')
 
     def _foreign_keys(self, db, table):

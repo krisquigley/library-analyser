@@ -216,6 +216,20 @@ class AnalysisRepositoryTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as db:
             self.assertFalse(db.execute('SELECT 1 FROM track_audio').fetchone())
 
+    def test_register_rejects_conflicting_trusted_duplicate_duration_even_when_one_is_too_long(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = FileIdentity('5' * 64, 123)
+
+        with self.assertRaisesRegex(AnalysisError, 'Conflicting trusted duration'):
+            repository.register(Inventory('/music', (
+                ScannedFile('/music/short.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=300.0, duration_source='mutagen')),
+                ScannedFile('/music/long.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=1300.0, duration_source='ffprobe')),
+            ), (), True))
+
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertFalse(db.execute('SELECT 1 FROM track_audio').fetchone())
+            self.assertFalse(db.execute('SELECT 1 FROM locations').fetchone())
+
     def test_register_rejects_duplicate_track_identity_race_before_audio_backfill(self):
         repository = SQLiteAnalysisRepository(str(self.path))
         first = ScannedFile('/music/one.flac', FileIdentity('f' * 64, 1), 1, 'flac', TrackMetadata(duration_seconds=60))

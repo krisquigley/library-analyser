@@ -6,6 +6,7 @@ Exact-file catalogue identity; each explicit analysis request is still a new run
 from contextlib import contextmanager
 from dataclasses import asdict
 import json
+from math import isfinite
 from pathlib import Path
 import sqlite3
 from uuid import uuid4
@@ -42,8 +43,10 @@ def _coalesced_duration(file, files):
     for candidate in same_identity:
         source = getattr(candidate.metadata, 'duration_source', '')
         seconds = candidate.metadata.duration_seconds
-        if source in TRUSTED_DURATION_SOURCES and _duration_decision(seconds, source).active:
-            trusted.append((float(seconds), source))
+        if source in TRUSTED_DURATION_SOURCES and seconds is not None:
+            seconds = float(seconds)
+            if isfinite(seconds) and seconds > 0:
+                trusted.append((seconds, source))
     distinct = {seconds for seconds, _source in trusted}
     if len(distinct) > 1:
         raise AnalysisError('Conflicting trusted duration measurements for duplicate track identity; scan again')

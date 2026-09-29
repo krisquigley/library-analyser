@@ -15,6 +15,10 @@ import sqlite3
 from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ScoreSummary, StageResult, TrackMetadata
 
 APPLICATION_ID = 0x4D414E41
+ACTIVE_LIBRARY_MAX_DURATION_SECONDS = 1200.0
+TRUSTED_DURATION_SOURCES = {'mutagen', 'ffprobe'}
+UNKNOWN_DURATION_REASON = 'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata'
+INVALID_DURATION_REASON = 'duration invalid; excluded from active library until mutagen/ffprobe verifies a positive finite duration; rescan audio metadata'
 
 
 class AnalysisError(Exception):
@@ -23,6 +27,25 @@ class AnalysisError(Exception):
 
 def _finite_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+
+
+def _duration_warning(duration_seconds, source):
+    if source not in TRUSTED_DURATION_SOURCES or duration_seconds is None:
+        return UNKNOWN_DURATION_REASON
+    if not _finite_number(duration_seconds) or duration_seconds <= 0:
+        return INVALID_DURATION_REASON
+    if duration_seconds > ACTIVE_LIBRARY_MAX_DURATION_SECONDS:
+        return (f'duration {duration_seconds:.3f}s >{ACTIVE_LIBRARY_MAX_DURATION_SECONDS:.1f}s; '
+                'excluded from active library; rescan metadata or choose a shorter file')
+    return ''
+
+
+def _expected_audio_status(duration_seconds, source):
+    if _duration_warning(duration_seconds, source) == '':
+        return 'eligible'
+    if source in TRUSTED_DURATION_SOURCES and duration_seconds is not None:
+        return 'excluded'
+    return 'unknown'
 
 
 def stage_from_mapping(data):
@@ -286,6 +309,9 @@ class ReadOnlyExplorerSQLiteRepository:
                     or not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256)
                     or track_id != f'sha256:{sha256}'
                     or not isinstance(size, int) or size < 0):
+                raise AnalysisError('Unexpected analysis database rows')
+        for duration, source, status, reason in db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio'):
+            if status != _expected_audio_status(duration, source) or reason != _duration_warning(duration, source):
                 raise AnalysisError('Unexpected analysis database rows')
 
     def _foreign_keys(self, db, table):
