@@ -32,9 +32,9 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.calls, ['a', 'b'])
         self.assertEqual(self.queue.events[:3], ['recover', 'pending', 'running'])
         batch.execute('new-fingerprint', limit=1)
-        self.assertEqual(self.calls, ['a', 'b', 'a'])
+        self.assertEqual(self.calls, ['a', 'b'])
         batch.execute('new-fingerprint', limit=1, force=True)
-        self.assertEqual(len(self.calls), 4)
+        self.assertEqual(len(self.calls), 3)
 
     def test_failures_require_explicit_bounded_retry(self):
         batch = self.build(ValueError('bad file'))
@@ -59,6 +59,44 @@ class BatchTests(unittest.TestCase):
         batch = self.build()
         for limit in (0, -1):
             with self.assertRaises(ValueError): batch.execute('fp', limit=limit)
+
+    def test_explicit_catalogue_tracks_only_retry_failed_jobs(self):
+        batch = self.build()
+        from music_analyzer.application.ports.batch import BatchJob
+        self.queue.jobs = {
+            'a': BatchJob('a', 'old', 'failed', 1),
+            'b': BatchJob('b', 'old', 'completed', 1),
+        }
+        batch.execute('new', selected_tracks=('a', 'b'), retry_failed=True, max_duration=4757)
+        self.assertEqual(self.calls, ['a'])
+        self.assertEqual(self.queue.jobs['a'].fingerprint, 'new')
+        self.assertEqual(self.queue.jobs['a'].attempts, 1)
+        self.assertEqual(self.queue.jobs['b'], BatchJob('b', 'old', 'completed', 1))
+
+    def test_explicit_catalogue_tracks_require_retry_failed(self):
+        batch = self.build()
+        from music_analyzer.application.ports.batch import BatchJob
+        self.queue.jobs = {'a': BatchJob('a', 'old', 'failed', 1)}
+        with self.assertRaises(ValueError):
+            batch.execute('new', selected_tracks=('a',))
+        self.assertEqual(self.calls, [])
+
+    def test_explicit_empty_catalogue_track_selection_is_noop(self):
+        batch = self.build()
+        from music_analyzer.application.ports.batch import BatchJob
+        existing = BatchJob('a', 'old', 'failed', 1)
+        self.queue.jobs = {'a': existing}
+        result = batch.execute('new', selected_tracks=(), retry_failed=True)
+        self.assertEqual(result, (existing,))
+        self.assertEqual(self.queue.jobs, {'a': existing})
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.queue.events, [])
+
+    def test_unknown_explicit_catalogue_track_is_rejected_before_dispatch(self):
+        batch = self.build()
+        with self.assertRaises(ValueError):
+            batch.execute('fp', selected_tracks=('missing',), retry_failed=True)
+        self.assertEqual(self.calls, [])
 
     def test_exhausted_interruption_becomes_failed(self):
         batch = self.build(KeyboardInterrupt())

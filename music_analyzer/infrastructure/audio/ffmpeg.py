@@ -2,16 +2,18 @@
 
 FFmpeg gets one second beyond the requested cap as an overflow sentinel. Such
 output is rejected, never presented as a complete track. No whole-audio Python
-buffer is allocated. At the hard 3600s cap, PCM uses at most ~606 MiB on disk.
+buffer is allocated. At the hard 5000s cap, PCM uses at most ~882 MB on disk; decode preflights
+that plus the bounded compressed snapshot with margin before writing.
 """
 from contextlib import contextmanager
 from pathlib import Path
 import hashlib
+import shutil
 import subprocess
 import tempfile
 
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, DecodedAudio
-from music_analyzer.domain.analysis import finite
+from music_analyzer.domain.analysis import MAX_ANALYSIS_DURATION_SECONDS, PCM_BYTES_PER_SECOND, finite
 
 
 class FFmpegDecoder:
@@ -21,13 +23,17 @@ class FFmpegDecoder:
 
     @contextmanager
     def decode(self, source: AudioSource, max_duration: float):
-        if not finite(max_duration) or not 0 < max_duration <= 3600:
-            raise AnalysisError('Maximum duration must be positive and at most 3600 seconds')
+        if not finite(max_duration) or not 0 < max_duration <= MAX_ANALYSIS_DURATION_SECONDS:
+            raise AnalysisError(f'Maximum duration must be positive and at most {MAX_ANALYSIS_DURATION_SECONDS} seconds')
         path = Path(source.location).absolute()
         try:
             if not path.is_file():
                 raise AnalysisError('Audio source must be an existing local file')
+            source_size = path.stat().st_size
             with tempfile.TemporaryDirectory(prefix='music-analyzer-audio-') as directory:
+                required = min(source_size, self.max_source_bytes) + int((max_duration + 1) * PCM_BYTES_PER_SECOND) + 128 * 1024**2
+                if shutil.disk_usage(directory).free < required:
+                    raise AnalysisError('Insufficient temporary disk space for bounded decode')
                 snapshot = Path(directory) / ('source' + path.suffix)
                 identity = hashlib.sha256()
                 size = 0
@@ -50,8 +56,9 @@ class FFmpegDecoder:
                 # actionable context; detailed codec diagnosis is a separate step.
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                timeout = min(900, max(120, int(max_duration / 5)))
                 try:
-                    returncode = process.wait(timeout=120)
+                    returncode = process.wait(timeout=timeout)
                 finally:
                     if process.poll() is None:
                         process.kill()
@@ -63,12 +70,12 @@ class FFmpegDecoder:
                     raise AnalysisError('FFmpeg produced empty or invalid audio')
                 duration = size / (4 * 44100)
                 if duration > max_duration:
-                    raise AnalysisError('Audio exceeds duration limit; increase it explicitly (maximum 3600s)')
+                    raise AnalysisError(f'Audio exceeds duration limit; increase it explicitly (maximum {MAX_ANALYSIS_DURATION_SECONDS}s)')
                 with output.open('rb') as stream:
                     pcm_identity = hashlib.file_digest(stream, 'sha256').hexdigest()
                 yield DecodedAudio(str(output), duration, 44100,
                                    identity.hexdigest() + ':' + pcm_identity)
         except subprocess.TimeoutExpired as error:
-            raise AnalysisError('FFmpeg decoding exceeded 120 seconds; no partial audio retained') from error
+            raise AnalysisError('FFmpeg decoding exceeded the bounded timeout; no partial audio retained') from error
         except OSError as error:
             raise AnalysisError(f'Unable to decode local audio: {error}') from error
