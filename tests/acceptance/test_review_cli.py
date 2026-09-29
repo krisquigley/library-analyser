@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 from music_analyzer.frameworks.cli.main import main
 from music_analyzer.application.dto.analysis import AudioSource, StageResult
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
 from music_analyzer.application.use_cases.scan_library import ScanLibrary
@@ -19,7 +20,8 @@ class ReviewCLITests(unittest.TestCase):
         self.root = Path(self.tmp.name); self.db = self.root/'analysis.db'
         (self.root/'音,".flac').write_bytes(b'fixture not audio')
         self.repo = SQLiteAnalysisRepository(str(self.db))
-        self.track = ScanLibrary(LocalInventory(), self.repo).execute(str(self.root)).files[0].identity.track_id
+        reader = type('Reader', (), {'read': lambda self, path: TrackMetadata(duration_seconds=120.0, duration_source='mutagen')})()
+        self.track = ScanLibrary(LocalInventory(reader), self.repo).execute(str(self.root)).files[0].identity.track_id
 
     def call(self, *args):
         out, err = io.StringIO(), io.StringIO()

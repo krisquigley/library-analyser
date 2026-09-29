@@ -13,6 +13,7 @@ from music_analyzer.application.dto.explorer import (
     UnpositionedTrack,
 )
 from music_analyzer.application.ports.explorer import ExplorerRepository
+from music_analyzer.application.use_cases.active_library import active_exclusion_reason, is_active_library_track
 from music_analyzer.application.use_cases.candidates import _features
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, _bounded_edges, symmetric_feature_distance
 from music_analyzer.domain.review import FIELDS
@@ -25,10 +26,12 @@ class ListExplorerTracks:
     def execute(self, limit=100, after=None):
         if limit == 'all':
             metadata, tracks = self.repository.candidate_snapshot()
+            tracks = tuple(track for track in tracks if is_active_library_track(track))
             return ExplorerSnapshot(self._metadata(metadata, len(tracks)), tuple(_map_track(track) for track in tracks))
         if not isinstance(limit, int) or limit < 1 or limit > 500:
             raise ValueError('Explorer list limit must be between 1 and 500 or all')
         metadata, track_count, tracks = self.repository.list_tracks(limit, after)
+        tracks = tuple(track for track in tracks if is_active_library_track(track))
         return ExplorerSnapshot(self._metadata(metadata, track_count), tuple(_map_track(track) for track in tracks))
 
     def _metadata(self, raw, track_count):
@@ -68,7 +71,7 @@ class BuildMoodAxisGraph:
 
     def execute(self, mood: str | None = None):
         raw_meta, records = self.repository.candidate_snapshot()
-        records = tuple(records)
+        records = tuple(record for record in records if is_active_library_track(record))
         available = _available_moods(records)
         selected = _resolve_mood(mood, available)
         positioned = []
@@ -118,6 +121,9 @@ def _map_track(track):
     stages = {stage.stage: stage for stage in track.run.stages} if track.run else {}
     manual = dict(track.overrides)
     reasons = []
+    exclusion = active_exclusion_reason(track.metadata)
+    if exclusion:
+        reasons.append('Excluded from active library: ' + exclusion)
     if not track.available_locations:
         reasons.append('No available catalogue location')
     if not track.run:

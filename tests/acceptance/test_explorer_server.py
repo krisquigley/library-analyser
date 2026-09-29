@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 import music_explorer.frameworks.explorer.server as standalone_server
 from music_analyzer.frameworks.explorer.server import create_server
+from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 
 APP_ID = 0x4D414E41
 
@@ -37,6 +38,11 @@ CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), com
         db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run-' + tid[-1], '/music/' + label, 'completed', ''))
         db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run-' + tid[-1], tid))
         db.execute('INSERT INTO stages VALUES(?,?,?)', ('run-' + tid[-1], 'bpm', json.dumps({'stage': 'bpm', 'provenance': [], 'uncertainty': '', 'values': [['bpm', bpm]]})))
+    db.commit(); db.close()
+    SQLiteAnalysisRepository(str(path))
+    db = sqlite3.connect(path)
+    for tid in (first, second):
+        db.execute("UPDATE track_audio SET duration_seconds=120.0,duration_source='mutagen',status='eligible',reason='' WHERE track_id=?", (tid,))
     db.commit(); db.close()
     return first, second
 

@@ -1,4 +1,4 @@
-"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 -> v4 -> v5 migrations.
+"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 -> v4 -> v5 -> v6 migrations.
 
 Existing unrelated schemas are rejected before any persistent pragma or DDL.
 Exact-file catalogue identity; each explicit analysis request is still a new run.
@@ -11,6 +11,15 @@ import sqlite3
 from uuid import uuid4
 
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
+from music_analyzer.domain.catalogue import duration_exclusion_reason
+
+
+def _duration_eligibility_reason(duration_seconds, source=''):
+    # Empty source is accepted for legacy/internal callers that can only supply
+    # a measured numeric duration. Explicit non-measured/textual sources fail closed.
+    if source and source not in {'mutagen', 'ffprobe'}:
+        return 'Duration unknown; rescan with a readable measured audio duration before active-library use'
+    return duration_exclusion_reason(duration_seconds)
 
 APPLICATION_ID = 0x4D414E41
 _COLUMNS = {
@@ -21,6 +30,11 @@ _CATALOGUE_COLUMNS = {
     'tracks': ('id', 'sha256', 'size'),
     'locations': ('path', 'track_id', 'mtime_ns', 'format', 'available'),
     'scan_roots': ('root', 'path'),
+}
+_AUDIO_ELIGIBILITY_COLUMNS = {'track_audio': ('track_id', 'duration_seconds', 'duration_source', 'status', 'reason')}
+_ACTIVE_VIEWS = {
+    'active_tracks': "CREATE VIEW active_tracks AS SELECT t.id,t.sha256,t.size FROM tracks t JOIN track_audio a ON a.track_id=t.id WHERE a.status='eligible'",
+    'active_locations': "CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.available FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible'",
 }
 
 
@@ -43,7 +57,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if db.execute('PRAGMA user_version').fetchone()[0] == 1:
                 self._validate(db, 1)
@@ -70,6 +84,18 @@ class SQLiteAnalysisRepository:
                 else:
                     db.execute('CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
                 db.execute('PRAGMA user_version=5')
+            if db.execute('PRAGMA user_version').fetchone()[0] == 5:
+                self._validate(db, 5)
+                db.execute("""CREATE TABLE track_audio(
+                    track_id TEXT PRIMARY KEY REFERENCES tracks(id),
+                    duration_seconds REAL,
+                    duration_source TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('eligible','excluded','unknown')),
+                    reason TEXT NOT NULL)""")
+                db.execute("INSERT INTO track_audio(track_id,duration_seconds,duration_source,status,reason) SELECT id,NULL,'','unknown','Duration unknown; rescan with a readable measured audio duration before active-library use' FROM tracks")
+                for sql in _ACTIVE_VIEWS.values():
+                    db.execute(sql)
+                db.execute('PRAGMA user_version=6')
             self._validate(db)
 
     def _check_path(self):
@@ -98,7 +124,7 @@ class SQLiteAnalysisRepository:
         db.execute('INSERT INTO track_metadata(track_id, common_json, tags_json, warnings_json) SELECT track_id, common_json, tags_json, warnings_json FROM track_metadata_v4')
         db.execute('DROP TABLE track_metadata_v4')
 
-    def _validate(self, db, version=5):
+    def _validate(self, db, version=6):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
                 or db.execute('PRAGMA user_version').fetchone()[0] != version):
             raise AnalysisError('Analysis database identity/version changed')
@@ -109,8 +135,12 @@ class SQLiteAnalysisRepository:
             columns_by_table = {**columns_by_table, 'run_tracks': ('run_id', 'track_id'), 'overrides': ('track_id', 'field', 'value')}
         if version >= 5:
             columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
+        if version >= 6:
+            columns_by_table = {**columns_by_table, **_AUDIO_ELIGIBILITY_COLUMNS}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         expected = {(name, 'table') for name in columns_by_table}
+        if version >= 6:
+            expected |= {(name, 'view') for name in _ACTIVE_VIEWS}
         if version in (2, 3):
             migration_tables = {'batch_jobs', 'run_tracks', 'overrides', 'track_metadata'} if version == 2 else {'run_tracks', 'overrides', 'track_metadata'}
             expected = {item for item in expected if item[0] not in migration_tables}
@@ -128,6 +158,24 @@ class SQLiteAnalysisRepository:
                 raise AnalysisError('Unexpected analysis database columns')
             if version >= 5 and table == 'track_metadata' and not self._valid_track_metadata_constraints(db, table_info):
                 raise AnalysisError('Unexpected analysis database constraints')
+            if version >= 6 and table == 'track_audio':
+                if not self._has_single_column_primary_key(table_info, 'track_id'):
+                    raise AnalysisError('Unexpected analysis database constraints')
+                sql = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='track_audio'").fetchone()[0]
+                if "CHECK(status IN ('eligible','excluded','unknown'))" not in ' '.join(sql.split()):
+                    raise AnalysisError('Unexpected analysis database constraints')
+                if not any(row[2] == 'tracks' and row[3] == 'track_id' and row[4] == 'id'
+                           for row in db.execute('PRAGMA foreign_key_list(track_audio)')):
+                    raise AnalysisError('Unexpected analysis database constraints')
+        if version >= 6:
+            self._validate_track_audio_rows(db)
+
+    def _validate_track_audio_rows(self, db):
+        for track_id, duration, source, status, reason in db.execute('SELECT track_id,duration_seconds,duration_source,status,reason FROM track_audio'):
+            expected_reason = _duration_eligibility_reason(duration, source)
+            expected_status = 'eligible' if expected_reason == '' else ('unknown' if duration is None else 'excluded')
+            if status != expected_status or reason != expected_reason:
+                raise AnalysisError('Unexpected analysis database rows')
 
 
     @contextmanager
@@ -184,11 +232,20 @@ class SQLiteAnalysisRepository:
                 identity = file.identity
                 db.execute('INSERT OR IGNORE INTO tracks VALUES(?,?,?)',
                            (identity.track_id, identity.sha256, identity.size))
+                stored = db.execute('SELECT sha256,size FROM tracks WHERE id=?', (identity.track_id,)).fetchone()
+                if stored != (identity.sha256, identity.size):
+                    raise AnalysisError('Duplicate track identity changed while scanning; scan again')
                 db.execute('INSERT INTO locations VALUES(?,?,?,?,1) ON CONFLICT(path) DO UPDATE SET track_id=excluded.track_id,mtime_ns=excluded.mtime_ns,format=excluded.format,available=1',
                            (file.location, identity.track_id, file.mtime_ns, file.format))
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
                 db.execute('INSERT INTO track_metadata VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET common_json=excluded.common_json,tags_json=excluded.tags_json,warnings_json=excluded.warnings_json',
                            (identity.track_id, json.dumps(file.metadata.common, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.tags, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.warnings, ensure_ascii=False, allow_nan=False)))
+                duration = file.metadata.duration_seconds
+                source = getattr(file.metadata, 'duration_source', '')
+                reason = _duration_eligibility_reason(duration, source)
+                status = 'eligible' if reason == '' else ('unknown' if duration is None else 'excluded')
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET duration_seconds=excluded.duration_seconds,duration_source=excluded.duration_source,status=excluded.status,reason=excluded.reason',
+                           (identity.track_id, duration, source, status, reason))
             if inventory.complete:
                 for (path,) in db.execute('SELECT path FROM scan_roots WHERE root=?', (inventory.root,)):
                     if path not in seen:
@@ -209,7 +266,7 @@ class SQLiteAnalysisRepository:
         after = ''
         while True:
             with self._transaction() as db:
-                page = db.execute('SELECT id FROM tracks WHERE id>? ORDER BY id LIMIT 100', (after,)).fetchall()
+                page = db.execute("SELECT t.id FROM tracks t JOIN track_audio a ON a.track_id=t.id AND a.status='eligible' WHERE t.id>? ORDER BY t.id LIMIT 100", (after,)).fetchall()
             if not page: return
             for (track,) in page: yield track
             after = page[-1][0]
@@ -243,10 +300,12 @@ class SQLiteAnalysisRepository:
     def _read_metadata(self, db, track_id):
         from music_analyzer.application.dto.catalogue import TrackMetadata
         row = db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone()
+        audio = db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (track_id,)).fetchone()
         if not row:
-            return TrackMetadata()
+            return TrackMetadata(duration_seconds=(audio[0] if audio else None), duration_source=(audio[1] if audio else ''))
         try:
-            return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(row[0])), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(row[1])), tuple(str(x) for x in json.loads(row[2])))
+            warnings = tuple(str(x) for x in json.loads(row[2]))
+            return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(row[0])), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(row[1])), warnings, audio[0] if audio else None, audio[1] if audio else '')
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise AnalysisError('Invalid stored metadata') from error
 

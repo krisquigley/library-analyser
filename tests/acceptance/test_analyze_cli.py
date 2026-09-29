@@ -4,13 +4,14 @@ import json
 import unittest
 from unittest.mock import patch
 from music_analyzer.application.dto.analysis import AnalysisReport, StageResult
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.frameworks.cli.main import main
 
 
 class AnalyzeCLITests(unittest.TestCase):
     def test_explicit_file_preserves_future_track_id_argument(self):
         report = AnalysisReport('run', 'completed', (StageResult('bpm', (), 'provisional', (('bpm', 120.),)),))
-        with patch('music_analyzer.frameworks.cli.main.build_analysis') as build:
+        with patch('music_analyzer.frameworks.cli.main.build_analysis') as build, patch('music_analyzer.frameworks.cli.main.MutagenMetadataReader.read', return_value=TrackMetadata(duration_seconds=60.0, duration_source='mutagen')):
             build.return_value.execute.return_value = report
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
@@ -21,7 +22,7 @@ class AnalyzeCLITests(unittest.TestCase):
             self.assertEqual(args[1], 60)
 
     def test_failed_partial_report_is_json_and_nonzero(self):
-        with patch('music_analyzer.frameworks.cli.main.build_analysis') as build:
+        with patch('music_analyzer.frameworks.cli.main.build_analysis') as build, patch('music_analyzer.frameworks.cli.main.MutagenMetadataReader.read', return_value=TrackMetadata(duration_seconds=60.0, duration_source='mutagen')):
             build.return_value.execute.return_value = AnalysisReport('run', 'failed', (), 'genres: missing model')
             out = io.StringIO()
             with contextlib.redirect_stdout(out):

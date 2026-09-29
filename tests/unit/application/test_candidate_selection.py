@@ -2,6 +2,7 @@ import unittest
 
 from music_analyzer.application.dto.analysis import AnalysisReport, StageResult
 from music_analyzer.domain.analysis import ScoreSummary
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.explorer import ExplorerStoredTrack
 from music_analyzer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_analyzer.application.use_cases.candidates import SelectExplorerCandidates
@@ -37,7 +38,7 @@ def stage(name, values=(), summary=(), uncertainty='', provenance=()):
 
 
 def track(suffix, stages=(), overrides=(), label=''):
-    return ExplorerStoredTrack('sha256:' + suffix * 64, suffix * 64, 1, label or suffix, 1, AnalysisReport('run-' + suffix, 'completed', tuple(stages)), tuple(overrides))
+    return ExplorerStoredTrack('sha256:' + suffix * 64, suffix * 64, 1, label or suffix, 1, AnalysisReport('run-' + suffix, 'completed', tuple(stages)), tuple(overrides), TrackMetadata(duration_seconds=120.0, duration_source='mutagen'))
 
 
 class SelectExplorerCandidatesTests(unittest.TestCase):

@@ -1,5 +1,6 @@
 from music_analyzer.application.dto.review import ReviewReport
 from music_analyzer.application.ports.review import ReviewRepository, ReviewOutput
+from music_analyzer.application.use_cases.active_library import active_exclusion_reason
 from music_analyzer.domain.analysis import finite, select_scores
 from music_analyzer.domain.review import FIELDS, validate_override, effective_value
 
@@ -14,6 +15,8 @@ class ReviewTracks:
         track = self.repository.read_track(track_id)
         stages = {s.stage: s for s in track.run.stages} if track.run else {}
         reasons = []
+        exclusion = active_exclusion_reason(track.metadata)
+        if exclusion: reasons.append('Excluded from active library: ' + exclusion)
         if not track.locations: reasons.append('No available catalogue location')
         if not track.run: reasons.append('No identity-linked analysis; legacy/path-only runs are not attributed')
         elif track.run.status != 'completed': reasons.append('Latest run: ' + track.run.status)

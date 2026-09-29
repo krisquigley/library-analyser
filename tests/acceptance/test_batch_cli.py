@@ -6,10 +6,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from music_analyzer.application.dto.analysis import AnalysisReport
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.frameworks.cli.main import main
 
 
 class BatchCLITests(unittest.TestCase):
+    def setUp(self):
+        self._metadata_patch = patch('music_analyzer.frameworks.cli.main.MutagenMetadataReader.read', return_value=TrackMetadata(duration_seconds=120.0, duration_source='mutagen'))
+        self._metadata_patch.start()
+        self.addCleanup(self._metadata_patch.stop)
+
     def test_catalogue_dispatch_status_skip_force_and_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'root'; root.mkdir()

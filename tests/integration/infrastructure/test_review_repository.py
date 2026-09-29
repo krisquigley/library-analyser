@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from music_analyzer.application.dto.analysis import AudioSource, StageResult
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
 from music_analyzer.application.use_cases.scan_library import ScanLibrary
@@ -18,7 +19,8 @@ class ReviewRepositoryTests(unittest.TestCase):
         self.root = Path(self.tmp.name); self.path = self.root/'analysis.db'
         self.repo = SQLiteAnalysisRepository(str(self.path))
         (self.root/'音.flac').write_bytes(b'fake')
-        self.track = ScanLibrary(LocalInventory(), self.repo).execute(str(self.root)).files[0].identity.track_id
+        reader = type('Reader', (), {'read': lambda self, path: TrackMetadata(duration_seconds=120.0, duration_source='mutagen')})()
+        self.track = ScanLibrary(LocalInventory(reader), self.repo).execute(str(self.root)).files[0].identity.track_id
 
     def test_identity_mapping_override_reanalysis_and_path_replacement(self):
         first = self.repo.start(AudioSource(str(self.root/'音.flac'), self.track))
@@ -42,6 +44,10 @@ class ReviewRepositoryTests(unittest.TestCase):
         self.repo.save_stage(run, StageResult('bpm', (), 'legacy'))
         with closing(sqlite3.connect(self.path)) as db, db:
             before = db.execute('SELECT * FROM stages').fetchall()
+            db.execute('DROP VIEW active_locations')
+            db.execute('DROP VIEW active_tracks')
+            db.execute('DROP TABLE track_audio')
+            db.execute('DROP TABLE track_metadata')
             db.execute('DROP TABLE run_tracks'); db.execute('DROP TABLE overrides'); db.execute('PRAGMA user_version=3')
         original = SQLiteAnalysisRepository._validate
         def fail(repo, db, version=4):
@@ -56,7 +62,7 @@ class ReviewRepositoryTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.path))
         with closing(sqlite3.connect(self.path)) as db, db:
             self.assertEqual(db.execute('SELECT * FROM stages').fetchall(), before)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
 
     def test_v4_migration_rejects_malformed_existing_track_metadata_table(self):
         with closing(sqlite3.connect(self.path)) as db, db:

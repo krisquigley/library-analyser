@@ -113,6 +113,22 @@ _EXPECTED_SCHEMA = {
         'unique_indexes': (),
         'checks': ((),),
     },
+    'track_audio': {
+        'columns': ((('track_id', 'TEXT', False, 1), ('duration_seconds', 'REAL', False, 0), ('duration_source', 'TEXT', True, 0), ('status', 'TEXT', True, 0), ('reason', 'TEXT', True, 0)),),
+        'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
+        'unique_indexes': (),
+        'checks': (("CHECK(status IN ('eligible','excluded','unknown'))",),),
+    },
+}
+_EXPECTED_VIEWS = {
+    'active_tracks': (
+        ('id', 'sha256', 'size'),
+        "CREATE VIEW active_tracks AS SELECT t.id,t.sha256,t.size FROM tracks t JOIN track_audio a ON a.track_id=t.id WHERE a.status='eligible'",
+    ),
+    'active_locations': (
+        ('path', 'track_id', 'mtime_ns', 'format', 'available'),
+        "CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.available FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible'",
+    ),
 }
 
 
@@ -130,23 +146,23 @@ class ReadOnlyExplorerSQLiteRepository:
             metadata = self._metadata(db)
             where = '' if after is None else 'WHERE id > ?'
             params = () if after is None else (after,)
-            track_count = db.execute(f'SELECT count(*) FROM tracks {where}', params).fetchone()[0]
-            ids = tuple(row[0] for row in db.execute(f'SELECT id FROM tracks {where} ORDER BY id LIMIT ?', (*params, limit)))
+            track_count = db.execute(f'SELECT count(*) FROM active_tracks {where}', params).fetchone()[0]
+            ids = tuple(row[0] for row in db.execute(f'SELECT id FROM active_tracks {where} ORDER BY id LIMIT ?', (*params, limit)))
             return metadata, track_count, tuple(self._read_track(db, track_id) for track_id in ids)
 
     def candidate_snapshot(self):
         with self._transaction() as db:
             metadata = self._metadata(db)
-            ids = tuple(row[0] for row in db.execute('SELECT id FROM tracks ORDER BY id'))
+            ids = tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
             return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
 
     def track_ids(self):
         with self._transaction() as db:
-            return tuple(row[0] for row in db.execute('SELECT id FROM tracks ORDER BY id'))
+            return tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
 
     def available_audio_paths(self):
         with self._transaction() as db:
-            return tuple(row[0] for row in db.execute('SELECT path FROM locations WHERE available=1 ORDER BY path'))
+            return tuple(row[0] for row in db.execute('SELECT path FROM active_locations ORDER BY path'))
 
     def read_track(self, track_id: str):
         with self._transaction() as db:
@@ -192,10 +208,12 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def _read_metadata(self, db, track_id):
         row = db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone()
+        audio = db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (track_id,)).fetchone()
         if not row:
-            return TrackMetadata()
+            return TrackMetadata(duration_seconds=(audio[0] if audio else None), duration_source=(audio[1] if audio else ''))
         try:
-            return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(row[0])), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(row[1])), tuple(str(x) for x in json.loads(row[2])))
+            warnings = tuple(str(x) for x in json.loads(row[2]))
+            return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(row[0])), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(row[1])), warnings, audio[0] if audio else None, audio[1] if audio else '')
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise AnalysisError('Invalid stored metadata') from error
 
@@ -231,11 +249,18 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def _validate(self, db):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
-                or db.execute('PRAGMA user_version').fetchone()[0] != 5):
+                or db.execute('PRAGMA user_version').fetchone()[0] != 6):
             raise AnalysisError('Not a supported music-analyzer analysis database')
-        objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
-        if objects != {(name, 'table') for name in _EXPECTED_SCHEMA}:
+        objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view')"))
+        expected_objects = {(name, 'table') for name in _EXPECTED_SCHEMA} | {(name, 'view') for name in _EXPECTED_VIEWS}
+        if objects != expected_objects:
             raise AnalysisError('Unexpected analysis database schema')
+        for view, (columns, expected_sql) in _EXPECTED_VIEWS.items():
+            actual_columns = tuple(row[1] for row in db.execute(f'PRAGMA table_info({view})'))
+            actual_sql = db.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name=?", (view,)).fetchone()[0]
+            normalize = lambda sql: ' '.join(sql.rstrip(';').split())
+            if actual_columns != columns or normalize(actual_sql) != normalize(expected_sql):
+                raise AnalysisError('Unexpected analysis database schema')
         for table, expected in _EXPECTED_SCHEMA.items():
             sql = db.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)

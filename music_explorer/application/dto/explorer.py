@@ -8,6 +8,8 @@ class TrackMetadata:
     common: tuple[tuple[str, str | tuple[str, ...]], ...] = ()
     tags: tuple[tuple[str, tuple[str, ...]], ...] = ()
     warnings: tuple[str, ...] = ()
+    duration_seconds: float | None = None
+    duration_source: str = ''
 
 
 @dataclass(frozen=True)

@@ -25,7 +25,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
         repository.finish(run, 'failed', 'key: unavailable')
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA application_id').fetchone()[0], APPLICATION_ID)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
             self.assertEqual(db.execute('SELECT location,status,detail FROM runs').fetchone(),
                              ('/music/空 白.flac', 'failed', 'key: unavailable'))
             stage = json.loads(db.execute('SELECT result FROM stages').fetchone()[0])
@@ -63,7 +63,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
             table_info = tuple(db.execute('PRAGMA table_info(track_metadata)'))
             primary_key_columns = tuple(row[1] for row in sorted((row for row in table_info if row[5]), key=lambda row: row[5]))
             self.assertEqual(primary_key_columns, ('track_id',))
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
             self.assertEqual(
                 db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone(),
                 ('[["title","Tagged Song"]]', '[["TIT2",["Tagged Song"]]]', '[]'),
@@ -98,11 +98,85 @@ class AnalysisRepositoryTests(unittest.TestCase):
     def test_v5_rejects_track_metadata_without_required_foreign_key(self):
         repository = SQLiteAnalysisRepository(str(self.path))
         with closing(sqlite3.connect(self.path)) as db:
+            db.execute('DROP VIEW IF EXISTS active_locations')
+            db.execute('DROP VIEW IF EXISTS active_tracks')
+            db.execute('DROP TABLE IF EXISTS track_audio')
             db.execute('DROP TABLE track_metadata')
             db.execute('CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY, common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL)')
+            db.execute('PRAGMA user_version=5')
             db.commit()
         with self.assertRaises(AnalysisError):
             SQLiteAnalysisRepository(str(self.path))
+
+    def test_v5_migration_adds_duration_inventory_without_losing_existing_catalogue_state(self):
+        track_id = 'sha256:' + 'b' * 64
+        with closing(sqlite3.connect(self.path)) as db:
+            db.executescript(f'''
+                PRAGMA application_id={APPLICATION_ID};
+                PRAGMA user_version=5;
+                CREATE TABLE runs(id TEXT PRIMARY KEY, location TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE stages(run_id TEXT NOT NULL, stage TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(run_id,stage));
+                CREATE TABLE tracks(id TEXT PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, size INTEGER NOT NULL);
+                CREATE TABLE locations(path TEXT PRIMARY KEY, track_id TEXT NOT NULL, mtime_ns INTEGER NOT NULL, format TEXT NOT NULL, available INTEGER NOT NULL);
+                CREATE TABLE scan_roots(root TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(root,path));
+                CREATE TABLE batch_jobs(track_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL, run_id TEXT, detail TEXT NOT NULL);
+                CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY, track_id TEXT NOT NULL);
+                CREATE TABLE overrides(track_id TEXT NOT NULL, field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
+                CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
+            ''')
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (track_id, 'b' * 64, 123))
+            db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/music/old.flac', track_id, 7, 'flac', 1))
+            db.execute('INSERT INTO scan_roots VALUES(?,?)', ('/music', '/music/old.flac'))
+            db.execute('INSERT INTO runs VALUES(?,?,?,?,?)', ('run', '/music/old.flac', 'completed', 'ok', 'then'))
+            db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run', track_id))
+            db.execute('INSERT INTO overrides VALUES(?,?,?)', (track_id, 'key', 'C'))
+            db.execute('INSERT INTO batch_jobs VALUES(?,?,?,?,?,?)', (track_id, 'fp', 'failed', 2, 'run', 'keep'))
+            db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (track_id, '[["title","Old"]]', '[]', '[]'))
+            db.commit()
+
+        SQLiteAnalysisRepository(str(self.path))
+
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
+            self.assertEqual(db.execute('SELECT id,sha256,size FROM tracks').fetchone(), (track_id, 'b' * 64, 123))
+            self.assertEqual(db.execute('SELECT path,track_id,available FROM locations').fetchone(), ('/music/old.flac', track_id, 1))
+            self.assertEqual(db.execute('SELECT state,attempts,run_id,detail FROM batch_jobs').fetchone(), ('failed', 2, 'run', 'keep'))
+            self.assertEqual(db.execute('SELECT field,value FROM overrides').fetchone(), ('key', 'C'))
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (track_id,)).fetchone(), (None, '', 'unknown', 'Duration unknown; rescan with a readable measured audio duration before active-library use'))
+            self.assertEqual(db.execute('SELECT count(*) FROM active_tracks').fetchone()[0], 0)
+
+    def test_register_backfills_existing_track_duration_eligibility_without_changing_identity(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = FileIdentity('c' * 64, 123)
+        repository.register(Inventory('/music', (ScannedFile('/music/song.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=None)),), (), True))
+        repository.register(Inventory('/music', (ScannedFile('/music/song.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=1200.0)),), (), True))
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM tracks').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone(), (1200.0, '', 'eligible', ''))
+            self.assertEqual(db.execute('SELECT id FROM active_tracks').fetchone(), (identity.track_id,))
+
+    def test_register_marks_long_and_unknown_tracks_inactive_but_preserves_locations(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        long_id = FileIdentity('d' * 64, 123)
+        unknown_id = FileIdentity('e' * 64, 123)
+        repository.register(Inventory('/music', (
+            ScannedFile('/music/long.flac', long_id, 1, 'flac', TrackMetadata(duration_seconds=1200.001)),
+            ScannedFile('/music/unknown.flac', unknown_id, 1, 'flac', TrackMetadata(warnings=('duration unavailable; excluded from active library',))),
+        ), (), True))
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM locations').fetchone()[0], 2)
+            self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (long_id.track_id,)).fetchone(), ('excluded', 'Duration 1200.001s exceeds active-library limit of 1200.0s'))
+            self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (unknown_id.track_id,)).fetchone(), ('unknown', 'Duration unknown; rescan with a readable measured audio duration before active-library use'))
+            self.assertEqual(db.execute('SELECT count(*) FROM active_locations').fetchone()[0], 0)
+
+    def test_register_rejects_duplicate_track_identity_race_before_audio_backfill(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        first = ScannedFile('/music/one.flac', FileIdentity('f' * 64, 1), 1, 'flac', TrackMetadata(duration_seconds=60))
+        duplicate = ScannedFile('/music/two.flac', FileIdentity('f' * 64, 2), 1, 'flac', TrackMetadata(duration_seconds=60))
+        with self.assertRaises(AnalysisError):
+            repository.register(Inventory('/music', (first, duplicate), (), True))
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertFalse(db.execute('SELECT 1 FROM track_audio').fetchone())
 
     def test_register_persists_embedded_track_metadata_without_migration_backfill_io(self):
         repository = SQLiteAnalysisRepository(str(self.path))

@@ -76,7 +76,7 @@ class CatalogueTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.db))
         SQLiteAnalysisRepository(str(self.db))
         with closing(sqlite3.connect(self.db)) as db, db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (5,))
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (6,))
             self.assertEqual(db.execute('SELECT result FROM stages').fetchone()[0], '{"provenance":"unchanged Unicode é"}')
 
     def test_malformed_v1_not_partially_migrated(self):
@@ -124,6 +124,20 @@ class CatalogueTests(unittest.TestCase):
             result = files.inventory(str(self.root), ScanLimits(max_file_bytes=10, max_total_bytes=10))
         self.assertEqual(read.call_count, 1)
         self.assertFalse(result.complete)
+
+    def test_metadata_reader_duration_is_bound_to_stable_file_identity(self):
+        class DurationMetadataReader:
+            def read(self, location):
+                from music_analyzer.application.dto.catalogue import TrackMetadata
+                return TrackMetadata(duration_seconds=1199.5)
+
+        (self.root/'timed.flac').write_bytes(b'audio bytes')
+        repo = SQLiteAnalysisRepository(str(self.db))
+        result = ScanLibrary(LocalInventory(DurationMetadataReader()), repo).execute(str(self.root))
+
+        self.assertEqual(result.files[0].metadata.duration_seconds, 1199.5)
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio').fetchone(), (1199.5, '', 'eligible', ''))
 
     def test_metadata_reader_race_is_rejected_without_persisting_mismatched_identity(self):
         class ReplacingMetadataReader:
