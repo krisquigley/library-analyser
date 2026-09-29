@@ -76,6 +76,42 @@ class BatchCLITests(unittest.TestCase):
                 build.return_value = ('default-recipe', lambda s, d: self.fail('completed catalogue jobs are not implicitly stale'))
                 self.assertEqual(cli('analyze')[0], 0)
 
+    def test_empty_catalogue_tracks_file_is_explicit_noop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'root'; root.mkdir()
+            (root / 'a.flac').write_bytes(b'a')
+            db = str(Path(tmp) / 'analysis.sqlite')
+            def cli(*args):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = main([*args, '--database', db, '--json'])
+                return code, json.loads(output.getvalue())
+            self.assertEqual(cli('scan', str(root))[0], 0)
+            with patch('music_analyzer.frameworks.cli.main.build_batch_worker') as build:
+                build.return_value = ('failed-recipe', lambda s, d: AnalysisReport('failed-run', 'failed', (), 'seed failure'))
+                self.assertEqual(cli('analyze', '--force')[0], 1)
+                before = cli('status')[1]
+                build.side_effect = AssertionError('empty explicit catalogue selection must not build a worker')
+                for contents in ('', '\n  \n', '# comment\n   # another comment\n'):
+                    selected_file = Path(tmp) / 'selected.txt'
+                    selected_file.write_text(contents)
+                    code, report = cli('analyze', '--retry-failed', '--catalogue-tracks-file', str(selected_file))
+                    self.assertEqual(code, 1)
+                    self.assertEqual(report, before)
+                    self.assertEqual(cli('status')[1], before)
+
+    def test_unreadable_catalogue_tracks_file_error_omits_raw_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / 'private' / 'missing.txt'
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = main(['analyze', '--retry-failed', '--catalogue-tracks-file', str(missing), '--database', str(Path(tmp) / 'analysis.sqlite'), '--json'])
+            self.assertEqual(code, 1)
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload['status'], 'setup_failed')
+            self.assertEqual(payload['detail'], 'Unable to read catalogue track file')
+            self.assertNotIn(str(missing), payload['detail'])
+
     def test_catalogue_tracks_file_and_conflicting_args_are_decoded_by_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
             track_file = Path(tmp) / 'tracks.txt'

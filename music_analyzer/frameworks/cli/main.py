@@ -110,7 +110,7 @@ def read_catalogue_tracks(track_ids, tracks_file):
                     if value and not value.startswith('#'):
                         selected.append(value)
         except OSError as error:
-            raise ValueError(f'Unable to read catalogue track file: {error}') from error
+            raise ValueError('Unable to read catalogue track file') from error
     return tuple(dict.fromkeys(selected))
 
 
@@ -257,9 +257,13 @@ def main(argv: list[str] | None = None) -> int:
             jobs = SQLiteBatchQueue(load_settings(**overrides).database).status()
             output, ready = present_batch(jobs, args.json), True
         elif args.command == 'analyze' and not (args.file or args.track):
-            selected_tracks = read_catalogue_tracks(args.catalogue_track, args.catalogue_tracks_file)
-            batch, recipe = build_batch(load_settings(**overrides), args.max_duration)
-            jobs = batch.execute(recipe, args.limit, args.retry_failed, args.force, args.max_duration, selected_tracks=selected_tracks)
+            settings = load_settings(**overrides)
+            selected_tracks = read_catalogue_tracks(args.catalogue_track, args.catalogue_tracks_file) if catalogue_selected else None
+            if selected_tracks == ():
+                jobs = SQLiteBatchQueue(settings.database).status()
+            else:
+                batch, recipe = build_batch(settings, args.max_duration)
+                jobs = batch.execute(recipe, args.limit, args.retry_failed, args.force, args.max_duration, selected_tracks=selected_tracks)
             output, ready = present_batch(jobs, args.json), not any(j.state == 'failed' for j in jobs)
         elif args.command == 'analyze':
             source = AudioSource(args.file) if args.file else ResolveTrack(

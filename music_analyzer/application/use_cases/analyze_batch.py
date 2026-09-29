@@ -16,7 +16,10 @@ class AnalyzeBatch:
     def execute(self, fingerprint, limit=None, retry_failed=False, force=False, max_duration=900, selected_tracks=None):
         if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0):
             raise ValueError('Limit must be a positive integer')
-        selected = tuple(dict.fromkeys(selected_tracks or ()))
+        explicit_selection = selected_tracks is not None
+        selected = tuple(dict.fromkeys(selected_tracks)) if explicit_selection else ()
+        if explicit_selection and not selected:
+            return self.queue.status()
         if selected and not retry_failed:
             raise ValueError('Catalogue track selection retries failed jobs only; pass --retry-failed')
         with self.queue.exclusive():

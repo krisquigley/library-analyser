@@ -81,6 +81,17 @@ class BatchTests(unittest.TestCase):
             batch.execute('new', selected_tracks=('a',))
         self.assertEqual(self.calls, [])
 
+    def test_explicit_empty_catalogue_track_selection_is_noop(self):
+        batch = self.build()
+        from music_analyzer.application.ports.batch import BatchJob
+        existing = BatchJob('a', 'old', 'failed', 1)
+        self.queue.jobs = {'a': existing}
+        result = batch.execute('new', selected_tracks=(), retry_failed=True)
+        self.assertEqual(result, (existing,))
+        self.assertEqual(self.queue.jobs, {'a': existing})
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.queue.events, [])
+
     def test_unknown_explicit_catalogue_track_is_rejected_before_dispatch(self):
         batch = self.build()
         with self.assertRaises(ValueError):
