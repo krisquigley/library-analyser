@@ -21,7 +21,7 @@ from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
 from music_analyzer.interface_adapters.presenters.catalogue import present_scan
 from music_analyzer.application.use_cases.analyze_track import AnalyzeTrack
 from music_analyzer.application.dto.analysis import AudioSource
-from music_analyzer.domain.analysis import finite
+from music_analyzer.domain.analysis import MAX_ANALYSIS_DURATION_SECONDS, finite
 from music_analyzer.infrastructure.analysis.essentia import EssentiaEngine, VerifiedModels, load_backend
 from music_analyzer.infrastructure.audio.ffmpeg import FFmpegDecoder
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
@@ -97,6 +97,23 @@ def build_batch_worker(settings, max_duration):
     return recipe, worker.execute
 
 
+def read_catalogue_tracks(track_ids, tracks_file):
+    selected = []
+    for track_id in track_ids or ():
+        if track_id:
+            selected.append(track_id)
+    if tracks_file:
+        try:
+            with Path(tracks_file).open(encoding='utf-8') as stream:
+                for line in stream:
+                    value = line.strip()
+                    if value and not value.startswith('#'):
+                        selected.append(value)
+        except OSError as error:
+            raise ValueError(f'Unable to read catalogue track file: {error}') from error
+    return tuple(dict.fromkeys(selected))
+
+
 def build_batch(settings, max_duration):
     queue = SQLiteBatchQueue(settings.database)
     files = LocalInventory()
@@ -159,7 +176,9 @@ def main(argv: list[str] | None = None) -> int:
     analyze.add_argument('--limit', type=int, help='Maximum attempted tracks this invocation.')
     analyze.add_argument('--retry-failed', action='store_true', help='Retry failures, at most three attempts per recipe.')
     analyze.add_argument('--force', action='store_true', help='Reset attempt budget and rerun selected tracks.')
-    analyze.add_argument('--max-duration', type=float, default=900, help='Reject longer audio; default 900s, maximum 3600s.')
+    analyze.add_argument('--max-duration', type=float, default=900, help=f'Reject longer audio; default 900s, maximum {MAX_ANALYSIS_DURATION_SECONDS}s.')
+    analyze.add_argument('--catalogue-track', action='append', default=[], metavar='TRACK_ID', help='Retry this catalogue track ID when it is currently failed; repeatable, no paths.')
+    analyze.add_argument('--catalogue-tracks-file', help='Read catalogue track IDs to retry, one per line; blank lines and # comments ignored.')
     analyze.add_argument('--json', action='store_true', help='Print complete raw scores and provenance as JSON.')
     for name in ('show', 'reaggregate'):
         command = commands.add_parser(name, help='Inspect stored evidence; no decoding or inference.')
@@ -195,13 +214,16 @@ def main(argv: list[str] | None = None) -> int:
     projection.add_argument('--k', type=int, default=10, help='Maximum undirected neighbour degree; default 10.')
     projection.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
-    if args.command == 'analyze' and (not finite(args.max_duration) or not 0 < args.max_duration <= 3600):
-        parser.error('--max-duration must be positive, finite and at most 3600 seconds')
+    if args.command == 'analyze' and (not finite(args.max_duration) or not 0 < args.max_duration <= MAX_ANALYSIS_DURATION_SECONDS):
+        parser.error(f'--max-duration must be positive, finite and at most {MAX_ANALYSIS_DURATION_SECONDS} seconds')
     if args.command == 'analyze':
         if args.limit is not None and args.limit <= 0:
             parser.error('--limit must be positive')
-        if (args.file or args.track) and (args.limit is not None or args.retry_failed or args.force):
+        catalogue_selected = bool(args.catalogue_track or args.catalogue_tracks_file)
+        if (args.file or args.track) and (args.limit is not None or args.retry_failed or args.force or catalogue_selected):
             parser.error('Batch options cannot be used with --file or --track')
+        if catalogue_selected and (args.limit is not None or args.force or not args.retry_failed):
+            parser.error('--catalogue-track/--catalogue-tracks-file require --retry-failed and cannot be combined with --limit or --force')
     try:
         overrides = {key: value for key, value in vars(args).items()
                      if key in {'config', 'database', 'model_directory'}}
@@ -235,8 +257,9 @@ def main(argv: list[str] | None = None) -> int:
             jobs = SQLiteBatchQueue(load_settings(**overrides).database).status()
             output, ready = present_batch(jobs, args.json), True
         elif args.command == 'analyze' and not (args.file or args.track):
+            selected_tracks = read_catalogue_tracks(args.catalogue_track, args.catalogue_tracks_file)
             batch, recipe = build_batch(load_settings(**overrides), args.max_duration)
-            jobs = batch.execute(recipe, args.limit, args.retry_failed, args.force, args.max_duration)
+            jobs = batch.execute(recipe, args.limit, args.retry_failed, args.force, args.max_duration, selected_tracks=selected_tracks)
             output, ready = present_batch(jobs, args.json), not any(j.state == 'failed' for j in jobs)
         elif args.command == 'analyze':
             source = AudioSource(args.file) if args.file else ResolveTrack(

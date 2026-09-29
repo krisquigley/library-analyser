@@ -230,10 +230,12 @@ errors propagate and can leave a running row; crash recovery is deferred.
 A real FFmpeg adapter decodes a local file once to disposable 44.1 kHz mono
 float32 PCM. It does not edit the input. The decoder does not buffer the full track; rhythm/key each load the capped
 track into memory. Essentia/TensorFlow internal allocations are not OS-limited.
-Default application duration cap is 900 seconds (~152 MiB temporary PCM), with
-an explicit hard maximum of 3600 seconds (~606 MiB). One extra second detects
-oversized inputs, which are rejected rather than silently truncated. Decode has
-a 120-second wall timeout, and normal failure/interrupt paths remove temporary
+Default application duration cap is 900 seconds (~159 MB temporary PCM), with
+an explicit hard maximum of 5000 seconds (~882 MB). One extra second detects
+oversized inputs, which are rejected rather than silently truncated. Decode
+preflights temporary disk space for the PCM, bounded 512 MiB source snapshot and
+margin before writing. Decode has a bounded wall timeout that scales for longer
+explicit caps (up to a hard 900 seconds), and normal failure/interrupt paths remove temporary
 files. Hard process kills may leave OS-temp directories named
 `music-analyzer-audio-*`; remove only abandoned directories. Actual disposable
 FLAC, MP3 and M4A decode tests pass with the installed FFmpeg. These silent
@@ -351,6 +353,8 @@ the subsequent [real pilot](docs/real-pilot.md) is bounded execution validation.
 ```sh
 music-analyzer analyze --database /existing/directory/analysis.sqlite --limit 10 --json
 music-analyzer analyze --database /existing/directory/analysis.sqlite --retry-failed
+music-analyzer analyze --database /existing/directory/analysis.sqlite --retry-failed --catalogue-track sha256:DIGEST --max-duration 4757
+music-analyzer analyze --database /existing/directory/analysis.sqlite --retry-failed --catalogue-tracks-file /path/to/track-ids.txt --max-duration 5000
 music-analyzer analyze --database /existing/directory/analysis.sqlite --force --limit 1
 music-analyzer status --database /existing/directory/analysis.sqlite --json
 ```
@@ -361,8 +365,17 @@ persists pending/running/completed/failed jobs. `--limit` caps attempts, not sca
 or identity checks; no unsafe parallelism is provided. Failed tracks do not abort
 other tracks. Defaults do not retry failures; `--retry-failed` permits one attempt
 per eligible track this invocation, with three attempts total per recipe.
-`--force` resets that budget and reruns selected tracks including completed ones.
-A changed recipe starts a fresh budget. Attempts interrupted by Ctrl+C count.
+`--catalogue-track` (repeatable) and `--catalogue-tracks-file` scope that retry to
+public catalogue track IDs only, require `--retry-failed`, and cannot be combined
+with `--limit`, `--force`, `--file` or legacy one-off `--track`. In scoped mode,
+only selected jobs whose current durable state is `failed` are dispatched; selected
+completed jobs and every unselected job row remain untouched even when the new
+`--max-duration` changes the recipe. `--force` resets the attempt budget for
+unscoped dispatch. Completed catalogue jobs with a verified current identity are
+not implicitly invalidated by later unscoped default runs, preventing successful
+long-track retries from being overwritten by a shorter mixed-recipe invocation;
+use explicit force only when intentionally replacing completed catalogue evidence.
+Attempts interrupted by Ctrl+C count.
 
 A nonblocking POSIX advisory lock beside the database rejects a second batch
 process. Keep the `.batch.lock` file; never delete it while a dispatcher runs.

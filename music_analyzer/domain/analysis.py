@@ -2,6 +2,10 @@
 from dataclasses import dataclass
 
 
+MAX_ANALYSIS_DURATION_SECONDS = 5000
+PCM_BYTES_PER_SECOND = 4 * 44100
+
+
 def finite(value: float) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and -float('inf') < value < float('inf')
 

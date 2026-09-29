@@ -13,26 +13,35 @@ class AnalyzeBatch:
     def __init__(self, queue: BatchQueue, resolve, analyze, verify):
         self.queue, self.resolve, self.analyze, self.verify = queue, resolve, analyze, verify
 
-    def execute(self, fingerprint, limit=None, retry_failed=False, force=False, max_duration=900):
+    def execute(self, fingerprint, limit=None, retry_failed=False, force=False, max_duration=900, selected_tracks=None):
         if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0):
             raise ValueError('Limit must be a positive integer')
+        selected = tuple(dict.fromkeys(selected_tracks or ()))
+        if selected and not retry_failed:
+            raise ValueError('Catalogue track selection retries failed jobs only; pass --retry-failed')
         with self.queue.exclusive():
             self.queue.recover()
             recipe = fingerprint() if callable(fingerprint) else fingerprint
             if not recipe:
                 raise ValueError('A verified analysis fingerprint is required')
+            catalogue_tracks = self.queue.tracks()
+            unknown = tuple(track for track in selected if track not in catalogue_tracks)
+            if unknown:
+                raise ValueError('Unknown catalogue track ID: ' + ', '.join(unknown))
+            tracks = selected or catalogue_tracks
             dispatched = 0
-            for track in self.queue.tracks():
+            for track in tracks:
                 previous = self.queue.get_job(track)
                 same = previous is not None and previous.fingerprint == recipe
-                if same and not force:
-                    if previous.state == 'completed' and self.verify(track):
+                if not force and previous is not None and previous.state == 'completed' and self.verify(track):
+                    continue
+                if selected and (previous is None or previous.state != 'failed'):
+                    continue
+                if not force:
+                    if same and previous.attempts >= self.MAX_ATTEMPTS:
+                        self.queue.put_job(replace(previous, state='failed', detail='Attempt budget exhausted; --force required'))
                         continue
-                    if previous.attempts >= self.MAX_ATTEMPTS:
-                        if previous.state != 'failed':
-                            self.queue.put_job(replace(previous, state='failed', detail='Attempt budget exhausted; --force required'))
-                        continue
-                    if previous.state == 'failed' and not retry_failed:
+                    if same and previous.state == 'failed' and not retry_failed:
                         continue
                 if limit is not None and dispatched >= limit:
                     break
