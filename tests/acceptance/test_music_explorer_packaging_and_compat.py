@@ -21,7 +21,7 @@ class MusicExplorerPackagingAndCompatibilityTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         analyzer_assets = root / 'music_analyzer/frameworks/explorer/assets'
         standalone_assets = root / 'music_explorer/frameworks/explorer/assets'
-        for name in ['app.js', 'style.css']:
+        for name in ['app.js', 'index.html', 'style.css']:
             with self.subTest(asset=name):
                 self.assertEqual(
                     analyzer_assets.joinpath(name).read_text(encoding='utf-8'),

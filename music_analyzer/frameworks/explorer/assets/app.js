@@ -20,7 +20,7 @@ let pendingSelectionIntent=null;
 let loadingRefreshToken=0;
 let lastRefreshError=null;
 let hasCompletedInitialRefresh=false;
-let trackSummaryPage={tracks:[],metadata:{}};
+let trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query:'',order:'title'};
 let trackSummaryRequestSeq=0;
 let graphLoadState={status:'idle',message:'Graph not loaded. Use the Load graph button when you want the 3D library graph.'};
 function sessionStorageNumber(key){
@@ -145,9 +145,8 @@ async function refresh(){
     setLoadingPhase(refreshToken,'Loading first track page');
     const list=await api('/api/tracks/summary?limit=100&order=title');
     if(abortStaleRefresh(refreshToken,token)) return;
-    trackSummaryPage=list;
+    applyTrackSummaryPage(list,{append:false,query:''});
     setLoadingPhase(refreshToken,'Rendering first track page',`${(list.tracks||[]).length} of ${list.metadata&&list.metadata.track_count!=null?list.metadata.track_count:'many'} tracks`);
-    renderTracks(list.tracks||[]);
     renderGraphLoadStatus();
     if(abortStaleRefresh(refreshToken,token)) return;
     await refreshSelectionDependent(token);
@@ -162,16 +161,31 @@ async function refresh(){
 }
 function trackTitle(t){return t.title||t.display_label||t.handle;}
 function trackArtist(t){return t.artist||'Unknown artist';}
-async function loadTrackSummaryPage(query){
+function applyTrackSummaryPage(page,options){
+  const append=!!(options&&options.append);
+  const previous=append&&Array.isArray(trackSummaryPage.tracks)?trackSummaryPage.tracks:[];
+  const tracks=append?[...previous,...(page.tracks||[])]:[...(page.tracks||[])];
+  trackSummaryPage={...page,tracks,query:(options&&options.query)||'',order:'title'};
+  renderTracks(tracks);
+}
+async function loadTrackSummaryPage(query,options){
   const seq=++trackSummaryRequestSeq;
+  const append=!!(options&&options.append);
+  const cursor=options&&options.cursor;
+  const normalizedQuery=String(query||'');
   const params=new URLSearchParams({limit:'100',order:'title'});
-  if(query) params.set('query',query);
+  if(normalizedQuery) params.set('query',normalizedQuery);
+  if(cursor) params.set('cursor',cursor);
   const page=await api('/api/tracks/summary?'+params.toString());
   if(seq!==trackSummaryRequestSeq) return;
-  trackSummaryPage=page;
-  renderTracks(page.tracks||[]);
+  applyTrackSummaryPage(page,{append,query:normalizedQuery});
 }
-function renderTracks(tracks){const root=document.getElementById('tracks'); if(!root) return; const table=document.createElement('table'); table.className='tracks-table'; const caption=document.createElement('caption'); const total=trackSummaryPage&&trackSummaryPage.metadata?trackSummaryPage.metadata.track_count:null; text(caption,total==null?`${tracks.length} tracks`:`Showing ${tracks.length} of ${total} matching tracks`); table.append(caption); const thead=document.createElement('thead'); const headRow=document.createElement('tr'); for(const label of ['Title','Artist']) headRow.append(text(document.createElement('th'),label)); thead.append(headRow); const tbody=document.createElement('tbody'); const empty=document.createElement('p'); empty.id='track-search-empty'; empty.className='muted'; empty.setAttribute('role','status'); text(empty,'No tracks match your search'); empty.hidden=tracks.length!==0; const rows=tracks.map(t=>{const row=document.createElement('tr'); row.dataset.trackId=t.handle; row.dataset.title=trackTitle(t); row.dataset.artist=trackArtist(t); row.className=t.handle===state.current_track_id?'current':''; const titleCell=document.createElement('td'); const button=document.createElement('button'); text(button,trackTitle(t)); button.onclick=()=>setCurrent(t.handle); if(row.className) button.setAttribute('aria-current','true'); titleCell.append(button); const artistCell=text(document.createElement('td'),trackArtist(t)); row.append(titleCell,artistCell); return row;}); tbody.replaceChildren(...rows); table.append(thead,tbody); root.replaceChildren(table,empty); const search=document.getElementById('track-search'); if(search && !search.dataset.summarySearchWired){search.dataset.summarySearchWired='1'; let timer=null; search.oninput=()=>{clearTimeout(timer); const q=search.value; timer=setTimeout(()=>loadTrackSummaryPage(q).catch(()=>{}),150);};}}
+function loadNextTrackSummaryPage(){
+  const cursor=trackSummaryPage&&trackSummaryPage.next_cursor;
+  if(!cursor) return Promise.resolve();
+  return loadTrackSummaryPage(trackSummaryPage.query||'',{append:true,cursor});
+}
+function renderTracks(tracks){const root=document.getElementById('tracks'); if(!root) return; const table=document.createElement('table'); table.className='tracks-table'; const caption=document.createElement('caption'); const total=trackSummaryPage&&trackSummaryPage.metadata?trackSummaryPage.metadata.track_count:null; text(caption,total==null?`${tracks.length} tracks`:`Showing ${tracks.length} of ${total}`); table.append(caption); const thead=document.createElement('thead'); const headRow=document.createElement('tr'); for(const label of ['Title','Artist']) headRow.append(text(document.createElement('th'),label)); thead.append(headRow); const tbody=document.createElement('tbody'); const empty=document.createElement('p'); empty.id='track-search-empty'; empty.className='muted'; empty.setAttribute('role','status'); text(empty,'No tracks match your search'); empty.hidden=tracks.length!==0; const rows=tracks.map(t=>{const row=document.createElement('tr'); row.dataset.trackId=t.handle; row.dataset.title=trackTitle(t); row.dataset.artist=trackArtist(t); row.className=t.handle===state.current_track_id?'current':''; const titleCell=document.createElement('td'); const button=document.createElement('button'); text(button,trackTitle(t)); button.onclick=()=>setCurrent(t.handle); if(row.className) button.setAttribute('aria-current','true'); titleCell.append(button); const artistCell=text(document.createElement('td'),trackArtist(t)); row.append(titleCell,artistCell); return row;}); tbody.replaceChildren(...rows); table.append(thead,tbody); const status=document.createElement('p'); status.className='muted'; status.setAttribute('role','status'); status.setAttribute('aria-live','polite'); text(status,total==null?`${tracks.length} tracks loaded`:`Showing ${tracks.length} of ${total}`); const children=[table,status]; if(trackSummaryPage&&trackSummaryPage.next_cursor){const nav=document.createElement('nav'); nav.setAttribute('aria-label','Track list pagination'); const more=document.createElement('button'); more.type='button'; text(more,'Load more tracks'); more.onclick=()=>loadNextTrackSummaryPage().catch(()=>{}); nav.append(more); children.push(nav);} children.push(empty); root.replaceChildren(...children); const search=document.getElementById('track-search'); if(search && !search.dataset.summarySearchWired){search.dataset.summarySearchWired='1'; let timer=null; search.oninput=()=>{clearTimeout(timer); const q=search.value; timer=setTimeout(()=>loadTrackSummaryPage(q).catch(()=>{}),150);};}}
 function filterTrackRows(query,tbody,empty){const needle=String(query||'').trim().toLowerCase(); let shown=0; for(const row of tbody.children){const haystack=`${row.dataset.title||''} ${row.dataset.artist||''}`.toLowerCase(); row.hidden=!!needle && !haystack.includes(needle); if(!row.hidden) shown++;} if(empty) empty.hidden=shown!==0;}
 function renderGraphLoadStatus(){const root=document.getElementById('graph-load-status')||document.getElementById('controls'); if(!root) return; let panel=document.getElementById('graph-load-status'); if(!panel){panel=document.createElement('section'); panel.id='graph-load-status'; panel.className='graph-load-status'; root.append(panel);} panel.replaceChildren(); panel.append(text(document.createElement('h3'),'Library graph')); const p=document.createElement('p'); text(p,graphLoadState.message||'Graph not loaded. Use the Load graph button when you want the 3D library graph.'); panel.append(p); if(graphLoadState.status==='idle'||graphLoadState.status==='error'||graphLoadState.status==='ready'){const button=document.createElement('button'); button.id='load-graph'; button.type='button'; text(button,graphLoadState.status==='error'?'Retry graph':graphLoadState.status==='ready'?'Reload graph':'Load graph'); button.onclick=()=>loadGraph().catch(()=>{}); panel.append(button);} else if(graphLoadState.status==='loading'||graphLoadState.status==='rendering'){const busy=document.createElement('p'); busy.setAttribute('role','status'); busy.setAttribute('aria-live','polite'); text(busy,graphLoadState.status==='loading'?'Loading graph…':'Rendering graph…'); panel.append(busy);}}
 async function loadGraph(){const seq=(graphLoadState.requestSeq||0)+1; graphLoadState={...graphLoadState,status:'loading',message:'Loading graph. The track list, search, history, and detail remain usable.',requestSeq:seq}; renderGraphLoadStatus(); try{const graph=await api('/api/mood-axis-graph'+graphQueryFromControls()); if(seq!==graphLoadState.requestSeq) return; graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); graphLoadState={...graphLoadState,status:'rendering',message:`Rendering ${visibleGraph.nodes.length} positioned tracks`,requestSeq:seq}; renderGraphLoadStatus(); await nextFrame(); if(seq!==graphLoadState.requestSeq) return; renderMap(visibleGraph); graphLoadState={...graphLoadState,status:'ready',message:`Graph ready: ${visibleGraph.nodes.length} positioned tracks`,requestSeq:seq}; renderGraphLoadStatus();}catch(error){if(seq!==graphLoadState.requestSeq) return; graphLoadState={...graphLoadState,status:'error',message:`Graph failed: ${error&&error.message?error.message:error}`,requestSeq:seq}; renderGraphLoadStatus(); throw error;}}
@@ -373,4 +387,4 @@ function setGraphControlsForTesting(controls){selectedGraphControls={...selected
 function getGraphControlsForTesting(){return {...selectedGraphControls,genres:[...(selectedGraphControls.genres||[])]};}
 function getVisibleGraphForTesting(){return {nodes:[...(visibleGraph.nodes||[])],links:[...(visibleGraph.links||[])],unpositioned:[...(visibleGraph.unpositioned||[])]};}
 function getStateForTesting(){return {...state,history:[...(state.history||[])]};}
-if(typeof module!=='undefined'){module.exports={refresh,setLoadingPhase,setLoadingError,clearLoading,nextFrame,detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,selectionClientId,syncSelectionEpoch,renderInitialDetail,renderDetail,renderTrackMetadata,setGraphModelForTesting,setVisibleGraphForTesting,setStateForTesting,getStateForTesting,loadGraph,applyCurrentGraphFilters,renderGraphLoadStatus,renderTracks,graphRelatednessLegend,relatednessLinkAlpha,buildGraphControls,syncGraphControlOptions,clearGraphFilters,setGraphControlsForTesting,getGraphControlsForTesting,getVisibleGraphForTesting};}
+if(typeof module!=='undefined'){module.exports={refresh,setLoadingPhase,setLoadingError,clearLoading,nextFrame,detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,buildMoodGraphModel,moodNodeColor,graphColorLegend,graphQueryFromControls,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,selectionClientId,syncSelectionEpoch,renderInitialDetail,renderDetail,renderTrackMetadata,setGraphModelForTesting,setVisibleGraphForTesting,setStateForTesting,getStateForTesting,loadGraph,applyCurrentGraphFilters,renderGraphLoadStatus,renderTracks,loadTrackSummaryPage,loadNextTrackSummaryPage,graphRelatednessLegend,relatednessLinkAlpha,buildGraphControls,syncGraphControlOptions,clearGraphFilters,setGraphControlsForTesting,getGraphControlsForTesting,getVisibleGraphForTesting};}

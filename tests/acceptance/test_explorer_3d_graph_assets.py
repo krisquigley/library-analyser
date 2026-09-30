@@ -466,6 +466,116 @@ async function flushSummarySearch(){for(let i=0;i<8;i++) await Promise.resolve()
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+    def test_track_summary_source_uses_next_cursor_and_load_more_without_unbounded_list(self):
+        for package in ('music_analyzer', 'music_explorer'):
+            with self.subTest(package=package):
+                source = (REPO_ROOT / package / 'frameworks/explorer/assets/app.js').read_text(encoding='utf-8')
+                self.assertIn("params.set('cursor',cursor)", source)
+                self.assertIn("Load more tracks", source)
+                self.assertIn("Showing ${tracks.length} of ${total}", source)
+                self.assertIn('next_cursor', source[source.index('function renderTracks'):])
+                self.assertNotIn('/api/tracks?limit=all', source)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for track pagination DOM tests')
+    def test_summary_list_load_more_uses_next_cursor_appends_and_preserves_selection(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  return {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', value:'', textContent:'', onclick:null, oninput:null, hidden:false, disabled:false, type:'', id:'',
+    append(...nodes){this.children.push(...nodes);},
+    replaceChildren(...nodes){this.children=[...nodes]; this.textContent='';},
+    setAttribute(name,value){this.attributes[name]=String(value); if(name==='aria-label') this.ariaLabel=String(value);},
+    getAttribute(name){return this.attributes[name] || null;},
+    removeAttribute(name){delete this.attributes[name];},
+    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
+  };
+}
+const tracks = makeElement('div');
+const search = makeElement('input');
+const elements = {tracks, 'track-search': search};
+global.document = {createElement: makeElement, getElementById(id){return elements[id] || null;}, querySelectorAll(){return [];}};
+let fetches = [];
+global.fetch = async path => {
+  fetches.push(String(path));
+  if (String(path).includes('cursor=after-100')) return {ok:true, json:async()=>({tracks:[{handle:'selected', title:'Title 00100', artist:'Artist'}, {handle:'later', title:'Title 00101', artist:'Artist'}], metadata:{track_count:102}, next_cursor:null})};
+  return {ok:true, json:async()=>({tracks:[{handle:'first', title:'Title 00000', artist:'Artist'}], metadata:{track_count:102}, next_cursor:'after-100'})};
+};
+(async()=>{
+  app.setStateForTesting({current_track_id:'selected'});
+  await app.loadTrackSummaryPage('');
+  assert.deepStrictEqual(fetches, ['/api/tracks/summary?limit=100&order=title']);
+  assert(tracks.innerText.includes('Showing 1 of 102'));
+  let loadMore = tracks.children.find(child => child.tagName === 'NAV').children[0];
+  assert.strictEqual(loadMore.textContent, 'Load more tracks');
+  await loadMore.onclick();
+  assert(fetches.at(-1).includes('cursor=after-100'));
+  assert.strictEqual(fetches.at(-1), '/api/tracks/summary?limit=100&order=title&cursor=after-100');
+  const tbody = tracks.children[0].children[2];
+  assert.deepStrictEqual(tbody.children.map(row => row.dataset.title), ['Title 00000','Title 00100','Title 00101']);
+  assert.strictEqual(tbody.children[1].className, 'current');
+  assert.strictEqual(tbody.children[1].children[0].children[0].getAttribute('aria-current'), 'true');
+  assert(tracks.innerText.includes('Showing 3 of 102'));
+  assert(!tracks.children.some(child => child.tagName === 'NAV'), 'load more navigation disappears at end');
+})().catch(error=>{console.error(error); process.exit(1);});
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for track pagination race tests')
+    def test_summary_search_resets_cursor_and_stale_next_page_does_not_mix_results(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function deferred(){let resolve; const promise = new Promise(r => resolve = r); return {promise, resolve};}
+function makeElement(tag){
+  return {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', value:'', textContent:'', onclick:null, oninput:null, hidden:false, disabled:false,
+    append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children=[...nodes]; this.textContent='';},
+    setAttribute(name,value){this.attributes[name]=String(value);}, getAttribute(name){return this.attributes[name] || null;}, removeAttribute(name){delete this.attributes[name];},
+    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
+  };
+}
+const tracks = makeElement('div');
+const search = makeElement('input');
+const elements = {tracks, 'track-search': search};
+global.document = {createElement: makeElement, getElementById(id){return elements[id] || null;}, querySelectorAll(){return [];}};
+let next = deferred();
+let fetches = [];
+global.fetch = async path => {
+  fetches.push(String(path));
+  const text = String(path);
+  if (text.includes('cursor=after-100')) return next.promise;
+  if (text.includes('query=needle')) return {ok:true, json:async()=>({tracks:[{handle:'needle', title:'Needle Song', artist:'Finder'}], metadata:{track_count:1}, next_cursor:null})};
+  return {ok:true, json:async()=>({tracks:[{handle:'first', title:'Alpha', artist:'Artist'}], metadata:{track_count:101}, next_cursor:'after-100'})};
+};
+(async()=>{
+  await app.loadTrackSummaryPage('');
+  const loadMore = tracks.children.find(child => child.tagName === 'NAV').children[0];
+  const staleNext = loadMore.onclick();
+  await Promise.resolve();
+  await app.loadTrackSummaryPage('needle');
+  next.resolve({ok:true, json:async()=>({tracks:[{handle:'stale', title:'Stale Old Page', artist:'Wrong'}], metadata:{track_count:101}, next_cursor:null})});
+  await staleNext;
+  const tbody = tracks.children[0].children[2];
+  assert.deepStrictEqual(tbody.children.map(row => row.dataset.title), ['Needle Song']);
+  assert(fetches.includes('/api/tracks/summary?limit=100&order=title&query=needle'));
+  assert(!fetches.find(url => url.includes('query=needle') && url.includes('cursor=')), 'new search must reset cursor');
+  assert(!tracks.innerText.includes('Stale Old Page'));
+  assert(tracks.innerText.includes('Showing 1 of 1'));
+})().catch(error=>{console.error(error); process.exit(1);});
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+    def test_static_html_copy_matches_manual_graph_loading_in_both_mirrored_assets(self):
+        for package in ('music_analyzer', 'music_explorer'):
+            with self.subTest(package=package):
+                html = (REPO_ROOT / package / 'frameworks/explorer/assets/index.html').read_text(encoding='utf-8')
+                self.assertNotIn('initial graph shows the whole library', html)
+                self.assertIn('Use Load graph to render the 3D library graph manually', html)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for metadata DOM tests')
     def test_metadata_is_flat_deduplicated_and_escaped(self):
         script = r"""
