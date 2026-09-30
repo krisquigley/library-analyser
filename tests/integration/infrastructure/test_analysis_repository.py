@@ -8,7 +8,20 @@ import unittest
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
 from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
 from music_analyzer.domain.catalogue import FileIdentity
+from music_analyzer.application.use_cases.scan_library import ScanLibrary
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository, APPLICATION_ID
+from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
+
+
+class StaticInventory:
+    def __init__(self, files):
+        self._files = tuple(files)
+
+    def inventory(self, root, limits):
+        return Inventory(root, self._files, (), True)
+
+    def matches(self, location, track_id):  # pragma: no cover - not used by these tests
+        return False
 
 
 class AnalysisRepositoryTests(unittest.TestCase):
@@ -221,6 +234,89 @@ class AnalysisRepositoryTests(unittest.TestCase):
             with closing(sqlite3.connect(self.path)) as db:
                 self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone(), (300.0, 'mutagen', 'eligible', ''))
                 self.assertEqual(db.execute('SELECT count(*) FROM locations WHERE track_id=?', (identity.track_id,)).fetchone()[0], 2)
+
+    def test_scan_library_rescans_preserve_persisted_trusted_duration_across_roots_and_orders(self):
+        identity = FileIdentity('8' * 64, 123)
+        trusted = ScannedFile('/root-a/trusted.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=300.0, duration_source='mutagen'))
+        untrusted = ScannedFile('/root-b/untrusted.flac', identity, 2, 'flac', TrackMetadata(duration_seconds=None, duration_source=''))
+
+        for first, second, repeated in ((trusted, untrusted, untrusted), (untrusted, trusted, untrusted)):
+            with self.subTest(order=(first.location, second.location, repeated.location)):
+                self.path.unlink(missing_ok=True)
+
+                ScanLibrary(StaticInventory((first,)), SQLiteAnalysisRepository(str(self.path))).execute('/root-a' if first is trusted else '/root-b')
+                ScanLibrary(StaticInventory((second,)), SQLiteAnalysisRepository(str(self.path))).execute('/root-a' if second is trusted else '/root-b')
+                ScanLibrary(StaticInventory((repeated,)), SQLiteAnalysisRepository(str(self.path))).execute('/root-b')
+
+                with closing(sqlite3.connect(self.path)) as db:
+                    self.assertEqual(
+                        db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone(),
+                        (300.0, 'mutagen', 'eligible', ''),
+                    )
+                    self.assertEqual(
+                        tuple(row[0] for row in db.execute('SELECT path FROM active_locations WHERE track_id=? ORDER BY path', (identity.track_id,))),
+                        ('/root-a/trusted.flac', '/root-b/untrusted.flac'),
+                    )
+                self.assertEqual(tuple(SQLiteAnalysisRepository(str(self.path)).track_ids()), (identity.track_id,))
+                self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids(), (identity.track_id,))
+
+    def test_migrated_catalogue_becomes_batch_and_explorer_active_after_trusted_rescan(self):
+        identity = FileIdentity('0' * 64, 123)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.executescript(f'''
+                PRAGMA application_id={APPLICATION_ID};
+                PRAGMA user_version=5;
+                CREATE TABLE runs(id TEXT PRIMARY KEY, location TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','completed','failed','interrupted')), detail TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE stages(run_id TEXT NOT NULL REFERENCES runs(id), stage TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(run_id,stage));
+                CREATE TABLE tracks(id TEXT PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, size INTEGER NOT NULL);
+                CREATE TABLE locations(path TEXT PRIMARY KEY, track_id TEXT NOT NULL REFERENCES tracks(id), mtime_ns INTEGER NOT NULL, format TEXT NOT NULL, available INTEGER NOT NULL CHECK(available IN (0,1)));
+                CREATE TABLE scan_roots(root TEXT NOT NULL, path TEXT NOT NULL REFERENCES locations(path), PRIMARY KEY(root,path));
+                CREATE TABLE batch_jobs(track_id TEXT PRIMARY KEY REFERENCES tracks(id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')), attempts INTEGER NOT NULL CHECK(attempts >= 0), run_id TEXT, detail TEXT NOT NULL);
+                CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
+                CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
+                CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
+            ''')
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (identity.track_id, identity.sha256, identity.size))
+            db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/root-a/trusted.flac', identity.track_id, 1, 'flac', 1))
+            db.execute('INSERT INTO scan_roots VALUES(?,?)', ('/root-a', '/root-a/trusted.flac'))
+            db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (identity.track_id, '[]', '[]', '[]'))
+            db.commit()
+
+        SQLiteAnalysisRepository(str(self.path))
+        trusted = ScannedFile('/root-a/trusted.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=300.0, duration_source='mutagen'))
+        untrusted = ScannedFile('/root-b/untrusted.flac', identity, 2, 'flac', TrackMetadata(duration_seconds=None, duration_source=''))
+        ScanLibrary(StaticInventory((trusted,)), SQLiteAnalysisRepository(str(self.path))).execute('/root-a')
+        ScanLibrary(StaticInventory((untrusted,)), SQLiteAnalysisRepository(str(self.path))).execute('/root-b')
+
+        self.assertEqual(tuple(SQLiteAnalysisRepository(str(self.path)).track_ids()), (identity.track_id,))
+        self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids(), (identity.track_id,))
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM active_locations WHERE track_id=?', (identity.track_id,)).fetchone(), (2,))
+
+    def test_register_rejects_persisted_trusted_duration_conflicts_without_touching_history_or_jobs(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = FileIdentity('9' * 64, 123)
+        repository.register(Inventory('/root-a', (
+            ScannedFile('/root-a/trusted.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=300.0, duration_source='mutagen')),
+        ), (), True))
+        run = repository.start(AudioSource('/root-a/trusted.flac', identity.track_id))
+        repository.finish(run, 'completed', 'keep')
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute('INSERT INTO batch_jobs VALUES(?,?,?,?,?,?)', (identity.track_id, 'fp', 'failed', 2, run, 'keep'))
+            db.commit()
+
+        for incoming in (1300.0, 0.0, float('nan')):
+            with self.subTest(incoming=incoming):
+                before = self.path.read_bytes()
+                with self.assertRaisesRegex(AnalysisError, 'Conflicting trusted duration'):
+                    SQLiteAnalysisRepository(str(self.path)).register(Inventory('/root-b', (
+                        ScannedFile('/root-b/conflict.flac', identity, 2, 'flac', TrackMetadata(duration_seconds=incoming, duration_source='ffprobe')),
+                    ), (), True))
+                self.assertEqual(self.path.read_bytes(), before)
+                with closing(sqlite3.connect(self.path)) as db:
+                    self.assertEqual(db.execute('SELECT status,detail FROM runs WHERE id=?', (run,)).fetchone(), ('completed', 'keep'))
+                    self.assertEqual(db.execute('SELECT state,attempts,run_id,detail FROM batch_jobs WHERE track_id=?', (identity.track_id,)).fetchone(), ('failed', 2, run, 'keep'))
+                    self.assertFalse(db.execute("SELECT 1 FROM locations WHERE path='/root-b/conflict.flac'").fetchone())
 
     def test_register_rejects_conflicting_trusted_duplicate_durations(self):
         repository = SQLiteAnalysisRepository(str(self.path))

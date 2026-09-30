@@ -43,17 +43,41 @@ def _duration_status(duration_seconds, source=''):
     return 'unknown'
 
 
-def _coalesced_duration(file, files):
+def _trusted_duration_evidence(duration_seconds, source):
+    if source not in TRUSTED_DURATION_SOURCES or duration_seconds is None:
+        return None
+    if isinstance(duration_seconds, bool):
+        return ('invalid', None, source)
+    try:
+        seconds = float(duration_seconds)
+    except (TypeError, ValueError):
+        return ('invalid', None, source)
+    if isfinite(seconds) and seconds > 0:
+        return ('measured', seconds, source)
+    return ('invalid', None, source)
+
+
+def _coalesced_duration(file, files, stored_audio=None):
     same_identity = tuple(candidate for candidate in files if candidate.identity.track_id == file.identity.track_id)
     trusted = []
     invalid_trusted = False
+    if stored_audio is not None:
+        duration, source = stored_audio
+        evidence = _trusted_duration_evidence(duration, source)
+        if evidence:
+            kind, seconds, evidence_source = evidence
+            if kind == 'measured':
+                trusted.append((seconds, evidence_source))
+            else:
+                invalid_trusted = True
     for candidate in same_identity:
         source = getattr(candidate.metadata, 'duration_source', '')
         seconds = candidate.metadata.duration_seconds
-        if source in TRUSTED_DURATION_SOURCES and seconds is not None:
-            seconds = float(seconds)
-            if isfinite(seconds) and seconds > 0:
-                trusted.append((seconds, source))
+        evidence = _trusted_duration_evidence(seconds, source)
+        if evidence:
+            kind, measured_seconds, evidence_source = evidence
+            if kind == 'measured':
+                trusted.append((measured_seconds, evidence_source))
             else:
                 invalid_trusted = True
     distinct = {seconds for seconds, _source in trusted}
@@ -290,7 +314,8 @@ class SQLiteAnalysisRepository:
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
                 db.execute('INSERT INTO track_metadata VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET common_json=excluded.common_json,tags_json=excluded.tags_json,warnings_json=excluded.warnings_json',
                            (identity.track_id, json.dumps(file.metadata.common, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.tags, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.warnings, ensure_ascii=False, allow_nan=False)))
-                duration, source = _coalesced_duration(file, inventory.files)
+                stored_audio = db.execute('SELECT duration_seconds,duration_source FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone()
+                duration, source = _coalesced_duration(file, inventory.files, stored_audio)
                 duration = _normalized_sqlite_duration(duration)
                 reason = _duration_eligibility_reason(duration, source)
                 status = _duration_status(duration, source)
