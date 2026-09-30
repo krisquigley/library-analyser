@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 
-from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ScoreSummary, StageResult, TrackMetadata
+from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, ScoreSummary, StageResult, TrackMetadata
 
 APPLICATION_ID = 0x4D414E41
 ACTIVE_LIBRARY_MAX_DURATION_SECONDS = 1200.0
@@ -173,6 +173,51 @@ class ReadOnlyExplorerSQLiteRepository:
             ids = tuple(row[0] for row in db.execute(f'SELECT id FROM active_tracks {where} ORDER BY id LIMIT ?', (*params, limit)))
             return metadata, track_count, tuple(self._read_track(db, track_id) for track_id in ids)
 
+
+    def list_track_summaries(self, limit: int, cursor: str | None = None, query: str = '', order: str = 'title'):
+        with self._transaction() as db:
+            metadata = self._metadata(db)
+            where = []
+            params = []
+            q = (query or '').strip().lower()
+            if q:
+                like = '%' + q.replace('%', '\\%').replace('_', '\\_') + '%'
+                where.append("(lower(id) LIKE ? ESCAPE '\\' OR lower(COALESCE(first_path,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(common_json,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(tags_json,'')) LIKE ? ESCAPE '\\')")
+                params.extend([like, like, like, like])
+            cursor_key, cursor_id = self._decode_summary_cursor(cursor)
+            order_expr = 'lower(display_label)' if order in ('title', 'artist') else 'id'
+            if cursor_key is not None and cursor_id is not None:
+                where.append(f"({order_expr} > ? OR ({order_expr} = ? AND id > ?))")
+                params.extend([cursor_key, cursor_key, cursor_id])
+            where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+            base = """
+                WITH first_location AS (
+                    SELECT track_id, min(path) AS path, count(*) AS available_locations
+                    FROM active_locations GROUP BY track_id
+                ), summary AS (
+                    SELECT t.id, t.sha256, t.size, COALESCE(first_location.path, '') AS first_path,
+                           COALESCE(first_location.available_locations, 0) AS available_locations,
+                           COALESCE(tm.common_json, '[]') AS common_json,
+                           COALESCE(tm.tags_json, '[]') AS tags_json,
+                           lower(CASE WHEN COALESCE(first_location.path, '') = '' THEN t.id ELSE COALESCE(first_location.path, '') END) AS display_label
+                    FROM active_tracks t
+                    LEFT JOIN first_location ON first_location.track_id=t.id
+                    LEFT JOIN track_metadata tm ON tm.track_id=t.id
+                )
+                SELECT id, sha256, size, first_path, available_locations, common_json, tags_json, display_label
+                FROM summary
+            """
+            track_count = db.execute('SELECT count(*) FROM (' + base + where_sql + ')', tuple(params)).fetchone()[0]
+            rows = db.execute(base + where_sql + f' ORDER BY {order_expr}, id LIMIT ?', (*params, limit + 1)).fetchall()
+            page_rows = rows[:limit]
+            summaries = tuple(self._summary_from_row(row) for row in page_rows)
+            next_cursor = None
+            if len(rows) > limit and page_rows:
+                last = page_rows[-1]
+                key = last[7] if order in ('title', 'artist') else last[0]
+                next_cursor = self._encode_summary_cursor(key, last[0])
+            return metadata, track_count, summaries, next_cursor
+
     def candidate_snapshot(self):
         with self._transaction() as db:
             metadata = self._metadata(db)
@@ -229,14 +274,59 @@ class ReadOnlyExplorerSQLiteRepository:
         metadata = self._read_metadata(db, track_id)
         return ExplorerStoredTrack(track[0], track[1], track[2], display_label, len(locations), run, overrides, metadata)
 
+
+    def _summary_from_row(self, row):
+        track_id, _sha, _size, first_path, available_locations, common_json, tags_json, display_label = row
+        label = Path(first_path).name if first_path else display_label
+        metadata = self._metadata_from_json(common_json, tags_json, '[]', None)
+        title = self._metadata_value(metadata, 'title') or label or track_id
+        artist = self._metadata_value(metadata, 'artist') or 'Unknown artist'
+        return ExplorerTrackSummary(track_id, title, artist, label, int(available_locations))
+
+    def _metadata_from_json(self, common_json, tags_json, warnings_json, audio):
+        warnings = tuple(str(x) for x in json.loads(warnings_json))
+        return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(common_json)), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(tags_json)), warnings, audio[0] if audio else None, audio[1] if audio else '')
+
+    def _metadata_value(self, metadata, semantic):
+        wanted = {'title': ('title',), 'artist': ('artist', 'artists')}[semantic]
+        for key, value in metadata.common:
+            if str(key).strip().lower().replace(' ', '_') in wanted:
+                if isinstance(value, tuple):
+                    joined = '; '.join(str(v).strip() for v in value if str(v).strip())
+                    if joined:
+                        return joined
+                elif str(value).strip():
+                    return str(value).strip()
+        for key, values in metadata.tags:
+            if str(key).strip().lower().replace(' ', '_') in wanted:
+                joined = '; '.join(str(v).strip() for v in (values or ()) if str(v).strip())
+                if joined:
+                    return joined
+        return None
+
+    def _encode_summary_cursor(self, key, track_id):
+        import base64
+        return base64.urlsafe_b64encode(json.dumps([key, track_id], separators=(',', ':')).encode('utf-8')).decode('ascii')
+
+    def _decode_summary_cursor(self, cursor):
+        if not cursor:
+            return None, None
+        try:
+            import base64
+            value = json.loads(base64.urlsafe_b64decode(str(cursor).encode('ascii')).decode('utf-8'))
+            if isinstance(value, list) and len(value) == 2 and all(isinstance(x, str) for x in value):
+                return value[0], value[1]
+        except Exception:
+            pass
+        raise AnalysisError('Invalid explorer summary cursor')
+
     def _read_metadata(self, db, track_id):
         row = db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone()
         audio = db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (track_id,)).fetchone()
         if not row:
             return TrackMetadata(duration_seconds=(audio[0] if audio else None), duration_source=(audio[1] if audio else ''))
         try:
-            warnings = tuple(str(x) for x in json.loads(row[2]))
-            return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(row[0])), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(row[1])), warnings, audio[0] if audio else None, audio[1] if audio else '')
+            return self._metadata_from_json(row[0], row[1], row[2], audio)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise AnalysisError('Invalid stored metadata') from error
 

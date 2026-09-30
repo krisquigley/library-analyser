@@ -7,6 +7,7 @@ from music_explorer.application.dto.explorer import (
     ExplorerMetadata,
     ExplorerSnapshot,
     ExplorerTrackDetail,
+    ExplorerTrackSummaryPage,
     MoodAxisEdge,
     MoodAxisGraph,
     MoodAxisNode,
@@ -31,12 +32,26 @@ class ListExplorerTracks:
         return ExplorerSnapshot(self._metadata(metadata, track_count), tuple(_map_track(track) for track in tracks))
 
     def _metadata(self, raw, track_count):
-        return ExplorerMetadata(
-            application_id=int(raw.get('application_id', 0)),
-            schema_version=int(raw.get('schema_version', 0)),
-            read_policy=str(raw.get('read_policy', 'bounded_read_transaction')),
-            track_count=track_count,
-        )
+        return _metadata_from_raw(raw, track_count)
+
+
+class ListExplorerTrackSummaries:
+    VALID_ORDERS = ('title', 'artist', 'id')
+
+    def __init__(self, repository: ExplorerRepository):
+        self.repository = repository
+
+    def execute(self, limit=100, cursor=None, query='', order='title'):
+        if not isinstance(limit, int) or limit < 1 or limit > 100:
+            raise ValueError('Explorer summary limit must be between 1 and 100')
+        query = str(query or '').strip()
+        if len(query) > 200:
+            raise ValueError('Explorer summary query must be at most 200 characters')
+        order = str(order or 'title')
+        if order not in self.VALID_ORDERS:
+            raise ValueError('Explorer summary order must be title, artist, or id')
+        metadata, track_count, tracks, next_cursor = self.repository.list_track_summaries(limit, cursor, query, order)
+        return ExplorerTrackSummaryPage(_metadata_from_raw(metadata, track_count), tuple(tracks), limit, next_cursor, query, order)
 
 
 class GetExplorerTrackDetail:
@@ -111,6 +126,15 @@ class FilterMoodAxisGraph:
         ids = {node.track_id for node in nodes}
         edges = tuple(edge for edge in graph.edges if edge.a in ids and edge.b in ids)
         return MoodAxisGraph(graph.metadata, graph.selected_mood, graph.available_moods, nodes, graph.unpositioned, edges)
+
+
+def _metadata_from_raw(raw, track_count):
+    return ExplorerMetadata(
+        application_id=int(raw.get('application_id', 0)),
+        schema_version=int(raw.get('schema_version', 0)),
+        read_policy=str(raw.get('read_policy', 'bounded_read_transaction')),
+        track_count=track_count,
+    )
 
 
 def _map_track(track):

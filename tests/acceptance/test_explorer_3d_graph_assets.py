@@ -669,7 +669,7 @@ context.fetch = (path, options={}) => {
   fetches.push(String(path));
   if (path === '/api/current') return Promise.resolve(response({current_track_id:'server-current', selection_epoch:2, selection_accepted:false}));
   if (path === '/api/state') return Promise.resolve(response({current_track_id:'server-current', selection_epoch:2}));
-  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'client-click', display_label:'Client Click'},{handle:'server-current', display_label:'Server Current'}]}));
+  if (path === '/api/tracks/summary?limit=100&order=title') return Promise.resolve(response({tracks:[{handle:'client-click', display_label:'Client Click'},{handle:'server-current', display_label:'Server Current'}]}));
   if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('client-click'), point('server-current')], edges:[], selected_mood:'calm', available_moods:['calm']}));
   if (path === '/api/tracks/client-click') return Promise.resolve(response({handle:'client-click', display_label:'Client Click', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (path === '/api/tracks/server-current') return Promise.resolve(response({handle:'server-current', display_label:'Server Current', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
@@ -766,7 +766,7 @@ const second = context.setCurrent('b');
 await second;
 detailA.resolve({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
 await first;
-assert.deepStrictEqual(fetches.filter(u => u === '/api/tracks?limit=all' || u.startsWith('/api/mood-axis-graph')), []);
+assert.deepStrictEqual(fetches.filter(u => u === '/api/tracks/summary?limit=100&order=title' || u.startsWith('/api/mood-axis-graph')), []);
 assert(fetches.includes('/api/current'));
 assert(fetches.includes('/api/tracks/a'));
 assert(fetches.includes('/api/tracks/b'));
@@ -802,7 +802,7 @@ const fetches = [];
 context.fetch = (path, options={}) => {
   fetches.push(String(path));
   if (path === '/api/state') return refreshState.promise.then(payload => response(payload));
-  if (path === '/api/tracks?limit=all') return refreshList.promise.then(payload => response(payload));
+  if (path === '/api/tracks/summary?limit=100&order=title') return refreshList.promise.then(payload => response(payload));
   if (path === '/api/mood-axis-graph') return refreshGraph.promise.then(payload => response(payload));
   if (path === '/api/current') return Promise.resolve(response({current_track_id:'b'}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
@@ -820,10 +820,10 @@ assert.deepStrictEqual(fetches, [], 'full refresh waits for the initial paint fr
 runNextFrame();
 await waitForFetch('/api/state');
 refreshState.resolve({current_track_id:'a'});
-await waitForFetch('/api/tracks?limit=all');
+await waitForFetch('/api/tracks/summary?limit=100&order=title');
 refreshList.resolve({tracks:[{handle:'a', display_label:'Aye'}]});
 await waitForFetch('/api/mood-axis-graph');
-assert(fetches.includes('/api/tracks?limit=all'), 'stale refresh reached the list request');
+assert(fetches.includes('/api/tracks/summary?limit=100&order=title'), 'stale refresh reached the list request');
 const latest = context.setCurrent('b');
 await latest;
 refreshGraph.resolve({positioned:[point('a')], edges:[], selected_mood:'calm', available_moods:['calm']});
@@ -834,7 +834,7 @@ assert.deepStrictEqual(elements.tracks.children.map(row => row.dataset.trackId),
 assert.deepStrictEqual(rendered, [], 'stale refresh must not render stale graph data');
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'stale refresh detail must not overwrite latest selection detail');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'selection does not request removed candidate list');
-assert(fetches.includes('/api/tracks?limit=all'));
+assert(fetches.includes('/api/tracks/summary?limit=100&order=title'));
 })().catch(error => { console.error(error); process.exit(1); });
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
@@ -859,7 +859,7 @@ context.fetch = (path, options={}) => {
   fetches.push(String(path));
   if (path === '/api/current') return Promise.resolve(response({current_track_id:'a'}));
   if (path === '/api/state') return Promise.resolve(response({current_track_id:'a'}));
-  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'}]}));
+  if (path === '/api/tracks/summary?limit=100&order=title') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'}]}));
   if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('a')], edges:[], selected_mood:'calm', available_moods:['calm']}));
   if (path === '/api/tracks/a') {
     trackDetailRequests += 1;
@@ -909,7 +909,7 @@ context.fetch = (path, options={}) => {
   fetches.push(String(path));
   if (path === '/api/current') return postCurrent.promise.then(() => response({current_track_id:'b'}));
   if (path === '/api/state') return Promise.resolve(response({current_track_id:'a'}));
-  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]}));
+  if (path === '/api/tracks/summary?limit=100&order=title') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]}));
   if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('a'), point('b')], edges:[], selected_mood:'calm', available_moods:['calm']}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (path === '/api/tracks/a') return Promise.resolve(response({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
@@ -962,7 +962,7 @@ context.fetch = (path, options={}) => {
   if (path === '/api/reset') return resetPost.promise.then(() => response({current_track_id:null}));
   if (path === '/api/current') return clickPost.promise.then(() => response({current_track_id:'b'}));
   if (path === '/api/state') return stateFetch.promise.then(() => response({current_track_id:'b'}));
-  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]}));
+  if (path === '/api/tracks/summary?limit=100&order=title') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]}));
   if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('a'), point('b')], edges:[], selected_mood:'calm', available_moods:['calm']}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (String(path).startsWith('/api/candidates?')) return Promise.resolve(response({candidates:[{track_id:'cand-b', tier:'strong', score:0.8}]}));
@@ -1012,7 +1012,7 @@ context.fetch = (path, options={}) => {
   if (path === '/api/current') return postCurrent.promise.then(() => response({current_track_id:'b'}));
   if (path === '/api/reset') return Promise.resolve(response({current_track_id:null}));
   if (path === '/api/state') return Promise.resolve(response({current_track_id:null}));
-  if (path === '/api/tracks?limit=all') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]}));
+  if (path === '/api/tracks/summary?limit=100&order=title') return Promise.resolve(response({tracks:[{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]}));
   if (path === '/api/mood-axis-graph') return Promise.resolve(response({positioned:[point('a'), point('b')], edges:[], selected_mood:'calm', available_moods:['calm']}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (String(path).startsWith('/api/candidates?')) return Promise.resolve(response({candidates:[{track_id:'cand-b', tier:'stale', score:0.8}]}));
@@ -1192,6 +1192,79 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
 
 
 
+
+
+
+
+    def test_browser_startup_source_uses_compact_summary_before_graph(self):
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                source = app.read_text(encoding='utf-8')
+                refresh_source = source[source.index('async function refresh()'):source.index('function trackTitle')]
+                self.assertIn("const list=await api('/api/tracks/summary?limit=100&order=title')", refresh_source)
+                self.assertNotIn("/api/tracks?limit=all", refresh_source)
+                self.assertNotIn("/api/mood-axis-graph", refresh_source, 'startup refresh must not request graph before user clicks Load graph')
+                self.assertIn('renderGraphLoadStatus()', refresh_source)
+                load_graph_source = source[source.index('async function loadGraph()'):source.index('function renderInitialDetail')]
+                self.assertIn("const graph=await api('/api/mood-axis-graph'+graphQueryFromControls())", load_graph_source)
+                self.assertIn('load-graph', source)
+                self.assertIn('Load graph', source)
+                self.assertIn('loadGraph', source[source.index('module.exports'):])
+                self.assertIn('getStateForTesting', source[source.index('module.exports'):])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for compact summary startup tests')
+    def test_initial_refresh_renders_summary_list_and_detail_before_graph_resolves(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  return {tagName: tag.toUpperCase(), children: [], parentElement: null, attributes: {}, dataset: {}, style: {}, id: '', hidden: false, value: '', selectedOptions: [], textContent: '', onclick: null, oninput: null, onchange: null, clientWidth: 900, clientHeight: 700, width: 0, height: 0,
+    classList: {add(){}, remove(){}, contains(){return false;}},
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children = []; this.append(...nodes);},
+    replaceWith(node){if(this.parentElement){const siblings=this.parentElement.children; const index=siblings.indexOf(this); if(index >= 0) siblings.splice(index, 1, node); if(node && typeof node === 'object') node.parentElement = this.parentElement;}},
+    setAttribute(name, value){this.attributes[name] = String(value);}, removeAttribute(name){delete this.attributes[name];},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}, stroke(){}, moveTo(){}, lineTo(){}, set fillStyle(_v){}, set strokeStyle(_v){}};},
+    querySelector(selector){if(selector === 'button') return this.children.flatMap(c => c.children || []).find(c => c.tagName === 'BUTTON') || null; return null;}
+  };
+}
+function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
+function response(payload){return {ok:true, json:async()=>payload};}
+const elements = {};
+for (const id of ['library-loading','loading-status','loading-error','loading-retry','tracks','detail','map','track-search','selected-mood','genre-filter','mood-strip','mood-strip-picker','mood-strip-value']) { elements[id] = makeElement(id === 'map' || id === 'mood-strip' ? 'canvas' : id === 'track-search' ? 'input' : 'div'); elements[id].id = id; }
+elements.map.parentElement = makeElement('div');
+global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
+const frames = [];
+global.requestAnimationFrame = cb => frames.push(cb);
+function runNextFrame(){assert(frames.length, 'expected an animation frame callback'); frames.shift()();}
+async function waitFor(condition, message){for(let i=0;i<30;i++){if(condition()) return; await Promise.resolve();} assert(condition(), message);}
+const fetches = [];
+global.fetch = path => {
+  fetches.push(String(path));
+  if (path === '/api/state') return Promise.resolve(response({current_track_id:'off-page', history:['previous'], selection_epoch:4}));
+  if (path === '/api/tracks/summary?limit=100&order=title') return Promise.resolve(response({tracks:[{handle:'visible', title:'Visible Song', artist:'Visible Artist'}], next_cursor:'visible'}));
+  if (path === '/api/tracks/off-page') return Promise.resolve(response({handle:'off-page', metadata:{common:[['title','Off Page Detail']], tags:[]}, fields:{}}));
+  return Promise.reject(new Error('unexpected fetch '+path));
+};
+(async () => {
+  const refresh = app.refresh();
+  runNextFrame();
+  await refresh;
+  assert(fetches.includes('/api/tracks/summary?limit=100&order=title'), 'initial list uses compact summary API');
+  assert(!fetches.includes('/api/tracks?limit=all'), 'initial list must not use unbounded full track API');
+  assert(!fetches.includes('/api/mood-axis-graph'), 'startup must not decide to trigger the graph for large libraries');
+  const rows = elements.tracks.children[0].children[1].children;
+  assert.deepStrictEqual(rows.map(row => row.dataset.trackId), ['visible']);
+  assert.strictEqual(rows[0].className, '', 'off-page selection is preserved without pretending visible row is current');
+  assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'selected detail renders without graph data');
+  assert.strictEqual(app.getStateForTesting().current_track_id, 'off-page');
+  assert.deepStrictEqual(app.getStateForTesting().history, ['previous']);
+  assert.strictEqual(elements['track-search'].oninput && typeof elements['track-search'].oninput, 'function', 'list search is usable without graph');
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for loading screen DOM tests')
     def test_loading_screen_yields_before_fetch_rendering_graph_and_reports_honest_stages(self):
         script = r"""
@@ -1225,11 +1298,9 @@ global.fetch = async path => { calls.push(String(path)); return {ok:true, json: 
   assert.match(elements['loading-status'].textContent, /Preparing/);
   assert.deepStrictEqual(calls, [], 'loading status must be paintable before network fetches start');
   runNextFrame();
-  await waitFor(() => calls.length === 3 && /Rendering graph/.test(elements['loading-status'].textContent), 'refresh should fetch data and announce graph rendering after the first frame');
-  assert.deepStrictEqual(calls, ['/api/state','/api/tracks?limit=all','/api/mood-axis-graph']);
-  assert.match(elements['loading-status'].textContent, /Rendering graph: 1 positioned tracks/);
-  assert.strictEqual(elements.map.width, 0, 'graph rendering waits for a frame after announcing the phase');
-  runNextFrame();
+  await waitFor(() => calls.length === 2, 'refresh should fetch state and compact summary only after the first frame');
+  assert.deepStrictEqual(calls, ['/api/state','/api/tracks/summary?limit=100&order=title']);
+  assert(!calls.includes('/api/mood-axis-graph'), 'refresh must not load graph before explicit user click');
   await promise;
   assert(elements['library-loading'].classList.contains('done'));
   assert.strictEqual(elements['library-loading'].attributes['aria-busy'], 'false');

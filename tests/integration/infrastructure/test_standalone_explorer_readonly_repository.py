@@ -182,6 +182,36 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Invalid stored stage'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).read_track(tid)
 
+    def test_list_track_summaries_is_compact_paginated_and_does_not_read_stage_results(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            first = 'sha256:' + '1' * 64
+            second = 'sha256:' + '2' * 64
+            for tid, label in ((first, 'First.flac'), (second, 'Second.flac')):
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, tid.split(':')[1], 10))
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/private/music/' + label, tid, 1, 'flac', 1))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, 120.0, 'mutagen', 'eligible', ''))
+                db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (tid, '[["title", "' + label[:-5] + '"]]', '[]', '[]'))
+            db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run-1', '/private/music/First.flac', 'completed', ''))
+            db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run-1', first))
+            db.execute('INSERT INTO stages VALUES(?,?,?)', ('run-1', 'bpm', 'not-json-summary-endpoint-must-not-read-this'))
+            db.commit(); db.close()
+
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+            metadata, count, page, cursor = repo.list_track_summaries(1, query='first', order='title')
+
+            self.assertEqual(metadata['read_policy'], 'bounded_read_transaction')
+            self.assertEqual(count, 1)
+            self.assertEqual(page[0].handle, first)
+            self.assertEqual(page[0].title, 'First')
+            self.assertIsNone(cursor)
+            _metadata, count, first_page, cursor = repo.list_track_summaries(1, order='id')
+            self.assertEqual(count, 2)
+            self.assertEqual(tuple(row.handle for row in first_page), (first,))
+            _metadata, _count, second_page, _cursor = repo.list_track_summaries(1, cursor=cursor, order='id')
+            self.assertEqual(tuple(row.handle for row in second_page), (second,))
+
 
 if __name__ == '__main__':
     unittest.main()
