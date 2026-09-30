@@ -27,6 +27,23 @@ class ScanPresenterDurationPolicyTests(unittest.TestCase):
         self.assertEqual(payload['duration_unknown_count'], 2)
         self.assertEqual(payload['files'][1]['active_exclusion_reason'].split(';')[0], 'duration unverified')
 
+    def test_threshold_boundary_warning_does_not_display_rounded_threshold_as_observed_duration(self):
+        files = (
+            ScannedFile('/music/exact.flac', FileIdentity('e' * 64, 1), 1, 'flac', TrackMetadata(duration_seconds=1200.0, duration_source='mutagen')),
+            ScannedFile('/music/just-over.flac', FileIdentity('f' * 64, 1), 1, 'flac', TrackMetadata(duration_seconds=1200.000001, duration_source='ffprobe')),
+        )
+        report = ScanReport('/music', files, (), True, ())
+
+        text = present_scan(report)
+        payload = json.loads(present_scan(report, as_json=True))
+        warning = payload['files'][1]['active_exclusion_reason']
+
+        self.assertNotIn('WARNING /music/exact.flac', text)
+        self.assertIn('1 duration exclusions, 0 unknown durations', text)
+        self.assertIn('duration exceeds 1200.0s', warning)
+        self.assertNotIn('1200.000s', warning)
+        self.assertIn(f'WARNING /music/just-over.flac: {warning}', text)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -40,7 +40,7 @@ def active_library_duration_policy(verification: DurationVerification | None) ->
     if verification.seconds > ACTIVE_LIBRARY_MAX_DURATION_SECONDS:
         return ActiveLibraryDurationDecision(
             False,
-            f'duration {verification.seconds:.3f}s >{ACTIVE_LIBRARY_MAX_DURATION_SECONDS:.1f}s; '
+            f'duration exceeds {ACTIVE_LIBRARY_MAX_DURATION_SECONDS:.1f}s; '
             'excluded from active library; rescan metadata or choose a shorter file',
         )
     return ActiveLibraryDurationDecision(True)

@@ -58,7 +58,7 @@ class ScanLibraryDurationPolicyTests(unittest.TestCase):
         self.assertTrue(repo.registered.complete, 'scan registers catalogue identities/locations; active views filter eligibility')
         by_location = {file.location: file for file in report.files}
         self.assertEqual(by_location['/music/exact.flac'].metadata.warnings, ())
-        self.assertTrue(any('>1200.0s' in warning for warning in by_location['/music/long.flac'].metadata.warnings))
+        self.assertTrue(any('duration exceeds 1200.0s' in warning for warning in by_location['/music/long.flac'].metadata.warnings))
         self.assertTrue(any('duration unverified' in warning for warning in by_location['/music/unknown.flac'].metadata.warnings))
         self.assertTrue(any('duration unverified' in warning for warning in by_location['/music/textual.flac'].metadata.warnings))
         self.assertTrue(any('duration unverified' in warning for warning in by_location['/music/blank.flac'].metadata.warnings))

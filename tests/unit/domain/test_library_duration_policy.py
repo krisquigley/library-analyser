@@ -16,7 +16,9 @@ class ActiveLibraryDurationPolicyTests(unittest.TestCase):
     def test_strictly_above_threshold_is_excluded_with_actionable_warning(self):
         decision = active_library_duration_policy(DurationVerification(1200.000001, 'ffprobe'))
         self.assertFalse(decision.active)
-        self.assertIn(f'>{ACTIVE_LIBRARY_MAX_DURATION_SECONDS:.1f}s', decision.warning)
+        self.assertIn(f'{ACTIVE_LIBRARY_MAX_DURATION_SECONDS:.1f}s', decision.warning)
+        self.assertIn('exceeds', decision.warning)
+        self.assertNotIn('1200.000s', decision.warning)
         self.assertIn('excluded from active library', decision.warning)
         self.assertIn('rescan', decision.warning.lower())
 

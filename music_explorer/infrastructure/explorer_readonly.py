@@ -35,7 +35,7 @@ def _duration_warning(duration_seconds, source):
     if not _finite_number(duration_seconds) or duration_seconds <= 0:
         return INVALID_DURATION_REASON
     if duration_seconds > ACTIVE_LIBRARY_MAX_DURATION_SECONDS:
-        return (f'duration {duration_seconds:.3f}s >{ACTIVE_LIBRARY_MAX_DURATION_SECONDS:.1f}s; '
+        return (f'duration exceeds {ACTIVE_LIBRARY_MAX_DURATION_SECONDS:.1f}s; '
                 'excluded from active library; rescan metadata or choose a shorter file')
     return ''
 

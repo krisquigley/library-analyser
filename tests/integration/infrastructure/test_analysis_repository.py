@@ -178,7 +178,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
         ), (), True))
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM locations').fetchone()[0], 2)
-            self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (long_id.track_id,)).fetchone(), ('excluded', 'duration 1200.001s >1200.0s; excluded from active library; rescan metadata or choose a shorter file'))
+            self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (long_id.track_id,)).fetchone(), ('excluded', 'duration exceeds 1200.0s; excluded from active library; rescan metadata or choose a shorter file'))
             self.assertEqual(db.execute('SELECT status,reason FROM track_audio WHERE track_id=?', (unknown_id.track_id,)).fetchone(), ('unknown', 'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata'))
             self.assertEqual(db.execute('SELECT count(*) FROM active_locations').fetchone()[0], 0)
 

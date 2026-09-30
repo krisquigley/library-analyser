@@ -63,7 +63,7 @@ class ActiveDurationExclusionTests(unittest.TestCase):
         self.assertEqual(listed.metadata.track_count, 1)
 
         long_detail = GetExplorerTrackDetail(repo).execute(TOO_LONG)
-        self.assertIn('Excluded from active library: duration 1200.010s >1200.0s; excluded from active library; rescan metadata or choose a shorter file', long_detail.reasons)
+        self.assertIn('Excluded from active library: duration exceeds 1200.0s; excluded from active library; rescan metadata or choose a shorter file', long_detail.reasons)
         unknown_detail = GetExplorerTrackDetail(repo).execute(UNKNOWN)
         self.assertIn('Excluded from active library: duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata', unknown_detail.reasons)
 
