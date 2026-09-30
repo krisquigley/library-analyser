@@ -1,22 +1,5 @@
-"""Exact-file identity and active-library eligibility policy."""
+"""Exact-file identity domain model."""
 from dataclasses import dataclass
-from math import isfinite
-
-MAX_ACTIVE_DURATION_SECONDS = 1200.0
-
-
-def duration_exclusion_reason(duration_seconds: float | None) -> str:
-    if duration_seconds is None:
-        return 'Duration unknown; rescan with a readable measured audio duration before active-library use'
-    if not isinstance(duration_seconds, (int, float)) or isinstance(duration_seconds, bool) or not isfinite(duration_seconds) or duration_seconds < 0:
-        return 'Duration unreadable; rescan with a readable measured audio duration before active-library use'
-    if float(duration_seconds) > MAX_ACTIVE_DURATION_SECONDS:
-        return f'Duration {float(duration_seconds):.3f}s exceeds active-library limit of {MAX_ACTIVE_DURATION_SECONDS:.1f}s'
-    return ''
-
-
-def is_active_duration(duration_seconds: float | None) -> bool:
-    return duration_exclusion_reason(duration_seconds) == ''
 
 
 @dataclass(frozen=True)
