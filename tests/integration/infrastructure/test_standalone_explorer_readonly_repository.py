@@ -42,10 +42,31 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
+    def test_accepts_normalized_trusted_nonfinite_duration_as_unknown(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + '7' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '7' * 64, 10))
+            db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (
+                tid,
+                None,
+                'mutagen',
+                'unknown',
+                'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata',
+            ))
+            db.commit(); db.close()
+
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+            self.assertEqual(repo.track_ids(), ())
+            self.assertIsNone(repo.read_track(tid).metadata.duration_seconds)
+
     def test_rejects_tampered_track_audio_rows_instead_of_trusting_active_view_status(self):
         for audio_update in (
             (119.0, '', 'eligible', ''),
             (120.0, 'mutagen', 'archived', ''),
+            (None, 'mutagen', 'excluded', 'duration invalid; excluded from active library until mutagen/ffprobe verifies a positive finite duration; rescan audio metadata'),
+            (float('inf'), 'mutagen', 'excluded', 'duration invalid; excluded from active library until mutagen/ffprobe verifies a positive finite duration; rescan audio metadata'),
         ):
             with self.subTest(audio_update=audio_update), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'analysis.sqlite'

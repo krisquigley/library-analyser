@@ -20,6 +20,12 @@ from music_analyzer.domain.library_duration_policy import (
 )
 
 
+def _normalized_sqlite_duration(duration_seconds):
+    if isinstance(duration_seconds, (int, float)) and not isinstance(duration_seconds, bool) and not isfinite(duration_seconds):
+        return None
+    return duration_seconds
+
+
 def _duration_decision(duration_seconds, source=''):
     return active_library_duration_policy(DurationVerification(duration_seconds, source) if source else None)
 
@@ -212,6 +218,8 @@ class SQLiteAnalysisRepository:
         if db.execute('SELECT 1 FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE a.track_id IS NULL LIMIT 1').fetchone():
             raise AnalysisError('Unexpected analysis database rows')
         for track_id, duration, source, status, reason in db.execute('SELECT track_id,duration_seconds,duration_source,status,reason FROM track_audio'):
+            if isinstance(duration, (int, float)) and not isinstance(duration, bool) and not isfinite(duration):
+                raise AnalysisError('Unexpected analysis database rows')
             expected_reason = _duration_eligibility_reason(duration, source)
             expected_status = _duration_status(duration, source)
             if status != expected_status or reason != expected_reason:
@@ -281,6 +289,7 @@ class SQLiteAnalysisRepository:
                 db.execute('INSERT INTO track_metadata VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET common_json=excluded.common_json,tags_json=excluded.tags_json,warnings_json=excluded.warnings_json',
                            (identity.track_id, json.dumps(file.metadata.common, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.tags, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.warnings, ensure_ascii=False, allow_nan=False)))
                 duration, source = _coalesced_duration(file, inventory.files)
+                duration = _normalized_sqlite_duration(duration)
                 reason = _duration_eligibility_reason(duration, source)
                 status = _duration_status(duration, source)
                 db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET duration_seconds=excluded.duration_seconds,duration_source=excluded.duration_source,status=excluded.status,reason=excluded.reason',

@@ -184,6 +184,25 @@ class AnalysisRepositoryTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status FROM track_audio WHERE track_id=?', (zero_id.track_id,)).fetchone(), (0.0, 'mutagen', 'excluded'))
             self.assertEqual(db.execute('SELECT count(*) FROM active_tracks').fetchone()[0], 0)
 
+    def test_register_normalizes_single_trusted_nonfinite_duration_before_sqlite_insert(self):
+        for value in (float('nan'), float('inf'), float('-inf')):
+            with self.subTest(value=value):
+                self.path.unlink(missing_ok=True)
+                repository = SQLiteAnalysisRepository(str(self.path))
+                identity = FileIdentity('7' * 64, 123)
+
+                repository.register(Inventory('/music', (
+                    ScannedFile('/music/nonfinite.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=value, duration_source='mutagen')),
+                ), (), True))
+                SQLiteAnalysisRepository(str(self.path))
+
+                with closing(sqlite3.connect(self.path)) as db:
+                    self.assertEqual(
+                        db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone(),
+                        (None, 'mutagen', 'unknown', 'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata'),
+                    )
+                    self.assertEqual(db.execute('SELECT count(*) FROM active_tracks').fetchone()[0], 0)
+
     def test_duplicate_same_identity_coalesces_trusted_duration_regardless_scan_order(self):
         identity = FileIdentity('3' * 64, 123)
         for files in (
