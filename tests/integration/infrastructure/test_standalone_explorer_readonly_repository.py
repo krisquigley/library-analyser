@@ -237,7 +237,7 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             self.assertEqual(count, 3)
             self.assertEqual(tuple(row.title for row in title_page_1), ('Alpha Title', 'Gamma Filename.flac'))
             _metadata, count, title_page_2, title_cursor_2 = repo.list_track_summaries(2, cursor=title_cursor, order='title')
-            self.assertEqual(count, 1)
+            self.assertEqual(count, 3)
             self.assertEqual(tuple(row.title for row in title_page_2), ('Middle Title',))
             self.assertIsNone(title_cursor_2)
 
@@ -245,9 +245,78 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             self.assertEqual(count, 3)
             self.assertEqual(tuple(row.artist for row in artist_page_1), ('Alpha', 'Bravo'))
             _metadata, count, artist_page_2, artist_cursor_2 = repo.list_track_summaries(2, cursor=artist_cursor, order='artist')
-            self.assertEqual(count, 1)
+            self.assertEqual(count, 3)
             self.assertEqual(tuple(row.artist for row in artist_page_2), ('Zulu',))
             self.assertIsNone(artist_cursor_2)
+
+
+    def test_list_track_summaries_keeps_total_count_while_following_cursors(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            rows = []
+            for idx in range(250):
+                hex_id = f'{idx + 1:064x}'
+                tid = 'sha256:' + hex_id
+                if idx < 150:
+                    title = f'Needle Title {idx:03d}'
+                    artist = f'Needle Artist {idx:03d}'
+                else:
+                    title = f'Other Title {idx:03d}'
+                    artist = f'Other Artist {idx:03d}'
+                rows.append((tid, title, artist))
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, hex_id, idx + 10))
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', (f'/private/music/{idx:03d}.flac', tid, idx, 'flac', 1))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, 120.0, 'mutagen', 'eligible', ''))
+                db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (
+                    tid,
+                    '[[' + json.dumps('title') + ', ' + json.dumps(title) + '], [' + json.dumps('artist') + ', [' + json.dumps(artist) + ']]]',
+                    '[]',
+                    '[]',
+                ))
+            db.commit(); db.close()
+
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+
+            for order in ('title', 'artist'):
+                with self.subTest(order=order, query=''):
+                    cursor = None
+                    handles = []
+                    counts = []
+                    page_lengths = []
+                    for _ in range(3):
+                        _metadata, count, page, cursor = repo.list_track_summaries(100, cursor=cursor, order=order)
+                        counts.append(count)
+                        page_lengths.append(len(page))
+                        handles.extend(row.handle for row in page)
+                    self.assertEqual(counts, [250, 250, 250])
+                    self.assertEqual(page_lengths, [100, 100, 50])
+                    self.assertIsNone(cursor)
+                    expected = tuple(tid for tid, _title, _artist in sorted(
+                        rows,
+                        key=(lambda row: (row[1].casefold(), row[0])) if order == 'title' else (lambda row: (row[2].casefold(), row[0])),
+                    ))
+                    self.assertEqual(tuple(handles), expected)
+
+                with self.subTest(order=order, query='needle'):
+                    cursor = None
+                    handles = []
+                    counts = []
+                    page_lengths = []
+                    for _ in range(3):
+                        _metadata, count, page, cursor = repo.list_track_summaries(50, cursor=cursor, query='needle', order=order)
+                        counts.append(count)
+                        page_lengths.append(len(page))
+                        handles.extend(row.handle for row in page)
+                    self.assertEqual(counts, [150, 150, 150])
+                    self.assertEqual(page_lengths, [50, 50, 50])
+                    self.assertIsNone(cursor)
+                    matching_rows = rows[:150]
+                    expected = tuple(tid for tid, _title, _artist in sorted(
+                        matching_rows,
+                        key=(lambda row: (row[1].casefold(), row[0])) if order == 'title' else (lambda row: (row[2].casefold(), row[0])),
+                    ))
+                    self.assertEqual(tuple(handles), expected)
 
 
     def test_list_track_summaries_unicode_cursor_uses_same_fold_as_sql_order(self):
@@ -275,7 +344,7 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             self.assertEqual(tuple(row.artist for row in first_page), ('Älpha Artist',))
             self.assertIsNotNone(cursor)
             _metadata, count, second_page, second_cursor = repo.list_track_summaries(1, cursor=cursor, order='artist')
-            self.assertEqual(count, 1)
+            self.assertEqual(count, 2)
             self.assertEqual(tuple(row.artist for row in second_page), ('Ålpha Artist',))
             self.assertIsNone(second_cursor)
 

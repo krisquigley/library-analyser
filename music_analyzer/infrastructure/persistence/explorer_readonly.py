@@ -147,6 +147,8 @@ class ReadOnlyExplorerSQLiteRepository:
                 visible_artist = "_explorer_summary_fold(_explorer_summary_search_key('artist', common_json, tags_json, display_label, id))"
                 where.append(f"({visible_title} LIKE ? ESCAPE '\\' OR {visible_artist} LIKE ? ESCAPE '\\')")
                 params.extend([like, like])
+            count_where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+            count_params = tuple(params)
             cursor_key, cursor_id = self._decode_summary_cursor(cursor)
             order_key = order if order in ('title', 'artist') else 'id'
             order_expr = "_explorer_summary_fold(_explorer_summary_sort_key(?, common_json, tags_json, display_label, id))" if order_key in ('title', 'artist') else 'id'
@@ -177,7 +179,7 @@ class ReadOnlyExplorerSQLiteRepository:
             """
             select_order_key_params = (order_key,) if order_key in ('title', 'artist') else ('id',)
             order_params = (order_key,) if order_key in ('title', 'artist') else ()
-            track_count = db.execute('SELECT count(*) FROM (' + base + where_sql + ')', (*select_order_key_params, *params)).fetchone()[0]
+            track_count = db.execute('SELECT count(*) FROM (' + base + count_where_sql + ')', (*select_order_key_params, *count_params)).fetchone()[0]
             rows = db.execute(base + where_sql + f' ORDER BY {order_expr}, id LIMIT ?', (*select_order_key_params, *params, *order_params, limit + 1)).fetchall()
             page_rows = rows[:limit]
             summaries = tuple(self._summary_from_row(row) for row in page_rows)
