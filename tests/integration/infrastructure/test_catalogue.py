@@ -165,3 +165,15 @@ class CatalogueTests(unittest.TestCase):
 
         with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
             SQLiteAnalysisRepository(str(self.db))
+
+    def test_reopens_fail_closed_when_track_audio_has_orphan_row_inserted_with_foreign_keys_disabled(self):
+        SQLiteAnalysisRepository(str(self.db))
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute('PRAGMA foreign_keys=OFF')
+            connection.execute(
+                'INSERT INTO track_audio VALUES(?,?,?,?,?)',
+                ('sha256:' + '8' * 64, 120.0, 'mutagen', 'eligible', ''),
+            )
+
+        with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+            SQLiteAnalysisRepository(str(self.db))

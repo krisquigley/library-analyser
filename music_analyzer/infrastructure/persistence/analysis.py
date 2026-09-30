@@ -217,6 +217,8 @@ class SQLiteAnalysisRepository:
     def _validate_track_audio_rows(self, db):
         if db.execute('SELECT 1 FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE a.track_id IS NULL LIMIT 1').fetchone():
             raise AnalysisError('Unexpected analysis database rows')
+        if db.execute('SELECT 1 FROM track_audio a LEFT JOIN tracks t ON t.id=a.track_id WHERE t.id IS NULL LIMIT 1').fetchone():
+            raise AnalysisError('Unexpected analysis database rows')
         for track_id, duration, source, status, reason in db.execute('SELECT track_id,duration_seconds,duration_source,status,reason FROM track_audio'):
             if isinstance(duration, (int, float)) and not isinstance(duration, bool) and not isfinite(duration):
                 raise AnalysisError('Unexpected analysis database rows')

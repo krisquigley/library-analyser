@@ -42,6 +42,23 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
+    def test_rejects_orphan_track_audio_row_inserted_with_foreign_keys_disabled_before_showing_results(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            db.execute('PRAGMA foreign_keys=OFF')
+            good_tid = 'sha256:' + '8' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (good_tid, '8' * 64, 10))
+            db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (good_tid, 120.0, 'mutagen', 'eligible', ''))
+            db.execute(
+                'INSERT INTO track_audio VALUES(?,?,?,?,?)',
+                ('sha256:' + '9' * 64, 120.0, 'mutagen', 'eligible', ''),
+            )
+            db.commit(); db.close()
+
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
     def test_accepts_normalized_trusted_nonfinite_duration_as_unknown(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
