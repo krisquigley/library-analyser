@@ -79,6 +79,19 @@ class ExplorerServerTests(unittest.TestCase):
             body['selection_client_id'] = selection_client_id
         return self.post_json('/api/current', body)
 
+    def test_track_summaries_endpoint_is_paginated_and_compact(self):
+        page = self.get_json('/api/tracks/summary?limit=1&order=id')
+
+        self.assertEqual(page['limit'], 1)
+        self.assertEqual(len(page['tracks']), 1)
+        self.assertEqual(page['tracks'][0]['handle'], self.first)
+        self.assertIn('next_cursor', page)
+        self.assertNotIn('fields', page['tracks'][0])
+        self.assertNotIn('metadata', page['tracks'][0])
+        self.assertNotIn('candidate_snapshot', json.dumps(page))
+        next_page = self.get_json('/api/tracks/summary?limit=1&order=id&cursor=' + page['next_cursor'])
+        self.assertEqual(next_page['tracks'][0]['handle'], self.second)
+
     def test_api_lists_details_candidates_state_and_projection(self):
         state = self.get_json('/api/state')
         self.assertIsNone(state['current_track_id'])

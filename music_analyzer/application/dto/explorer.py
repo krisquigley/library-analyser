@@ -45,6 +45,27 @@ class ExplorerMetadata:
     feature_contract_version: str = 'summary-derived-v1'
 
 
+
+
+@dataclass(frozen=True)
+class ExplorerTrackSummary:
+    handle: str
+    title: str
+    artist: str
+    display_label: str
+    available_locations: int
+
+
+@dataclass(frozen=True)
+class ExplorerTrackSummaryPage:
+    metadata: ExplorerMetadata
+    tracks: tuple[ExplorerTrackSummary, ...]
+    limit: int
+    next_cursor: str | None = None
+    query: str = ''
+    order: str = 'title'
+
+
 @dataclass(frozen=True)
 class AutomaticEvidence:
     values: tuple[tuple[str, str | float], ...] = ()

@@ -2,8 +2,8 @@ import unittest
 
 from music_analyzer.application.dto.analysis import AnalysisReport, StageResult
 from music_analyzer.application.dto.catalogue import TrackMetadata
-from music_analyzer.application.dto.explorer import ExplorerMetadata, ExplorerStoredTrack
-from music_analyzer.application.use_cases.explorer import GetExplorerTrackDetail, ListExplorerTracks
+from music_analyzer.application.dto.explorer import ExplorerMetadata, ExplorerStoredTrack, ExplorerTrackSummary
+from music_analyzer.application.use_cases.explorer import GetExplorerTrackDetail, ListExplorerTrackSummaries, ListExplorerTracks, ListExplorerTrackSummaries
 
 
 class FakeExplorerRepository:
@@ -43,6 +43,27 @@ class FakeExplorerRepository:
             records = tuple(record for record in records if record.track_id > after)
         return self.metadata(), len(records), records[:limit]
 
+    def list_track_summaries(self, limit, cursor=None, query='', order='title'):
+        self.summary_args = (limit, cursor, query, order)
+        rows = (
+            ExplorerTrackSummary('sha256:' + 'a' * 64, 'Tagged Song', 'Unknown artist', 'A Song.flac', 1),
+            ExplorerTrackSummary('sha256:' + 'b' * 64, 'sha256:' + 'b' * 64, 'Unknown artist', '', 0),
+        )
+        return self.metadata(), len(rows), rows[:limit], (rows[limit - 1].handle if len(rows) > limit else None)
+
+
+    def list_track_summaries(self, limit, cursor=None, query='', order='title'):
+        if cursor == 'after-first':
+            records = self.records[1:]
+        else:
+            records = self.records
+        if query:
+            records = tuple(record for record in records if query.lower() in (record.display_label + record.track_id).lower())
+        from music_analyzer.application.dto.explorer import ExplorerTrackSummary
+        summaries = tuple(ExplorerTrackSummary(r.track_id, r.display_label or r.track_id, 'Unknown artist', r.display_label, r.available_locations) for r in records[:limit])
+        next_cursor = 'after-first' if len(records) > limit else None
+        return self.metadata(), len(records), summaries, next_cursor
+
     def read_track(self, track_id):
         for record in self.records:
             if record.track_id == track_id:
@@ -53,6 +74,16 @@ class FakeExplorerRepository:
 class ExplorerUseCaseTests(unittest.TestCase):
     def setUp(self):
         self.reader = FakeExplorerRepository()
+
+    def test_summary_page_uses_compact_repository_boundary(self):
+        page = ListExplorerTrackSummaries(self.reader).execute(limit=1, cursor='cursor-1', query=' tag ', order='artist')
+
+        self.assertEqual(self.reader.summary_args, (1, 'cursor-1', 'tag', 'artist'))
+        self.assertEqual(page.limit, 1)
+        self.assertEqual(page.next_cursor, 'sha256:' + 'a' * 64)
+        self.assertEqual(page.tracks[0].title, 'Tagged Song')
+        self.assertNotIn('fields', repr(page.tracks[0]))
+        self.assertNotIn('raw_predictions', repr(page))
 
     def test_list_returns_redacted_summaries_without_paths_or_raw_predictions(self):
         report = ListExplorerTracks(self.reader).execute(limit=10)
@@ -107,6 +138,33 @@ class ExplorerUseCaseTests(unittest.TestCase):
             ListExplorerTracks(self.reader).execute(limit=0)
         with self.assertRaises(ValueError):
             ListExplorerTracks(self.reader).execute(limit=501)
+
+
+    def test_summary_page_uses_compact_repository_boundary(self):
+        class SummaryOnlyRepository(FakeExplorerRepository):
+            def list_tracks(self, limit, after=None):  # pragma: no cover
+                raise AssertionError('summary list must not use full track records')
+            def candidate_snapshot(self):  # pragma: no cover
+                raise AssertionError('summary list must not use graph/full snapshot')
+            def read_track(self, track_id):  # pragma: no cover
+                raise AssertionError('summary list must not read detail')
+
+        page = ListExplorerTrackSummaries(SummaryOnlyRepository()).execute(limit=1, query='song', order='title')
+
+        self.assertEqual(page.limit, 1)
+        self.assertEqual(page.query, 'song')
+        self.assertEqual(page.metadata.track_count, 1)
+        self.assertEqual(tuple(track.title for track in page.tracks), ('A Song.flac',))
+
+    def test_summary_arguments_are_bounded(self):
+        use_case = ListExplorerTrackSummaries(self.reader)
+        for limit in (0, 101):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                use_case.execute(limit=limit)
+        with self.assertRaises(ValueError):
+            use_case.execute(order='size')
+        with self.assertRaises(ValueError):
+            use_case.execute(query='x' * 201)
 
     def test_unknown_detail_handle_is_actionable(self):
         with self.assertRaises(ValueError):

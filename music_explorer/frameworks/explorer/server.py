@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from music_explorer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
-from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks
+from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
@@ -140,6 +140,13 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 limit = 'all' if raw_limit == 'all' else int(raw_limit)
                 after = query.get('after', [None])[0]
                 return self._json(_to_json(ListExplorerTracks(repository).execute(limit, after)))
+            if path in ('/api/tracks/summary', '/api/track-summaries'):
+                query = parse_qs(parsed.query)
+                limit = int(query.get('limit', ['100'])[0])
+                cursor = query.get('cursor', [None])[0]
+                search = query.get('query', query.get('q', ['']))[0]
+                order = query.get('order', ['title'])[0]
+                return self._json(_to_json(ListExplorerTrackSummaries(repository).execute(limit, cursor, search, order)))
             if path.startswith('/api/tracks/'):
                 track_id = unquote(path[len('/api/tracks/'):])
                 return self._json(_to_json(GetExplorerTrackDetail(repository).execute(track_id)))

@@ -32,6 +32,8 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     requests = []
                     page.on('request', lambda request: requests.append(request.url))
                     page.goto(f'http://127.0.0.1:{server.server_port}/')
+                    self.assertFalse(any('/api/mood-axis-graph' in url for url in requests), 'startup should not request the graph before Load graph')
+                    page.get_by_role('button', name='Load graph').click()
                     page.wait_for_function("document.querySelector('#selected-mood').options.length > 1")
                     page.wait_for_function('graphModel.nodes.length === 2 && !!forceGraph')
                     page.get_by_role('button', name='Alpha').click()
@@ -82,8 +84,10 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     self.assertEqual(page.locator('#tracks th').all_text_contents(), ['Title', 'Artist'])
                     self.assertEqual(page.get_by_role('searchbox', name='Search tracks by title or artist').count(), 1)
                     page.get_by_role('searchbox', name='Search tracks by title or artist').fill('SECOND')
+                    page.wait_for_function("document.querySelectorAll('#tracks tbody tr').length === 1")
                     self.assertEqual(page.locator('#tracks tbody tr:visible').count(), 1)
                     page.get_by_role('searchbox', name='Search tracks by title or artist').fill('')
+                    page.wait_for_function("document.querySelectorAll('#tracks tbody tr').length === 2")
                     page.get_by_role('button', name='Second.flac').click()
                     page.get_by_role('heading', name='Current Track').wait_for()
                     self.assertEqual(page.get_by_text('Graph key / status').count(), 0)
@@ -91,6 +95,9 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     self.assertEqual(page.locator('#mood-strip-picker').count(), 1)
                     current = page.evaluate("fetch('/api/state').then(r=>r.json())")
                     self.assertEqual(current['current_track_id'], second)
+                    self.assertEqual(page.locator('#graph3d canvas').count(), 0, 'graph is manual and should not render before Load graph')
+                    page.get_by_role('button', name='Load graph').click()
+                    page.locator('#graph3d canvas').wait_for()
                     scene = page.locator('#graph3d canvas').evaluate("""canvas => {
                         const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
                         const box = canvas.getBoundingClientRect();
