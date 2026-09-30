@@ -6,7 +6,7 @@ This note defines the public-safe startup performance contract for the Track Jou
 
 For large libraries, the first usable explorer view is the track list and basic controls. The browser must be able to show that view from a compact summary page without waiting for graph construction or full per-track evidence parsing.
 
-Product decision: the graph is manually requested. The first view shows a visible **Load graph** button; the browser must not request `/api/mood-axis-graph` on initial startup at any library size. Clicking the button starts graph loading with independent loading/error/retry state while the compact list, search, selection, history, and detail interactions remain usable.
+Product decision: the graph is manually requested. The first view shows a visible **Load graph** button; the browser must not request `/api/mood-axis-graph` on initial startup at any library size. Choosing a mood before the graph is loaded only stores that choice for the eventual manual load. Clicking the button starts graph loading with independent loading/error/retry state while the compact list, search, selection, history, and detail interactions remain usable. After the graph is ready, a user-initiated mood change reloads the graph for the selected mood while preserving the existing layout/camera when the returned graph geometry is unchanged.
 
 The existing full-library endpoints remain compatibility endpoints. New startup work should use a paginated summary endpoint for the initial list, then load graph data only after the user activates the graph button.
 

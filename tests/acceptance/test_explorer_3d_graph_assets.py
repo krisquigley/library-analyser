@@ -283,6 +283,58 @@ global.ForceGraph3D = undefined;
             with self.subTest(app=app):
                 subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for mood tracker reload tests')
+    def test_mood_tracker_change_reloads_ready_graph_but_not_before_initial_load(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null, parentElement:null, clientWidth:900, clientHeight:700,
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children=[]; this.textContent=''; this.append(...nodes);},
+    setAttribute(name,value){this.attributes[name]=String(value);},
+    removeAttribute(name){delete this.attributes[name];},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}};},
+    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
+  };
+  return el;
+}
+function findById(root,id){ if(root.id===id) return root; for(const child of root.children||[]){const found=child&&typeof child==='object'?findById(child,id):null; if(found) return found;} return null; }
+const elements = {'graph-load-status': makeElement('section'), graph3d: makeElement('div'), 'mood-strip': null, 'mood-strip-picker': null, 'mood-strip-value': null};
+global.document = {createElement: makeElement, getElementById:id=>elements[id]||null, querySelectorAll:()=>[]};
+global.requestAnimationFrame = cb => cb();
+global.ForceGraph3D = undefined;
+const root = makeElement('div');
+app.buildGraphControls(root);
+const mood = findById(root, 'selected-mood');
+let requests = [];
+global.fetch = async path => {
+  requests.push(String(path));
+  const heavy = String(path).includes('mood=heavy');
+  return {ok:true, json:async()=>({selected_mood:heavy?'heavy':'relaxing', available_moods:['relaxing','heavy'], positioned:[
+    {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed'}, mood_score:{label:heavy?'heavy':'relaxing',raw:heavy?0.8:0.1}, bpm:120, genres:[], reasons:[]}
+  ], edges:[], unpositioned:[]})};
+};
+(async()=>{
+  mood.value = 'heavy';
+  const before = mood.onchange();
+  if (before && before.then) await before;
+  assert.deepStrictEqual(requests, [], 'changing the mood before Load graph only stores the choice and never auto-fetches');
+  await app.loadGraph();
+  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy'], 'manual Load graph uses the stored mood');
+  assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'heavy');
+  mood.value = 'relaxing';
+  const after = mood.onchange();
+  if (after && after.then) await after;
+  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy','/api/mood-axis-graph?mood=relaxing'], 'changing the mood after the graph is ready reloads graph data');
+  assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'relaxing');
+  assert.strictEqual(app.buildMoodStrip(app.getVisibleGraphForTesting(), null)[0].score, 0.1, 'strip uses the reloaded mood score');
+})().catch(error=>{console.error(error); process.exit(1);});
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for relatedness alpha tests')
     def test_relatedness_link_alpha_reflects_clamped_score_and_notes_explain_it(self):
         script = r"""

@@ -250,5 +250,65 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             self.assertIsNone(artist_cursor_2)
 
 
+    def test_list_track_summaries_unicode_cursor_uses_same_fold_as_sql_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            rows = (
+                ('sha256:' + '1' * 64, 'First.flac', 'Älpha Artist'),
+                ('sha256:' + '2' * 64, 'Second.flac', 'Ålpha Artist'),
+            )
+            for tid, label, artist in rows:
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, tid.split(':')[1], 10))
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/private/music/' + label, tid, 1, 'flac', 1))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, 120.0, 'mutagen', 'eligible', ''))
+                db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (tid, '[[' + json.dumps('title') + ', ' + json.dumps(label[:-5]) + ']]', '[[' + json.dumps('artist') + ', [' + json.dumps(artist) + ']]]', '[]'))
+            db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run-1', '/private/music/First.flac', 'completed', ''))
+            db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run-1', rows[0][0]))
+            db.execute('INSERT INTO stages VALUES(?,?,?)', ('run-1', 'bpm', 'not-json-summary-endpoint-must-not-read-this'))
+            db.commit(); db.close()
+
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+
+            _metadata, count, first_page, cursor = repo.list_track_summaries(1, order='artist')
+            self.assertEqual(count, 2)
+            self.assertEqual(tuple(row.artist for row in first_page), ('Älpha Artist',))
+            self.assertIsNotNone(cursor)
+            _metadata, count, second_page, second_cursor = repo.list_track_summaries(1, cursor=cursor, order='artist')
+            self.assertEqual(count, 1)
+            self.assertEqual(tuple(row.artist for row in second_page), ('Ålpha Artist',))
+            self.assertIsNone(second_cursor)
+
+    def test_list_track_summaries_searches_visible_title_and_artist_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            rows = (
+                ('sha256:' + '1' * 64, 'FalsePositive.flac', '[[' + json.dumps('album_artist') + ', ' + json.dumps('Private Notes') + ']]', '[]'),
+                ('sha256:' + '2' * 64, 'Legitimate.flac', '[[' + json.dumps('title') + ', ' + json.dumps('Quiet Song') + '], [' + json.dumps('artist') + ', [' + json.dumps('Visible Artist') + ']]]', '[]'),
+                ('sha256:' + '3' * 64, 'Case.flac', '[[' + json.dumps('title') + ', ' + json.dumps('MiXeD Case Title') + ']]', '[]'),
+            )
+            for tid, label, common_json, tags_json in rows:
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, tid.split(':')[1], 10))
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/private/music/' + label, tid, 1, 'flac', 1))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, 120.0, 'mutagen', 'eligible', ''))
+                db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (tid, common_json, tags_json, '[]'))
+            db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run-1', '/private/music/FalsePositive.flac', 'completed', ''))
+            db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run-1', rows[0][0]))
+            db.execute('INSERT INTO stages VALUES(?,?,?)', ('run-1', 'bpm', 'not-json-summary-endpoint-must-not-read-this'))
+            db.commit(); db.close()
+
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+
+            _metadata, artist_count, artist_page, _cursor = repo.list_track_summaries(10, query='artist', order='title')
+            self.assertEqual(artist_count, 1)
+            self.assertEqual(tuple(row.handle for row in artist_page), (rows[1][0],))
+            _metadata, private_count, private_page, _cursor = repo.list_track_summaries(10, query='private', order='title')
+            self.assertEqual(private_count, 0)
+            self.assertEqual(private_page, ())
+            _metadata, case_count, case_page, _cursor = repo.list_track_summaries(10, query='mixed case', order='title')
+            self.assertEqual(case_count, 1)
+            self.assertEqual(tuple(row.handle for row in case_page), (rows[2][0],))
+
 if __name__ == '__main__':
     unittest.main()

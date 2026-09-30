@@ -140,14 +140,16 @@ class ReadOnlyExplorerSQLiteRepository:
             metadata = self._metadata(db)
             where = []
             params = []
-            q = (query or '').strip().lower()
+            q = (query or '').strip()
             if q:
-                like = '%' + q.replace('%', '\\%').replace('_', '\\_') + '%'
-                where.append("(lower(id) LIKE ? ESCAPE '\\' OR lower(COALESCE(first_path,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(common_json,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(tags_json,'')) LIKE ? ESCAPE '\\')")
-                params.extend([like, like, like, like])
+                like = '%' + self._summary_fold(q).replace('%', '\\%').replace('_', '\\_') + '%'
+                visible_title = "_explorer_summary_fold(_explorer_summary_sort_key('title', common_json, tags_json, display_label, id))"
+                visible_artist = "_explorer_summary_fold(_explorer_summary_search_key('artist', common_json, tags_json, display_label, id))"
+                where.append(f"({visible_title} LIKE ? ESCAPE '\\' OR {visible_artist} LIKE ? ESCAPE '\\')")
+                params.extend([like, like])
             cursor_key, cursor_id = self._decode_summary_cursor(cursor)
             order_key = order if order in ('title', 'artist') else 'id'
-            order_expr = "lower(_explorer_summary_sort_key(?, common_json, tags_json, display_label, id))" if order_key in ('title', 'artist') else 'id'
+            order_expr = "_explorer_summary_fold(_explorer_summary_sort_key(?, common_json, tags_json, display_label, id))" if order_key in ('title', 'artist') else 'id'
             if cursor_key is not None and cursor_id is not None:
                 where.append(f"({order_expr} > ? OR ({order_expr} = ? AND id > ?))")
                 if order_key in ('title', 'artist'):
@@ -183,7 +185,7 @@ class ReadOnlyExplorerSQLiteRepository:
             if len(rows) > limit and page_rows:
                 last = page_rows[-1]
                 key = last[8] if order_key in ('title', 'artist') else last[0]
-                next_cursor = self._encode_summary_cursor(str(key).lower(), last[0])
+                next_cursor = self._encode_summary_cursor(self._summary_fold(key), last[0])
             return metadata, track_count, summaries, next_cursor
 
     def candidate_snapshot(self):
@@ -267,6 +269,20 @@ class ReadOnlyExplorerSQLiteRepository:
             pass
         return str(track_id or '')
 
+    def _summary_search_key(self, field, common_json, tags_json, display_label, track_id):
+        if field == 'title':
+            return self._summary_sort_key('title', common_json, tags_json, display_label, track_id)
+        if field == 'artist':
+            try:
+                metadata = self._metadata_from_json(common_json or '[]', tags_json or '[]', '[]', None)
+                return self._metadata_value(metadata, 'artist') or ''
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return ''
+        return ''
+
+    def _summary_fold(self, value):
+        return str(value or '').casefold()
+
     def _metadata_value(self, metadata, semantic):
         wanted = {'title': ('title',), 'artist': ('artist', 'artists')}[semantic]
         for key, value in metadata.common:
@@ -325,6 +341,8 @@ class ReadOnlyExplorerSQLiteRepository:
             db = sqlite3.connect(uri, uri=True, timeout=1)
             db.create_function('_explorer_basename', 1, lambda value: Path(str(value)).name if value else '')
             db.create_function('_explorer_summary_sort_key', 5, self._summary_sort_key)
+            db.create_function('_explorer_summary_search_key', 5, self._summary_search_key)
+            db.create_function('_explorer_summary_fold', 1, self._summary_fold)
             db.execute('PRAGMA foreign_keys=ON')
             db.execute('PRAGMA query_only=ON')
             yield db
