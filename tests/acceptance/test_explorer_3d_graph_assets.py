@@ -238,6 +238,7 @@ function makeElement(tag){
     replaceChildren(...nodes){this.children=[]; this.append(...nodes);},
     setAttribute(name,value){this.attributes[name]=String(value);},
     removeAttribute(name){delete this.attributes[name];},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};},
     get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
   };
   return el;
@@ -391,21 +392,22 @@ assert.strictEqual(tbody.children[1].children[0].children[0].getAttribute('aria-
 assert.strictEqual(tbody.children[0].children[0].children[0].getAttribute('aria-current'), null);
 assert(tbody.children[0].innerText.includes('Bright Song') && tbody.children[0].innerText.includes('Alice'));
 assert(tbody.children[2].innerText.includes('Fallback.flac') && tbody.children[2].innerText.includes('Unknown artist'));
+async function flushSummarySearch(){for(let i=0;i<8;i++) await Promise.resolve();}
 (async()=>{
-  search.value = 'alice'; search.oninput(); await Promise.resolve(); await Promise.resolve();
+  search.value = 'alice'; search.oninput(); await flushSummarySearch();
   assert(requested.at(-1).includes('/api/tracks/summary?limit=100&order=title&query=alice'));
   table = tracks.children[0]; tbody = table.children[2];
   assert.strictEqual(tbody.children.length, 1);
   assert(tbody.children[0].innerText.includes('Bright Song'));
-  search.value = 'QUIET'; search.oninput(); await Promise.resolve(); await Promise.resolve();
+  search.value = 'QUIET'; search.oninput(); await flushSummarySearch();
   table = tracks.children[0]; tbody = table.children[2];
   assert.strictEqual(tbody.children.length, 1);
   assert(tbody.children[0].innerText.includes('Quiet Tune'));
-  search.value = 'Filename'; search.oninput(); await Promise.resolve(); await Promise.resolve();
+  search.value = 'Filename'; search.oninput(); await flushSummarySearch();
   table = tracks.children[0]; tbody = table.children[2];
   assert.strictEqual(tbody.children.length, 0, 'server-side summary search only matches title and artist');
   assert(tracks.innerText.includes('No tracks match your search'));
-  search.value = ''; search.oninput(); await Promise.resolve(); await Promise.resolve();
+  search.value = ''; search.oninput(); await flushSummarySearch();
   table = tracks.children[0]; tbody = table.children[2];
   assert.strictEqual(tbody.children.length, 3);
 })().catch(error=>{console.error(error); process.exit(1);});
@@ -763,13 +765,13 @@ context.fetch = (path, options={}) => {
 function canvasContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return canvasContext();}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 vm.runInContext("state={current_track_id:'server-current'}; selectionEpoch=1; graphModel={nodes:[{id:'client-click',moodScore:null},{id:'server-current',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
 await context.setCurrent('client-click');
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'rejected POST restores authoritative server selection');
 await context.refresh();
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'refresh after rejection must not overlay the rejected click intent');
-assert.deepStrictEqual(elements.tracks.children[0].children[1].children.map(row => row.className), ['', 'current']);
+assert.deepStrictEqual(elements.tracks.children[0].children[2].children.map(row => row.className), ['', 'current']);
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'detail follows authoritative server selection after refresh');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'refresh does not request removed candidate list');
 assert(fetches.includes('/api/current') && fetches.includes('/api/state'));
@@ -877,14 +879,13 @@ async function waitForFetch(path){for(let i=0;i<20 && !fetches.includes(path);i+
 function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
 function response(payload){return {ok:true, json:async()=>payload};}
 function point(id){return {id, label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
-const refreshState = deferred(), refreshList = deferred(), refreshGraph = deferred();
+const refreshState = deferred(), refreshList = deferred();
 const detailA = deferred();
 const fetches = [];
 context.fetch = (path, options={}) => {
   fetches.push(String(path));
   if (path === '/api/state') return refreshState.promise.then(payload => response(payload));
   if (path === '/api/tracks/summary?limit=100&order=title') return refreshList.promise.then(payload => response(payload));
-  if (path === '/api/mood-axis-graph') return refreshGraph.promise.then(payload => response(payload));
   if (path === '/api/current') return Promise.resolve(response({current_track_id:'b'}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (path === '/api/tracks/a') return detailA.promise.then(payload => response(payload));
@@ -892,7 +893,7 @@ context.fetch = (path, options={}) => {
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 const rendered = [];
 context.renderMap = data => rendered.push(data.nodes.map(n => n.id));
 vm.runInContext('renderMap = globalThis.renderMap', context);
@@ -902,12 +903,10 @@ runNextFrame();
 await waitForFetch('/api/state');
 refreshState.resolve({current_track_id:'a'});
 await waitForFetch('/api/tracks/summary?limit=100&order=title');
-refreshList.resolve({tracks:[{handle:'a', display_label:'Aye'}]});
-await waitForFetch('/api/mood-axis-graph');
 assert(fetches.includes('/api/tracks/summary?limit=100&order=title'), 'stale refresh reached the list request');
 const latest = context.setCurrent('b');
 await latest;
-refreshGraph.resolve({positioned:[point('a')], edges:[], selected_mood:'calm', available_moods:['calm']});
+refreshList.resolve({tracks:[{handle:'a', display_label:'Aye'}]});
 detailA.resolve({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
 await stale;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'stale refresh state must not overwrite newer selection state');
@@ -952,7 +951,7 @@ context.fetch = (path, options={}) => {
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 vm.runInContext("state={current_track_id:'a'}; selectionEpoch=1; graphModel={nodes:[{id:'a',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
 const olderRefresh = context.refresh();
 await Promise.resolve();
@@ -1002,7 +1001,7 @@ context.fetch = (path, options={}) => {
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 const rendered = [];
 context.renderMap = data => rendered.push(data.nodes.map(n => n.id));
 vm.runInContext('renderMap = globalThis.renderMap', context);
@@ -1011,7 +1010,7 @@ await Promise.resolve();
 const staleRefresh = context.refresh();
 await staleRefresh;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'refresh must preserve optimistic latest click while POST is pending');
-assert.deepStrictEqual(elements.tracks.children[0].children[1].children.map(row => row.className), ['', 'current']);
+assert.deepStrictEqual(elements.tracks.children[0].children[2].children.map(row => row.className), ['', 'current']);
 postCurrent.resolve();
 await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'POST response should remain latest selected track despite intervening refresh');
@@ -1051,7 +1050,7 @@ context.fetch = (path, options={}) => {
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p'), controls: element('div'), undo: element('button'), reset: element('button')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 vm.runInContext("if(typeof document!=='undefined'){document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');}", context);
 const reset = elements.reset.onclick();
 await Promise.resolve();
@@ -1101,7 +1100,7 @@ context.fetch = (path, options={}) => {
 };
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p'), controls: element('div'), undo: element('button'), reset: element('button')};
-context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[1].children : [];}, getElementById(id){return elements[id] || null;}};
+context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 context.refresh = () => Promise.resolve();
 vm.runInContext('refresh = globalThis.refresh', context);
 vm.runInContext("if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');}", context);
@@ -1334,7 +1333,7 @@ global.fetch = path => {
   assert(fetches.includes('/api/tracks/summary?limit=100&order=title'), 'initial list uses compact summary API');
   assert(!fetches.includes('/api/tracks?limit=all'), 'initial list must not use unbounded full track API');
   assert(!fetches.includes('/api/mood-axis-graph'), 'startup must not decide to trigger the graph for large libraries');
-  const rows = elements.tracks.children[0].children[1].children;
+  const rows = elements.tracks.children[0].children[2].children;
   assert.deepStrictEqual(rows.map(row => row.dataset.trackId), ['visible']);
   assert.strictEqual(rows[0].className, '', 'off-page selection is preserved without pretending visible row is current');
   assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'selected detail renders without graph data');
@@ -1420,13 +1419,12 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
   await first;
   assert(!elements['library-loading'].classList.contains('done'), 'stale refresh must not hide newer loading');
   pending[1].resolve(ok({current_track_id:null})); await waitForPending(3);
-  pending[2].resolve(ok({tracks:[]})); await waitForPending(4);
-  pending[3].resolve(ok(graph)); await second;
+  pending[2].resolve(ok({tracks:[]})); await second;
   assert(elements['library-loading'].classList.contains('done'), 'newest refresh may clear loading');
   const failing = app.refresh().catch(error => error);
   runNextFrame();
-  await waitForPending(5);
-  pending[4].reject(new Error('network down'));
+  await waitForPending(4);
+  pending[3].reject(new Error('network down'));
   const error = await failing;
   assert.match(error.message, /network down/);
   assert.strictEqual(elements['library-loading'].attributes['aria-busy'], 'false');
