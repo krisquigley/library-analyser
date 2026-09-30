@@ -212,6 +212,43 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             _metadata, _count, second_page, _cursor = repo.list_track_summaries(1, cursor=cursor, order='id')
             self.assertEqual(tuple(row.handle for row in second_page), (second,))
 
+    def test_list_track_summaries_orders_title_and_artist_by_returned_metadata_with_stable_cursors(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            rows = (
+                ('sha256:' + '1' * 64, 'Gamma Filename.flac', '[]', '[["artist", ["Zulu"]]]'),
+                ('sha256:' + '2' * 64, 'Zulu Filename.flac', '[["title", "Alpha Title"], ["artist", ["Bravo"]]]', '[]'),
+                ('sha256:' + '3' * 64, 'Beta Filename.flac', '[["title", "Middle Title"], ["artist", ["Alpha"]]]', '[]'),
+            )
+            for tid, label, common_json, tags_json in rows:
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, tid.split(':')[1], 10))
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', ('/private/music/' + label, tid, 1, 'flac', 1))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, 120.0, 'mutagen', 'eligible', ''))
+                db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (tid, common_json, tags_json, '[]'))
+            db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run-1', '/private/music/01-filename.flac', 'completed', ''))
+            db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run-1', rows[0][0]))
+            db.execute('INSERT INTO stages VALUES(?,?,?)', ('run-1', 'bpm', 'not-json-summary-endpoint-must-not-read-this'))
+            db.commit(); db.close()
+
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+
+            _metadata, count, title_page_1, title_cursor = repo.list_track_summaries(2, order='title')
+            self.assertEqual(count, 3)
+            self.assertEqual(tuple(row.title for row in title_page_1), ('Alpha Title', 'Gamma Filename.flac'))
+            _metadata, count, title_page_2, title_cursor_2 = repo.list_track_summaries(2, cursor=title_cursor, order='title')
+            self.assertEqual(count, 1)
+            self.assertEqual(tuple(row.title for row in title_page_2), ('Middle Title',))
+            self.assertIsNone(title_cursor_2)
+
+            _metadata, count, artist_page_1, artist_cursor = repo.list_track_summaries(2, order='artist')
+            self.assertEqual(count, 3)
+            self.assertEqual(tuple(row.artist for row in artist_page_1), ('Alpha', 'Bravo'))
+            _metadata, count, artist_page_2, artist_cursor_2 = repo.list_track_summaries(2, cursor=artist_cursor, order='artist')
+            self.assertEqual(count, 1)
+            self.assertEqual(tuple(row.artist for row in artist_page_2), ('Zulu',))
+            self.assertIsNone(artist_cursor_2)
+
 
 if __name__ == '__main__':
     unittest.main()

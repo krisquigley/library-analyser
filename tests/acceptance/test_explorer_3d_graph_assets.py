@@ -225,6 +225,63 @@ assert.strictEqual(app.graphQueryFromControls(), '?mood=heavy');
             with self.subTest(app=app):
                 subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
+
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for graph filter render tests')
+    def test_loaded_graph_filters_recompute_visible_graph_without_fetching_graph_again(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null,
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children=[]; this.append(...nodes);},
+    setAttribute(name,value){this.attributes[name]=String(value);},
+    removeAttribute(name){delete this.attributes[name];},
+    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
+  };
+  return el;
+}
+function findById(root,id){ if(root.id===id) return root; for(const child of root.children||[]){const found=child&&typeof child==='object'?findById(child,id):null; if(found) return found;} return null; }
+const elements = {'graph-load-status': makeElement('section'), graph3d: makeElement('div'), 'mood-strip': null, 'mood-strip-picker': null, 'mood-strip-value': null};
+global.document = {createElement: makeElement, getElementById:id=>elements[id]||null, querySelectorAll:()=>[]};
+global.requestAnimationFrame = cb => cb();
+let graphRequests = 0;
+global.fetch = async path => {
+  if (String(path).startsWith('/api/mood-axis-graph')) graphRequests += 1;
+  return {ok:true, json:async()=>({selected_mood:'relaxing', available_moods:['relaxing','heavy'], positioned:[
+    {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.9}, bpm:120, genres:[['rock',0.6]], reasons:[]},
+    {track_id:'b', display_label:'Beta', x:{raw:0.3, normalized:0.3, scale:'native'}, y:{raw:0.4, normalized:0.4, scale:'native'}, z:{label:'BPM', raw:130, normalized:6.5, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.2}, bpm:130, genres:[['jazz',0.7]], reasons:[]}
+  ], edges:[{a:'a',b:'b',score:0.5}], unpositioned:[]})};
+};
+const root = makeElement('div');
+app.buildGraphControls(root);
+const bpmMin = findById(root, 'bpm-min');
+const genre = findById(root, 'genre-filter');
+const clear = findById(root, 'clear-graph-filters');
+global.ForceGraph3D = undefined;
+(async()=>{
+  await app.loadGraph();
+  assert.strictEqual(graphRequests, 1, 'Load graph fetches graph once');
+  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a','b']);
+  bpmMin.value = '125';
+  bpmMin.onchange();
+  assert.strictEqual(graphRequests, 1, 'BPM filtering must not reload graph');
+  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['b']);
+  genre.selectedOptions = [{value:'jazz'}];
+  genre.onchange();
+  assert.strictEqual(graphRequests, 1, 'genre filtering must not reload graph');
+  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['b']);
+  clear.onclick();
+  assert.strictEqual(graphRequests, 1, 'clearing graph filters must not reload graph');
+  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a','b']);
+  assert.strictEqual(app.getGraphControlsForTesting().bpmMin, null);
+})().catch(error=>{console.error(error); process.exit(1);});
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for relatedness alpha tests')
     def test_relatedness_link_alpha_reflects_clamped_score_and_notes_explain_it(self):
         script = r"""
@@ -302,6 +359,21 @@ const tracks = makeElement('div');
 const search = makeElement('input');
 const elements = {tracks, 'track-search': search};
 global.document = {createElement: makeElement, getElementById(id){return elements[id] || null;}, querySelectorAll(){return [];}};
+global.setTimeout = fn => { fn(); return 1; };
+global.clearTimeout = () => {};
+let requested = [];
+global.fetch = async path => {
+  requested.push(String(path));
+  const url = new URL(String(path), 'http://example.test');
+  const query = (url.searchParams.get('query') || '').toLowerCase();
+  const all = [
+    {handle:'one', display_label:'Filename One.flac', title:'Bright Song', artist:'Alice'},
+    {handle:'two', display_label:'Filename Two.flac', title:'Quiet Tune', artist:'Bob'},
+    {handle:'three', display_label:'Fallback.flac', artist:'Unknown artist'}
+  ];
+  const filtered = query ? all.filter(t => `${t.title || t.display_label} ${t.artist || 'Unknown artist'}`.toLowerCase().includes(query)) : all;
+  return {ok:true, json:async()=>({tracks:filtered, metadata:{track_count:filtered.length}})};
+};
 app.setStateForTesting({current_track_id:'two'});
 app.renderTracks([
   {handle:'one', display_label:'Filename One.flac', title:'Bright Song', artist:'Alice'},
@@ -309,25 +381,34 @@ app.renderTracks([
   {handle:'three', display_label:'Fallback.flac', artist:'Unknown artist'}
 ]);
 assert.strictEqual(tracks.children[0].tagName, 'TABLE');
-const table = tracks.children[0];
-assert.strictEqual(table.children[0].children[0].children[0].textContent, 'Title');
-assert.strictEqual(table.children[0].children[0].children[1].textContent, 'Artist');
-const tbody = table.children[1];
+let table = tracks.children[0];
+assert.strictEqual(table.children[1].children[0].children[0].textContent, 'Title');
+assert.strictEqual(table.children[1].children[0].children[1].textContent, 'Artist');
+let tbody = table.children[2];
 assert.strictEqual(tbody.children.length, 3);
 assert.strictEqual(tbody.children[1].className, 'current');
 assert.strictEqual(tbody.children[1].children[0].children[0].getAttribute('aria-current'), 'true');
 assert.strictEqual(tbody.children[0].children[0].children[0].getAttribute('aria-current'), null);
 assert(tbody.children[0].innerText.includes('Bright Song') && tbody.children[0].innerText.includes('Alice'));
 assert(tbody.children[2].innerText.includes('Fallback.flac') && tbody.children[2].innerText.includes('Unknown artist'));
-search.value = 'alice'; search.oninput();
-assert.deepStrictEqual(tbody.children.map(row => row.hidden), [false, true, true]);
-search.value = 'QUIET'; search.oninput();
-assert.deepStrictEqual(tbody.children.map(row => row.hidden), [true, false, true]);
-search.value = 'Filename'; search.oninput();
-assert.deepStrictEqual(tbody.children.map(row => row.hidden), [true, true, true], 'search only matches title and artist');
-assert(tracks.innerText.includes('No tracks match your search'));
-search.value = ''; search.oninput();
-assert.deepStrictEqual(tbody.children.map(row => row.hidden), [false, false, false]);
+(async()=>{
+  search.value = 'alice'; search.oninput(); await Promise.resolve(); await Promise.resolve();
+  assert(requested.at(-1).includes('/api/tracks/summary?limit=100&order=title&query=alice'));
+  table = tracks.children[0]; tbody = table.children[2];
+  assert.strictEqual(tbody.children.length, 1);
+  assert(tbody.children[0].innerText.includes('Bright Song'));
+  search.value = 'QUIET'; search.oninput(); await Promise.resolve(); await Promise.resolve();
+  table = tracks.children[0]; tbody = table.children[2];
+  assert.strictEqual(tbody.children.length, 1);
+  assert(tbody.children[0].innerText.includes('Quiet Tune'));
+  search.value = 'Filename'; search.oninput(); await Promise.resolve(); await Promise.resolve();
+  table = tracks.children[0]; tbody = table.children[2];
+  assert.strictEqual(tbody.children.length, 0, 'server-side summary search only matches title and artist');
+  assert(tracks.innerText.includes('No tracks match your search'));
+  search.value = ''; search.oninput(); await Promise.resolve(); await Promise.resolve();
+  table = tracks.children[0]; tbody = table.children[2];
+  assert.strictEqual(tbody.children.length, 3);
+})().catch(error=>{console.error(error); process.exit(1);});
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 

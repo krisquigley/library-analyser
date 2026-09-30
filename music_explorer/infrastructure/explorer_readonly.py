@@ -185,10 +185,14 @@ class ReadOnlyExplorerSQLiteRepository:
                 where.append("(lower(id) LIKE ? ESCAPE '\\' OR lower(COALESCE(first_path,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(common_json,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(tags_json,'')) LIKE ? ESCAPE '\\')")
                 params.extend([like, like, like, like])
             cursor_key, cursor_id = self._decode_summary_cursor(cursor)
-            order_expr = 'lower(display_label)' if order in ('title', 'artist') else 'id'
+            order_key = order if order in ('title', 'artist') else 'id'
+            order_expr = "lower(_explorer_summary_sort_key(?, common_json, tags_json, display_label, id))" if order_key in ('title', 'artist') else 'id'
             if cursor_key is not None and cursor_id is not None:
                 where.append(f"({order_expr} > ? OR ({order_expr} = ? AND id > ?))")
-                params.extend([cursor_key, cursor_key, cursor_id])
+                if order_key in ('title', 'artist'):
+                    params.extend([order_key, cursor_key, order_key, cursor_key, cursor_id])
+                else:
+                    params.extend([cursor_key, cursor_key, cursor_id])
             where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
             base = """
                 WITH first_location AS (
@@ -199,23 +203,26 @@ class ReadOnlyExplorerSQLiteRepository:
                            COALESCE(first_location.available_locations, 0) AS available_locations,
                            COALESCE(tm.common_json, '[]') AS common_json,
                            COALESCE(tm.tags_json, '[]') AS tags_json,
-                           lower(CASE WHEN COALESCE(first_location.path, '') = '' THEN t.id ELSE COALESCE(first_location.path, '') END) AS display_label
+                           CASE WHEN COALESCE(first_location.path, '') = '' THEN '' ELSE _explorer_basename(first_location.path) END AS display_label
                     FROM active_tracks t
                     LEFT JOIN first_location ON first_location.track_id=t.id
                     LEFT JOIN track_metadata tm ON tm.track_id=t.id
                 )
-                SELECT id, sha256, size, first_path, available_locations, common_json, tags_json, display_label
+                SELECT id, sha256, size, first_path, available_locations, common_json, tags_json, display_label,
+                       _explorer_summary_sort_key(?, common_json, tags_json, display_label, id) AS sort_key
                 FROM summary
             """
-            track_count = db.execute('SELECT count(*) FROM (' + base + where_sql + ')', tuple(params)).fetchone()[0]
-            rows = db.execute(base + where_sql + f' ORDER BY {order_expr}, id LIMIT ?', (*params, limit + 1)).fetchall()
+            select_order_key_params = (order_key,) if order_key in ('title', 'artist') else ('id',)
+            order_params = (order_key,) if order_key in ('title', 'artist') else ()
+            track_count = db.execute('SELECT count(*) FROM (' + base + where_sql + ')', (*select_order_key_params, *params)).fetchone()[0]
+            rows = db.execute(base + where_sql + f' ORDER BY {order_expr}, id LIMIT ?', (*select_order_key_params, *params, *order_params, limit + 1)).fetchall()
             page_rows = rows[:limit]
             summaries = tuple(self._summary_from_row(row) for row in page_rows)
             next_cursor = None
             if len(rows) > limit and page_rows:
                 last = page_rows[-1]
-                key = last[7] if order in ('title', 'artist') else last[0]
-                next_cursor = self._encode_summary_cursor(key, last[0])
+                key = last[8] if order_key in ('title', 'artist') else last[0]
+                next_cursor = self._encode_summary_cursor(str(key).lower(), last[0])
             return metadata, track_count, summaries, next_cursor
 
     def candidate_snapshot(self):
@@ -276,7 +283,7 @@ class ReadOnlyExplorerSQLiteRepository:
 
 
     def _summary_from_row(self, row):
-        track_id, _sha, _size, first_path, available_locations, common_json, tags_json, display_label = row
+        track_id, _sha, _size, first_path, available_locations, common_json, tags_json, display_label, _sort_key = row
         label = Path(first_path).name if first_path else display_label
         metadata = self._metadata_from_json(common_json, tags_json, '[]', None)
         title = self._metadata_value(metadata, 'title') or label or track_id
@@ -286,6 +293,18 @@ class ReadOnlyExplorerSQLiteRepository:
     def _metadata_from_json(self, common_json, tags_json, warnings_json, audio):
         warnings = tuple(str(x) for x in json.loads(warnings_json))
         return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(common_json)), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(tags_json)), warnings, audio[0] if audio else None, audio[1] if audio else '')
+
+    def _summary_sort_key(self, order, common_json, tags_json, display_label, track_id):
+        try:
+            metadata = self._metadata_from_json(common_json or '[]', tags_json or '[]', '[]', None)
+            label = str(display_label or '')
+            if order == 'artist':
+                return self._metadata_value(metadata, 'artist') or 'Unknown artist'
+            if order == 'title':
+                return self._metadata_value(metadata, 'title') or label or str(track_id or '')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        return str(track_id or '')
 
     def _metadata_value(self, metadata, semantic):
         wanted = {'title': ('title',), 'artist': ('artist', 'artists')}[semantic]
@@ -343,6 +362,8 @@ class ReadOnlyExplorerSQLiteRepository:
         try:
             uri = self._path.as_uri() + '?mode=ro'
             db = sqlite3.connect(uri, uri=True, timeout=1)
+            db.create_function('_explorer_basename', 1, lambda value: Path(str(value)).name if value else '')
+            db.create_function('_explorer_summary_sort_key', 5, self._summary_sort_key)
             db.execute('PRAGMA foreign_keys=ON')
             db.execute('PRAGMA query_only=ON')
             yield db
