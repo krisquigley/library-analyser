@@ -22,6 +22,7 @@ from music_analyzer.interface_adapters.presenters.catalogue import present_scan
 from music_analyzer.application.use_cases.analyze_track import AnalyzeTrack
 from music_analyzer.application.dto.analysis import AudioSource
 from music_analyzer.domain.analysis import MAX_ANALYSIS_DURATION_SECONDS, finite
+from music_analyzer.application.use_cases.active_library import active_exclusion_reason
 from music_analyzer.infrastructure.analysis.essentia import EssentiaEngine, VerifiedModels, load_backend
 from music_analyzer.infrastructure.audio.ffmpeg import FFmpegDecoder
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
@@ -114,8 +115,8 @@ def read_catalogue_tracks(track_ids, tracks_file):
     return tuple(dict.fromkeys(selected))
 
 
-def build_batch(settings, max_duration):
-    queue = SQLiteBatchQueue(settings.database)
+def build_batch(settings, max_duration, queue=None):
+    queue = queue or SQLiteBatchQueue(settings.database)
     files = LocalInventory()
     resolver = ResolveTrack(queue, files)
     selected = {}
@@ -254,21 +255,36 @@ def main(argv: list[str] | None = None) -> int:
             output = present_scan(report, as_json=args.json)
             ready = report.complete
         elif args.command == 'status':
-            jobs = SQLiteBatchQueue(load_settings(**overrides).database).status()
-            output, ready = present_batch(jobs, args.json), True
+            queue = SQLiteBatchQueue(load_settings(**overrides).database)
+            jobs = queue.status()
+            output, ready = present_batch(jobs, args.json, queue.ineligible_tracks()), True
         elif args.command == 'analyze' and not (args.file or args.track):
             settings = load_settings(**overrides)
             selected_tracks = read_catalogue_tracks(args.catalogue_track, args.catalogue_tracks_file) if catalogue_selected else None
+            queue = SQLiteBatchQueue(settings.database)
             if selected_tracks == ():
-                jobs = SQLiteBatchQueue(settings.database).status()
+                jobs = queue.status()
             else:
-                batch, recipe = build_batch(settings, args.max_duration)
+                batch, recipe = build_batch(settings, args.max_duration, queue=queue)
                 jobs = batch.execute(recipe, args.limit, args.retry_failed, args.force, args.max_duration, selected_tracks=selected_tracks)
-            output, ready = present_batch(jobs, args.json), not any(j.state == 'failed' for j in jobs)
+            output, ready = present_batch(jobs, args.json, queue.ineligible_tracks()), not any(j.state == 'failed' for j in jobs)
         elif args.command == 'analyze':
-            source = AudioSource(args.file) if args.file else ResolveTrack(
-                SQLiteAnalysisRepository(load_settings(**overrides).database), LocalInventory()).execute(args.track)
-            report = build_analysis(**overrides).execute(source, args.max_duration)
+            if args.file:
+                metadata = MutagenMetadataReader().read(args.file)
+                reason = active_exclusion_reason(metadata)
+                if reason:
+                    raise ValueError('Explicit file is not eligible for active-library analysis: ' + reason)
+                source = AudioSource(args.file)
+                analysis = build_analysis(**overrides)
+            else:
+                settings = load_settings(**overrides)
+                queue = SQLiteBatchQueue(settings.database)
+                reason = queue.ineligible_tracks().get(args.track)
+                if reason:
+                    raise ValueError('Explicit track is not eligible for active-library analysis: ' + reason)
+                source = ResolveTrack(queue, LocalInventory()).execute(args.track)
+                analysis = build_analysis(**overrides)
+            report = analysis.execute(source, args.max_duration)
             output = present_analysis(report, as_json=args.json)
             ready = report.status == 'completed'
         elif args.command == 'explorer':

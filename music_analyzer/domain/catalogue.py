@@ -1,4 +1,4 @@
-"""Exact-file identity, deliberately not an acoustic recording identity."""
+"""Exact-file identity domain model."""
 from dataclasses import dataclass
 
 

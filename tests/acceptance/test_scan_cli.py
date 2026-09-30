@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from music_analyzer.application.dto.analysis import AnalysisReport
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.frameworks.cli.main import main
 
 
@@ -18,8 +19,9 @@ class ScanCLITests(unittest.TestCase):
             audio.write_bytes(b'temporary fixture not real inference')
             database = str(Path(tmp) / 'analysis.sqlite')
             out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                self.assertEqual(main(['scan', str(root), '--database', database, '--json']), 0)
+            with patch('music_analyzer.frameworks.cli.main.MutagenMetadataReader.read', return_value=TrackMetadata(duration_seconds=120.0, duration_source='mutagen')):
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(main(['scan', str(root), '--database', database, '--json']), 0)
             track = json.loads(out.getvalue())['files'][0]['track_id']
             with patch('music_analyzer.frameworks.cli.main.build_analysis') as build:
                 build.return_value.execute.return_value = AnalysisReport('run', 'completed', ())

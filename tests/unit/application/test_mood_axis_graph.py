@@ -2,6 +2,7 @@ import unittest
 from dataclasses import replace
 
 from music_analyzer.application.dto.analysis import AnalysisReport, StageResult
+from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.explorer import ExplorerStoredTrack
 from music_analyzer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph
 from music_analyzer.domain.analysis import ScoreSummary
@@ -21,7 +22,7 @@ def track(suffix, *, bpm=120.0, energy=(0.25, 0.75), mood=(('relaxing', 'heavy')
         stages.append(StageResult('mood', (('mtg_jamendo_moodtheme-discogs-effnet-1', 'synthetic-sha256'), ('scale', 'sigmoid_mean_score_0_1')), '', summary=summary(mood[0], mood[1])))
     if genres is not None:
         stages.append(StageResult('genres', (('genre_discogs400-discogs-effnet-1', 'synthetic-sha256'), ('threshold', '0.5')), '', summary=summary(genres[0], genres[1])))
-    return ExplorerStoredTrack('sha256:' + suffix * 64, suffix * 64, 10, suffix + '.flac', 1, AnalysisReport('run-' + suffix, 'completed', tuple(stages)), overrides)
+    return ExplorerStoredTrack('sha256:' + suffix * 64, suffix * 64, 10, suffix + '.flac', 1, AnalysisReport('run-' + suffix, 'completed', tuple(stages)), overrides, TrackMetadata(duration_seconds=120.0, duration_source='mutagen'))
 
 
 class FakeRepo:

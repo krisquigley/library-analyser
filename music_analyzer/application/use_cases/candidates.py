@@ -2,6 +2,7 @@
 from music_analyzer.application.dto.candidates import CandidateQuery, CandidateResultDto, CandidateSummaryDto
 from music_analyzer.application.dto.explorer import AutomaticEvidence, ExplorerFieldEvidence, ExplorerMetadata
 from music_analyzer.application.ports.explorer import ExplorerRepository
+from music_analyzer.application.use_cases.active_library import is_active_library_track
 from music_analyzer.domain.candidate_selection import CandidateFeatures, FeatureEvidence, SelectionControl, SelectionRequest, rank_candidates
 
 FEATURE_CONTRACT_VERSION = 'summary-derived-v1'
@@ -18,7 +19,7 @@ class SelectExplorerCandidates:
         if not isinstance(query.limit, int) or query.limit < 1 or query.limit > 500:
             raise ValueError('Candidate limit must be between 1 and 500')
         raw_meta, records = self.repository.candidate_snapshot()
-        records = tuple(records)
+        records = tuple(record for record in records if is_active_library_track(record))
         total = len(records)
         by_id = {record.track_id: record for record in records}
         if query.current_track_id not in by_id:

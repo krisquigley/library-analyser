@@ -21,19 +21,99 @@ CREATE TABLE batch_jobs(track_id TEXT PRIMARY KEY REFERENCES tracks(id), fingerp
 CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
 CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
     CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
+CREATE TABLE track_audio(track_id TEXT PRIMARY KEY REFERENCES tracks(id), duration_seconds REAL, duration_source TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('eligible','excluded','unknown')), reason TEXT NOT NULL);
+CREATE VIEW active_tracks AS SELECT t.id,t.sha256,t.size FROM tracks t JOIN track_audio a ON a.track_id=t.id WHERE a.status='eligible';
+CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.available FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible';
 ''')
     db.execute(f'PRAGMA application_id={APP_ID}')
-    db.execute('PRAGMA user_version=5')
+    db.execute('PRAGMA user_version=6')
     return db
 
 
 class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
+    def test_rejects_missing_track_audio_row_for_each_track(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + '8' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '8' * 64, 10))
+            db.commit(); db.close()
+
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
+    def test_rejects_orphan_track_audio_row_inserted_with_foreign_keys_disabled_before_showing_results(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            db.execute('PRAGMA foreign_keys=OFF')
+            good_tid = 'sha256:' + '8' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (good_tid, '8' * 64, 10))
+            db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (good_tid, 120.0, 'mutagen', 'eligible', ''))
+            db.execute(
+                'INSERT INTO track_audio VALUES(?,?,?,?,?)',
+                ('sha256:' + '9' * 64, 120.0, 'mutagen', 'eligible', ''),
+            )
+            db.commit(); db.close()
+
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
+    def test_accepts_normalized_trusted_nonfinite_duration_as_unknown(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + '7' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '7' * 64, 10))
+            db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (
+                tid,
+                None,
+                'mutagen',
+                'unknown',
+                'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata',
+            ))
+            db.commit(); db.close()
+
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+            self.assertEqual(repo.track_ids(), ())
+            self.assertIsNone(repo.read_track(tid).metadata.duration_seconds)
+
+    def test_rejects_tampered_track_audio_rows_instead_of_trusting_active_view_status(self):
+        for audio_update in (
+            (119.0, '', 'eligible', ''),
+            (120.0, 'mutagen', 'archived', ''),
+            (None, 'mutagen', 'excluded', 'duration invalid; excluded from active library until mutagen/ffprobe verifies a positive finite duration; rescan audio metadata'),
+            (float('inf'), 'mutagen', 'excluded', 'duration invalid; excluded from active library until mutagen/ffprobe verifies a positive finite duration; rescan audio metadata'),
+        ):
+            with self.subTest(audio_update=audio_update), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / 'analysis.sqlite'
+                db = create_db(path)
+                db.execute('PRAGMA ignore_check_constraints=ON')
+                tid = 'sha256:' + '9' * 64
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '9' * 64, 10))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, *audio_update))
+                db.commit(); db.close()
+
+                with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                    ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
+    def test_rejects_v6_schema_with_loose_active_view_definition(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            db.execute('DROP VIEW active_tracks')
+            db.execute('CREATE VIEW active_tracks AS SELECT id,sha256,size FROM tracks')
+            db.commit(); db.close()
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
     def test_rejects_malformed_stage_summary_with_empty_labels_and_zero_coverage(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             db = create_db(path)
             tid = 'sha256:' + 'b' * 64
             db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, 'b' * 64, 10))
+            db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, 120.0, 'mutagen', 'eligible', ''))
             db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run', '', 'completed', ''))
             db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run', tid))
             payload = {
@@ -54,6 +134,7 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             db = create_db(path)
             tid = 'sha256:' + 'b' * 64
             db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, 'b' * 64, 10))
+            db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, 120.0, 'mutagen', 'eligible', ''))
             db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run', '', 'completed', ''))
             db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run', tid))
             payload = {
@@ -80,6 +161,7 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             db = create_db(path)
             tid = 'sha256:' + 'b' * 64
             db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, 'b' * 64, 10))
+            db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (tid, 120.0, 'mutagen', 'eligible', ''))
             db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', ('run', '', 'completed', ''))
             db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run', tid))
             payload = {

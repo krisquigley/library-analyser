@@ -10,7 +10,7 @@ from unittest.mock import patch
 from music_analyzer.application.use_cases.projection_artifacts import ProjectionArtifactError
 from music_analyzer.frameworks.cli.main import main
 from music_analyzer.infrastructure.filesystem.projection_artifacts import FileProjectionArtifactStore
-from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID
+from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID, SQLiteAnalysisRepository
 
 
 VALID = {
@@ -208,6 +208,9 @@ def _write_projection_ready_database(db_path, audio_path):
         db.execute('INSERT INTO run_tracks VALUES(?,?)', ('run-1', tid))
         db.execute('INSERT INTO stages VALUES(?,?,?)', ('run-1', 'bpm', json.dumps({'stage': 'bpm', 'provenance': [], 'uncertainty': '', 'values': [['bpm', 120.0]]})))
         db.execute('INSERT INTO stages VALUES(?,?,?)', ('run-1', 'energy', json.dumps({'stage': 'energy', 'provenance': [], 'uncertainty': '', 'summary': {'labels': ['arousal'], 'mean': [0.0], 'minimum': [0.0], 'maximum': [0.0], 'coverage': 1.0, 'provisional': False, 'uncertainty': ''}})))
+    SQLiteAnalysisRepository(str(db_path))
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.execute("UPDATE track_audio SET duration_seconds=120.0,duration_source='mutagen',status='eligible',reason='' WHERE track_id=?", (tid,))
 
 
 if __name__ == '__main__':

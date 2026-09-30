@@ -242,13 +242,19 @@ FLAC, MP3 and M4A decode tests pass with the installed FFmpeg. These silent
 one-second fixtures do not validate rhythm, harmony or semantic inference.
 
 `SQLiteAnalysisRepository` initializes a dedicated empty database transactionally
-with an application ID and schema version 4 (transactional v0 → v1 → v2 → v3 → v4). It rejects unrelated schemas,
+with an application ID and schema version 6 (transactional v0 → v1 → v2 → v3 → v4 → v5 → v6). It rejects unrelated schemas,
 unknown versions, symlink paths and Mixxx-named databases; it stores separate run
 IDs, source locations, stage results, uncertainty and provenance. It never opens
 the music file. Parent directories must already exist. Identity is not a security
 boundary against hostile concurrent local replacement. The v1 → v2 migration adds
 tracks, locations and root membership without rewriting runs or stage/provenance
-payloads. The v2 → v3 migration adds batch jobs without rewriting existing records. No migration from other applications. Never point it at a Mixxx database.
+payloads. The v2 → v3 migration adds batch jobs without rewriting existing records.
+The v5 → v6 migration adds active-library audio eligibility without rewriting runs,
+stage/provenance payloads or historical tracks/locations; existing catalogue rows
+start with unknown duration and inactive/held out of active analysis until the same
+selected roots are rescanned to populate trusted measured duration evidence. Back up
+user databases before allowing any schema migration. No migration from other
+applications. Never point it at a Mixxx database.
 
 A provisional pure score summary retains duration-weighted mean, minimum,
 maximum and explicit disjoint-window coverage. It does not select tags, infer
@@ -315,24 +321,39 @@ music-analyzer analyze --track sha256:DIGEST_FROM_SCAN --database /existing/dire
 ```
 
 Only the supplied directory is inventoried. No default music directory, tag writes,
-Mixxx access, metadata network requests or model downloads. Supported inventory
-extensions: FLAC, MP3, M4A, WAV, OGG, OPUS, AIFF/AIF (case insensitive). This slice
-records filesystem metadata (size, nanosecond mtime, extension) and streaming
-SHA-256, **not audio tags, duration, codec validation or acoustic fingerprints**.
-Malformed audio can enter the catalogue and later fail decoding. Other extensions
-are ignored. Symlink files/directories are skipped; a symlink root/ancestor is
-rejected. Special files are never read. Unicode locations remain distinct.
+source-audio writes, Mixxx access, implicit analysis, metadata network requests or
+model downloads. Supported inventory extensions: FLAC, MP3, M4A, WAV, OGG, OPUS,
+AIFF/AIF (case insensitive). This slice records filesystem metadata (size,
+nanosecond mtime, extension), streaming SHA-256 and local mutagen-based duration
+provenance when the container can be identified. It does **not** validate codecs,
+calculate acoustic fingerprints, decode PCM or infer tags. Malformed audio may
+still enter the catalogue or have unknown/unreadable duration and later fail
+decoding. Other extensions are ignored. Symlink files/directories are skipped; a
+symlink root/ancestor is rejected. Special files are never read. Unicode locations
+remain distinct.
 
 Track IDs are `sha256:<exact-byte digest>`: identical copies share an ID but retain
 separate location rows. Moving identical bytes preserves the ID; changed bytes
 create a different identity at that path. Different encodings are not merged.
 Every scan rehashes; metadata-only fast skipping and result reuse are not claimed.
 A successful complete rescan marks previously registered, now-absent locations
-under that exact root unavailable, retaining historical tracks/locations.
+under that exact root unavailable, retaining historical tracks/locations and their
+analysis history.
 Errors or exhausted limits produce a partial report (exit 1) and never mark missing
 locations; successful files are still registered atomically. Scan issues are
 returned, not stored as durable jobs. Root membership supports repeated and
 overlapping roots; missing detection requires rescanning the same root.
+
+Active-library eligibility is derived from trusted measured duration evidence
+(`mutagen`, or `ffprobe` for compatible stored evidence). Durations strictly greater
+than 1200.0 seconds are excluded; exactly 1200.0 seconds remains eligible. Unknown,
+unreadable, nonfinite, nonpositive or untrusted duration evidence is held out of the
+active library and scan/status output reports warnings such as duration exclusions
+or unknown durations. After a v5 → v6 migration, pre-existing rows have no trusted
+duration evidence and are therefore unknown/inactive until you rescan the same
+selected roots. Malformed files and mutagen performance/format limitations can keep
+a file unknown or later make decoding fail; scanning still performs no analysis and
+never writes source audio, Mixxx data or tags.
 
 Defaults bound entries (including directories/ignored entries) to 10,000, files to
 512 MiB each and attempted hashing to 8 GiB total; configurable hard ceilings are
@@ -359,8 +380,9 @@ music-analyzer analyze --database /existing/directory/analysis.sqlite --force --
 music-analyzer status --database /existing/directory/analysis.sqlite --json
 ```
 
-Without `--file`/`--track`, analyze selects available catalogue identities in stable
-track-ID order. One worker loads models once, attempts tracks sequentially and
+Without `--file`/`--track`, analyze selects active eligible catalogue identities in
+stable track-ID order; unknown/unverified or too-long rows are not implicitly
+analyzed. One worker loads models once, attempts tracks sequentially and
 persists pending/running/completed/failed jobs. `--limit` caps attempts, not scans
 or identity checks; no unsafe parallelism is provided. Failed tracks do not abort
 other tracks. Defaults do not retry failures; `--retry-failed` permits one attempt

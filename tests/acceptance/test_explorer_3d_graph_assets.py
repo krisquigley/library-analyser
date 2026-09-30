@@ -8,6 +8,7 @@ from pathlib import Path
 
 from tests.acceptance.test_explorer_server import APP_ID
 from music_analyzer.frameworks.explorer.server import create_server
+from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -57,6 +58,11 @@ CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), com
             ]
             for stage, payload in stages:
                 db.execute('INSERT INTO stages VALUES(?,?,?)', (run_id, stage, json.dumps(payload)))
+    db.commit(); db.close()
+    SQLiteAnalysisRepository(str(path))
+    db = sqlite3.connect(path)
+    for tid in ids:
+        db.execute("UPDATE track_audio SET duration_seconds=120.0,duration_source='mutagen',status='eligible',reason='' WHERE track_id=?", (tid,))
     db.commit(); db.close()
     return ids
 

@@ -31,7 +31,12 @@ class AnalyzeBatch:
             unknown = tuple(track for track in selected if track not in catalogue_tracks)
             if unknown:
                 raise ValueError('Unknown catalogue track ID: ' + ', '.join(unknown))
-            tracks = selected or catalogue_tracks
+            ineligible = self.queue.ineligible_tracks() if hasattr(self.queue, 'ineligible_tracks') else {}
+            selected_ineligible = tuple(track for track in selected if track in ineligible)
+            if selected_ineligible:
+                details = '; '.join(f'{track}: {ineligible[track]}' for track in selected_ineligible)
+                raise ValueError('Selected catalogue track is ineligible for active analysis: ' + details)
+            tracks = selected or (self.queue.active_tracks() if hasattr(self.queue, 'active_tracks') else catalogue_tracks)
             dispatched = 0
             for track in tracks:
                 previous = self.queue.get_job(track)

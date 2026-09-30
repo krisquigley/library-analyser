@@ -48,6 +48,20 @@ class SQLiteBatchQueue(SQLiteAnalysisRepository):
         with self._transaction() as db:
             return tuple(row[0] for row in db.execute('SELECT DISTINCT track_id FROM locations WHERE available=1 ORDER BY track_id'))
 
+    def active_tracks(self):
+        with self._transaction() as db:
+            return tuple(row[0] for row in db.execute("SELECT DISTINCT l.track_id FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible' ORDER BY l.track_id"))
+
+    def ineligible_tracks(self):
+        with self._transaction() as db:
+            return {track_id: reason for track_id, reason in db.execute("""
+                SELECT DISTINCT l.track_id,COALESCE(a.reason,'missing track audio eligibility row; rescan audio metadata')
+                FROM locations l
+                LEFT JOIN track_audio a ON a.track_id=l.track_id
+                WHERE l.available=1 AND (a.track_id IS NULL OR a.status!='eligible')
+                ORDER BY l.track_id
+            """)}
+
     def get_job(self, track_id):
         with self._transaction() as db:
             row = db.execute('SELECT * FROM batch_jobs WHERE track_id=?', (track_id,)).fetchone()

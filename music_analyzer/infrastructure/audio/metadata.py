@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from math import isfinite
 from pathlib import Path
 
 from music_analyzer.application.dto.catalogue import TrackMetadata
@@ -39,15 +40,18 @@ class MutagenMetadataReader:
         try:
             from mutagen import File  # type: ignore
         except ImportError:
-            return TrackMetadata(warnings=('mutagen unavailable; embedded metadata not extracted',))
+            return TrackMetadata(warnings=('mutagen unavailable; embedded metadata not extracted', 'duration unknown: mutagen unavailable'))
         try:
             audio = File(location, easy=False)
         except Exception as error:  # mutagen raises format-specific exceptions
-            return TrackMetadata(warnings=(f'metadata unreadable: {error}',))
+            return TrackMetadata(warnings=(f'metadata unreadable: {error}', 'duration unknown: measured audio duration unreadable'))
+        duration_seconds, duration_warning = _measured_duration(audio)
         if audio is None or not getattr(audio, 'tags', None):
-            return TrackMetadata()
+            return TrackMetadata(warnings=((duration_warning,) if duration_warning else ()), duration_seconds=duration_seconds, duration_source=('mutagen' if duration_seconds is not None else ''))
         tags: dict[str, tuple[str, ...]] = {}
         warnings: list[str] = []
+        if duration_warning:
+            warnings.append(duration_warning)
         total = 0
         for raw_key, raw_value in audio.tags.items():
             key = _clean_key(str(raw_key))
@@ -97,7 +101,17 @@ class MutagenMetadataReader:
             if collected:
                 unique = tuple(dict.fromkeys(collected))
                 common.append((field, unique[0] if len(unique) == 1 else unique))
-        return TrackMetadata(tuple(common), tuple(sorted(tags.items())), tuple(dict.fromkeys(warnings)))
+        return TrackMetadata(tuple(common), tuple(sorted(tags.items())), tuple(dict.fromkeys(warnings)), duration_seconds, ('mutagen' if duration_seconds is not None else ''))
+
+
+def _measured_duration(audio) -> tuple[float | None, str]:
+    if audio is None:
+        return None, 'duration unknown: mutagen could not identify audio container'
+    info = getattr(audio, 'info', None)
+    length = getattr(info, 'length', None)
+    if isinstance(length, bool) or not isinstance(length, (int, float)) or not isfinite(length) or length < 0:
+        return None, 'duration unknown: measured audio duration unreadable'
+    return float(length), ''
 
 
 def _clean_key(value: str) -> str:

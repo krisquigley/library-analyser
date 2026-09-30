@@ -7,7 +7,9 @@ from unittest.mock import patch
 from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository, APPLICATION_ID
 from music_analyzer.application.use_cases.scan_library import ScanLibrary, ResolveTrack
+from music_analyzer.application.dto.analysis import AnalysisError
 from music_analyzer.application.dto.catalogue import ScanLimits
+from music_analyzer.domain.catalogue import FileIdentity
 
 
 class CatalogueTests(unittest.TestCase):
@@ -76,7 +78,7 @@ class CatalogueTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.db))
         SQLiteAnalysisRepository(str(self.db))
         with closing(sqlite3.connect(self.db)) as db, db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (5,))
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (6,))
             self.assertEqual(db.execute('SELECT result FROM stages').fetchone()[0], '{"provenance":"unchanged Unicode é"}')
 
     def test_malformed_v1_not_partially_migrated(self):
@@ -125,6 +127,20 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(read.call_count, 1)
         self.assertFalse(result.complete)
 
+    def test_metadata_reader_duration_is_bound_to_stable_file_identity(self):
+        class DurationMetadataReader:
+            def read(self, location):
+                from music_analyzer.application.dto.catalogue import TrackMetadata
+                return TrackMetadata(duration_seconds=1199.5, duration_source='mutagen')
+
+        (self.root/'timed.flac').write_bytes(b'audio bytes')
+        repo = SQLiteAnalysisRepository(str(self.db))
+        result = ScanLibrary(LocalInventory(DurationMetadataReader()), repo).execute(str(self.root))
+
+        self.assertEqual(result.files[0].metadata.duration_seconds, 1199.5)
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertEqual(db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio').fetchone(), (1199.5, 'mutagen', 'eligible', ''))
+
     def test_metadata_reader_race_is_rejected_without_persisting_mismatched_identity(self):
         class ReplacingMetadataReader:
             def read(self, location):
@@ -140,3 +156,24 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(len(result.issues), 1)
         self.assertIn('File changed while hashing; scan again', result.issues[0].detail)
         self.assertFalse(tuple(repo.track_ids()))
+
+    def test_reopens_fail_closed_when_track_audio_row_is_missing(self):
+        SQLiteAnalysisRepository(str(self.db))
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            identity = FileIdentity('7' * 64, 70)
+            connection.execute('INSERT INTO tracks VALUES(?,?,?)', (identity.track_id, identity.sha256, identity.size))
+
+        with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+            SQLiteAnalysisRepository(str(self.db))
+
+    def test_reopens_fail_closed_when_track_audio_has_orphan_row_inserted_with_foreign_keys_disabled(self):
+        SQLiteAnalysisRepository(str(self.db))
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute('PRAGMA foreign_keys=OFF')
+            connection.execute(
+                'INSERT INTO track_audio VALUES(?,?,?,?,?)',
+                ('sha256:' + '8' * 64, 120.0, 'mutagen', 'eligible', ''),
+            )
+
+        with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+            SQLiteAnalysisRepository(str(self.db))

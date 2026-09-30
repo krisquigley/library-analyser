@@ -7,7 +7,7 @@ from contextlib import closing
 from pathlib import Path
 
 from music_analyzer.application.dto.analysis import AnalysisError
-from music_analyzer.application.dto.catalogue import Inventory, ScannedFile
+from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
 from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
@@ -28,9 +28,13 @@ def create_db(path):
     CREATE TABLE run_tracks(run_id TEXT PRIMARY KEY REFERENCES runs(id), track_id TEXT NOT NULL REFERENCES tracks(id));
     CREATE TABLE overrides(track_id TEXT NOT NULL REFERENCES tracks(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(track_id,field));
     CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), common_json TEXT NOT NULL, tags_json TEXT NOT NULL, warnings_json TEXT NOT NULL);
+    CREATE TABLE track_audio(track_id TEXT PRIMARY KEY REFERENCES tracks(id), duration_seconds REAL, duration_source TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('eligible','excluded','unknown')), reason TEXT NOT NULL);
+    CREATE TRIGGER test_track_audio_default AFTER INSERT ON tracks BEGIN INSERT INTO track_audio VALUES(NEW.id, 120.0, 'mutagen', 'eligible', ''); END;
+    CREATE VIEW active_tracks AS SELECT t.id,t.sha256,t.size FROM tracks t JOIN track_audio a ON a.track_id=t.id WHERE a.status='eligible';
+    CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.available FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible';
     ''')
         db.execute(f'PRAGMA application_id={APP_ID}')
-        db.execute('PRAGMA user_version=5')
+        db.execute('PRAGMA user_version=6')
         return db
     except Exception:
         db.close()
@@ -142,8 +146,18 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             CREATE TABLE overrides(track_id, field, value);
             ''')
                 db.execute(f'PRAGMA application_id={APP_ID}')
-                db.execute('PRAGMA user_version=5')
+                db.execute('PRAGMA user_version=6')
                 db.execute('INSERT INTO tracks VALUES(?,?,?)', ('not-a-sha-id', 'not-sha', 'not-int'))
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
+    def test_rejects_v6_schema_with_loose_active_view_definition(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            db.execute('DROP VIEW active_tracks')
+            db.execute('CREATE VIEW active_tracks AS SELECT id,sha256,size FROM tracks')
+            db.commit(); db.close()
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
@@ -156,16 +170,75 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
+    def test_rejects_track_missing_track_audio_row_instead_of_trusting_active_view_inner_join(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + '8' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '8' * 64, 10))
+            db.execute('DELETE FROM track_audio WHERE track_id=?', (tid,))
+            db.commit(); db.close()
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
+    def test_rejects_orphan_track_audio_row_inserted_with_foreign_keys_disabled_before_showing_results(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            db.execute('PRAGMA foreign_keys=OFF')
+            good_tid = 'sha256:' + '8' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (good_tid, '8' * 64, 10))
+            db.execute(
+                'INSERT INTO track_audio VALUES(?,?,?,?,?)',
+                ('sha256:' + '9' * 64, 120.0, 'mutagen', 'eligible', ''),
+            )
+            db.commit(); db.close()
+            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
+    def test_accepts_normalized_trusted_nonfinite_duration_as_unknown(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            db = create_db(path)
+            tid = 'sha256:' + '7' * 64
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '7' * 64, 10))
+            db.execute('UPDATE track_audio SET duration_seconds=?,duration_source=?,status=?,reason=? WHERE track_id=?',
+                       (None, 'mutagen', 'unknown', 'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata', tid))
+            db.commit(); db.close()
+
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+            self.assertEqual(repo.track_ids(), ())
+            self.assertIsNone(repo.read_track(tid).metadata.duration_seconds)
+
+    def test_rejects_tampered_track_audio_rows_instead_of_trusting_active_view_status(self):
+        for audio_update in (
+            (119.0, '', 'eligible', ''),
+            (120.0, 'mutagen', 'archived', ''),
+            (None, 'mutagen', 'excluded', 'duration invalid; excluded from active library until mutagen/ffprobe verifies a positive finite duration; rescan audio metadata'),
+            (float('inf'), 'mutagen', 'excluded', 'duration invalid; excluded from active library until mutagen/ffprobe verifies a positive finite duration; rescan audio metadata'),
+        ):
+            with self.subTest(audio_update=audio_update), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / 'analysis.sqlite'
+                db = create_db(path)
+                db.execute('PRAGMA ignore_check_constraints=ON')
+                tid = 'sha256:' + '9' * 64
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, '9' * 64, 10))
+                db.execute('UPDATE track_audio SET duration_seconds=?,duration_source=?,status=?,reason=? WHERE track_id=?', (*audio_update, tid))
+                db.commit(); db.close()
+
+                with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                    ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+
     def test_accepts_schema_migrated_by_analysis_repository(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             repo = SQLiteAnalysisRepository(str(path))
             identity = FileIdentity('3' * 64, 30)
-            inventory = Inventory('/music', (ScannedFile('/music/Legacy.flac', identity, 1, 'flac'),), (), True)
+            inventory = Inventory('/music', (ScannedFile('/music/Legacy.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=120.0, duration_source='fixture')),), (), True)
             repo.register(inventory)
-            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), (identity.track_id,))
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), ())
 
-    def test_accepts_legacy_v1_schema_migrated_to_v4(self):
+    def test_accepts_legacy_v1_schema_migrated_to_v6(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             with closing(sqlite3.connect(path)) as db, db:
@@ -179,9 +252,9 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
                 db.execute("INSERT INTO stages VALUES('run','rhythm',?)", ('{"provenance":"unchanged"}',))
             repo = SQLiteAnalysisRepository(str(path))
             identity = FileIdentity('4' * 64, 40)
-            inventory = Inventory('/music', (ScannedFile('/music/Legacy.flac', identity, 1, 'flac'),), (), True)
+            inventory = Inventory('/music', (ScannedFile('/music/Legacy.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=120.0, duration_source='fixture')),), (), True)
             repo.register(inventory)
-            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), (identity.track_id,))
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), ())
 
     def test_read_transaction_uses_consistent_wal_snapshot_for_count_and_page(self):
         with tempfile.TemporaryDirectory() as td:

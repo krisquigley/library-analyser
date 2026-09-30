@@ -17,7 +17,7 @@ class FakeExplorerRepository:
                 available_locations=1,
                 run=AnalysisReport('new-failed', 'failed', (StageResult('bpm', (), 'uncertain', (('bpm', 120.0),)),), 'decode failed'),
                 overrides=(('bpm', 'about 128 maybe'),),
-                metadata=TrackMetadata(common=(('title', 'Tagged Song'),), tags=(('TITLE', ('Tagged Song',)),)),
+                metadata=TrackMetadata(common=(('title', 'Tagged Song'),), tags=(('TITLE', ('Tagged Song',)),), duration_seconds=180.0, duration_source='mutagen'),
             ),
             ExplorerStoredTrack(
                 track_id='sha256:' + 'b' * 64,
@@ -27,6 +27,7 @@ class FakeExplorerRepository:
                 available_locations=0,
                 run=None,
                 overrides=(),
+                metadata=TrackMetadata(duration_seconds=180.0, duration_source='ffprobe'),
             ),
         )
 
@@ -81,7 +82,7 @@ class ExplorerUseCaseTests(unittest.TestCase):
         self.reader.records = (self.reader.records[0], ExplorerStoredTrack(
             track_id='sha256:' + 'c' * 64, sha256='c' * 64, size=123,
             display_label='Fallback.flac', available_locations=1, run=None,
-            metadata=TrackMetadata(tags=(('TITLE', ('Tag Song',)), ('ARTIST', ('Tag Artist',)))),
+            metadata=TrackMetadata(tags=(('TITLE', ('Tag Song',)), ('ARTIST', ('Tag Artist',))), duration_seconds=180.0, duration_source='mutagen'),
         ))
         tagged = ListExplorerTracks(self.reader).execute(limit=10).tracks[1]
         self.assertEqual((tagged.title, tagged.artist), ('Tag Song', 'Tag Artist'))
