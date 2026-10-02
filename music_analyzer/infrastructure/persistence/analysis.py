@@ -1,4 +1,4 @@
-"""Dedicated analysis database, with transactional v0 -> v1 -> v2 -> v3 -> v4 -> v5 -> v6 migrations.
+"""Dedicated analysis database, with transactional v0 -> v1 -> ... -> v7 migrations.
 
 Existing unrelated schemas are rejected before any persistent pragma or DDL.
 Exact-file catalogue identity; each explicit analysis request is still a new run.
@@ -12,6 +12,7 @@ import sqlite3
 from uuid import uuid4
 
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
+from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 from music_analyzer.domain.library_duration_policy import (
     DurationVerification,
     TRUSTED_DURATION_SOURCES,
@@ -104,6 +105,11 @@ _ACTIVE_VIEWS = {
     'active_tracks': "CREATE VIEW active_tracks AS SELECT t.id,t.sha256,t.size FROM tracks t JOIN track_audio a ON a.track_id=t.id WHERE a.status='eligible'",
     'active_locations': "CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.available FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible'",
 }
+_GRAPH_COLUMNS = {
+    'graph_edges': ('source_track_id', 'target_track_id', 'score', 'distance', 'supported_group_count', 'distance_policy_version', 'neighbour_policy_version', 'built_at'),
+    'graph_builds': ('id', 'status', 'detail', 'edge_count', 'sparse_k', 'source_fingerprint', 'distance_policy_version', 'neighbour_policy_version', 'is_current', 'created_at', 'completed_at'),
+    'graph_build_edges': ('build_id', 'source_track_id', 'target_track_id', 'score', 'distance', 'supported_group_count', 'distance_policy_version', 'neighbour_policy_version', 'built_at'),
+}
 
 
 class SQLiteAnalysisRepository:
@@ -125,7 +131,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6, 7):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if db.execute('PRAGMA user_version').fetchone()[0] == 1:
                 self._validate(db, 1)
@@ -164,7 +170,12 @@ class SQLiteAnalysisRepository:
                 for sql in _ACTIVE_VIEWS.values():
                     db.execute(sql)
                 db.execute('PRAGMA user_version=6')
-            self._validate(db)
+            if db.execute('PRAGMA user_version').fetchone()[0] == 6:
+                self._validate(db, 6)
+                self._drop_graph_schema(db)
+                self._create_graph_schema(db)
+                db.execute('PRAGMA user_version=7')
+            self._validate(db, 7)
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
@@ -192,7 +203,61 @@ class SQLiteAnalysisRepository:
         db.execute('INSERT INTO track_metadata(track_id, common_json, tags_json, warnings_json) SELECT track_id, common_json, tags_json, warnings_json FROM track_metadata_v4')
         db.execute('DROP TABLE track_metadata_v4')
 
-    def _validate(self, db, version=6):
+    def _drop_graph_schema(self, db):
+        for name in (
+                'idx_graph_build_edges_target_track_id', 'idx_graph_build_edges_source_track_id',
+                'idx_graph_build_edges_build_id', 'idx_graph_edges_target_track_id',
+                'idx_graph_edges_source_track_id', 'idx_graph_builds_one_current'):
+            db.execute(f'DROP INDEX IF EXISTS {name}')
+        for name in ('graph_build_edges', 'graph_edges', 'graph_builds'):
+            db.execute(f'DROP TABLE IF EXISTS {name}')
+
+    def _create_graph_schema(self, db):
+        db.execute("""CREATE TABLE graph_builds(
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK(status IN ('completed','failed')),
+            detail TEXT NOT NULL,
+            edge_count INTEGER NOT NULL CHECK(edge_count >= 0),
+            sparse_k INTEGER NOT NULL CHECK(sparse_k >= 0),
+            source_fingerprint TEXT NOT NULL,
+            distance_policy_version TEXT NOT NULL,
+            neighbour_policy_version TEXT NOT NULL,
+            is_current INTEGER NOT NULL CHECK(is_current IN (0,1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK(status = 'completed' OR is_current = 0))""")
+        db.execute("""CREATE UNIQUE INDEX idx_graph_builds_one_current
+                   ON graph_builds(is_current) WHERE is_current = 1""")
+        db.execute("""CREATE TABLE graph_edges(
+            source_track_id TEXT NOT NULL REFERENCES tracks(id),
+            target_track_id TEXT NOT NULL REFERENCES tracks(id),
+            score REAL NOT NULL CHECK(score >= 0.0 AND score <= 1.0),
+            distance REAL NOT NULL CHECK(distance >= 0.0 AND distance <= 1.0),
+            supported_group_count INTEGER NOT NULL CHECK(supported_group_count > 0),
+            distance_policy_version TEXT NOT NULL,
+            neighbour_policy_version TEXT NOT NULL,
+            built_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(source_track_id,target_track_id),
+            CHECK(source_track_id < target_track_id))""")
+        db.execute('CREATE INDEX idx_graph_edges_source_track_id ON graph_edges(source_track_id)')
+        db.execute('CREATE INDEX idx_graph_edges_target_track_id ON graph_edges(target_track_id)')
+        db.execute("""CREATE TABLE graph_build_edges(
+            build_id TEXT NOT NULL REFERENCES graph_builds(id) ON DELETE CASCADE,
+            source_track_id TEXT NOT NULL REFERENCES tracks(id),
+            target_track_id TEXT NOT NULL REFERENCES tracks(id),
+            score REAL NOT NULL CHECK(score >= 0.0 AND score <= 1.0),
+            distance REAL NOT NULL CHECK(distance >= 0.0 AND distance <= 1.0),
+            supported_group_count INTEGER NOT NULL CHECK(supported_group_count > 0),
+            distance_policy_version TEXT NOT NULL,
+            neighbour_policy_version TEXT NOT NULL,
+            built_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(build_id,source_track_id,target_track_id),
+            CHECK(source_track_id < target_track_id))""")
+        db.execute('CREATE INDEX idx_graph_build_edges_build_id ON graph_build_edges(build_id)')
+        db.execute('CREATE INDEX idx_graph_build_edges_source_track_id ON graph_build_edges(build_id,source_track_id)')
+        db.execute('CREATE INDEX idx_graph_build_edges_target_track_id ON graph_build_edges(build_id,target_track_id)')
+
+    def _validate(self, db, version=7):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
                 or db.execute('PRAGMA user_version').fetchone()[0] != version):
             raise AnalysisError('Analysis database identity/version changed')
@@ -205,14 +270,26 @@ class SQLiteAnalysisRepository:
             columns_by_table = {**columns_by_table, 'track_metadata': ('track_id', 'common_json', 'tags_json', 'warnings_json')}
         if version >= 6:
             columns_by_table = {**columns_by_table, **_AUDIO_ELIGIBILITY_COLUMNS}
+        if version >= 7:
+            columns_by_table = {**columns_by_table, **_GRAPH_COLUMNS}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         expected = {(name, 'table') for name in columns_by_table}
         if version >= 6:
             expected |= {(name, 'view') for name in _ACTIVE_VIEWS}
+        if version >= 7:
+            expected |= {('idx_graph_edges_source_track_id', 'index'), ('idx_graph_edges_target_track_id', 'index'), ('idx_graph_build_edges_build_id', 'index'), ('idx_graph_build_edges_source_track_id', 'index'), ('idx_graph_build_edges_target_track_id', 'index'), ('idx_graph_builds_one_current', 'index')}
         if version in (2, 3):
             migration_tables = {'batch_jobs', 'run_tracks', 'overrides', 'track_metadata'} if version == 2 else {'run_tracks', 'overrides', 'track_metadata'}
             expected = {item for item in expected if item[0] not in migration_tables}
             objects = {item for item in objects if item[0] not in migration_tables}
+        if version < 7:
+            graph_objects = {
+                'graph_edges', 'graph_builds', 'graph_build_edges',
+                'idx_graph_edges_source_track_id', 'idx_graph_edges_target_track_id',
+                'idx_graph_build_edges_build_id', 'idx_graph_build_edges_source_track_id',
+                'idx_graph_build_edges_target_track_id', 'idx_graph_builds_one_current',
+            }
+            objects = {item for item in objects if item[0] not in graph_objects}
         if version == 4:
             has_track_metadata = ('track_metadata', 'table') in objects
             objects = {item for item in objects if item[0] != 'track_metadata'}
@@ -235,8 +312,46 @@ class SQLiteAnalysisRepository:
                 if not any(row[2] == 'tracks' and row[3] == 'track_id' and row[4] == 'id'
                            for row in db.execute('PRAGMA foreign_key_list(track_audio)')):
                     raise AnalysisError('Unexpected analysis database constraints')
+            if version >= 7 and table == 'graph_edges':
+                sql = ' '.join(db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='graph_edges'").fetchone()[0].split())
+                for fragment in (
+                    'PRIMARY KEY(source_track_id,target_track_id)',
+                    'CHECK(source_track_id < target_track_id)',
+                    'CHECK(score >= 0.0 AND score <= 1.0)',
+                    'CHECK(distance >= 0.0 AND distance <= 1.0)',
+                ):
+                    if fragment not in sql:
+                        raise AnalysisError('Unexpected analysis database constraints')
+                foreign_keys = tuple((row[3], row[2], row[4]) for row in db.execute('PRAGMA foreign_key_list(graph_edges)'))
+                if (('source_track_id', 'tracks', 'id') not in foreign_keys
+                        or ('target_track_id', 'tracks', 'id') not in foreign_keys):
+                    raise AnalysisError('Unexpected analysis database constraints')
+            if version >= 7 and table == 'graph_build_edges':
+                sql = ' '.join(db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='graph_build_edges'").fetchone()[0].split())
+                primary_key = 'PRIMARY KEY(build_id,source_track_id,target_track_id)' if table == 'graph_build_edges' else 'PRIMARY KEY(source_track_id,target_track_id)'
+                for fragment in (
+                    primary_key,
+                    'CHECK(source_track_id < target_track_id)',
+                    'CHECK(score >= 0.0 AND score <= 1.0)',
+                    'CHECK(distance >= 0.0 AND distance <= 1.0)',
+                ):
+                    if fragment not in sql:
+                        raise AnalysisError('Unexpected analysis database constraints')
+                foreign_keys = tuple((row[3], row[2], row[4]) for row in db.execute('PRAGMA foreign_key_list(graph_build_edges)'))
+                if (('source_track_id', 'tracks', 'id') not in foreign_keys
+                        or ('target_track_id', 'tracks', 'id') not in foreign_keys
+                        or (table == 'graph_build_edges' and ('build_id', 'graph_builds', 'id') not in foreign_keys)):
+                    raise AnalysisError('Unexpected analysis database constraints')
+            if version >= 7 and table == 'graph_builds':
+                sql = ' '.join(db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='graph_builds'").fetchone()[0].split())
+                if ("CHECK(status IN ('completed','failed'))" not in sql
+                        or 'CHECK(is_current IN (0,1))' not in sql
+                        or "CHECK(status = 'completed' OR is_current = 0)" not in sql):
+                    raise AnalysisError('Unexpected analysis database constraints')
         if version >= 6:
             self._validate_track_audio_rows(db)
+        if version >= 7:
+            self._validate_graph_rows(db)
 
     def _validate_track_audio_rows(self, db):
         if db.execute('SELECT 1 FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE a.track_id IS NULL LIMIT 1').fetchone():
@@ -249,6 +364,52 @@ class SQLiteAnalysisRepository:
             expected_reason = _duration_eligibility_reason(duration, source)
             expected_status = _duration_status(duration, source)
             if status != expected_status or reason != expected_reason:
+                raise AnalysisError('Unexpected analysis database rows')
+
+    def _validate_graph_rows(self, db):
+        current_count = db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0]
+        completed_count = db.execute("SELECT count(*) FROM graph_builds WHERE status='completed'").fetchone()[0]
+        if current_count != (1 if completed_count else 0):
+            raise AnalysisError('Unexpected analysis database rows')
+        for build_id, status, edge_count, sparse_k, source_fingerprint, distance_policy, neighbour_policy, is_current in db.execute(
+                'SELECT id,status,edge_count,sparse_k,source_fingerprint,distance_policy_version,neighbour_policy_version,is_current FROM graph_builds'):
+            actual_edge_count = db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (build_id,)).fetchone()[0]
+            if (status not in {'completed', 'failed'}
+                    or not isinstance(edge_count, int) or edge_count < 0
+                    or not isinstance(sparse_k, int) or sparse_k < 0
+                    or not isinstance(source_fingerprint, str) or not source_fingerprint
+                    or distance_policy != DISTANCE_POLICY_VERSION
+                    or neighbour_policy != NEIGHBOUR_POLICY_VERSION
+                    or is_current not in (0, 1)
+                    or (status != 'completed' and is_current)
+                    or (status == 'completed' and edge_count != actual_edge_count)
+                    or (status == 'failed' and actual_edge_count != 0)):
+                raise AnalysisError('Unexpected analysis database rows')
+        current_build = db.execute('SELECT id FROM graph_builds WHERE is_current=1').fetchone()
+        if current_build is None and db.execute('SELECT 1 FROM graph_edges LIMIT 1').fetchone():
+            raise AnalysisError('Unexpected analysis database rows')
+        if current_build is not None:
+            current_edges = tuple(db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                       distance_policy_version,neighbour_policy_version
+                FROM graph_edges ORDER BY source_track_id,target_track_id'''))
+            historical_current_edges = tuple(db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                       distance_policy_version,neighbour_policy_version
+                FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
+            if current_edges != historical_current_edges:
+                raise AnalysisError('Unexpected analysis database rows')
+        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_edges
+                UNION ALL
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges'''):
+            if (not isinstance(source, str) or not isinstance(target, str) or source >= target
+                    or not isinstance(score, (int, float)) or not 0.0 <= float(score) <= 1.0
+                    or not isinstance(distance, (int, float)) or not 0.0 <= float(distance) <= 1.0
+                    or round(1.0 - float(distance), 6) != round(float(score), 6)
+                    or not isinstance(count, int) or count <= 0
+                    or distance_policy != DISTANCE_POLICY_VERSION
+                    or neighbour_policy != NEIGHBOUR_POLICY_VERSION):
                 raise AnalysisError('Unexpected analysis database rows')
 
 
@@ -273,6 +434,54 @@ class SQLiteAnalysisRepository:
             db.execute('BEGIN IMMEDIATE')
             self._validate(db)
             yield db
+
+    def replace_graph_snapshot(self, edges, sparse_k: int, source_fingerprint: str) -> str:
+        edges = tuple(edges)
+        build_id = str(uuid4())
+        with self._transaction() as db:
+            db.execute(
+                '''INSERT INTO graph_builds(
+                    id,status,detail,edge_count,sparse_k,source_fingerprint,
+                    distance_policy_version,neighbour_policy_version,is_current)
+                   VALUES(?,?,?,?,?,?,?,?,0)''',
+                (build_id, 'completed', '', len(edges), int(sparse_k), str(source_fingerprint),
+                 DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION),
+            )
+            for edge in edges:
+                distance = round(float(edge.distance), 6)
+                score = round(1.0 - distance, 6)
+                params = (edge.a, edge.b, score, distance, int(edge.supported_group_count),
+                          DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION)
+                db.execute(
+                    '''INSERT INTO graph_build_edges(
+                        build_id,source_track_id,target_track_id,score,distance,supported_group_count,
+                        distance_policy_version,neighbour_policy_version)
+                       VALUES(?,?,?,?,?,?,?,?)''',
+                    (build_id, *params),
+                )
+            db.execute('DELETE FROM graph_edges')
+            db.execute('''INSERT INTO graph_edges(
+                    source_track_id,target_track_id,score,distance,supported_group_count,
+                    distance_policy_version,neighbour_policy_version)
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                    distance_policy_version,neighbour_policy_version
+                FROM graph_build_edges WHERE build_id=?''', (build_id,))
+            db.execute('UPDATE graph_builds SET is_current=0 WHERE is_current=1')
+            db.execute('UPDATE graph_builds SET is_current=1 WHERE id=?', (build_id,))
+        return build_id
+
+    def record_graph_failure(self, sparse_k: int, source_fingerprint: str, detail: str) -> str:
+        build_id = str(uuid4())
+        with self._transaction() as db:
+            db.execute(
+                '''INSERT INTO graph_builds(
+                    id,status,detail,edge_count,sparse_k,source_fingerprint,
+                    distance_policy_version,neighbour_policy_version,is_current)
+                   VALUES(?,?,?,?,?,?,?,?,0)''',
+                (build_id, 'failed', str(detail)[:1000], 0, int(sparse_k), str(source_fingerprint),
+                 DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION),
+            )
+        return build_id
 
     def start(self, source: AudioSource) -> str:
         run_id = str(uuid4())

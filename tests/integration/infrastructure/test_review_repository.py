@@ -46,6 +46,8 @@ class ReviewRepositoryTests(unittest.TestCase):
             before = db.execute('SELECT * FROM stages').fetchall()
             db.execute('DROP VIEW active_locations')
             db.execute('DROP VIEW active_tracks')
+            db.execute('DROP TABLE graph_edges')
+            db.execute('DROP TABLE graph_builds')
             db.execute('DROP TABLE track_audio')
             db.execute('DROP TABLE track_metadata')
             db.execute('DROP TABLE run_tracks'); db.execute('DROP TABLE overrides'); db.execute('PRAGMA user_version=3')
@@ -62,7 +64,7 @@ class ReviewRepositoryTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.path))
         with closing(sqlite3.connect(self.path)) as db, db:
             self.assertEqual(db.execute('SELECT * FROM stages').fetchall(), before)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
 
     def test_v4_migration_rejects_malformed_existing_track_metadata_table(self):
         with closing(sqlite3.connect(self.path)) as db, db:

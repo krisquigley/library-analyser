@@ -13,6 +13,7 @@ import re
 import sqlite3
 
 from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, ScoreSummary, StageResult, TrackMetadata
+from music_explorer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 
 APPLICATION_ID = 0x4D414E41
 ACTIVE_LIBRARY_MAX_DURATION_SECONDS = 1200.0
@@ -143,6 +144,37 @@ _EXPECTED_SCHEMA = {
         'checks': (("CHECK(status IN ('eligible','excluded','unknown'))",),),
     },
 }
+_EXPECTED_GRAPH_SCHEMA = {
+    'graph_edges': {
+        'columns': ((('source_track_id', 'TEXT', True, 1), ('target_track_id', 'TEXT', True, 2), ('score', 'REAL', True, 0),
+                     ('distance', 'REAL', True, 0), ('supported_group_count', 'INTEGER', True, 0),
+                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
+                     ('built_at', 'TEXT', True, 0)),),
+        'foreign_keys': ((('tracks', ('source_track_id',), ('id',)), ('tracks', ('target_track_id',), ('id',))),),
+        'unique_indexes': (),
+        'checks': (('CHECK(source_track_id < target_track_id)', 'CHECK(score >= 0.0 AND score <= 1.0)', 'CHECK(distance >= 0.0 AND distance <= 1.0)'),),
+    },
+    'graph_builds': {
+        'columns': ((('id', 'TEXT', False, 1), ('status', 'TEXT', True, 0), ('detail', 'TEXT', True, 0),
+                     ('edge_count', 'INTEGER', True, 0), ('sparse_k', 'INTEGER', True, 0), ('source_fingerprint', 'TEXT', True, 0),
+                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
+                     ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0), ('completed_at', 'TEXT', True, 0)),),
+        'foreign_keys': ((),),
+        'unique_indexes': (),
+        'checks': (("CHECK(status IN ('completed','failed'))", 'CHECK(edge_count >= 0)', 'CHECK(sparse_k >= 0)', 'CHECK(is_current IN (0,1))', "CHECK(status = 'completed' OR is_current = 0)"),),
+    },
+    'graph_build_edges': {
+        'columns': ((('build_id', 'TEXT', True, 1), ('source_track_id', 'TEXT', True, 2), ('target_track_id', 'TEXT', True, 3), ('score', 'REAL', True, 0),
+                     ('distance', 'REAL', True, 0), ('supported_group_count', 'INTEGER', True, 0),
+                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
+                     ('built_at', 'TEXT', True, 0)),),
+        'foreign_keys': ((('graph_builds', ('build_id',), ('id',)), ('tracks', ('source_track_id',), ('id',)), ('tracks', ('target_track_id',), ('id',))),),
+        'unique_indexes': (),
+        'checks': (('CHECK(source_track_id < target_track_id)', 'CHECK(score >= 0.0 AND score <= 1.0)', 'CHECK(distance >= 0.0 AND distance <= 1.0)'),),
+    },
+}
+_EXPECTED_GRAPH_INDEXES = {('idx_graph_edges_source_track_id', 'index'), ('idx_graph_edges_target_track_id', 'index'), ('idx_graph_build_edges_build_id', 'index'), ('idx_graph_build_edges_source_track_id', 'index'), ('idx_graph_build_edges_target_track_id', 'index'), ('idx_graph_builds_one_current', 'index')}
+
 _EXPECTED_VIEWS = {
     'active_tracks': (
         ('id', 'sha256', 'size'),
@@ -402,11 +434,15 @@ class ReadOnlyExplorerSQLiteRepository:
             db.execute('COMMIT')
 
     def _validate(self, db):
-        if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
-                or db.execute('PRAGMA user_version').fetchone()[0] != 6):
+        version = db.execute('PRAGMA user_version').fetchone()[0]
+        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7):
             raise AnalysisError('Not a supported music-analyzer analysis database')
-        objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view')"))
-        expected_objects = {(name, 'table') for name in _EXPECTED_SCHEMA} | {(name, 'view') for name in _EXPECTED_VIEWS}
+        objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','index')"))
+        schema = dict(_EXPECTED_SCHEMA)
+        expected_objects = {(name, 'table') for name in schema} | {(name, 'view') for name in _EXPECTED_VIEWS}
+        if version == 7:
+            schema.update(_EXPECTED_GRAPH_SCHEMA)
+            expected_objects |= {(name, 'table') for name in _EXPECTED_GRAPH_SCHEMA} | _EXPECTED_GRAPH_INDEXES
         if objects != expected_objects:
             raise AnalysisError('Unexpected analysis database schema')
         for view, (columns, expected_sql) in _EXPECTED_VIEWS.items():
@@ -415,7 +451,7 @@ class ReadOnlyExplorerSQLiteRepository:
             normalize = lambda sql: ' '.join(sql.rstrip(';').split())
             if actual_columns != columns or normalize(actual_sql) != normalize(expected_sql):
                 raise AnalysisError('Unexpected analysis database schema')
-        for table, expected in _EXPECTED_SCHEMA.items():
+        for table, expected in schema.items():
             sql = db.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
             ).fetchone()[0]
@@ -433,6 +469,8 @@ class ReadOnlyExplorerSQLiteRepository:
             if not any(all(check in compact_sql for check in checks) for checks in expected['checks']):
                 raise AnalysisError('Unexpected analysis database schema')
         self._validate_rows(db)
+        if version == 7:
+            self._validate_graph_rows(db)
 
     def _validate_rows(self, db):
         for track_id, sha256, size in db.execute('SELECT id,sha256,size FROM tracks'):
@@ -451,6 +489,47 @@ class ReadOnlyExplorerSQLiteRepository:
             if status != _expected_audio_status(duration, source) or reason != _duration_warning(duration, source):
                 raise AnalysisError('Unexpected analysis database rows')
 
+    def _validate_graph_rows(self, db):
+        current_count = db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0]
+        completed_count = db.execute("SELECT count(*) FROM graph_builds WHERE status='completed'").fetchone()[0]
+        if current_count != (1 if completed_count else 0):
+            raise AnalysisError('Unexpected analysis database rows')
+        current_build = db.execute('SELECT id FROM graph_builds WHERE is_current=1').fetchone()
+        for build_id, status, edge_count, sparse_k, distance_policy, neighbour_policy, is_current in db.execute(
+                'SELECT id,status,edge_count,sparse_k,distance_policy_version,neighbour_policy_version,is_current FROM graph_builds'):
+            historical_edges = db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (build_id,)).fetchone()[0]
+            if (status not in {'completed', 'failed'} or not isinstance(edge_count, int) or edge_count < 0
+                    or not isinstance(sparse_k, int) or sparse_k < 0
+                    or distance_policy != DISTANCE_POLICY_VERSION or neighbour_policy != NEIGHBOUR_POLICY_VERSION
+                    or is_current not in (0, 1) or (status != 'completed' and is_current)
+                    or (status == 'completed' and edge_count != historical_edges)
+                    or (status == 'failed' and historical_edges != 0)):
+                raise AnalysisError('Unexpected analysis database rows')
+        if current_build is None and db.execute('SELECT 1 FROM graph_edges LIMIT 1').fetchone():
+            raise AnalysisError('Unexpected analysis database rows')
+        if current_build is not None:
+            current_edges = tuple(db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                       distance_policy_version,neighbour_policy_version
+                FROM graph_edges ORDER BY source_track_id,target_track_id'''))
+            historical_current_edges = tuple(db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                       distance_policy_version,neighbour_policy_version
+                FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
+            if current_edges != historical_current_edges:
+                raise AnalysisError('Unexpected analysis database rows')
+        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_edges
+                UNION ALL
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges'''):
+            if (not isinstance(source, str) or not isinstance(target, str) or source >= target
+                    or not isinstance(score, (int, float)) or not 0.0 <= float(score) <= 1.0
+                    or not isinstance(distance, (int, float)) or not 0.0 <= float(distance) <= 1.0
+                    or round(1.0 - float(distance), 6) != round(float(score), 6)
+                    or not isinstance(count, int) or count <= 0
+                    or distance_policy != DISTANCE_POLICY_VERSION
+                    or neighbour_policy != NEIGHBOUR_POLICY_VERSION):
+                raise AnalysisError('Unexpected analysis database rows')
     def _foreign_keys(self, db, table):
         keys = {}
         for row in db.execute(f'PRAGMA foreign_key_list({table})'):

@@ -40,6 +40,7 @@ from music_analyzer.infrastructure.environment.probes import (
 )
 from music_analyzer.interface_adapters.presenters.doctor import present_doctor
 from music_analyzer.application.use_cases.projection_artifacts import PrepareProjectionArtifact, RefreshProjectionArtifact
+from music_analyzer.application.use_cases.build_graph import BuildGraphSnapshot
 from music_analyzer.infrastructure.filesystem.projection_artifacts import FileProjectionArtifactStore
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 from music_explorer.frameworks.explorer.server import create_server
@@ -207,6 +208,11 @@ def main(argv: list[str] | None = None) -> int:
     add_configuration_options(explorer)
     explorer.add_argument('--host', default='127.0.0.1', help='Bind host; default 127.0.0.1.')
     explorer.add_argument('--port', type=int, default=8765, help='Bind port; default 8765. Compatibility route for music-explorer.')
+    graph = commands.add_parser('graph', help='Build or inspect persisted graph snapshots without inference.')
+    add_configuration_options(graph)
+    graph_actions = graph.add_subparsers(dest='graph_action', required=True)
+    graph_build = graph_actions.add_parser('build', help='Persist the current bounded related-track graph snapshot.')
+    add_configuration_options(graph_build)
     projection = commands.add_parser('prepare-projection', help='Prepare or refresh the read-only explorer projection artifact.')
     add_configuration_options(projection)
     projection.add_argument('--artifact', required=True, help='Projection artifact JSON path, separate from the analysis database.')
@@ -287,6 +293,13 @@ def main(argv: list[str] | None = None) -> int:
             report = analysis.execute(source, args.max_duration)
             output = present_analysis(report, as_json=args.json)
             ready = report.status == 'completed'
+        elif args.command == 'graph':
+            settings = load_settings(**overrides)
+            writer = SQLiteAnalysisRepository(settings.database)
+            reader = ReadOnlyExplorerSQLiteRepository(settings.database)
+            result = BuildGraphSnapshot(reader, writer).execute()
+            output = f'Built {result.edge_count} graph edges'
+            ready = True
         elif args.command == 'explorer':
             if args.host != '127.0.0.1':
                 parser.error('explorer binds 127.0.0.1 only in this local personal-use slice')

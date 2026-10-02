@@ -9,6 +9,7 @@ from pathlib import Path
 from music_analyzer.application.dto.analysis import AnalysisError
 from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
 from music_analyzer.domain.catalogue import FileIdentity
+from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
@@ -43,6 +44,60 @@ def create_db(path):
 
 def stage(name, value=1.0):
     return json.dumps({'stage': name, 'provenance': [['fixture', 'unit']], 'uncertainty': '', 'values': [[name, value]]})
+
+
+def create_v7_graph_db(path):
+    db = create_db(path)
+    try:
+        db.executescript('''
+    CREATE TABLE graph_builds(
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL CHECK(status IN ('completed','failed')),
+        detail TEXT NOT NULL,
+        edge_count INTEGER NOT NULL CHECK(edge_count >= 0),
+        sparse_k INTEGER NOT NULL CHECK(sparse_k >= 0),
+        source_fingerprint TEXT NOT NULL,
+        distance_policy_version TEXT NOT NULL,
+        neighbour_policy_version TEXT NOT NULL,
+        is_current INTEGER NOT NULL CHECK(is_current IN (0,1)),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK(status = 'completed' OR is_current = 0));
+    CREATE UNIQUE INDEX idx_graph_builds_one_current ON graph_builds(is_current) WHERE is_current = 1;
+    CREATE TABLE graph_edges(
+        source_track_id TEXT NOT NULL REFERENCES tracks(id),
+        target_track_id TEXT NOT NULL REFERENCES tracks(id),
+        score REAL NOT NULL CHECK(score >= 0.0 AND score <= 1.0),
+        distance REAL NOT NULL CHECK(distance >= 0.0 AND distance <= 1.0),
+        supported_group_count INTEGER NOT NULL CHECK(supported_group_count > 0),
+        distance_policy_version TEXT NOT NULL,
+        neighbour_policy_version TEXT NOT NULL,
+        built_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(source_track_id,target_track_id),
+        CHECK(source_track_id < target_track_id));
+    CREATE INDEX idx_graph_edges_source_track_id ON graph_edges(source_track_id);
+    CREATE INDEX idx_graph_edges_target_track_id ON graph_edges(target_track_id);
+    CREATE TABLE graph_build_edges(
+        build_id TEXT NOT NULL REFERENCES graph_builds(id) ON DELETE CASCADE,
+        source_track_id TEXT NOT NULL REFERENCES tracks(id),
+        target_track_id TEXT NOT NULL REFERENCES tracks(id),
+        score REAL NOT NULL CHECK(score >= 0.0 AND score <= 1.0),
+        distance REAL NOT NULL CHECK(distance >= 0.0 AND distance <= 1.0),
+        supported_group_count INTEGER NOT NULL CHECK(supported_group_count > 0),
+        distance_policy_version TEXT NOT NULL,
+        neighbour_policy_version TEXT NOT NULL,
+        built_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(build_id,source_track_id,target_track_id),
+        CHECK(source_track_id < target_track_id));
+    CREATE INDEX idx_graph_build_edges_build_id ON graph_build_edges(build_id);
+    CREATE INDEX idx_graph_build_edges_source_track_id ON graph_build_edges(build_id,source_track_id);
+    CREATE INDEX idx_graph_build_edges_target_track_id ON graph_build_edges(build_id,target_track_id);
+    ''')
+        db.execute('PRAGMA user_version=7')
+        return db
+    except Exception:
+        db.close()
+        raise
 
 
 class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
@@ -237,6 +292,71 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             inventory = Inventory('/music', (ScannedFile('/music/Legacy.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=120.0, duration_source='fixture')),), (), True)
             repo.register(inventory)
             self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), ())
+
+    def test_accepts_valid_v6_and_v7_graph_build_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            v6_path = Path(td) / 'v6.sqlite'
+            db = create_db(v6_path)
+            db.commit(); db.close()
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(v6_path)).metadata()['schema_version'], 6)
+
+            v7_path = Path(td) / 'v7.sqlite'
+            db = create_v7_graph_db(v7_path)
+            try:
+                db.execute(
+                    '''INSERT INTO graph_builds(
+                        id,status,detail,edge_count,sparse_k,source_fingerprint,
+                        distance_policy_version,neighbour_policy_version,is_current,created_at,completed_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
+                    ('build-ok', 'completed', '', 0, 10, 'synthetic', DISTANCE_POLICY_VERSION,
+                     NEIGHBOUR_POLICY_VERSION, 1, 'created', 'completed'),
+                )
+                db.commit()
+            finally:
+                db.close()
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(v7_path)).metadata()['schema_version'], 7)
+
+    def test_rejects_tampered_v7_graph_build_rows(self):
+        cases = (
+            ('status', {'status': 'running'}, True),
+            ('edge_count', {'edge_count': -1}, True),
+            ('sparse_k', {'sparse_k': -1}, True),
+            ('distance_policy_version', {'distance_policy_version': 'stale-distance-policy'}, False),
+            ('neighbour_policy_version', {'neighbour_policy_version': 'stale-neighbour-policy'}, False),
+        )
+        for name, update, ignore_checks in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / 'analysis.sqlite'
+                db = create_v7_graph_db(path)
+                db.close()
+                row = {
+                    'id': 'build-bad',
+                    'status': 'completed',
+                    'detail': '',
+                    'edge_count': 0,
+                    'sparse_k': 10,
+                    'source_fingerprint': 'synthetic',
+                    'distance_policy_version': DISTANCE_POLICY_VERSION,
+                    'neighbour_policy_version': NEIGHBOUR_POLICY_VERSION,
+                    'is_current': 0,
+                    'created_at': 'created',
+                    'completed_at': 'completed',
+                    **update,
+                }
+                with closing(sqlite3.connect(path)) as db, db:
+                    if ignore_checks:
+                        db.execute('PRAGMA ignore_check_constraints=ON')
+                    db.execute(
+                        '''INSERT INTO graph_builds(
+                            id,status,detail,edge_count,sparse_k,source_fingerprint,
+                            distance_policy_version,neighbour_policy_version,is_current,created_at,completed_at)
+                           VALUES(:id,:status,:detail,:edge_count,:sparse_k,:source_fingerprint,
+                                  :distance_policy_version,:neighbour_policy_version,:is_current,:created_at,:completed_at)''',
+                        row,
+                    )
+
+                with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                    ReadOnlyExplorerSQLiteRepository(str(path)).metadata()
 
     def test_accepts_legacy_v1_schema_migrated_to_v6(self):
         with tempfile.TemporaryDirectory() as td:
