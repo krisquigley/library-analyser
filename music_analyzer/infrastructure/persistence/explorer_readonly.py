@@ -119,13 +119,22 @@ _EXPECTED_GRAPH_SCHEMA = {
         'columns': ((('id', 'TEXT', False, 1), ('status', 'TEXT', True, 0), ('detail', 'TEXT', True, 0),
                      ('edge_count', 'INTEGER', True, 0), ('sparse_k', 'INTEGER', True, 0), ('source_fingerprint', 'TEXT', True, 0),
                      ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
-                     ('created_at', 'TEXT', True, 0), ('completed_at', 'TEXT', True, 0)),),
+                     ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0), ('completed_at', 'TEXT', True, 0)),),
         'foreign_keys': ((),),
         'unique_indexes': (),
-        'checks': (("CHECK(status IN ('completed','failed'))", 'CHECK(edge_count >= 0)', 'CHECK(sparse_k >= 0)'),),
+        'checks': (("CHECK(status IN ('completed','failed'))", 'CHECK(edge_count >= 0)', 'CHECK(sparse_k >= 0)', 'CHECK(is_current IN (0,1))', "CHECK(status = 'completed' OR is_current = 0)"),),
+    },
+    'graph_build_edges': {
+        'columns': ((('build_id', 'TEXT', True, 1), ('source_track_id', 'TEXT', True, 2), ('target_track_id', 'TEXT', True, 3), ('score', 'REAL', True, 0),
+                     ('distance', 'REAL', True, 0), ('supported_group_count', 'INTEGER', True, 0),
+                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
+                     ('built_at', 'TEXT', True, 0)),),
+        'foreign_keys': ((('graph_builds', ('build_id',), ('id',)), ('tracks', ('source_track_id',), ('id',)), ('tracks', ('target_track_id',), ('id',))),),
+        'unique_indexes': (),
+        'checks': (('CHECK(source_track_id < target_track_id)', 'CHECK(score >= 0.0 AND score <= 1.0)', 'CHECK(distance >= 0.0 AND distance <= 1.0)'),),
     },
 }
-_EXPECTED_GRAPH_INDEXES = {('idx_graph_edges_source_track_id', 'index'), ('idx_graph_edges_target_track_id', 'index')}
+_EXPECTED_GRAPH_INDEXES = {('idx_graph_edges_source_track_id', 'index'), ('idx_graph_edges_target_track_id', 'index'), ('idx_graph_build_edges_build_id', 'index'), ('idx_graph_build_edges_source_track_id', 'index'), ('idx_graph_build_edges_target_track_id', 'index'), ('idx_graph_builds_one_current', 'index')}
 
 _EXPECTED_VIEWS = {
     'active_tracks': (
@@ -443,8 +452,38 @@ class ReadOnlyExplorerSQLiteRepository:
                 raise AnalysisError('Unexpected analysis database rows')
 
     def _validate_graph_rows(self, db):
-        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute(
-                'SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_edges'):
+        current_count = db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0]
+        completed_count = db.execute("SELECT count(*) FROM graph_builds WHERE status='completed'").fetchone()[0]
+        if current_count != (1 if completed_count else 0):
+            raise AnalysisError('Unexpected analysis database rows')
+        current_build = db.execute('SELECT id FROM graph_builds WHERE is_current=1').fetchone()
+        for build_id, status, edge_count, sparse_k, distance_policy, neighbour_policy, is_current in db.execute(
+                'SELECT id,status,edge_count,sparse_k,distance_policy_version,neighbour_policy_version,is_current FROM graph_builds'):
+            historical_edges = db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (build_id,)).fetchone()[0]
+            if (status not in {'completed', 'failed'} or not isinstance(edge_count, int) or edge_count < 0
+                    or not isinstance(sparse_k, int) or sparse_k < 0
+                    or distance_policy != DISTANCE_POLICY_VERSION or neighbour_policy != NEIGHBOUR_POLICY_VERSION
+                    or is_current not in (0, 1) or (status != 'completed' and is_current)
+                    or (status == 'completed' and edge_count != historical_edges)
+                    or (status == 'failed' and historical_edges != 0)):
+                raise AnalysisError('Unexpected analysis database rows')
+        if current_build is None and db.execute('SELECT 1 FROM graph_edges LIMIT 1').fetchone():
+            raise AnalysisError('Unexpected analysis database rows')
+        if current_build is not None:
+            current_edges = tuple(db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                       distance_policy_version,neighbour_policy_version
+                FROM graph_edges ORDER BY source_track_id,target_track_id'''))
+            historical_current_edges = tuple(db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                       distance_policy_version,neighbour_policy_version
+                FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
+            if current_edges != historical_current_edges:
+                raise AnalysisError('Unexpected analysis database rows')
+        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute('''
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_edges
+                UNION ALL
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges'''):
             if (not isinstance(source, str) or not isinstance(target, str) or source >= target
                     or not isinstance(score, (int, float)) or not 0.0 <= float(score) <= 1.0
                     or not isinstance(distance, (int, float)) or not 0.0 <= float(distance) <= 1.0

@@ -5,7 +5,10 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
+from music_analyzer.application.dto.analysis import AnalysisError
+from music_analyzer.domain.projection import ProjectionEdge
 from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID, SQLiteAnalysisRepository
+from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
 
 def create_v6_database(path: Path) -> None:
@@ -61,6 +64,15 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
                 self.assertEqual(db.execute('SELECT state,run_id,detail FROM batch_jobs').fetchone(), ('completed', 'run-a', 'keep'))
                 self.assertEqual(db.execute('SELECT status,reason FROM track_audio').fetchone(), ('eligible', ''))
 
+                build_columns = tuple(row[1] for row in db.execute('PRAGMA table_info(graph_builds)'))
+                self.assertEqual(
+                    build_columns,
+                    ('id', 'status', 'detail', 'edge_count', 'sparse_k', 'source_fingerprint', 'distance_policy_version', 'neighbour_policy_version', 'is_current', 'created_at', 'completed_at'),
+                )
+                build_sql = ' '.join(db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='graph_builds'").fetchone()[0].split())
+                self.assertIn('CHECK(is_current IN (0,1))', build_sql)
+                self.assertIn("CHECK(status = 'completed' OR is_current = 0)", build_sql)
+
                 graph_columns = tuple(row[1] for row in db.execute('PRAGMA table_info(graph_edges)'))
                 self.assertEqual(
                     graph_columns,
@@ -77,6 +89,109 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
                 indexes = {row[1] for row in db.execute('PRAGMA index_list(graph_edges)')}
                 self.assertIn('idx_graph_edges_source_track_id', indexes)
                 self.assertIn('idx_graph_edges_target_track_id', indexes)
+
+                build_edge_columns = tuple(row[1] for row in db.execute('PRAGMA table_info(graph_build_edges)'))
+                self.assertEqual(build_edge_columns, ('build_id', 'source_track_id', 'target_track_id', 'score', 'distance', 'supported_group_count', 'distance_policy_version', 'neighbour_policy_version', 'built_at'))
+                build_edge_sql = ' '.join(db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='graph_build_edges'").fetchone()[0].split())
+                self.assertIn('PRIMARY KEY(build_id,source_track_id,target_track_id)', build_edge_sql)
+                build_edge_foreign_keys = tuple((row[3], row[2], row[4]) for row in db.execute('PRAGMA foreign_key_list(graph_build_edges)'))
+                self.assertIn(('build_id', 'graph_builds', 'id'), build_edge_foreign_keys)
+                build_edge_indexes = {row[1] for row in db.execute('PRAGMA index_list(graph_build_edges)')}
+                self.assertIn('idx_graph_build_edges_build_id', build_edge_indexes)
+                self.assertIn('idx_graph_build_edges_source_track_id', build_edge_indexes)
+                self.assertIn('idx_graph_build_edges_target_track_id', build_edge_indexes)
+                build_indexes = {row[1] for row in db.execute('PRAGMA index_list(graph_builds)')}
+                self.assertIn('idx_graph_builds_one_current', build_indexes)
+
+    def test_repeated_graph_builds_keep_versioned_edges_and_single_current_pointer(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            create_v6_database(path)
+            repository = SQLiteAnalysisRepository(str(path))
+            with closing(sqlite3.connect(path)) as db, db:
+                for suffix in ('b', 'c'):
+                    track_id = 'sha256:' + suffix * 64
+                    db.execute('INSERT INTO tracks VALUES(?,?,?)', (track_id, suffix * 64, 123))
+                    db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (track_id, 180.0, 'mutagen', 'eligible', ''))
+
+            first_id = repository.replace_graph_snapshot((
+                ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64, 0.25, 2),
+            ), 10, 'fingerprint-one')
+            second_id = repository.replace_graph_snapshot((
+                ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'c' * 64, 0.5, 2),
+                ProjectionEdge('sha256:' + 'b' * 64, 'sha256:' + 'c' * 64, 0.75, 2),
+            ), 10, 'fingerprint-two')
+            failed_id = repository.record_graph_failure(10, 'fingerprint-three', 'synthetic failure')
+
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(
+                    tuple(db.execute('SELECT id,status,edge_count,is_current,source_fingerprint FROM graph_builds ORDER BY rowid')),
+                    (
+                        (first_id, 'completed', 1, 0, 'fingerprint-one'),
+                        (second_id, 'completed', 2, 1, 'fingerprint-two'),
+                        (failed_id, 'failed', 0, 0, 'fingerprint-three'),
+                    ),
+                )
+                self.assertEqual(
+                    tuple(db.execute('SELECT source_track_id,target_track_id FROM graph_build_edges WHERE build_id=?', (first_id,))),
+                    (('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64),),
+                )
+                self.assertEqual(
+                    tuple(db.execute('SELECT source_track_id,target_track_id FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id', (second_id,))),
+                    (
+                        ('sha256:' + 'a' * 64, 'sha256:' + 'c' * 64),
+                        ('sha256:' + 'b' * 64, 'sha256:' + 'c' * 64),
+                    ),
+                )
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (failed_id,)).fetchone()[0], 0)
+
+            # The read-only mirror accepts the strict versioned schema and row invariants.
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).metadata()['schema_version'], 7)
+
+    def test_failed_replacement_rolls_back_new_build_and_leaves_previous_current_snapshot_intact(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            create_v6_database(path)
+            repository = SQLiteAnalysisRepository(str(path))
+            with closing(sqlite3.connect(path)) as db, db:
+                track_id = 'sha256:' + 'b' * 64
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (track_id, 'b' * 64, 123))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (track_id, 180.0, 'mutagen', 'eligible', ''))
+
+            current_id = repository.replace_graph_snapshot((
+                ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64, 0.25, 2),
+            ), 10, 'fingerprint-one')
+            with self.assertRaises(AnalysisError):
+                repository.replace_graph_snapshot((
+                    ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64, 0.25, 2),
+                    ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'c' * 64, 0.50, 2),
+                ), 10, 'fingerprint-bad')
+
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(
+                    tuple(db.execute('SELECT id,status,edge_count,is_current,source_fingerprint FROM graph_builds')),
+                    ((current_id, 'completed', 1, 1, 'fingerprint-one'),),
+                )
+                self.assertEqual(db.execute('SELECT source_track_id,target_track_id FROM graph_edges').fetchone(), ('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64))
+                self.assertEqual(db.execute('SELECT build_id FROM graph_build_edges').fetchone(), (current_id,))
+
+    def test_read_only_validator_rejects_completed_history_without_single_current_build(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            create_v6_database(path)
+            repository = SQLiteAnalysisRepository(str(path))
+            with closing(sqlite3.connect(path)) as db, db:
+                track_id = 'sha256:' + 'b' * 64
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (track_id, 'b' * 64, 123))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (track_id, 180.0, 'mutagen', 'eligible', ''))
+            repository.replace_graph_snapshot((
+                ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64, 0.25, 2),
+            ), 10, 'fingerprint-one')
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute('UPDATE graph_builds SET is_current=0')
+
+            with self.assertRaises(AnalysisError):
+                ReadOnlyExplorerSQLiteRepository(str(path)).metadata()
 
 
 if __name__ == '__main__':
