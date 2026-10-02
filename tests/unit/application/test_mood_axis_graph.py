@@ -3,7 +3,7 @@ from dataclasses import replace
 
 from music_analyzer.application.dto.analysis import AnalysisReport, StageResult
 from music_analyzer.application.dto.catalogue import TrackMetadata
-from music_analyzer.application.dto.explorer import ExplorerStoredTrack
+from music_analyzer.application.dto.explorer import ExplorerStoredTrack, MoodAxisEdge
 from music_analyzer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph
 from music_analyzer.domain.analysis import ScoreSummary
 
@@ -26,8 +26,13 @@ def track(suffix, *, bpm=120.0, energy=(0.25, 0.75), mood=(('relaxing', 'heavy')
 
 
 class FakeRepo:
-    def __init__(self, records): self.records = tuple(records)
-    def candidate_snapshot(self): return {'application_id': 1, 'schema_version': 4, 'read_policy': 'bounded_read_transaction'}, self.records
+    def __init__(self, records, *, schema_version=4, graph_status=None, graph_edges=()):
+        self.records = tuple(records)
+        self.schema_version = schema_version
+        self.graph_status = graph_status
+        self.graph_edges = tuple(graph_edges)
+    def candidate_snapshot(self): return {'application_id': 1, 'schema_version': self.schema_version, 'read_policy': 'bounded_read_transaction'}, self.records
+    def current_graph_edges(self): return self.graph_status, self.graph_edges
 
 
 class MoodAxisGraphTests(unittest.TestCase):
@@ -132,6 +137,21 @@ class MoodAxisGraphTests(unittest.TestCase):
         self.assertEqual([n.track_id for n in filtered.positioned], ['sha256:' + 'a' * 64])
         cleared = FilterMoodAxisGraph().execute(graph)
         self.assertEqual(tuple((n.track_id, n.x.normalized, n.y.normalized, n.z.normalized) for n in cleared.positioned), tuple((n.track_id, n.x.normalized, n.y.normalized, n.z.normalized) for n in graph.positioned))
+
+    def test_v7_graph_uses_persisted_edges_and_exposes_ready_status(self):
+        records = [track('a'), track('b')]
+        edge = MoodAxisEdge(records[0].track_id, records[1].track_id, 0.42, 'persisted explanation', {'policy': 'symmetric-feature-distance-v1'}, 2)
+        graph = BuildMoodAxisGraph(FakeRepo(records, schema_version=7, graph_status={'state': 'ready', 'source': 'graph_build_edges'}, graph_edges=(edge,))).execute('relaxing')
+        self.assertEqual(graph.edges, (edge,))
+        self.assertEqual(graph.metadata['graph_status']['state'], 'ready')
+        self.assertEqual(graph.metadata['graph_status']['source'], 'graph_build_edges')
+
+    def test_v7_stale_graph_reports_status_without_edges(self):
+        records = [track('a'), track('b')]
+        graph = BuildMoodAxisGraph(FakeRepo(records, schema_version=7, graph_status={'state': 'stale', 'action': 'run music-analyzer graph build --database DB'}, graph_edges=(MoodAxisEdge(records[0].track_id, records[1].track_id, 0.42, 'old', {}, 1),))).execute('relaxing')
+        self.assertEqual(graph.edges, ())
+        self.assertEqual(graph.metadata['graph_status']['state'], 'stale')
+        self.assertIn('music-analyzer graph build --database', graph.metadata['graph_status']['action'])
 
     def test_selected_mood_changes_only_optional_score_and_edges_include_axis_independent_explanation(self):
         records = [track('a', mood=(('relaxing','heavy'), (0.2,0.9))), track('b', energy=(0.25,0.75), mood=(('relaxing','heavy'), (0.7,0.1)))]

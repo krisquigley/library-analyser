@@ -368,8 +368,7 @@ class SQLiteAnalysisRepository:
 
     def _validate_graph_rows(self, db):
         current_count = db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0]
-        completed_count = db.execute("SELECT count(*) FROM graph_builds WHERE status='completed'").fetchone()[0]
-        if current_count != (1 if completed_count else 0):
+        if current_count > 1:
             raise AnalysisError('Unexpected analysis database rows')
         for build_id, status, edge_count, sparse_k, source_fingerprint, distance_policy, neighbour_policy, is_current in db.execute(
                 'SELECT id,status,edge_count,sparse_k,source_fingerprint,distance_policy_version,neighbour_policy_version,is_current FROM graph_builds'):
@@ -483,11 +482,19 @@ class SQLiteAnalysisRepository:
             )
         return build_id
 
+    def _invalidate_current_graph_snapshot(self, db):
+        if db.execute('PRAGMA user_version').fetchone()[0] < 7:
+            return
+        db.execute('UPDATE graph_builds SET is_current=0 WHERE is_current=1')
+        db.execute('DELETE FROM graph_edges')
+
     def start(self, source: AudioSource) -> str:
         run_id = str(uuid4())
         with self._transaction() as db:
             db.execute('INSERT INTO runs(id,location,status) VALUES(?,?,?)', (run_id, source.location, 'running'))
             self._link_run(db, run_id, source.expected_identity)
+            if source.expected_identity:
+                self._invalidate_current_graph_snapshot(db)
         return run_id
 
     def save_stage(self, run_id: str, result: StageResult) -> None:
@@ -497,6 +504,8 @@ class SQLiteAnalysisRepository:
             if row != ('running',):
                 raise AnalysisError('Stage requires an existing running analysis')
             db.execute('INSERT INTO stages(run_id,stage,result) VALUES(?,?,?)', (run_id, result.stage, payload))
+            if result.stage in {'bpm', 'key', 'genres', 'mood', 'energy'}:
+                self._invalidate_current_graph_snapshot(db)
 
     def finish(self, run_id: str, status: str, detail: str) -> None:
         if status not in {'completed', 'failed', 'interrupted'}:
@@ -506,6 +515,8 @@ class SQLiteAnalysisRepository:
                                 (status, detail, run_id))
             if cursor.rowcount != 1:
                 raise AnalysisError('Finish requires an existing running analysis')
+            if status == 'completed':
+                self._invalidate_current_graph_snapshot(db)
 
     def register(self, inventory):
         missing = []
@@ -535,6 +546,8 @@ class SQLiteAnalysisRepository:
                     if path not in seen:
                         missing.append(path)
                         db.execute('UPDATE locations SET available=0 WHERE path=?', (path,))
+            if inventory.files or missing:
+                self._invalidate_current_graph_snapshot(db)
         return tuple(sorted(missing))
 
     def locations(self, track_id):
@@ -601,3 +614,5 @@ class SQLiteAnalysisRepository:
                 db.execute('DELETE FROM overrides WHERE track_id=? AND field=?', (track_id, field))
             else:
                 db.execute('INSERT INTO overrides VALUES(?,?,?) ON CONFLICT(track_id,field) DO UPDATE SET value=excluded.value', (track_id, field, value))
+            if field in {'bpm', 'key', 'genres', 'mood', 'energy'}:
+                self._invalidate_current_graph_snapshot(db)

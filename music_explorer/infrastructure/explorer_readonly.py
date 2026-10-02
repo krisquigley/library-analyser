@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 
-from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, ScoreSummary, StageResult, TrackMetadata
+from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, MoodAxisEdge, ScoreSummary, StageResult, TrackMetadata
 from music_explorer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 
 APPLICATION_ID = 0x4D414E41
@@ -267,6 +267,10 @@ class ReadOnlyExplorerSQLiteRepository:
             ids = tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
             return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
 
+    def current_graph_edges(self):
+        with self._transaction() as db:
+            return self._current_graph_edges(db)
+
     def track_ids(self):
         with self._transaction() as db:
             return tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
@@ -278,6 +282,50 @@ class ReadOnlyExplorerSQLiteRepository:
     def read_track(self, track_id: str):
         with self._transaction() as db:
             return self._read_track(db, track_id)
+
+    def _current_graph_edges(self, db):
+        version = db.execute('PRAGMA user_version').fetchone()[0]
+        if version < 7:
+            return None, ()
+        current = db.execute("""
+            SELECT id,edge_count,sparse_k,distance_policy_version,neighbour_policy_version
+            FROM graph_builds WHERE is_current=1 AND status='completed'
+        """).fetchone()
+        action = 'Run music-analyzer graph build --database DB before loading the mood-axis graph.'
+        if current is None:
+            latest = db.execute('SELECT status,detail FROM graph_builds ORDER BY created_at DESC,rowid DESC LIMIT 1').fetchone()
+            if latest is None:
+                return {'state': 'build_needed', 'source': 'graph_build_edges', 'reason': 'no completed warm graph snapshot', 'action': action}, ()
+            if latest[0] == 'failed':
+                return {'state': 'failed', 'source': 'graph_build_edges', 'reason': latest[1] or 'latest warm graph build failed', 'action': action}, ()
+            return {'state': 'stale', 'source': 'graph_build_edges', 'reason': 'warm graph snapshot is not current', 'action': action}, ()
+        build_id, edge_count, sparse_k, distance_policy, neighbour_policy = current
+        rows = db.execute('''
+            SELECT source_track_id,target_track_id,score,supported_group_count,
+                   distance_policy_version,neighbour_policy_version
+            FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id
+        ''', (build_id,)).fetchall()
+        status = {
+            'state': 'ready',
+            'source': 'graph_build_edges',
+            'build_id': build_id,
+            'edge_count': int(edge_count),
+            'sparse_k': int(sparse_k),
+            'distance_policy': distance_policy,
+            'edge_policy': neighbour_policy,
+        }
+        edges = tuple(
+            MoodAxisEdge(
+                source,
+                target,
+                round(float(score), 6),
+                'axis-independent relatedness from persisted warm graph_build_edges snapshot',
+                {'policy': edge_distance_policy, 'neighbour_policy': edge_neighbour_policy, 'source': 'graph_build_edges'},
+                int(supported_count),
+            )
+            for source, target, score, supported_count, edge_distance_policy, edge_neighbour_policy in rows
+        )
+        return status, edges
 
     def _metadata(self, db):
         return {
@@ -491,8 +539,7 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def _validate_graph_rows(self, db):
         current_count = db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0]
-        completed_count = db.execute("SELECT count(*) FROM graph_builds WHERE status='completed'").fetchone()[0]
-        if current_count != (1 if completed_count else 0):
+        if current_count > 1:
             raise AnalysisError('Unexpected analysis database rows')
         current_build = db.execute('SELECT id FROM graph_builds WHERE is_current=1').fetchone()
         for build_id, status, edge_count, sparse_k, distance_policy, neighbour_policy, is_current in db.execute(
