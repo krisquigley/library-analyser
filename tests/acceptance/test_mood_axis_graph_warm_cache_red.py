@@ -1,4 +1,5 @@
 import contextlib
+from contextlib import closing
 import io
 import json
 import sqlite3
@@ -33,7 +34,7 @@ def _build_warm_graph_database(path: Path):
 
 
 def _current_persisted_edges(path: Path):
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         return tuple(db.execute('''
             SELECT e.source_track_id,e.target_track_id,e.score,e.supported_group_count
             FROM graph_builds b
@@ -86,7 +87,7 @@ class MoodAxisGraphWarmCacheRedTests(unittest.TestCase):
 
             code, stdout, stderr = _run_cli(['override', 'set', '--database', str(db_path), ids[0], 'bpm', '121.0'])
             self.assertEqual(code, 0, stdout + stderr)
-            with sqlite3.connect(db_path) as db:
+            with closing(sqlite3.connect(db_path)) as db:
                 self.assertEqual(
                     db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0],
                     0,
