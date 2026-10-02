@@ -304,13 +304,23 @@ def _axis_node(record, detail, selected_mood):
 
 
 def _warm_graph_edges(repository, raw_meta, positioned_ids, sparse_k, records):
-    if int(raw_meta.get('schema_version', 0)) < 7:
+    schema_version = int(raw_meta.get('schema_version', 0))
+    if schema_version < 7:
         return None, _axis_edges(records, positioned_ids, sparse_k)
-    reader = getattr(repository, 'current_graph_edges', None)
+    if schema_version < 8:
+        return _graph_build_needed_status('exact positioned warm graph snapshot requires schema v8 rebuild'), ()
+    reader = getattr(repository, 'current_positioned_graph_edges', None)
     if reader is None:
-        return _graph_build_needed_status('warm graph edge reader unavailable'), ()
-    status, edges = reader()
-    status = dict(status or _graph_build_needed_status('no current warm graph snapshot'))
+        return _graph_build_needed_status('exact positioned warm graph edge reader unavailable'), ()
+    status, edges = reader(sparse_k)
+    status = dict(status or _graph_build_needed_status('no current exact positioned warm graph snapshot'))
+    if status.get('state') == 'ready' and int(status.get('sparse_k', sparse_k)) != int(sparse_k):
+        status = {
+            **status,
+            'state': 'stale',
+            'reason': 'warm graph snapshot sparse_k does not match requested sparse_k',
+            'action': 'Run music-analyzer graph build --database DB before loading the mood-axis graph.',
+        }
     if status.get('state') != 'ready':
         return status, ()
     filtered = tuple(edge for edge in edges if edge.a in positioned_ids and edge.b in positioned_ids)

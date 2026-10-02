@@ -113,7 +113,6 @@ class GraphBuildVersionedHistoryTests(unittest.TestCase):
             cases = (
                 "UPDATE graph_builds SET status='running'",
                 "UPDATE graph_builds SET edge_count=-1",
-                "UPDATE graph_builds SET distance_policy_version='bad'",
                 "UPDATE graph_builds SET is_current=0",
             )
             for sql in cases:

@@ -134,7 +134,18 @@ _EXPECTED_GRAPH_SCHEMA = {
         'checks': (('CHECK(source_track_id < target_track_id)', 'CHECK(score >= 0.0 AND score <= 1.0)', 'CHECK(distance >= 0.0 AND distance <= 1.0)'),),
     },
 }
+_EXPECTED_POSITIONED_GRAPH_SCHEMA = {
+    'graph_positioned_edges': _EXPECTED_GRAPH_SCHEMA['graph_edges'],
+    'graph_build_positioned_edges': _EXPECTED_GRAPH_SCHEMA['graph_build_edges'],
+    'graph_build_positioned_snapshots': {
+        'columns': ((('build_id', 'TEXT', False, 1), ('edge_count', 'INTEGER', True, 0), ('built_at', 'TEXT', True, 0)),),
+        'foreign_keys': ((('graph_builds', ('build_id',), ('id',)),),),
+        'unique_indexes': (),
+        'checks': (('CHECK(edge_count >= 0)',),),
+    },
+}
 _EXPECTED_GRAPH_INDEXES = {('idx_graph_edges_source_track_id', 'index'), ('idx_graph_edges_target_track_id', 'index'), ('idx_graph_build_edges_build_id', 'index'), ('idx_graph_build_edges_source_track_id', 'index'), ('idx_graph_build_edges_target_track_id', 'index'), ('idx_graph_builds_one_current', 'index')}
+_EXPECTED_POSITIONED_GRAPH_INDEXES = {('idx_graph_positioned_edges_source_track_id', 'index'), ('idx_graph_positioned_edges_target_track_id', 'index'), ('idx_graph_build_positioned_edges_build_id', 'index'), ('idx_graph_build_positioned_edges_source_track_id', 'index'), ('idx_graph_build_positioned_edges_target_track_id', 'index')}
 
 _EXPECTED_VIEWS = {
     'active_tracks': (
@@ -228,9 +239,13 @@ class ReadOnlyExplorerSQLiteRepository:
             ids = tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
             return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
 
-    def current_graph_edges(self):
+    def current_graph_edges(self, sparse_k: int | None = None):
         with self._transaction() as db:
-            return self._current_graph_edges(db)
+            return self._current_graph_edges(db, sparse_k)
+
+    def current_positioned_graph_edges(self, sparse_k: int | None = None):
+        with self._transaction() as db:
+            return self._current_positioned_graph_edges(db, sparse_k)
 
     def track_ids(self):
         with self._transaction() as db:
@@ -244,7 +259,7 @@ class ReadOnlyExplorerSQLiteRepository:
         with self._transaction() as db:
             return self._read_track(db, track_id)
 
-    def _current_graph_edges(self, db):
+    def _current_graph_edges(self, db, requested_sparse_k=None):
         version = db.execute('PRAGMA user_version').fetchone()[0]
         if version < 7:
             return None, ()
@@ -261,6 +276,26 @@ class ReadOnlyExplorerSQLiteRepository:
                 return {'state': 'failed', 'source': 'graph_build_edges', 'reason': latest[1] or 'latest warm graph build failed', 'action': action}, ()
             return {'state': 'stale', 'source': 'graph_build_edges', 'reason': 'warm graph snapshot is not current', 'action': action}, ()
         build_id, edge_count, sparse_k, distance_policy, neighbour_policy = current
+        if distance_policy != DISTANCE_POLICY_VERSION or neighbour_policy != NEIGHBOUR_POLICY_VERSION:
+            return {
+                'state': 'stale',
+                'source': 'graph_build_edges',
+                'reason': 'warm graph snapshot policy version is stale',
+                'action': action,
+                'build_id': build_id,
+                'distance_policy': distance_policy,
+                'edge_policy': neighbour_policy,
+            }, ()
+        if requested_sparse_k is not None and int(sparse_k) != int(requested_sparse_k):
+            return {
+                'state': 'stale',
+                'source': 'graph_build_edges',
+                'reason': 'warm graph snapshot sparse_k does not match requested graph sparsity',
+                'action': action,
+                'build_id': build_id,
+                'stored_sparse_k': int(sparse_k),
+                'requested_sparse_k': int(requested_sparse_k),
+            }, ()
         rows = db.execute('''
             SELECT source_track_id,target_track_id,score,supported_group_count,
                    distance_policy_version,neighbour_policy_version
@@ -282,6 +317,39 @@ class ReadOnlyExplorerSQLiteRepository:
                 round(float(score), 6),
                 'axis-independent relatedness from persisted warm graph_build_edges snapshot',
                 {'policy': edge_distance_policy, 'neighbour_policy': edge_neighbour_policy, 'source': 'graph_build_edges'},
+                int(supported_count),
+            )
+            for source, target, score, supported_count, edge_distance_policy, edge_neighbour_policy in rows
+        )
+        return status, edges
+
+    def _current_positioned_graph_edges(self, db, requested_sparse_k=None):
+        version = db.execute('PRAGMA user_version').fetchone()[0]
+        action = 'Run music-analyzer graph build --database DB before loading the mood-axis graph.'
+        if version < 8:
+            return {'state': 'build_needed', 'source': 'graph_build_positioned_edges', 'reason': 'exact positioned warm graph snapshot requires schema v8 rebuild', 'action': action}, ()
+        status, _global_edges = self._current_graph_edges(db, requested_sparse_k)
+        if not status or status.get('state') != 'ready':
+            if status:
+                status = {**status, 'source': 'graph_build_positioned_edges'}
+            return status, ()
+        build_id = status['build_id']
+        snapshot = db.execute('SELECT edge_count FROM graph_build_positioned_snapshots WHERE build_id=?', (build_id,)).fetchone()
+        if snapshot is None:
+            return {'state': 'build_needed', 'source': 'graph_build_positioned_edges', 'reason': 'exact positioned warm graph snapshot is not available for current build', 'action': action, 'build_id': build_id}, ()
+        rows = db.execute('''
+            SELECT source_track_id,target_track_id,score,supported_group_count,
+                   distance_policy_version,neighbour_policy_version
+            FROM graph_build_positioned_edges WHERE build_id=? ORDER BY source_track_id,target_track_id
+        ''', (build_id,)).fetchall()
+        status = {**status, 'source': 'graph_build_positioned_edges', 'edge_count': len(rows)}
+        edges = tuple(
+            MoodAxisEdge(
+                source,
+                target,
+                round(float(score), 6),
+                'axis-independent relatedness from persisted exact positioned graph_build_positioned_edges snapshot',
+                {'policy': edge_distance_policy, 'neighbour_policy': edge_neighbour_policy, 'source': 'graph_build_positioned_edges'},
                 int(supported_count),
             )
             for source, target, score, supported_count, edge_distance_policy, edge_neighbour_policy in rows
@@ -444,14 +512,17 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def _validate(self, db):
         version = db.execute('PRAGMA user_version').fetchone()[0]
-        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7):
+        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8):
             raise AnalysisError('Not a supported music-analyzer analysis database')
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','index')"))
         schema = dict(_EXPECTED_SCHEMA)
         expected_objects = {(name, 'table') for name in schema} | {(name, 'view') for name in _EXPECTED_VIEWS}
-        if version == 7:
+        if version >= 7:
             schema.update(_EXPECTED_GRAPH_SCHEMA)
             expected_objects |= {(name, 'table') for name in _EXPECTED_GRAPH_SCHEMA} | _EXPECTED_GRAPH_INDEXES
+        if version >= 8:
+            schema.update(_EXPECTED_POSITIONED_GRAPH_SCHEMA)
+            expected_objects |= {(name, 'table') for name in _EXPECTED_POSITIONED_GRAPH_SCHEMA} | _EXPECTED_POSITIONED_GRAPH_INDEXES
         if objects != expected_objects:
             raise AnalysisError('Unexpected analysis database schema')
         for view, (columns, expected_sql) in _EXPECTED_VIEWS.items():
@@ -478,7 +549,7 @@ class ReadOnlyExplorerSQLiteRepository:
             if not any(all(check in compact_sql for check in checks) for checks in expected['checks']):
                 raise AnalysisError('Unexpected analysis database schema')
         self._validate_rows(db)
-        if version == 7:
+        if version >= 7:
             self._validate_graph_rows(db)
 
     def _validate_rows(self, db):
@@ -509,13 +580,22 @@ class ReadOnlyExplorerSQLiteRepository:
             historical_edges = db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (build_id,)).fetchone()[0]
             if (status not in {'completed', 'failed'} or not isinstance(edge_count, int) or edge_count < 0
                     or not isinstance(sparse_k, int) or sparse_k < 0
-                    or distance_policy != DISTANCE_POLICY_VERSION or neighbour_policy != NEIGHBOUR_POLICY_VERSION
+                    or not isinstance(distance_policy, str) or not distance_policy
+                    or not isinstance(neighbour_policy, str) or not neighbour_policy
                     or is_current not in (0, 1) or (status != 'completed' and is_current)
                     or (status == 'completed' and edge_count != historical_edges)
                     or (status == 'failed' and historical_edges != 0)):
                 raise AnalysisError('Unexpected analysis database rows')
         if current_build is None and db.execute('SELECT 1 FROM graph_edges LIMIT 1').fetchone():
             raise AnalysisError('Unexpected analysis database rows')
+        if (current_build is None and db.execute('PRAGMA user_version').fetchone()[0] >= 8
+                and db.execute('SELECT 1 FROM graph_positioned_edges LIMIT 1').fetchone()):
+            raise AnalysisError('Unexpected analysis database rows')
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 8:
+            for build_id, edge_count in db.execute('SELECT build_id,edge_count FROM graph_build_positioned_snapshots'):
+                actual_positioned_count = db.execute('SELECT count(*) FROM graph_build_positioned_edges WHERE build_id=?', (build_id,)).fetchone()[0]
+                if not isinstance(edge_count, int) or edge_count < 0 or edge_count != actual_positioned_count:
+                    raise AnalysisError('Unexpected analysis database rows')
         if current_build is not None:
             current_edges = tuple(db.execute('''
                 SELECT source_track_id,target_track_id,score,distance,supported_group_count,
@@ -527,17 +607,35 @@ class ReadOnlyExplorerSQLiteRepository:
                 FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
             if current_edges != historical_current_edges:
                 raise AnalysisError('Unexpected analysis database rows')
-        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute('''
+            if db.execute('PRAGMA user_version').fetchone()[0] >= 8:
+                current_positioned_edges = tuple(db.execute('''
+                    SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                           distance_policy_version,neighbour_policy_version
+                    FROM graph_positioned_edges ORDER BY source_track_id,target_track_id'''))
+                historical_current_positioned_edges = tuple(db.execute('''
+                    SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                           distance_policy_version,neighbour_policy_version
+                    FROM graph_build_positioned_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
+                if current_positioned_edges != historical_current_positioned_edges:
+                    raise AnalysisError('Unexpected analysis database rows')
+        edge_sources_sql = '''
                 SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_edges
                 UNION ALL
-                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges'''):
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges'''
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 8:
+            edge_sources_sql += '''
+                UNION ALL
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_positioned_edges
+                UNION ALL
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_positioned_edges'''
+        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute(edge_sources_sql):
             if (not isinstance(source, str) or not isinstance(target, str) or source >= target
                     or not isinstance(score, (int, float)) or not 0.0 <= float(score) <= 1.0
                     or not isinstance(distance, (int, float)) or not 0.0 <= float(distance) <= 1.0
                     or round(1.0 - float(distance), 6) != round(float(score), 6)
                     or not isinstance(count, int) or count <= 0
-                    or distance_policy != DISTANCE_POLICY_VERSION
-                    or neighbour_policy != NEIGHBOUR_POLICY_VERSION):
+                    or not isinstance(distance_policy, str) or not distance_policy
+                    or not isinstance(neighbour_policy, str) or not neighbour_policy):
                 raise AnalysisError('Unexpected analysis database rows')
     def _foreign_keys(self, db, table):
         keys = {}

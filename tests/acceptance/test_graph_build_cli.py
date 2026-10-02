@@ -107,7 +107,7 @@ class GraphBuildCLITests(unittest.TestCase):
             load_backend.assert_not_called()
 
             with closing(sqlite3.connect(path)) as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
                 self.assertEqual(
                     tuple(db.execute('''
                         SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version

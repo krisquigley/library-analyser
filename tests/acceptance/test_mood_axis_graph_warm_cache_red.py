@@ -78,7 +78,7 @@ class MoodAxisGraphWarmCacheRedTests(unittest.TestCase):
                 expected_edges,
             )
             self.assertEqual(graph['metadata']['graph_status']['state'], 'ready')
-            self.assertEqual(graph['metadata']['graph_status']['source'], 'graph_build_edges')
+            self.assertEqual(graph['metadata']['graph_status']['source'], 'graph_build_positioned_edges')
 
     def test_graph_relevant_override_invalidates_warm_snapshot_and_next_read_reports_stale_without_edges(self):
         with tempfile.TemporaryDirectory() as td:
