@@ -16,6 +16,7 @@ from music_analyzer.application.dto.analysis import AnalysisError, AnalysisRepor
 from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.explorer import ExplorerStoredTrack, ExplorerTrackSummary, MoodAxisEdge
 from music_analyzer.application.use_cases.explorer import _build_mood_axis_graph
+from music_analyzer.application.use_cases.graph_feature_evidence import validate_graph_feature_evidence_payload
 from music_analyzer.domain.library_duration_policy import DurationVerification, TRUSTED_DURATION_SOURCES, active_library_duration_policy
 from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
@@ -757,12 +758,10 @@ class ReadOnlyExplorerSQLiteRepository:
                 payload = json.loads(evidence_json)
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 raise AnalysisError('Unexpected analysis database rows') from error
-            if (not isinstance(payload, dict)
-                    or payload.get('track_id') != track_id
-                    or payload.get('run_id') != run_id
-                    or payload.get('feature_contract_version') != 'graph-feature-evidence-v1'
-                    or set((payload.get('features') or {}).keys()) != {'bpm', 'key', 'genres', 'mood', 'energy'}):
-                raise AnalysisError('Unexpected analysis database rows')
+            try:
+                validate_graph_feature_evidence_payload(track_id, run_id, fingerprint, payload)
+            except ValueError as error:
+                raise AnalysisError('Unexpected analysis database rows') from error
 
     def _foreign_keys(self, db, table):
         keys = {}

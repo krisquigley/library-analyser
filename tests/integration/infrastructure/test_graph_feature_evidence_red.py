@@ -1,4 +1,5 @@
 from contextlib import closing
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -127,6 +128,41 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
         self.assertEqual(compact['run_id'], run_id)
         self.assertEqual(compact['feature_contract_version'], 'graph-feature-evidence-v1')
         self.assertEqual(set(compact['features']), {'bpm', 'key', 'genres', 'mood', 'energy'})
+
+    def test_writer_and_readonly_reject_v9_feature_evidence_with_mismatched_fingerprint(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository)
+        _complete_graph_relevant_run(repository, identity)
+
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("UPDATE graph_feature_evidence SET fingerprint=?", ('0' * 64,))
+            db.commit()
+
+        with self.assertRaises(AnalysisError):
+            SQLiteAnalysisRepository(str(self.path))
+        with self.assertRaises(AnalysisError):
+            ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+
+    def test_writer_and_readonly_reject_v9_feature_evidence_with_malformed_nested_features(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository)
+        _complete_graph_relevant_run(repository, identity)
+
+        with closing(sqlite3.connect(self.path)) as db:
+            payload = json.loads(db.execute('SELECT evidence_json FROM graph_feature_evidence').fetchone()[0])
+            payload['features']['bpm']['values'] = [['bpm', 'fast']]
+            payload['features']['key'] = '8A'
+            canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+            db.execute(
+                'UPDATE graph_feature_evidence SET evidence_json=?, fingerprint=?',
+                (canonical, hashlib.sha256(canonical.encode('utf-8')).hexdigest()),
+            )
+            db.commit()
+
+        with self.assertRaises(AnalysisError):
+            SQLiteAnalysisRepository(str(self.path))
+        with self.assertRaises(AnalysisError):
+            ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
 
     def test_failed_latest_run_does_not_serve_older_completed_evidence_as_current(self):
         repository = SQLiteAnalysisRepository(str(self.path))

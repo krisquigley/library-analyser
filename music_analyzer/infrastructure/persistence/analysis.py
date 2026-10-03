@@ -12,7 +12,10 @@ import sqlite3
 from uuid import uuid4
 
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
-from music_analyzer.application.use_cases.graph_feature_evidence import build_graph_feature_evidence
+from music_analyzer.application.use_cases.graph_feature_evidence import (
+    build_graph_feature_evidence,
+    validate_graph_feature_evidence_payload,
+)
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 from music_analyzer.domain.library_duration_policy import (
     DurationVerification,
@@ -553,12 +556,10 @@ class SQLiteAnalysisRepository:
                 payload = json.loads(evidence_json)
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 raise AnalysisError('Unexpected analysis database rows') from error
-            if (not isinstance(payload, dict)
-                    or payload.get('track_id') != track_id
-                    or payload.get('run_id') != run_id
-                    or payload.get('feature_contract_version') != 'graph-feature-evidence-v1'
-                    or set((payload.get('features') or {}).keys()) != {'bpm', 'key', 'genres', 'mood', 'energy'}):
-                raise AnalysisError('Unexpected analysis database rows')
+            try:
+                validate_graph_feature_evidence_payload(track_id, run_id, fingerprint, payload)
+            except ValueError as error:
+                raise AnalysisError('Unexpected analysis database rows') from error
         for (track_id,) in db.execute('SELECT track_id FROM graph_feature_evidence WHERE is_current=1 GROUP BY track_id HAVING count(*) > 1'):
             raise AnalysisError('Unexpected analysis database rows')
 
