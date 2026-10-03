@@ -47,7 +47,7 @@ def create_v6_database(path: Path) -> None:
 
 
 class GraphBuildSchemaMigrationTests(unittest.TestCase):
-    def test_v6_database_migrates_to_v8_with_graph_edge_schema_without_losing_history(self):
+    def test_v6_database_migrates_to_v9_with_graph_edge_schema_without_losing_history(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             create_v6_database(path)
@@ -55,7 +55,7 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
             SQLiteAnalysisRepository(str(path))
 
             with closing(sqlite3.connect(path)) as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
                 self.assertEqual(
                     db.execute('SELECT id,sha256,size FROM tracks').fetchone(),
                     ('sha256:' + 'a' * 64, 'a' * 64, 123),
@@ -148,7 +148,7 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
                 self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (failed_id,)).fetchone()[0], 0)
 
             # The read-only mirror accepts the strict versioned schema and row invariants.
-            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).metadata()['schema_version'], 8)
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).metadata()['schema_version'], 9)
 
     def test_failed_replacement_rolls_back_new_build_and_leaves_previous_current_snapshot_intact(self):
         with tempfile.TemporaryDirectory() as td:

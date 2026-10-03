@@ -147,6 +147,16 @@ _EXPECTED_POSITIONED_GRAPH_SCHEMA = {
 }
 _EXPECTED_GRAPH_INDEXES = {('idx_graph_edges_source_track_id', 'index'), ('idx_graph_edges_target_track_id', 'index'), ('idx_graph_build_edges_build_id', 'index'), ('idx_graph_build_edges_source_track_id', 'index'), ('idx_graph_build_edges_target_track_id', 'index'), ('idx_graph_builds_one_current', 'index')}
 _EXPECTED_POSITIONED_GRAPH_INDEXES = {('idx_graph_positioned_edges_source_track_id', 'index'), ('idx_graph_positioned_edges_target_track_id', 'index'), ('idx_graph_build_positioned_edges_build_id', 'index'), ('idx_graph_build_positioned_edges_source_track_id', 'index'), ('idx_graph_build_positioned_edges_target_track_id', 'index')}
+_EXPECTED_GRAPH_FEATURE_SCHEMA = {
+    'graph_feature_evidence': {
+        'columns': ((('track_id', 'TEXT', True, 1), ('run_id', 'TEXT', True, 2), ('fingerprint', 'TEXT', True, 0),
+                     ('evidence_json', 'TEXT', True, 0), ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0)),),
+        'foreign_keys': ((('runs', ('run_id',), ('id',)), ('tracks', ('track_id',), ('id',))),),
+        'unique_indexes': (),
+        'checks': (('CHECK(is_current IN (0,1))',),),
+    },
+}
+_EXPECTED_GRAPH_FEATURE_INDEXES = {('idx_graph_feature_evidence_one_current_per_track', 'index'), ('idx_graph_feature_evidence_run_id', 'index')}
 
 _EXPECTED_VIEWS = {
     'active_tracks': (
@@ -594,7 +604,7 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def _validate(self, db):
         version = db.execute('PRAGMA user_version').fetchone()[0]
-        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8):
+        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9):
             raise AnalysisError('Not a supported music-analyzer analysis database')
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','index')"))
         schema = dict(_EXPECTED_SCHEMA)
@@ -605,6 +615,9 @@ class ReadOnlyExplorerSQLiteRepository:
         if version >= 8:
             schema.update(_EXPECTED_POSITIONED_GRAPH_SCHEMA)
             expected_objects |= {(name, 'table') for name in _EXPECTED_POSITIONED_GRAPH_SCHEMA} | _EXPECTED_POSITIONED_GRAPH_INDEXES
+        if version >= 9:
+            schema.update(_EXPECTED_GRAPH_FEATURE_SCHEMA)
+            expected_objects |= {(name, 'table') for name in _EXPECTED_GRAPH_FEATURE_SCHEMA} | _EXPECTED_GRAPH_FEATURE_INDEXES
         if objects != expected_objects:
             raise AnalysisError('Unexpected analysis database schema')
         for view, (columns, expected_sql) in _EXPECTED_VIEWS.items():
@@ -633,6 +646,8 @@ class ReadOnlyExplorerSQLiteRepository:
         self._validate_rows(db)
         if version >= 7:
             self._validate_graph_rows(db)
+        if version >= 9:
+            self._validate_graph_feature_rows(db)
 
     def _validate_rows(self, db):
         for track_id, sha256, size in db.execute('SELECT id,sha256,size FROM tracks'):
@@ -719,6 +734,36 @@ class ReadOnlyExplorerSQLiteRepository:
                     or not isinstance(distance_policy, str) or not distance_policy
                     or not isinstance(neighbour_policy, str) or not neighbour_policy):
                 raise AnalysisError('Unexpected analysis database rows')
+
+    def _validate_graph_feature_rows(self, db):
+        for track_id, run_id, fingerprint, evidence_json, is_current in db.execute(
+                'SELECT track_id,run_id,fingerprint,evidence_json,is_current FROM graph_feature_evidence'):
+            if (not isinstance(track_id, str) or not _TRACK_ID_RE.fullmatch(track_id)
+                    or not isinstance(run_id, str) or not run_id
+                    or not isinstance(fingerprint, str) or not _SHA256_RE.fullmatch(fingerprint)
+                    or is_current not in (0, 1)):
+                raise AnalysisError('Unexpected analysis database rows')
+            if db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone() != ('completed',):
+                raise AnalysisError('Unexpected analysis database rows')
+            if not db.execute('SELECT 1 FROM run_tracks WHERE run_id=? AND track_id=?', (run_id, track_id)).fetchone():
+                raise AnalysisError('Unexpected analysis database rows')
+            if is_current:
+                latest = db.execute('''
+                    SELECT r.id,r.status FROM runs r JOIN run_tracks t ON t.run_id=r.id
+                    WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1''', (track_id,)).fetchone()
+                if latest != (run_id, 'completed'):
+                    raise AnalysisError('Unexpected analysis database rows')
+            try:
+                payload = json.loads(evidence_json)
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                raise AnalysisError('Unexpected analysis database rows') from error
+            if (not isinstance(payload, dict)
+                    or payload.get('track_id') != track_id
+                    or payload.get('run_id') != run_id
+                    or payload.get('feature_contract_version') != 'graph-feature-evidence-v1'
+                    or set((payload.get('features') or {}).keys()) != {'bpm', 'key', 'genres', 'mood', 'energy'}):
+                raise AnalysisError('Unexpected analysis database rows')
+
     def _foreign_keys(self, db, table):
         keys = {}
         for row in db.execute(f'PRAGMA foreign_key_list({table})'):
