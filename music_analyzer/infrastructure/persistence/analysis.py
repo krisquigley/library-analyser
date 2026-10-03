@@ -728,13 +728,17 @@ class SQLiteAnalysisRepository:
         try:
             payload = json.loads(detail)
         except (TypeError, ValueError, json.JSONDecodeError):
-            return True
+            return False
+        # PR49 wrote ownerless plain-text details.  There is no safe process
+        # probe for those rows after an upgrade, so recover them and rely on
+        # the attempt-status guard to prevent a stale legacy attempt from
+        # promoting over the retry.
         if not isinstance(payload, dict) or 'owner_pid' not in payload:
-            return True
+            return False
         try:
             pid = int(payload['owner_pid'])
         except (TypeError, ValueError):
-            return True
+            return False
         if pid <= 0:
             return False
         try:
