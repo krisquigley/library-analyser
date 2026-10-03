@@ -12,11 +12,12 @@ from pathlib import Path
 import re
 import sqlite3
 
-from music_analyzer.application.dto.analysis import AnalysisError, AnalysisReport
+from music_analyzer.application.dto.analysis import AnalysisError, AnalysisReport, StageResult
 from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.explorer import ExplorerStoredTrack, ExplorerTrackSummary, MoodAxisEdge
 from music_analyzer.application.use_cases.explorer import _build_mood_axis_graph
 from music_analyzer.application.use_cases.graph_feature_evidence import validate_graph_feature_evidence_payload
+from music_analyzer.domain.analysis import ScoreSummary
 from music_analyzer.domain.library_duration_policy import DurationVerification, TRUSTED_DURATION_SOURCES, active_library_duration_policy
 from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
@@ -264,6 +265,38 @@ class ReadOnlyExplorerSQLiteRepository:
             ids = tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
             return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
 
+    def graph_source_tracks(self):
+        with self._transaction() as db:
+            rows = db.execute('''
+                WITH first_location AS (
+                    SELECT track_id, min(path) AS path, count(*) AS available_locations
+                    FROM active_locations GROUP BY track_id
+                ), latest_run AS (
+                    SELECT track_id, run_id, status FROM (
+                        SELECT rt.track_id, r.id AS run_id, r.status AS status,
+                               row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
+                        FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                        JOIN active_tracks at ON at.id=rt.track_id
+                    ) WHERE rn=1
+                )
+                SELECT t.id,t.sha256,t.size,COALESCE(first_location.path,''),
+                       COALESCE(first_location.available_locations,0),latest_run.run_id,
+                       latest_run.status,COALESCE(tm.common_json,'[]'),COALESCE(tm.tags_json,'[]'),
+                       COALESCE(tm.warnings_json,'[]'),a.duration_seconds,a.duration_source,
+                       g.fingerprint,g.evidence_json
+                FROM active_tracks t
+                JOIN first_location ON first_location.track_id=t.id
+                LEFT JOIN latest_run ON latest_run.track_id=t.id
+                LEFT JOIN graph_feature_evidence g ON g.track_id=t.id AND g.run_id=latest_run.run_id AND g.is_current=1
+                LEFT JOIN track_metadata tm ON tm.track_id=t.id
+                LEFT JOIN track_audio a ON a.track_id=t.id
+                ORDER BY t.id
+            ''')
+            for row in rows:
+                record = self._graph_source_track_from_row(db, row)
+                if record is not None:
+                    yield record
+
     def mood_axis_graph_snapshot(self, mood: str | None = None, sparse_k: int = 10):
         with self._transaction() as db:
             metadata = self._metadata(db)
@@ -398,6 +431,65 @@ class ReadOnlyExplorerSQLiteRepository:
             'schema_version': db.execute('PRAGMA user_version').fetchone()[0],
             'read_policy': 'bounded_read_transaction',
         }
+
+    def _graph_source_track_from_row(self, db, row):
+        (track_id, sha256, size, first_path, available_locations, run_id, status,
+         common_json, tags_json, warnings_json, duration_seconds, duration_source,
+         evidence_fingerprint, evidence_json) = row
+        if run_id is None or status != 'completed':
+            return None
+        if evidence_json is None:
+            return self._read_track(db, track_id)
+        try:
+            payload = json.loads(evidence_json)
+            validate_graph_feature_evidence_payload(track_id, run_id, evidence_fingerprint, payload)
+            metadata = self._metadata_from_json(common_json, tags_json, warnings_json, (duration_seconds, duration_source))
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise AnalysisError('Invalid stored graph feature evidence') from error
+        locations = tuple(row[0] for row in db.execute('SELECT path FROM active_locations WHERE track_id=? ORDER BY path', (track_id,)))
+        overrides = tuple(db.execute(
+            "SELECT field,value FROM overrides WHERE track_id=? AND field IN ('bpm','key','genres','mood','energy') ORDER BY field",
+            (track_id,),
+        ))
+        run = AnalysisReport(run_id, 'completed', self._stages_from_graph_feature_payload(payload), '')
+        return ExplorerStoredTrack(
+            track_id,
+            sha256,
+            size,
+            Path(first_path).name if first_path else '',
+            int(available_locations),
+            run,
+            overrides,
+            metadata,
+            locations,
+        )
+
+    def _stages_from_graph_feature_payload(self, payload):
+        stages = []
+        for stage_name in sorted(payload['features']):
+            feature = payload['features'][stage_name]
+            summary = None
+            if feature.get('summary') is not None:
+                raw = feature['summary']
+                summary = ScoreSummary(
+                    tuple(raw['labels']),
+                    tuple(raw['mean']),
+                    tuple(raw['minimum']),
+                    tuple(raw['maximum']),
+                    float(raw['coverage']),
+                    bool(raw['provisional']),
+                    str(raw['uncertainty']),
+                )
+            stages.append(StageResult(
+                str(stage_name),
+                tuple((str(key), str(value)) for key, value in feature.get('provenance', ())),
+                str(feature.get('uncertainty', '')),
+                tuple((str(key), value) for key, value in feature.get('values', ())),
+                (),
+                summary,
+                (),
+            ))
+        return tuple(stages)
 
     def _compact_graph_tracks(self, db):
         rows = db.execute('''
