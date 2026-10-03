@@ -752,11 +752,18 @@ class SQLiteAnalysisRepository:
                        SET status='completed', detail='', edge_count=?, sparse_k=?, source_fingerprint=?,
                            source_revision=?, attempt_revision=?, distance_policy_version=?, neighbour_policy_version=?,
                            completed_at=CURRENT_TIMESTAMP
-                       WHERE id=? AND status='building' AND is_current=0''',
+                       WHERE id=? AND status='building' AND is_current=0 AND source_revision=?''',
                     (len(edges), int(sparse_k), str(source_fingerprint), current_source_revision, attempt_revision,
-                     DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, build_id),
+                     DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, build_id, current_source_revision),
                 )
                 if cursor.rowcount != 1:
+                    attempt = db.execute(
+                        'SELECT status,is_current,source_revision FROM graph_builds WHERE id=?',
+                        (build_id,),
+                    ).fetchone()
+                    if (attempt is not None and attempt[0] == 'building' and attempt[1] == 0
+                            and attempt[2] != current_source_revision):
+                        raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
                     raise AnalysisError('Graph build attempt is no longer promotable; run graph build again')
             for edge in edges:
                 distance = round(float(edge.distance), 6)

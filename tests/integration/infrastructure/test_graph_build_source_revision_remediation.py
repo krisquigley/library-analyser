@@ -218,6 +218,47 @@ class GraphBuildSourceRevisionRemediationTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Graph source changed before snapshot promotion'):
                 writer.replace_graph_snapshot(edges, 10, fingerprint, source_revision=source_revision, attempt_id=attempt_id)
 
+    def test_in_flight_attempt_rejects_obsolete_edges_even_when_caller_passes_current_revision(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            track_ids = create_three_track_graph_db(db_path)
+            writer = SQLiteAnalysisRepository(str(db_path))
+            reader = ReadOnlyExplorerSQLiteRepository(str(db_path))
+
+            stale_revision = writer.source_revision()
+            attempt_id = writer.begin_graph_build(10, stale_revision)
+            _metadata, records = reader.candidate_snapshot()
+            retained = tuple(record for record in records if record.run is not None and record.run.status == 'completed')
+            features = tuple(_features(record) for record in retained)
+            stale_edges = tuple(_bounded_edges(features, 10))
+            stale_fingerprint = _source_fingerprint(retained)
+            self.assertGreater(len(stale_edges), 0)
+
+            writer.set_override(track_ids[0], 'bpm', '121.0')
+            current_revision = writer.source_revision()
+            self.assertNotEqual(current_revision, stale_revision)
+
+            with self.assertRaisesRegex(AnalysisError, 'Graph source changed before snapshot promotion'):
+                writer.replace_graph_snapshot(
+                    stale_edges,
+                    10,
+                    stale_fingerprint,
+                    source_revision=current_revision,
+                    attempt_id=attempt_id,
+                )
+
+            with closing(sqlite3.connect(db_path)) as db:
+                self.assertEqual(
+                    db.execute(
+                        'SELECT status,is_current,edge_count,source_revision FROM graph_builds WHERE id=?',
+                        (attempt_id,),
+                    ).fetchone(),
+                    ('building', 0, 0, stale_revision),
+                )
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_edges').fetchone()[0], 0)
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (attempt_id,)).fetchone()[0], 0)
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0], 0)
+
     def test_complete_scan_availability_loss_rejects_stale_promotion_and_readonly_reports_no_current_edges(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / 'analysis.sqlite'
