@@ -113,6 +113,8 @@ _ACTIVE_VIEWS = {
     'active_tracks': "CREATE VIEW active_tracks AS SELECT t.id,t.sha256,t.size FROM tracks t JOIN track_audio a ON a.track_id=t.id WHERE a.status='eligible'",
     'active_locations': "CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.available FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible'",
 }
+_MAX_STORED_STAGE_RESULT_BYTES = 16 * 1024 * 1024
+
 _GRAPH_COLUMNS_LEGACY = {
     'graph_edges': ('source_track_id', 'target_track_id', 'score', 'distance', 'supported_group_count', 'distance_policy_version', 'neighbour_policy_version', 'built_at'),
     'graph_builds': ('id', 'status', 'detail', 'edge_count', 'sparse_k', 'source_fingerprint', 'distance_policy_version', 'neighbour_policy_version', 'is_current', 'created_at', 'completed_at'),
@@ -684,8 +686,15 @@ class SQLiteAnalysisRepository:
             self._validate(db, 10)
             yield db
 
+    @contextmanager
+    def _read_transaction(self):
+        with self._connection() as db:
+            db.execute('BEGIN')
+            self._validate(db, 10)
+            yield db
+
     def source_revision(self) -> str:
-        with self._transaction() as db:
+        with self._read_transaction() as db:
             return self._graph_source_revision(db)
 
     def _graph_source_revision(self, db):
@@ -706,7 +715,13 @@ class SQLiteAnalysisRepository:
                     JOIN active_tracks at ON at.id=rt.track_id
                     WHERE EXISTS (SELECT 1 FROM active_locations al WHERE al.track_id=rt.track_id)
                 ) WHERE rn=1 AND status='completed' ORDER BY track_id'''):
-            stages = tuple(db.execute('SELECT stage,result FROM stages WHERE run_id=? ORDER BY stage', (run_id,)))
+            stages = []
+            for stage, size in db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (run_id,)):
+                if int(size) > _MAX_STORED_STAGE_RESULT_BYTES:
+                    raise AnalysisError('Oversized stored stage (16 MiB limit)')
+                result = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (run_id, stage)).fetchone()[0]
+                stages.append((stage, result))
+            stages = tuple(stages)
             overrides = tuple(db.execute(
                 'SELECT field,value FROM overrides WHERE track_id=? AND field IN (?,?,?,?,?) ORDER BY field',
                 (track_id, *sorted(GRAPH_SOURCE_OVERRIDE_FIELDS)),
@@ -877,11 +892,14 @@ class SQLiteAnalysisRepository:
                 )
                 if cursor.rowcount != 1:
                     attempt = db.execute(
-                        'SELECT status,is_current,source_revision FROM graph_builds WHERE id=?',
+                        'SELECT status,is_current,source_revision,detail FROM graph_builds WHERE id=?',
                         (build_id,),
                     ).fetchone()
                     if (attempt is not None and attempt[0] == 'building' and attempt[1] == 0
                             and attempt[2] != current_source_revision):
+                        raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
+                    if (attempt is not None and attempt[0] == 'interrupted'
+                            and str(attempt[3]).startswith('graph source changed while warm graph build was running')):
                         raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
                     raise AnalysisError('Graph build attempt is no longer promotable; run graph build again')
             for edge in edges:
@@ -930,14 +948,36 @@ class SQLiteAnalysisRepository:
     def finish_graph_build_attempt(self, build_id: str, status: str, detail: str) -> None:
         if status not in {'failed', 'interrupted'}:
             raise AnalysisError('Invalid graph build attempt status')
+        build_id = str(build_id)
         with self._transaction() as db:
             cursor = db.execute(
                 '''UPDATE graph_builds SET status=?, detail=?, completed_at=CURRENT_TIMESTAMP
                    WHERE id=? AND status='building' AND is_current=0''',
-                (status, str(detail)[:1000], str(build_id)),
+                (status, str(detail)[:1000], build_id),
             )
-            if cursor.rowcount != 1:
-                raise AnalysisError('Graph build attempt is no longer active')
+            if cursor.rowcount == 1:
+                return
+            attempt = db.execute(
+                'SELECT status,is_current,detail FROM graph_builds WHERE id=?',
+                (build_id,),
+            ).fetchone()
+            if attempt is None:
+                raise AnalysisError('Unknown graph build attempt')
+            current_status, is_current, current_detail = attempt
+            if current_status == status and is_current == 0:
+                return
+            if (current_status == 'interrupted'
+                    and str(current_detail).startswith('graph source changed while warm graph build was running')):
+                raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
+            if current_status in {'failed', 'interrupted'}:
+                raise AnalysisError(f'Graph build attempt already {current_status}; cannot mark {status}')
+            if current_status == 'completed':
+                if is_current == 1:
+                    raise AnalysisError('Cannot finish completed current graph build attempt')
+                raise AnalysisError('Cannot finish completed historical graph build attempt')
+            if is_current == 1:
+                raise AnalysisError('Cannot finish current graph build attempt')
+            raise AnalysisError('Graph build attempt is no longer active')
 
     def record_graph_failure(self, sparse_k: int, source_fingerprint: str, detail: str, source_revision: str | None = None) -> str:
         build_id = str(uuid4())
@@ -957,6 +997,13 @@ class SQLiteAnalysisRepository:
         version = db.execute('PRAGMA user_version').fetchone()[0]
         if version < 7:
             return
+        if version >= 10:
+            db.execute(
+                """UPDATE graph_builds
+                   SET status='interrupted', detail=?, completed_at=CURRENT_TIMESTAMP
+                   WHERE status='building' AND is_current=0""",
+                ('graph source changed while warm graph build was running; retry is safe',),
+            )
         db.execute('UPDATE graph_builds SET is_current=0 WHERE is_current=1')
         db.execute('DELETE FROM graph_edges')
         if version >= 8:
@@ -1034,14 +1081,23 @@ class SQLiteAnalysisRepository:
     def register(self, inventory):
         missing = []
         with self._transaction() as db:
+            source_changed = False
             seen = {file.location for file in inventory.files}
             for file in inventory.files:
                 identity = file.identity
-                db.execute('INSERT OR IGNORE INTO tracks VALUES(?,?,?)',
-                           (identity.track_id, identity.sha256, identity.size))
-                stored = db.execute('SELECT sha256,size FROM tracks WHERE id=?', (identity.track_id,)).fetchone()
-                if stored != (identity.sha256, identity.size):
+                stored_track = db.execute('SELECT sha256,size FROM tracks WHERE id=?', (identity.track_id,)).fetchone()
+                if stored_track is None:
+                    source_changed = True
+                    db.execute('INSERT INTO tracks VALUES(?,?,?)', (identity.track_id, identity.sha256, identity.size))
+                    stored_track = (identity.sha256, identity.size)
+                if stored_track != (identity.sha256, identity.size):
                     raise AnalysisError('Duplicate track identity changed while scanning; scan again')
+                stored_location = db.execute(
+                    'SELECT track_id,mtime_ns,format,available FROM locations WHERE path=?',
+                    (file.location,),
+                ).fetchone()
+                if stored_location != (identity.track_id, file.mtime_ns, file.format, 1):
+                    source_changed = True
                 db.execute('INSERT INTO locations VALUES(?,?,?,?,1) ON CONFLICT(path) DO UPDATE SET track_id=excluded.track_id,mtime_ns=excluded.mtime_ns,format=excluded.format,available=1',
                            (file.location, identity.track_id, file.mtime_ns, file.format))
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
@@ -1054,16 +1110,19 @@ class SQLiteAnalysisRepository:
                 reason = _duration_eligibility_reason(duration, source)
                 status = _duration_status(duration, source)
                 new_audio_state = (duration, source, status, reason)
+                if stored_audio_state is None or stored_audio_state[2] != new_audio_state[2]:
+                    source_changed = True
                 db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET duration_seconds=excluded.duration_seconds,duration_source=excluded.duration_source,status=excluded.status,reason=excluded.reason',
                            (identity.track_id, *new_audio_state))
                 if stored_audio_state is not None and stored_audio_state != new_audio_state:
                     self._invalidate_current_graph_feature_evidence(db, identity.track_id)
             if inventory.complete:
-                for (path,) in db.execute('SELECT path FROM scan_roots WHERE root=?', (inventory.root,)):
-                    if path not in seen:
+                for (path, available) in db.execute('SELECT path,available FROM scan_roots JOIN locations USING(path) WHERE root=?', (inventory.root,)):
+                    if path not in seen and available:
                         missing.append(path)
+                        source_changed = True
                         db.execute('UPDATE locations SET available=0 WHERE path=?', (path,))
-            if inventory.files or missing:
+            if source_changed:
                 self._invalidate_current_graph_snapshot(db)
         return tuple(sorted(missing))
 

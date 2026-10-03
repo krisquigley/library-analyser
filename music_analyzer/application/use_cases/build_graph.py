@@ -91,17 +91,13 @@ class BuildGraphSnapshot:
         if not claimed:
             return GraphBuildResult(0, str(source_revision), state='building', reason='warm graph build is running')
         try:
-            _metadata, records = self.read_repository.candidate_snapshot()
-            retained = tuple(
-                record for record in records
-                if _is_graph_source_track(record) and record.run is not None and record.run.status == 'completed'
+            features = []
+            positioned_features = []
+            fingerprint = _stream_source_fingerprint(
+                self._graph_source_records(features, positioned_features)
             )
-            features = tuple(_features(record) for record in retained)
-            positioned = tuple(record for record in retained if _axis_node(record, _map_track(record), '')[0] is not None)
-            positioned_features = tuple(_features(record) for record in positioned)
-            edges = tuple(_bounded_edges(features, self.sparse_k))
-            positioned_edges = tuple(_bounded_edges(positioned_features, self.sparse_k))
-            fingerprint = _source_fingerprint(retained)
+            edges = tuple(_bounded_edges(tuple(features), self.sparse_k))
+            positioned_edges = tuple(_bounded_edges(tuple(positioned_features), self.sparse_k))
             self.write_repository.replace_graph_snapshot(
                 edges, self.sparse_k, fingerprint, positioned_edges,
                 source_revision=source_revision, attempt_id=attempt_id,
@@ -115,6 +111,24 @@ class BuildGraphSnapshot:
             if attempt_id is not None and hasattr(self.write_repository, 'finish_graph_build_attempt'):
                 self.write_repository.finish_graph_build_attempt(attempt_id, 'failed', str(error))
             raise
+
+    def _graph_source_records(self, features, positioned_features):
+        if hasattr(self.read_repository, 'graph_source_tracks'):
+            records = self.read_repository.graph_source_tracks()
+        else:
+            _metadata, records = self.read_repository.candidate_snapshot()
+        for record in records:
+            if not (_is_graph_source_track(record) and record.run is not None and record.run.status == 'completed'):
+                continue
+            feature = _features(record)
+            features.append(feature)
+            if _is_positioned_graph_source_track(record):
+                positioned_features.append(feature)
+            yield record
+
+
+def _is_positioned_graph_source_track(record) -> bool:
+    return _axis_node(record, _map_track(record), '')[0] is not None
 
 
 def _is_graph_source_track(record) -> bool:
@@ -130,43 +144,58 @@ def _is_graph_source_track(record) -> bool:
 
 
 def _source_fingerprint(records) -> str:
-    evidence = []
-    for record in sorted(records, key=lambda item: item.track_id):
-        stages = []
-        for stage in sorted(record.run.stages, key=lambda item: item.stage):
-            stages.append({
-                'stage': stage.stage,
-                'provenance': stage.provenance,
-                'uncertainty': stage.uncertainty,
-                'values': stage.values,
-                'summary': (
-                    None if stage.summary is None else {
-                        'labels': stage.summary.labels,
-                        'mean': stage.summary.mean,
-                        'minimum': stage.summary.minimum,
-                        'maximum': stage.summary.maximum,
-                        'coverage': stage.summary.coverage,
-                        'provisional': stage.summary.provisional,
-                        'uncertainty': stage.summary.uncertainty,
-                    }
-                ),
-            })
-        raw_locations = getattr(record, 'source_locations', ()) or getattr(record, 'locations', ())
-        locations = tuple(sorted(str(path) for path in raw_locations))
-        display_label = str(getattr(record, 'display_label', ''))
-        evidence.append({
-            'track_id': record.track_id,
-            'run_id': record.run.run_id,
-            'available_locations': int(getattr(record, 'available_locations', len(locations))),
-            'locations': locations,
-            'display_label': display_label,
-            'overrides': tuple(
-                sorted(
-                    (field, value) for field, value in getattr(record, 'overrides', ())
-                    if field in GRAPH_SOURCE_OVERRIDE_FIELDS
-                )
+    return _stream_source_fingerprint(sorted(records, key=lambda item: item.track_id))
+
+
+def _stream_source_fingerprint(records) -> str:
+    digest = hashlib.sha256()
+    digest.update(b'[')
+    first = True
+    for record in records:
+        if first:
+            first = False
+        else:
+            digest.update(b',')
+        payload = json.dumps(_source_fingerprint_evidence(record), sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+        digest.update(payload.encode('utf-8'))
+    digest.update(b']')
+    return digest.hexdigest()
+
+
+def _source_fingerprint_evidence(record) -> dict:
+    stages = []
+    for stage in sorted(record.run.stages, key=lambda item: item.stage):
+        stages.append({
+            'stage': stage.stage,
+            'provenance': stage.provenance,
+            'uncertainty': stage.uncertainty,
+            'values': stage.values,
+            'summary': (
+                None if stage.summary is None else {
+                    'labels': stage.summary.labels,
+                    'mean': stage.summary.mean,
+                    'minimum': stage.summary.minimum,
+                    'maximum': stage.summary.maximum,
+                    'coverage': stage.summary.coverage,
+                    'provisional': stage.summary.provisional,
+                    'uncertainty': stage.summary.uncertainty,
+                }
             ),
-            'stages': stages,
         })
-    payload = json.dumps(evidence, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
-    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+    raw_locations = getattr(record, 'source_locations', ()) or getattr(record, 'locations', ())
+    locations = tuple(sorted(str(path) for path in raw_locations))
+    display_label = str(getattr(record, 'display_label', ''))
+    return {
+        'track_id': record.track_id,
+        'run_id': record.run.run_id,
+        'available_locations': int(getattr(record, 'available_locations', len(locations))),
+        'locations': locations,
+        'display_label': display_label,
+        'overrides': tuple(
+            sorted(
+                (field, value) for field, value in getattr(record, 'overrides', ())
+                if field in GRAPH_SOURCE_OVERRIDE_FIELDS
+            )
+        ),
+        'stages': stages,
+    }
