@@ -693,10 +693,12 @@ class SQLiteAnalysisRepository:
                            row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
                     FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
                     JOIN active_tracks at ON at.id=rt.track_id
+                    WHERE EXISTS (SELECT 1 FROM active_locations al WHERE al.track_id=rt.track_id)
                 ) WHERE rn=1 AND status='completed' ORDER BY track_id'''):
             stages = tuple(db.execute('SELECT stage,result FROM stages WHERE run_id=? ORDER BY stage', (run_id,)))
             overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
-            rows.append((track_id, run_id, stages, overrides))
+            active_locations = tuple(db.execute('SELECT path FROM active_locations WHERE track_id=? ORDER BY path', (track_id,)))
+            rows.append((track_id, run_id, active_locations, stages, overrides))
         payload = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 

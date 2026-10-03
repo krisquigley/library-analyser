@@ -42,7 +42,7 @@ class BuildGraphSnapshot:
             _metadata, records = self.read_repository.candidate_snapshot()
             retained = tuple(
                 record for record in records
-                if is_active_library_track(record) and record.run is not None and record.run.status == 'completed'
+                if _is_graph_source_track(record) and record.run is not None and record.run.status == 'completed'
             )
             features = tuple(_features(record) for record in retained)
             positioned = tuple(record for record in retained if _axis_node(record, _map_track(record), '')[0] is not None)
@@ -63,6 +63,18 @@ class BuildGraphSnapshot:
             if attempt_id is not None and hasattr(self.write_repository, 'finish_graph_build_attempt'):
                 self.write_repository.finish_graph_build_attempt(attempt_id, 'failed', str(error))
             raise
+
+
+def _is_graph_source_track(record) -> bool:
+    if not is_active_library_track(record):
+        return False
+    available_locations = getattr(record, 'available_locations', None)
+    if available_locations is not None:
+        return int(available_locations) > 0
+    locations = getattr(record, 'locations', None)
+    if locations is not None:
+        return bool(locations)
+    return True
 
 
 def _source_fingerprint(records) -> str:
@@ -87,6 +99,12 @@ def _source_fingerprint(records) -> str:
                     }
                 ),
             })
-        evidence.append({'track_id': record.track_id, 'run_id': record.run.run_id, 'stages': stages})
+        evidence.append({
+            'track_id': record.track_id,
+            'run_id': record.run.run_id,
+            'available_locations': int(getattr(record, 'available_locations', len(getattr(record, 'locations', ())))),
+            'overrides': tuple(sorted(getattr(record, 'overrides', ()))),
+            'stages': stages,
+        })
     payload = json.dumps(evidence, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
