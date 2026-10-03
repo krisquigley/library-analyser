@@ -21,6 +21,8 @@ class GraphBuildResult:
     source_fingerprint: str
     distance_policy_version: str = DISTANCE_POLICY_VERSION
     neighbour_policy_version: str = NEIGHBOUR_POLICY_VERSION
+    state: str = 'built'
+    reason: str = ''
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,8 @@ class EnsureCurrentGraphSnapshot:
         else:
             builder = builder_factory(self.read_repository, self.write_repository, self.sparse_k)
         result = builder.execute()
+        if getattr(result, 'state', '') == 'building':
+            return GraphEnsureResult('building', False, None, getattr(result, 'reason', 'warm graph build is running'))
         return GraphEnsureResult('built', True, getattr(result, 'edge_count', None))
 
 
@@ -79,8 +83,13 @@ class BuildGraphSnapshot:
 
     def execute(self) -> GraphBuildResult:
         source_revision = self.write_repository.source_revision() if hasattr(self.write_repository, 'source_revision') else None
-        attempt_id = (self.write_repository.begin_graph_build(self.sparse_k, source_revision)
-                      if source_revision is not None and hasattr(self.write_repository, 'begin_graph_build') else None)
+        claimed = source_revision is None or not hasattr(self.write_repository, 'begin_graph_build')
+        attempt_id = None
+        if source_revision is not None and hasattr(self.write_repository, 'begin_graph_build'):
+            attempt_id = self.write_repository.begin_graph_build(self.sparse_k, source_revision)
+            claimed = attempt_id is not None
+        if not claimed:
+            return GraphBuildResult(0, str(source_revision), state='building', reason='warm graph build is running')
         try:
             _metadata, records = self.read_repository.candidate_snapshot()
             retained = tuple(

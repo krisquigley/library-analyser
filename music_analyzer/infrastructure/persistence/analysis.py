@@ -5,8 +5,10 @@ Exact-file catalogue identity; each explicit analysis request is still a new run
 """
 from contextlib import contextmanager
 from dataclasses import asdict
+import errno
 import json
 import hashlib
+import os
 from math import isfinite
 from pathlib import Path
 import sqlite3
@@ -706,6 +708,55 @@ class SQLiteAnalysisRepository:
         payload = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
+    def _graph_build_owner_detail(self) -> str:
+        return json.dumps({
+            'reason': 'warm graph build is running',
+            'owner_pid': os.getpid(),
+            'owner_start': self._process_start_token(os.getpid()),
+        }, sort_keys=True, separators=(',', ':'))
+
+    def _graph_build_reason(self, detail: str) -> str:
+        try:
+            payload = json.loads(detail)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return detail or 'warm graph build is running'
+        if isinstance(payload, dict):
+            return str(payload.get('reason') or 'warm graph build is running')
+        return 'warm graph build is running'
+
+    def _graph_build_owner_alive(self, detail: str) -> bool:
+        try:
+            payload = json.loads(detail)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return True
+        if not isinstance(payload, dict) or 'owner_pid' not in payload:
+            return True
+        try:
+            pid = int(payload['owner_pid'])
+        except (TypeError, ValueError):
+            return True
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except OSError as error:
+            if error.errno == errno.ESRCH:
+                return False
+            return True
+        expected_start = payload.get('owner_start')
+        if expected_start:
+            return self._process_start_token(pid) == expected_start
+        return True
+
+    def _process_start_token(self, pid: int) -> str:
+        stat_path = Path('/proc') / str(pid) / 'stat'
+        try:
+            stat = stat_path.read_text(encoding='utf-8')
+        except OSError:
+            return ''
+        suffix = stat.rsplit(') ', 1)[-1].split()
+        return suffix[19] if len(suffix) > 19 else ''
+
     def current_graph_snapshot(self, sparse_k: int, source_revision: str) -> dict:
         action = 'Run music-analyzer graph build --database DB before loading the mood-axis graph.'
         with self._transaction() as db:
@@ -727,20 +778,43 @@ class SQLiteAnalysisRepository:
             build_id, status, detail, stored_k, stored_revision, distance_policy, neighbour_policy = latest
             if status == 'building' and int(stored_k) == int(sparse_k) and stored_revision == str(source_revision) \
                     and distance_policy == DISTANCE_POLICY_VERSION and neighbour_policy == NEIGHBOUR_POLICY_VERSION:
-                return {'state': 'building', 'build_id': build_id, 'reason': detail or 'warm graph build is running', 'action': action}
+                if self._graph_build_owner_alive(detail):
+                    return {'state': 'building', 'build_id': build_id, 'reason': self._graph_build_reason(detail), 'action': action}
+                db.execute(
+                    '''UPDATE graph_builds SET status='interrupted', detail=?, completed_at=CURRENT_TIMESTAMP
+                       WHERE id=? AND status='building' AND is_current=0''',
+                    ('warm graph build owner is no longer running; retry is safe', build_id),
+                )
+                return {'state': 'interrupted', 'build_id': build_id,
+                        'reason': 'warm graph build owner is no longer running; retry is safe', 'action': action}
             if status in {'failed', 'interrupted'} and int(stored_k) == int(sparse_k) and stored_revision == str(source_revision):
                 return {'state': status, 'build_id': build_id, 'reason': detail or f'latest warm graph build {status}', 'action': action}
             return {'state': 'stale', 'reason': 'warm graph snapshot is not current', 'action': action}
 
-    def begin_graph_build(self, sparse_k: int, source_revision: str) -> str:
+    def begin_graph_build(self, sparse_k: int, source_revision: str) -> str | None:
         build_id = str(uuid4())
         with self._transaction() as db:
+            building = db.execute('''
+                SELECT id,detail FROM graph_builds
+                WHERE status='building' AND sparse_k=? AND source_revision=?
+                  AND distance_policy_version=? AND neighbour_policy_version=?
+                ORDER BY created_at DESC,rowid DESC LIMIT 1
+            ''', (int(sparse_k), str(source_revision), DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION)).fetchone()
+            if building is not None:
+                existing_id, detail = building
+                if self._graph_build_owner_alive(detail):
+                    return None
+                db.execute(
+                    '''UPDATE graph_builds SET status='interrupted', detail=?, completed_at=CURRENT_TIMESTAMP
+                       WHERE id=? AND status='building' AND is_current=0''',
+                    ('warm graph build owner is no longer running; retry is safe', existing_id),
+                )
             db.execute(
                 '''INSERT INTO graph_builds(
                     id,status,detail,edge_count,sparse_k,source_fingerprint,source_revision,attempt_revision,
                     distance_policy_version,neighbour_policy_version,is_current,completed_at)
                    VALUES(?,?,?,?,?,?,?,?,?,?,0,NULL)''',
-                (build_id, 'building', 'explicit graph build is running', 0, int(sparse_k), str(source_revision), str(source_revision),
+                (build_id, 'building', self._graph_build_owner_detail(), 0, int(sparse_k), str(source_revision), str(source_revision),
                  str(uuid4()), DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION),
             )
         return build_id

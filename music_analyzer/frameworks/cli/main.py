@@ -331,7 +331,10 @@ def main(argv: list[str] | None = None) -> int:
             writer = SQLiteAnalysisRepository(settings.database)
             reader = ReadOnlyExplorerSQLiteRepository(settings.database)
             result = BuildGraphSnapshot(reader, writer).execute()
-            output = f'Built {result.edge_count} graph edges'
+            if getattr(result, 'state', '') == 'building':
+                output = result.reason or 'Graph build already running'
+            else:
+                output = f'Built {result.edge_count} graph edges'
             ready = True
         elif args.command == 'explorer':
             if args.host != '127.0.0.1':
