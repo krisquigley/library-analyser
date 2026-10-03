@@ -13,6 +13,7 @@ import sqlite3
 from uuid import uuid4
 
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
+from music_analyzer.application.use_cases.build_graph import GRAPH_SOURCE_OVERRIDE_FIELDS
 from music_analyzer.application.use_cases.graph_feature_evidence import (
     build_graph_feature_evidence,
     validate_graph_feature_evidence_payload,
@@ -696,7 +697,10 @@ class SQLiteAnalysisRepository:
                     WHERE EXISTS (SELECT 1 FROM active_locations al WHERE al.track_id=rt.track_id)
                 ) WHERE rn=1 AND status='completed' ORDER BY track_id'''):
             stages = tuple(db.execute('SELECT stage,result FROM stages WHERE run_id=? ORDER BY stage', (run_id,)))
-            overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
+            overrides = tuple(db.execute(
+                'SELECT field,value FROM overrides WHERE track_id=? AND field IN (?,?,?,?,?) ORDER BY field',
+                (track_id, *sorted(GRAPH_SOURCE_OVERRIDE_FIELDS)),
+            ))
             active_locations = tuple(db.execute('SELECT path FROM active_locations WHERE track_id=? ORDER BY path', (track_id,)))
             rows.append((track_id, run_id, active_locations, stages, overrides))
         payload = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)

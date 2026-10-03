@@ -12,6 +12,9 @@ from music_analyzer.application.use_cases.explorer import _axis_node, _map_track
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, _bounded_edges
 
 
+GRAPH_SOURCE_OVERRIDE_FIELDS = frozenset({'bpm', 'key', 'genres', 'mood', 'energy'})
+
+
 @dataclass(frozen=True)
 class GraphBuildResult:
     edge_count: int
@@ -103,7 +106,12 @@ def _source_fingerprint(records) -> str:
             'track_id': record.track_id,
             'run_id': record.run.run_id,
             'available_locations': int(getattr(record, 'available_locations', len(getattr(record, 'locations', ())))),
-            'overrides': tuple(sorted(getattr(record, 'overrides', ()))),
+            'overrides': tuple(
+                sorted(
+                    (field, value) for field, value in getattr(record, 'overrides', ())
+                    if field in GRAPH_SOURCE_OVERRIDE_FIELDS
+                )
+            ),
             'stages': stages,
         })
     payload = json.dumps(evidence, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)

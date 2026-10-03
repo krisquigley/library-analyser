@@ -60,6 +60,68 @@ class GraphBuildSourceRevisionRemediationTests(unittest.TestCase):
             self.assertEqual(builds[-1][0:2], ('completed', 1))
             self.assertEqual(builds[-1][2], first.source_fingerprint)
 
+    def test_non_graph_instruments_override_keeps_current_graph_and_stable_rebuild_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            track_ids = create_three_track_graph_db(db_path)
+            first = _build_graph(db_path)
+
+            repo = SQLiteAnalysisRepository(str(db_path))
+            repo.set_override(track_ids[0], 'instruments', 'piano, drums')
+            with closing(sqlite3.connect(db_path)) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0], 1)
+
+            second = _build_graph(db_path)
+
+            self.assertEqual(second.source_fingerprint, first.source_fingerprint)
+            builds = _current_builds(db_path)
+            self.assertEqual(builds[-1][0:2], ('completed', 1))
+            self.assertEqual(builds[-1][2], first.source_fingerprint)
+
+    def test_in_flight_non_graph_instruments_override_does_not_reject_atomic_promotion(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            track_ids = create_three_track_graph_db(db_path)
+            writer = SQLiteAnalysisRepository(str(db_path))
+            reader = ReadOnlyExplorerSQLiteRepository(str(db_path))
+
+            source_revision = writer.source_revision()
+            attempt_id = writer.begin_graph_build(10, source_revision)
+            _metadata, records = reader.candidate_snapshot()
+            retained = tuple(record for record in records if record.run is not None and record.run.status == 'completed')
+            features = tuple(_features(record) for record in retained)
+            edges = tuple(_bounded_edges(features, 10))
+            fingerprint = _source_fingerprint(retained)
+            self.assertGreater(len(edges), 0)
+
+            writer.set_override(track_ids[0], 'instruments', 'piano, drums')
+            build_id = writer.replace_graph_snapshot(edges, 10, fingerprint, source_revision=source_revision, attempt_id=attempt_id)
+
+            self.assertEqual(build_id, attempt_id)
+            builds = _current_builds(db_path)
+            self.assertEqual(builds[-1][0:2], ('completed', 1))
+            self.assertEqual(builds[-1][2], fingerprint)
+
+    def test_in_flight_graph_relevant_bpm_override_rejects_obsolete_promotion(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            track_ids = create_three_track_graph_db(db_path)
+            writer = SQLiteAnalysisRepository(str(db_path))
+            reader = ReadOnlyExplorerSQLiteRepository(str(db_path))
+
+            source_revision = writer.source_revision()
+            attempt_id = writer.begin_graph_build(10, source_revision)
+            _metadata, records = reader.candidate_snapshot()
+            retained = tuple(record for record in records if record.run is not None and record.run.status == 'completed')
+            features = tuple(_features(record) for record in retained)
+            edges = tuple(_bounded_edges(features, 10))
+            fingerprint = _source_fingerprint(retained)
+
+            writer.set_override(track_ids[0], 'bpm', '121.0')
+
+            with self.assertRaisesRegex(AnalysisError, 'Graph source changed before snapshot promotion'):
+                writer.replace_graph_snapshot(edges, 10, fingerprint, source_revision=source_revision, attempt_id=attempt_id)
+
     def test_complete_scan_availability_loss_rejects_stale_promotion_and_readonly_reports_no_current_edges(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / 'analysis.sqlite'
