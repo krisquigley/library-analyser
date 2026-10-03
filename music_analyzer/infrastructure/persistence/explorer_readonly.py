@@ -488,8 +488,8 @@ class ReadOnlyExplorerSQLiteRepository:
         track = db.execute('SELECT id,sha256,size FROM tracks WHERE id=?', (track_id,)).fetchone()
         if not track:
             raise AnalysisError('Unknown explorer track')
-        locations = db.execute('SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path', (track_id,)).fetchall()
-        display_label = Path(locations[0][0]).name if locations else ''
+        locations = tuple(row[0] for row in db.execute('SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path', (track_id,)))
+        display_label = Path(locations[0]).name if locations else ''
         row = db.execute('SELECT r.id,r.status,r.detail FROM runs r JOIN run_tracks t ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', (track_id,)).fetchone()
         run = None
         if row:
@@ -500,7 +500,7 @@ class ReadOnlyExplorerSQLiteRepository:
             run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
         overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
         metadata = self._read_metadata(db, track_id)
-        return ExplorerStoredTrack(track[0], track[1], track[2], display_label, len(locations), run, overrides, metadata)
+        return ExplorerStoredTrack(track[0], track[1], track[2], display_label, len(locations), run, overrides, metadata, locations)
 
 
     def _summary_from_row(self, row):

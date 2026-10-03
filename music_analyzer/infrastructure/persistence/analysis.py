@@ -729,10 +729,12 @@ class SQLiteAnalysisRepository:
             expected_source_revision = str(source_revision) if source_revision is not None else current_source_revision
             if expected_source_revision != current_source_revision:
                 raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
-            stale_same_fingerprint = db.execute('''
-                SELECT 1 FROM graph_builds
-                WHERE source_fingerprint=? AND source_revision<>? LIMIT 1
-            ''', (str(source_fingerprint), current_source_revision)).fetchone()
+            stale_same_fingerprint = None
+            if source_revision is None:
+                stale_same_fingerprint = db.execute('''
+                    SELECT 1 FROM graph_builds
+                    WHERE source_fingerprint=? AND source_revision<>? LIMIT 1
+                ''', (str(source_fingerprint), current_source_revision)).fetchone()
             if stale_same_fingerprint:
                 raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
             if attempt_id is None:

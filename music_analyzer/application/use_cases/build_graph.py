@@ -102,10 +102,15 @@ def _source_fingerprint(records) -> str:
                     }
                 ),
             })
+        raw_locations = getattr(record, 'source_locations', ()) or getattr(record, 'locations', ())
+        locations = tuple(sorted(str(path) for path in raw_locations))
+        display_label = str(getattr(record, 'display_label', ''))
         evidence.append({
             'track_id': record.track_id,
             'run_id': record.run.run_id,
-            'available_locations': int(getattr(record, 'available_locations', len(getattr(record, 'locations', ())))),
+            'available_locations': int(getattr(record, 'available_locations', len(locations))),
+            'locations': locations,
+            'display_label': display_label,
             'overrides': tuple(
                 sorted(
                     (field, value) for field, value in getattr(record, 'overrides', ())

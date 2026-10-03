@@ -34,6 +34,7 @@ class ExplorerStoredTrack:
     run: AnalysisReport | None
     overrides: tuple[tuple[str, str], ...] = ()
     metadata: TrackMetadata = TrackMetadata()
+    source_locations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
