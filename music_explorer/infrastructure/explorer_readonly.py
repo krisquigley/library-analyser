@@ -13,6 +13,7 @@ import re
 import sqlite3
 
 from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, MoodAxisEdge, ScoreSummary, StageResult, TrackMetadata
+from music_explorer.application.use_cases.explorer import _build_mood_axis_graph
 from music_explorer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 
 APPLICATION_ID = 0x4D414E41
@@ -278,6 +279,15 @@ class ReadOnlyExplorerSQLiteRepository:
             ids = tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
             return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
 
+    def mood_axis_graph_snapshot(self, mood: str | None = None, sparse_k: int = 10):
+        with self._transaction() as db:
+            metadata = self._metadata(db)
+            if int(metadata.get('schema_version', 0)) < 8:
+                return None
+            warm_edges = self._current_positioned_graph_edges(db, sparse_k)
+            records = self._compact_graph_tracks(db)
+            return _build_mood_axis_graph(metadata, records, self, sparse_k, mood, warm_edges=warm_edges)
+
     def current_graph_edges(self, sparse_k: int | None = None):
         with self._transaction() as db:
             return self._current_graph_edges(db, sparse_k)
@@ -386,6 +396,91 @@ class ReadOnlyExplorerSQLiteRepository:
             'read_policy': 'bounded_read_transaction',
         }
 
+    def _compact_graph_tracks(self, db):
+        rows = db.execute('''
+            WITH first_location AS (
+                SELECT track_id, min(path) AS path, count(*) AS available_locations
+                FROM active_locations GROUP BY track_id
+            ), latest_run AS (
+                SELECT track_id, run_id, status, detail FROM (
+                    SELECT rt.track_id, r.id AS run_id, r.status AS status, r.detail AS detail,
+                           row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
+                    FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                    JOIN active_tracks at ON at.id=rt.track_id
+                ) WHERE rn=1
+            )
+            SELECT t.id, t.sha256, t.size,
+                   COALESCE(first_location.path, '') AS first_path,
+                   COALESCE(first_location.available_locations, 0) AS available_locations,
+                   latest_run.run_id, latest_run.status, latest_run.detail,
+                   COALESCE(tm.common_json, '[]'), COALESCE(tm.tags_json, '[]'), COALESCE(tm.warnings_json, '[]'),
+                   a.duration_seconds, a.duration_source
+            FROM active_tracks t
+            LEFT JOIN first_location ON first_location.track_id=t.id
+            LEFT JOIN latest_run ON latest_run.track_id=t.id
+            LEFT JOIN track_metadata tm ON tm.track_id=t.id
+            LEFT JOIN track_audio a ON a.track_id=t.id
+            ORDER BY t.id
+        ''').fetchall()
+        stages_by_run = {}
+        for run_id, stage, size, payload in db.execute('''
+            WITH latest_run AS (
+                SELECT track_id, run_id FROM (
+                    SELECT rt.track_id, r.id AS run_id,
+                           row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
+                    FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                    JOIN active_tracks at ON at.id=rt.track_id
+                ) WHERE rn=1
+            )
+            SELECT s.run_id, s.stage, length(CAST(s.result AS BLOB)), s.result
+            FROM latest_run JOIN stages s ON s.run_id=latest_run.run_id
+            ORDER BY latest_run.track_id, s.stage
+        '''):
+            stages_by_run.setdefault(run_id, []).append(self._stage_from_payload(stage, size, payload))
+        overrides_by_track = {}
+        for track_id, field, value in db.execute('''
+            SELECT o.track_id,o.field,o.value FROM overrides o
+            JOIN active_tracks at ON at.id=o.track_id
+            ORDER BY o.track_id,o.field
+        '''):
+            overrides_by_track.setdefault(track_id, []).append((field, value))
+        records = []
+        for row in rows:
+            (track_id, sha256, size, first_path, available_locations, run_id, status, detail,
+             common_json, tags_json, warnings_json, duration_seconds, duration_source) = row
+            run = None
+            if run_id is not None:
+                run = AnalysisReport(run_id, status, tuple(stages_by_run.get(run_id, ())), detail or '')
+            try:
+                metadata = self._metadata_from_json(common_json, tags_json, warnings_json, (duration_seconds, duration_source))
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                raise AnalysisError('Invalid stored metadata') from error
+            records.append(ExplorerStoredTrack(
+                track_id,
+                sha256,
+                size,
+                Path(first_path).name if first_path else '',
+                int(available_locations),
+                run,
+                tuple(overrides_by_track.get(track_id, ())),
+                metadata,
+            ))
+        return tuple(records)
+
+    def _stage_from_payload(self, stage, size, payload):
+        if size > 16 * 1024 * 1024:
+            raise AnalysisError('Oversized stored stage (16 MiB limit)')
+        try:
+            data = json.loads(payload)
+            if not isinstance(data, dict):
+                raise ValueError('Stage payload must be a JSON object')
+            result = stage_from_mapping(data)
+            if result.stage != stage:
+                raise ValueError('Stage name mismatch')
+            return type(result)(result.stage, result.provenance, result.uncertainty, result.values, result.windows, result.summary, ())
+        except (ValueError, KeyError, TypeError, IndexError, AttributeError, json.JSONDecodeError) as error:
+            raise AnalysisError('Invalid stored stage: ' + str(error)) from error
+
     def _read_track(self, db, track_id: str):
         track = db.execute('SELECT id,sha256,size FROM tracks WHERE id=?', (track_id,)).fetchone()
         if not track:
@@ -397,21 +492,8 @@ class ReadOnlyExplorerSQLiteRepository:
         if row:
             stages = []
             for stage, size in db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (row[0],)):
-                if size > 16 * 1024 * 1024:
-                    raise AnalysisError('Oversized stored stage (16 MiB limit)')
                 payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (row[0], stage)).fetchone()[0]
-                try:
-                    data = json.loads(payload)
-                    if not isinstance(data, dict):
-                        raise ValueError('Stage payload must be a JSON object')
-                    result = stage_from_mapping(data)
-                    if result.stage != stage:
-                        raise ValueError('Stage name mismatch')
-                    # Do not expose raw prediction tensors through explorer DTOs.
-                    result = type(result)(result.stage, result.provenance, result.uncertainty, result.values, result.windows, result.summary, ())
-                    stages.append(result)
-                except (ValueError, KeyError, TypeError, IndexError, AttributeError, json.JSONDecodeError) as error:
-                    raise AnalysisError('Invalid stored stage: ' + str(error)) from error
+                stages.append(self._stage_from_payload(stage, size, payload))
             run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
         overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
         metadata = self._read_metadata(db, track_id)

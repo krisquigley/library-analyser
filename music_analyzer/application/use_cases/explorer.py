@@ -85,46 +85,62 @@ class BuildMoodAxisGraph:
         self.sparse_k = sparse_k
 
     def execute(self, mood: str | None = None):
+        compact_reader = getattr(self.repository, 'mood_axis_graph_snapshot', None)
+        if compact_reader is not None:
+            compact = compact_reader(mood, self.sparse_k)
+            if compact is not None:
+                return compact
         raw_meta, records = self.repository.candidate_snapshot()
-        records = tuple(record for record in records if is_active_library_track(record))
-        available = _available_moods(records)
-        selected = _resolve_mood(mood, available)
-        positioned = []
-        unpositioned = []
-        for record in records:
-            detail = _map_track(record)
-            node, reasons = _axis_node(record, detail, selected)
-            if node is None:
-                unpositioned.append(UnpositionedTrack(record.track_id, record.display_label, tuple(reasons)))
-            else:
-                positioned.append(node)
-        positioned_ids = {node.track_id for node in positioned}
-        graph_status, edges = _warm_graph_edges(self.repository, raw_meta, positioned_ids, self.sparse_k, records)
-        metadata = {
-            'application_id': int(raw_meta.get('application_id', 0)),
-            'schema_version': int(raw_meta.get('schema_version', 0)),
-            'read_policy': str(raw_meta.get('read_policy', 'coherent_in_memory_snapshot')),
-            'track_count': len(records),
-            'coordinate_policy': 'fixed-valence-arousal-bpm-v1',
-            'normalization_policy': 'native-energy-and-fixed-bpm-20-per-unit-v1',
-            'energy_scale': 'Emomusic native valence/arousal regression coordinates retained when model provenance is compatible; no arbitrary clipping or DJ-energy interpretation',
-            'bpm_scale': 'Raw positive finite BPM, fixed display transform BPM / 20 (20 BPM per normalized unit); never octave-coerced or sample-refitted',
-            'mood_scale': 'Optional selected Jamendo mood/theme sigmoid labelled mean score on fixed [0,1] strip only; never a coordinate or visibility condition',
-            'genre_filter_policy': 'ANY selected genre with finite retained mean score > 0.1 (detail display cutoff, not provisional classification cutoff)',
-            'edge_policy': NEIGHBOUR_POLICY_VERSION,
-            'distance_policy': DISTANCE_POLICY_VERSION,
-            'sparse_k': self.sparse_k,
-        }
-        if graph_status is not None:
-            metadata['graph_status'] = graph_status
-        return MoodAxisGraph(
-            metadata=metadata,
-            selected_mood=selected,
-            available_moods=available,
-            positioned=tuple(positioned),
-            unpositioned=tuple(unpositioned),
-            edges=edges,
-        )
+        return _build_mood_axis_graph(raw_meta, records, self.repository, self.sparse_k, mood)
+
+
+def _build_mood_axis_graph(raw_meta, records, repository, sparse_k, mood, warm_edges=None):
+    records = tuple(record for record in records if is_active_library_track(record))
+    available = _available_moods(records)
+    selected = _resolve_mood(mood, available)
+    positioned = []
+    unpositioned = []
+    for record in records:
+        detail = _map_track(record)
+        node, reasons = _axis_node(record, detail, selected)
+        if node is None:
+            unpositioned.append(UnpositionedTrack(record.track_id, record.display_label, tuple(reasons)))
+        else:
+            positioned.append(node)
+    positioned_ids = {node.track_id for node in positioned}
+    if warm_edges is None:
+        graph_status, edges = _warm_graph_edges(repository, raw_meta, positioned_ids, sparse_k, records)
+    else:
+        graph_status, candidate_edges = warm_edges
+        if graph_status is not None and graph_status.get('state') == 'ready':
+            edges = tuple(edge for edge in candidate_edges if edge.a in positioned_ids and edge.b in positioned_ids)
+        else:
+            edges = ()
+    metadata = {
+        'application_id': int(raw_meta.get('application_id', 0)),
+        'schema_version': int(raw_meta.get('schema_version', 0)),
+        'read_policy': str(raw_meta.get('read_policy', 'coherent_in_memory_snapshot')),
+        'track_count': len(records),
+        'coordinate_policy': 'fixed-valence-arousal-bpm-v1',
+        'normalization_policy': 'native-energy-and-fixed-bpm-20-per-unit-v1',
+        'energy_scale': 'Emomusic native valence/arousal regression coordinates retained when model provenance is compatible; no arbitrary clipping or DJ-energy interpretation',
+        'bpm_scale': 'Raw positive finite BPM, fixed display transform BPM / 20 (20 BPM per normalized unit); never octave-coerced or sample-refitted',
+        'mood_scale': 'Optional selected Jamendo mood/theme sigmoid labelled mean score on fixed [0,1] strip only; never a coordinate or visibility condition',
+        'genre_filter_policy': 'ANY selected genre with finite retained mean score > 0.1 (detail display cutoff, not provisional classification cutoff)',
+        'edge_policy': NEIGHBOUR_POLICY_VERSION,
+        'distance_policy': DISTANCE_POLICY_VERSION,
+        'sparse_k': sparse_k,
+    }
+    if graph_status is not None:
+        metadata['graph_status'] = graph_status
+    return MoodAxisGraph(
+        metadata=metadata,
+        selected_mood=selected,
+        available_moods=available,
+        positioned=tuple(positioned),
+        unpositioned=tuple(unpositioned),
+        edges=edges,
+    )
 
 
 class FilterMoodAxisGraph:
