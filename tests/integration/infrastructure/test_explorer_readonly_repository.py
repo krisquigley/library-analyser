@@ -316,13 +316,76 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
                 db.close()
             self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(v7_path)).metadata()['schema_version'], 7)
 
+    def test_current_graph_with_stale_policy_version_reports_stale_instead_of_corrupt(self):
+        cases = (
+            ('distance_policy_version', 'stale-distance-policy'),
+            ('neighbour_policy_version', 'stale-neighbour-policy'),
+        )
+        for column, value in cases:
+            with self.subTest(column=column), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / 'analysis.sqlite'
+                db = create_v7_graph_db(path)
+                source = 'sha256:' + '1' * 64
+                target = 'sha256:' + '2' * 64
+                try:
+                    for tid in (source, target):
+                        db.execute('INSERT INTO tracks VALUES(?,?,?)', (tid, tid.split(':')[1], 10))
+                    row = {
+                        'id': 'build-stale',
+                        'status': 'completed',
+                        'detail': '',
+                        'edge_count': 1,
+                        'sparse_k': 10,
+                        'source_fingerprint': 'synthetic',
+                        'distance_policy_version': DISTANCE_POLICY_VERSION,
+                        'neighbour_policy_version': NEIGHBOUR_POLICY_VERSION,
+                        'is_current': 1,
+                        'created_at': 'created',
+                        'completed_at': 'completed',
+                    }
+                    row[column] = value
+                    db.execute(
+                        '''INSERT INTO graph_builds(
+                            id,status,detail,edge_count,sparse_k,source_fingerprint,
+                            distance_policy_version,neighbour_policy_version,is_current,created_at,completed_at)
+                           VALUES(:id,:status,:detail,:edge_count,:sparse_k,:source_fingerprint,
+                                  :distance_policy_version,:neighbour_policy_version,:is_current,:created_at,:completed_at)''',
+                        row,
+                    )
+                    edge_row = {
+                        'build_id': 'build-stale',
+                        'source_track_id': source,
+                        'target_track_id': target,
+                        'score': 0.75,
+                        'distance': 0.25,
+                        'supported_group_count': 1,
+                        'distance_policy_version': row['distance_policy_version'],
+                        'neighbour_policy_version': row['neighbour_policy_version'],
+                    }
+                    db.execute(
+                        '''INSERT INTO graph_edges(source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version)
+                           VALUES(:source_track_id,:target_track_id,:score,:distance,:supported_group_count,:distance_policy_version,:neighbour_policy_version)''',
+                        edge_row,
+                    )
+                    db.execute(
+                        '''INSERT INTO graph_build_edges(build_id,source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version)
+                           VALUES(:build_id,:source_track_id,:target_track_id,:score,:distance,:supported_group_count,:distance_policy_version,:neighbour_policy_version)''',
+                        edge_row,
+                    )
+                    db.commit()
+                finally:
+                    db.close()
+
+                status, edges = ReadOnlyExplorerSQLiteRepository(str(path)).current_graph_edges()
+                self.assertEqual(status['state'], 'stale')
+                self.assertIn('policy', status['reason'])
+                self.assertEqual(edges, ())
+
     def test_rejects_tampered_v7_graph_build_rows(self):
         cases = (
             ('status', {'status': 'running'}, True),
             ('edge_count', {'edge_count': -1}, True),
             ('sparse_k', {'sparse_k': -1}, True),
-            ('distance_policy_version', {'distance_policy_version': 'stale-distance-policy'}, False),
-            ('neighbour_policy_version', {'neighbour_policy_version': 'stale-neighbour-policy'}, False),
         )
         for name, update, ignore_checks in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as td:

@@ -5,7 +5,9 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from music_analyzer.application.dto.analysis import AnalysisError
+from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
+from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
+from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.domain.projection import ProjectionEdge
 from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID, SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
@@ -45,7 +47,7 @@ def create_v6_database(path: Path) -> None:
 
 
 class GraphBuildSchemaMigrationTests(unittest.TestCase):
-    def test_v6_database_migrates_to_v7_with_graph_edge_schema_without_losing_history(self):
+    def test_v6_database_migrates_to_v8_with_graph_edge_schema_without_losing_history(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             create_v6_database(path)
@@ -53,7 +55,7 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
             SQLiteAnalysisRepository(str(path))
 
             with closing(sqlite3.connect(path)) as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
                 self.assertEqual(
                     db.execute('SELECT id,sha256,size FROM tracks').fetchone(),
                     ('sha256:' + 'a' * 64, 'a' * 64, 123),
@@ -146,7 +148,7 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
                 self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (failed_id,)).fetchone()[0], 0)
 
             # The read-only mirror accepts the strict versioned schema and row invariants.
-            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).metadata()['schema_version'], 7)
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).metadata()['schema_version'], 8)
 
     def test_failed_replacement_rolls_back_new_build_and_leaves_previous_current_snapshot_intact(self):
         with tempfile.TemporaryDirectory() as td:
@@ -174,6 +176,47 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
                 )
                 self.assertEqual(db.execute('SELECT source_track_id,target_track_id FROM graph_edges').fetchone(), ('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64))
                 self.assertEqual(db.execute('SELECT build_id FROM graph_build_edges').fetchone(), (current_id,))
+
+    def test_graph_relevant_writers_invalidate_current_snapshot_including_reanalysis_start(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            create_v6_database(path)
+            repository = SQLiteAnalysisRepository(str(path))
+            with closing(sqlite3.connect(path)) as db, db:
+                track_id = 'sha256:' + 'b' * 64
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (track_id, 'b' * 64, 123))
+                db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (track_id, 180.0, 'mutagen', 'eligible', ''))
+            repository.replace_graph_snapshot((
+                ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64, 0.25, 2),
+            ), 10, 'fingerprint-one')
+            failed = repository.start(AudioSource('/music/Retained.flac', 'sha256:' + 'a' * 64))
+            repository.finish(failed, 'failed', 'no graph-relevant completed output')
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0], 0)
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_edges').fetchone()[0], 0)
+            repository.replace_graph_snapshot((
+                ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64, 0.25, 2),
+            ), 10, 'fingerprint-two')
+            run = repository.start(AudioSource('/music/Retained.flac', 'sha256:' + 'a' * 64))
+            repository.save_stage(run, StageResult('bpm', (('algorithm', 'test'),), '', (('bpm', 121.0),)))
+            repository.finish(run, 'completed', '')
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0], 0)
+            repository.replace_graph_snapshot((
+                ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64, 0.25, 2),
+            ), 10, 'fingerprint-three')
+            repository.set_override('sha256:' + 'a' * 64, 'bpm', '122')
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0], 0)
+            repository.replace_graph_snapshot((
+                ProjectionEdge('sha256:' + 'a' * 64, 'sha256:' + 'b' * 64, 0.25, 2),
+            ), 10, 'fingerprint-four')
+            identity = FileIdentity('a' * 64, 123)
+            repository.register(Inventory('/music', (
+                ScannedFile('/music/Retained.flac', identity, 8, 'flac', TrackMetadata(duration_seconds=180.0, duration_source='mutagen')),
+            ), (), True))
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0], 0)
 
     def test_read_only_validator_rejects_completed_history_without_single_current_build(self):
         with tempfile.TemporaryDirectory() as td:

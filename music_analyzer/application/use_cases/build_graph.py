@@ -8,6 +8,7 @@ import json
 from music_analyzer.application.ports.graph import GraphSnapshotWriter
 from music_analyzer.application.use_cases.active_library import is_active_library_track
 from music_analyzer.application.use_cases.candidates import _features
+from music_analyzer.application.use_cases.explorer import _axis_node, _map_track
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, _bounded_edges
 
 
@@ -40,9 +41,12 @@ class BuildGraphSnapshot:
             if is_active_library_track(record) and record.run is not None and record.run.status == 'completed'
         )
         features = tuple(_features(record) for record in retained)
+        positioned = tuple(record for record in retained if _axis_node(record, _map_track(record), '')[0] is not None)
+        positioned_features = tuple(_features(record) for record in positioned)
         edges = tuple(_bounded_edges(features, self.sparse_k))
+        positioned_edges = tuple(_bounded_edges(positioned_features, self.sparse_k))
         fingerprint = _source_fingerprint(retained)
-        self.write_repository.replace_graph_snapshot(edges, self.sparse_k, fingerprint)
+        self.write_repository.replace_graph_snapshot(edges, self.sparse_k, fingerprint, positioned_edges)
         return GraphBuildResult(len(edges), fingerprint)
 
 

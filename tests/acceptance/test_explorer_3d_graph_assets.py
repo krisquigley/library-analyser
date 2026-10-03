@@ -283,6 +283,69 @@ global.ForceGraph3D = undefined;
             with self.subTest(app=app):
                 subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
+    def test_load_graph_uses_api_graph_status_for_read_only_snapshot_copy(self):
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                source = app.read_text(encoding='utf-8')
+                start = source.index('async function loadGraph()')
+                end = source.index('function applyCurrentGraphFilters()', start)
+                load_graph = source[start:end]
+                self.assertIn('graphStatusMessage(graphModel.metadata.graph_status', load_graph)
+                self.assertIn('graphLoadState={...graphLoadState,status:statusCopy.status,message:statusCopy.message', load_graph)
+                helper_start = source.index('function graphStatusMessage(')
+                helper_end = source.index('function applyCurrentGraphFilters()', helper_start)
+                helper = source[helper_start:helper_end]
+                for state in ('stale', 'build_needed', 'failed', 'building'):
+                    self.assertIn(state, helper)
+                self.assertIn('music-analyzer graph build --database DB', helper)
+                self.assertNotIn('.reason', helper)
+                self.assertNotIn('.action', helper)
+                ready_index = helper.index("case 'ready'")
+                self.assertLess(ready_index, helper.index('Graph ready'))
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for graph status DOM tests')
+    def test_load_graph_displays_api_graph_status_without_misleading_ready_copy(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null, parentElement:null, clientWidth:900, clientHeight:700,
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children=[]; this.textContent=''; this.append(...nodes);},
+    setAttribute(name,value){this.attributes[name]=String(value);},
+    removeAttribute(name){delete this.attributes[name];},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};},
+    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
+  };
+  return el;
+}
+const statusPanel = makeElement('section');
+const elements = {'graph-load-status': statusPanel, graph3d: makeElement('div'), map: makeElement('canvas'), 'mood-strip': null, 'mood-strip-picker': null, 'mood-strip-value': null};
+global.document = {createElement: makeElement, getElementById:id=>elements[id]||null, querySelectorAll:()=>[]};
+global.requestAnimationFrame = cb => cb();
+global.ForceGraph3D = undefined;
+const node = {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.9}, bpm:120, genres:[], reasons:[]};
+async function loadWithStatus(graphStatus){
+  global.fetch = async path => ({ok:true, json:async()=>({selected_mood:'relaxing', available_moods:['relaxing'], positioned:[node], edges:[], unpositioned:[], metadata:{graph_status:graphStatus}})});
+  await app.loadGraph();
+  return statusPanel.innerText;
+}
+(async()=>{
+  const ready = await loadWithStatus({state:'ready'});
+  assert.match(ready, /Graph ready: 1 positioned tracks/);
+  for (const [state, label] of [['stale', 'stale'], ['build_needed', 'needs a build'], ['failed', 'failed'], ['building', 'building']]) {
+    const text = await loadWithStatus({state, reason:'contains <img src=x onerror=alert(1)> and /Users/alice/private.sqlite', action:'run hidden command'});
+    assert.doesNotMatch(text, /Graph ready/, `${state} response must not be labelled ready`);
+    assert.match(text, new RegExp(label, 'i'), `${state} response explains the status`);
+    assert.match(text, /music-analyzer graph build --database DB/, `${state} response gives the explicit read-only rebuild command`);
+    assert.doesNotMatch(text, /private\.sqlite|Users\/alice|hidden command/, `${state} response must not leak API paths or commands`);
+  }
+})().catch(error=>{console.error(error); process.exit(1);});
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for mood tracker reload tests')
     def test_mood_tracker_change_reloads_ready_graph_but_not_before_initial_load(self):
         script = r"""
