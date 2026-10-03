@@ -39,6 +39,19 @@ class FakeRepo:
         return self.graph_status, self.positioned_graph_edges
 
 
+class CompactGraphOnlyRepo:
+    def __init__(self, graph):
+        self.graph = graph
+        self.calls = []
+
+    def candidate_snapshot(self):
+        raise AssertionError('candidate_snapshot should not be used for warm schema-v8 exact positioned graph reads')
+
+    def mood_axis_graph_snapshot(self, mood=None, sparse_k=10):
+        self.calls.append((mood, sparse_k))
+        return self.graph
+
+
 class MoodAxisGraphTests(unittest.TestCase):
     def test_axis_mapping_retains_raw_values_normalized_display_metadata_and_selected_mood(self):
         graph = BuildMoodAxisGraph(FakeRepo([track('a')])).execute('relaxing')
@@ -157,6 +170,46 @@ class MoodAxisGraphTests(unittest.TestCase):
         self.assertEqual(graph.edges, (edge,))
         self.assertEqual(graph.metadata['graph_status']['state'], 'ready')
         self.assertEqual(graph.metadata['graph_status']['source'], 'graph_build_positioned_edges')
+
+    def test_v8_compact_graph_reader_bypasses_candidate_snapshot_for_ready_positioned_snapshot(self):
+        records = [track('a'), track('b')]
+        edge = MoodAxisEdge(records[0].track_id, records[1].track_id, 0.42, 'persisted explanation', {'policy': 'symmetric-feature-distance-v1'}, 2)
+        expected = BuildMoodAxisGraph(FakeRepo(
+            records,
+            schema_version=8,
+            graph_status={'state': 'ready', 'source': 'graph_build_positioned_edges', 'sparse_k': 10},
+            positioned_graph_edges=(edge,),
+        )).execute('relaxing')
+        repo = CompactGraphOnlyRepo(expected)
+
+        graph = BuildMoodAxisGraph(repo).execute('relaxing')
+
+        self.assertEqual(repo.calls, [('relaxing', 10)])
+        self.assertEqual(graph, expected)
+
+    def test_v8_compact_graph_reader_preserves_legacy_output_for_mixed_graph_cases_without_hydration(self):
+        records = [
+            track('a', energy=(0.10, 0.00), mood=(('relaxing', 'heavy'), (0.8, 0.2))),
+            track('b', energy=(0.10, 0.20), mood=(('relaxing', 'heavy'), (0.7, 0.3))),
+            track('c', bpm=None, energy=(0.10, 0.10), mood=(('relaxing', 'heavy'), (0.6, 0.4))),
+            track('d', overrides=(('mood', 'manual text'),)),
+            track('e', genres=(('rock', 'jazz'), (0.05, 0.8))),
+        ]
+        expected = BuildMoodAxisGraph(FakeRepo(records, schema_version=6), sparse_k=1).execute('heavy')
+        repo = CompactGraphOnlyRepo(expected)
+
+        graph = BuildMoodAxisGraph(repo, sparse_k=1).execute('heavy')
+        filtered = FilterMoodAxisGraph().execute(graph, genres=('jazz',))
+
+        self.assertEqual(repo.calls, [('heavy', 1)])
+        self.assertEqual(graph, expected)
+        self.assertEqual(
+            tuple((node.track_id, node.x.raw, node.y.raw, node.z.raw, node.mood_score.raw if node.mood_score else None, node.reasons) for node in graph.positioned),
+            tuple((node.track_id, node.x.raw, node.y.raw, node.z.raw, node.mood_score.raw if node.mood_score else None, node.reasons) for node in expected.positioned),
+        )
+        self.assertEqual(tuple(item.track_id for item in graph.unpositioned), tuple(item.track_id for item in expected.unpositioned))
+        self.assertEqual(tuple((edge.a, edge.b, edge.score, edge.supported_group_count) for edge in graph.edges), tuple((edge.a, edge.b, edge.score, edge.supported_group_count) for edge in expected.edges))
+        self.assertEqual(tuple(node.track_id for node in filtered.positioned), tuple(node.track_id for node in FilterMoodAxisGraph().execute(expected, genres=('jazz',)).positioned))
 
     def test_v8_stale_graph_reports_status_without_edges(self):
         records = [track('a'), track('b')]
