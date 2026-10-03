@@ -7,7 +7,7 @@ from contextlib import closing
 from pathlib import Path
 
 from music_analyzer.application.use_cases.build_graph import BuildGraphSnapshot
-from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
+from music_analyzer.infrastructure.persistence.analysis import AnalysisError, SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 from tests.acceptance.test_graph_build_cli import create_candidate_database
 
@@ -156,6 +156,85 @@ class GraphSnapshotStatusTests(unittest.TestCase):
                 self.assertEqual(status['state'], terminal)
                 with closing(sqlite3.connect(path)) as db:
                     self.assertEqual(db.execute('SELECT is_current FROM graph_builds WHERE id=?', (build_id,)).fetchone()[0], 0)
+
+    def test_repeating_same_terminal_graph_build_finish_is_idempotent(self):
+        for terminal in ('failed', 'interrupted'):
+            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / 'analysis.sqlite'
+                create_candidate_database(path)
+                repository = SQLiteAnalysisRepository(str(path))
+                revision = repository.source_revision()
+                build_id = repository.begin_graph_build(10, revision)
+                repository.finish_graph_build_attempt(build_id, terminal, 'first detail')
+
+                repository.finish_graph_build_attempt(build_id, terminal, 'second detail')
+
+                with closing(sqlite3.connect(path)) as db:
+                    self.assertEqual(
+                        db.execute('SELECT status,detail,is_current FROM graph_builds WHERE id=?', (build_id,)).fetchone(),
+                        (terminal, 'first detail', 0),
+                    )
+                    self.assertEqual(db.execute('SELECT count(*) FROM graph_builds').fetchone()[0], 1)
+
+    def test_finish_graph_build_attempt_rejects_unknown_or_completed_attempts_without_mutation(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            create_candidate_database(path)
+            repository = SQLiteAnalysisRepository(str(path))
+            revision = repository.source_revision()
+            current_id = repository.replace_graph_snapshot((), 10, 'fingerprint', source_revision=revision)
+            historical_id = repository.replace_graph_snapshot((), 10, 'fingerprint-2', source_revision=revision)
+            before = self._graph_build_rows(path)
+
+            cases = (
+                ('missing-build', 'failed', 'Unknown graph build attempt'),
+                (current_id, 'failed', 'completed historical graph build attempt'),
+                (historical_id, 'failed', 'completed current graph build attempt'),
+            )
+            for build_id, terminal, message in cases:
+                with self.subTest(build_id=build_id):
+                    with self.assertRaisesRegex(AnalysisError, message):
+                        repository.finish_graph_build_attempt(build_id, terminal, 'cleanup detail')
+                    self.assertEqual(self._graph_build_rows(path), before)
+
+    def test_finish_graph_build_attempt_rejects_incompatible_terminal_transition_without_mutation(self):
+        for first, second in (('failed', 'interrupted'), ('interrupted', 'failed')):
+            with self.subTest(first=first, second=second), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / 'analysis.sqlite'
+                create_candidate_database(path)
+                repository = SQLiteAnalysisRepository(str(path))
+                revision = repository.source_revision()
+                build_id = repository.begin_graph_build(10, revision)
+                repository.finish_graph_build_attempt(build_id, first, 'primary detail')
+                before = self._graph_build_rows(path)
+
+                with self.assertRaisesRegex(AnalysisError, f'Graph build attempt already {first}'):
+                    repository.finish_graph_build_attempt(build_id, second, 'cleanup detail')
+
+                self.assertEqual(self._graph_build_rows(path), before)
+
+    def test_finish_graph_build_attempt_preserves_source_change_interruption_as_primary_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            create_candidate_database(path)
+            repository = SQLiteAnalysisRepository(str(path))
+            revision = repository.source_revision()
+            build_id = repository.begin_graph_build(10, revision)
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute(
+                    "UPDATE graph_builds SET status='interrupted',detail=? WHERE id=?",
+                    ('graph source changed while warm graph build was running; retry is safe', build_id),
+                )
+            before = self._graph_build_rows(path)
+
+            with self.assertRaisesRegex(AnalysisError, 'Graph source changed before snapshot promotion'):
+                repository.finish_graph_build_attempt(build_id, 'failed', 'cleanup detail')
+
+            self.assertEqual(self._graph_build_rows(path), before)
+
+    def _graph_build_rows(self, path: Path):
+        with closing(sqlite3.connect(path)) as db:
+            return tuple(db.execute('SELECT id,status,detail,is_current,edge_count FROM graph_builds ORDER BY rowid'))
 
 
 if __name__ == '__main__':

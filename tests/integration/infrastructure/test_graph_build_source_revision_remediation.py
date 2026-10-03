@@ -9,6 +9,7 @@ from pathlib import Path
 from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
 from music_analyzer.application.use_cases.build_graph import BuildGraphSnapshot, _source_fingerprint
 from music_analyzer.application.use_cases.candidates import _features
+from music_analyzer.application.use_cases.explorer import _axis_node, _map_track
 from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.domain.projection import _bounded_edges
 from music_analyzer.infrastructure.persistence.analysis import AnalysisError, SQLiteAnalysisRepository
@@ -261,6 +262,31 @@ class GraphBuildSourceRevisionRemediationTests(unittest.TestCase):
                 1,
             )
             self.assertGreater(builds[-1][4], 0)
+
+    def test_manual_text_bpm_override_changes_source_and_removes_track_from_positioned_graph_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            track_ids = create_three_track_graph_db(db_path)
+            first = _build_graph(db_path)
+            before_record = ReadOnlyExplorerSQLiteRepository(str(db_path)).read_track(track_ids[0])
+            self.assertIsNotNone(_axis_node(before_record, _map_track(before_record), '')[0])
+
+            repo = SQLiteAnalysisRepository(str(db_path))
+            repo.set_override(track_ids[0], 'bpm', 'manual text BPM')
+            after_record = ReadOnlyExplorerSQLiteRepository(str(db_path)).read_track(track_ids[0])
+            second = _build_graph(db_path)
+
+            self.assertIsNone(_axis_node(after_record, _map_track(after_record), '')[0])
+            self.assertNotEqual(second.source_fingerprint, first.source_fingerprint)
+            status, global_edges = ReadOnlyExplorerSQLiteRepository(str(db_path)).current_graph_edges()
+            positioned_status, positioned_edges = ReadOnlyExplorerSQLiteRepository(str(db_path)).current_positioned_graph_edges()
+            self.assertEqual(status['state'], 'ready')
+            self.assertEqual(positioned_status['state'], 'ready')
+            self.assertGreater(len(global_edges), 0)
+            self.assertEqual(positioned_edges, ())
+            builds = _current_builds(db_path)
+            self.assertEqual(builds[-1][0:2], ('completed', 1))
+            self.assertEqual(builds[-1][2], second.source_fingerprint)
 
     def test_identical_input_rebuild_does_not_false_block_healthy_noop_build(self):
         with tempfile.TemporaryDirectory() as td:

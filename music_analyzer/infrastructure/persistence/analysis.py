@@ -948,16 +948,35 @@ class SQLiteAnalysisRepository:
     def finish_graph_build_attempt(self, build_id: str, status: str, detail: str) -> None:
         if status not in {'failed', 'interrupted'}:
             raise AnalysisError('Invalid graph build attempt status')
+        build_id = str(build_id)
         with self._transaction() as db:
             cursor = db.execute(
                 '''UPDATE graph_builds SET status=?, detail=?, completed_at=CURRENT_TIMESTAMP
                    WHERE id=? AND status='building' AND is_current=0''',
-                (status, str(detail)[:1000], str(build_id)),
+                (status, str(detail)[:1000], build_id),
             )
             if cursor.rowcount == 1:
                 return
-            if db.execute('SELECT 1 FROM graph_builds WHERE id=?', (str(build_id),)).fetchone():
+            attempt = db.execute(
+                'SELECT status,is_current,detail FROM graph_builds WHERE id=?',
+                (build_id,),
+            ).fetchone()
+            if attempt is None:
+                raise AnalysisError('Unknown graph build attempt')
+            current_status, is_current, current_detail = attempt
+            if current_status == status and is_current == 0:
                 return
+            if (current_status == 'interrupted'
+                    and str(current_detail).startswith('graph source changed while warm graph build was running')):
+                raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
+            if current_status in {'failed', 'interrupted'}:
+                raise AnalysisError(f'Graph build attempt already {current_status}; cannot mark {status}')
+            if current_status == 'completed':
+                if is_current == 1:
+                    raise AnalysisError('Cannot finish completed current graph build attempt')
+                raise AnalysisError('Cannot finish completed historical graph build attempt')
+            if is_current == 1:
+                raise AnalysisError('Cannot finish current graph build attempt')
             raise AnalysisError('Graph build attempt is no longer active')
 
     def record_graph_failure(self, sparse_k: int, source_fingerprint: str, detail: str, source_revision: str | None = None) -> str:
