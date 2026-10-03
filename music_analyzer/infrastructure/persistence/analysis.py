@@ -745,7 +745,10 @@ class SQLiteAnalysisRepository:
             return True
         expected_start = payload.get('owner_start')
         if expected_start:
-            return self._process_start_token(pid) == expected_start
+            current_start = self._process_start_token(pid)
+            if not current_start:
+                return True
+            return current_start == expected_start
         return True
 
     def _process_start_token(self, pid: int) -> str:
