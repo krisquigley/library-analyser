@@ -8,6 +8,7 @@ import json
 from music_analyzer.application.ports.graph import GraphSnapshotWriter
 from music_analyzer.application.use_cases.active_library import is_active_library_track
 from music_analyzer.application.use_cases.candidates import _features
+from music_analyzer.application.use_cases.explorer import _axis_node, _map_track
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, _bounded_edges
 
 
@@ -121,8 +122,13 @@ class BuildGraphSnapshot:
                 continue
             feature = _features(record)
             features.append(feature)
-            positioned_features.append(feature)
+            if _is_positioned_graph_source_track(record):
+                positioned_features.append(feature)
             yield record
+
+
+def _is_positioned_graph_source_track(record) -> bool:
+    return _axis_node(record, _map_track(record), '')[0] is not None
 
 
 def _is_graph_source_track(record) -> bool:

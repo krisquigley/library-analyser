@@ -113,6 +113,8 @@ _ACTIVE_VIEWS = {
     'active_tracks': "CREATE VIEW active_tracks AS SELECT t.id,t.sha256,t.size FROM tracks t JOIN track_audio a ON a.track_id=t.id WHERE a.status='eligible'",
     'active_locations': "CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.available FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible'",
 }
+_MAX_STORED_STAGE_RESULT_BYTES = 16 * 1024 * 1024
+
 _GRAPH_COLUMNS_LEGACY = {
     'graph_edges': ('source_track_id', 'target_track_id', 'score', 'distance', 'supported_group_count', 'distance_policy_version', 'neighbour_policy_version', 'built_at'),
     'graph_builds': ('id', 'status', 'detail', 'edge_count', 'sparse_k', 'source_fingerprint', 'distance_policy_version', 'neighbour_policy_version', 'is_current', 'created_at', 'completed_at'),
@@ -706,7 +708,13 @@ class SQLiteAnalysisRepository:
                     JOIN active_tracks at ON at.id=rt.track_id
                     WHERE EXISTS (SELECT 1 FROM active_locations al WHERE al.track_id=rt.track_id)
                 ) WHERE rn=1 AND status='completed' ORDER BY track_id'''):
-            stages = tuple(db.execute('SELECT stage,result FROM stages WHERE run_id=? ORDER BY stage', (run_id,)))
+            stages = []
+            for stage, size in db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (run_id,)):
+                if int(size) > _MAX_STORED_STAGE_RESULT_BYTES:
+                    raise AnalysisError('Oversized stored stage (16 MiB limit)')
+                result = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (run_id, stage)).fetchone()[0]
+                stages.append((stage, result))
+            stages = tuple(stages)
             overrides = tuple(db.execute(
                 'SELECT field,value FROM overrides WHERE track_id=? AND field IN (?,?,?,?,?) ORDER BY field',
                 (track_id, *sorted(GRAPH_SOURCE_OVERRIDE_FIELDS)),

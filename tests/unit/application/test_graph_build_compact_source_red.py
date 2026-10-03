@@ -4,6 +4,7 @@ from music_analyzer.application.dto.analysis import AnalysisReport, StageResult
 from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.explorer import ExplorerStoredTrack
 from music_analyzer.application.use_cases.build_graph import BuildGraphSnapshot, _source_fingerprint
+from music_analyzer.application.use_cases.explorer import _axis_node, _map_track
 from music_analyzer.application.use_cases.candidates import _features
 from music_analyzer.domain.analysis import ScoreSummary
 from music_analyzer.domain.projection import _bounded_edges
@@ -13,15 +14,18 @@ def _summary(labels, values):
     return ScoreSummary(tuple(labels), tuple(values), tuple(values), tuple(values), 1.0, False, '')
 
 
-def _track(suffix, *, bpm, energy, mood, genres, available_locations=1, status='completed', duration=180.0):
-    stages = (
+def _track(suffix, *, bpm, energy, mood, genres, available_locations=1, status='completed', duration=180.0, bpm_override=True):
+    stages = [
         StageResult('bpm', (('model', 'fixture-bpm'),), '', (('bpm', bpm),)),
-        StageResult('energy', (('model', 'emomusic-msd-musicnn-2'), ('scale', 'native_valence_arousal_regression')), '', summary=_summary(('valence', 'arousal'), energy)),
         StageResult('mood', (('model', 'mtg_jamendo_moodtheme-discogs-effnet-1'), ('scale', 'sigmoid_mean_score_0_1')), '', summary=_summary(('relaxing', 'heavy'), mood)),
         StageResult('genres', (('model', 'genre_discogs400-discogs-effnet-1'), ('threshold', '0.5')), '', summary=_summary(('rock', 'jazz'), genres)),
         StageResult('key', (('model', 'fixture-key'),), '', (('key', 'C major'),)),
-    )
+    ]
+    if energy is not None:
+        stages.insert(1, StageResult('energy', (('model', 'emomusic-msd-musicnn-2'), ('scale', 'native_valence_arousal_regression')), '', summary=_summary(('valence', 'arousal'), energy)))
+    stages = tuple(stages)
     run = AnalysisReport('run-' + suffix, status, stages, '')
+    overrides = ((('bpm', str(bpm)),) if bpm_override else ()) + (('title', 'graph-irrelevant title'),)
     return ExplorerStoredTrack(
         'sha256:' + suffix * 64,
         suffix * 64,
@@ -29,7 +33,7 @@ def _track(suffix, *, bpm, energy, mood, genres, available_locations=1, status='
         suffix + '.flac',
         available_locations,
         run,
-        (('bpm', str(bpm)), ('title', 'graph-irrelevant title')),
+        overrides,
         TrackMetadata(duration_seconds=duration, duration_source='mutagen'),
         ('/music/' + suffix + '.flac',),
     )
@@ -78,9 +82,9 @@ class CapturingGraphWriter:
 class GraphBuildCompactSourceRedTests(unittest.TestCase):
     def test_graph_build_streams_compact_source_tracks_without_eager_candidate_snapshot(self):
         retained = (
-            _track('a', bpm=100.0, energy=(0.1, 0.2), mood=(0.9, 0.1), genres=(0.9, 0.1)),
-            _track('b', bpm=130.0, energy=(0.2, 0.7), mood=(0.4, 0.6), genres=(0.2, 0.8)),
-            _track('c', bpm=170.0, energy=(0.8, 0.3), mood=(0.2, 0.8), genres=(0.7, 0.3)),
+            _track('a', bpm=100.0, energy=(0.1, 0.2), mood=(0.9, 0.1), genres=(0.9, 0.1), bpm_override=False),
+            _track('b', bpm=130.0, energy=(0.2, 0.7), mood=(0.4, 0.6), genres=(0.2, 0.8), bpm_override=False),
+            _track('c', bpm=170.0, energy=(0.8, 0.3), mood=(0.2, 0.8), genres=(0.7, 0.3), bpm_override=False),
         )
         ignored = (
             _track('d', bpm=90.0, energy=(0.3, 0.3), mood=(0.5, 0.5), genres=(0.5, 0.5), available_locations=0),
@@ -103,6 +107,23 @@ class GraphBuildCompactSourceRedTests(unittest.TestCase):
         self.assertEqual(writer.replaced['source_revision'], writer.revision)
         self.assertEqual(writer.replaced['attempt_id'], 'attempt-1')
         self.assertEqual(reader.stream_calls, 1)
+
+    def test_positioned_edges_match_mood_axis_positionable_tracks_only(self):
+        positioned_a = _track('a', bpm=100.0, energy=(0.1, 0.2), mood=(0.9, 0.1), genres=(0.9, 0.1), bpm_override=False)
+        positioned_b = _track('b', bpm=130.0, energy=(0.2, 0.7), mood=(0.4, 0.6), genres=(0.2, 0.8), bpm_override=False)
+        unpositioned_c = _track('c', bpm=170.0, energy=None, mood=(0.2, 0.8), genres=(0.7, 0.3), bpm_override=False)
+        self.assertIsNotNone(_axis_node(positioned_a, _map_track(positioned_a), '')[0])
+        self.assertIsNotNone(_axis_node(positioned_b, _map_track(positioned_b), '')[0])
+        self.assertIsNone(_axis_node(unpositioned_c, _map_track(unpositioned_c), '')[0])
+        reader = CompactGraphSourceReader((positioned_a, positioned_b, unpositioned_c))
+        writer = CapturingGraphWriter()
+
+        BuildGraphSnapshot(reader, writer, sparse_k=2).execute()
+
+        all_features = tuple(_features(record) for record in (positioned_a, positioned_b, unpositioned_c))
+        positioned_features = tuple(_features(record) for record in (positioned_a, positioned_b))
+        self.assertEqual(writer.replaced['edges'], tuple(_bounded_edges(all_features, 2)))
+        self.assertEqual(writer.replaced['positioned_edges'], tuple(_bounded_edges(positioned_features, 2)))
 
 
 if __name__ == '__main__':

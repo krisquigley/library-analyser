@@ -11,8 +11,10 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from music_analyzer.application.use_cases.build_graph import GRAPH_SOURCE_OVERRIDE_FIELDS
+from music_analyzer.application.dto.analysis import AnalysisError
+from music_analyzer.application.use_cases.build_graph import BuildGraphSnapshot, GRAPH_SOURCE_OVERRIDE_FIELDS
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
+from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
 
 # 128MiB is intentionally within the issue-44 128-192MiB POSIX RLIMIT_AS
@@ -23,6 +25,7 @@ _MEMORY_LIMIT_BYTES = 128 * 1024 * 1024
 _STAGE_RESULT_BYTES = 768 * 1024
 _TRACK_COUNT = 64
 _TIMEOUT_SECONDS = 15
+_OVERSIZED_STAGE_BYTES = 17 * 1024 * 1024
 
 
 def _skip_without_posix_address_space_limit():
@@ -57,6 +60,28 @@ def _create_large_stage_result_database(path: Path) -> None:
             )
             db.execute('INSERT INTO run_tracks(run_id,track_id) VALUES(?,?)', (run_id, track_id))
             db.execute('INSERT INTO stages(run_id,stage,result) VALUES(?,?,?)', (run_id, 'large-stage', payload))
+
+
+def _create_oversized_stage_database(path: Path) -> None:
+    SQLiteAnalysisRepository(str(path))
+    with sqlite3.connect(path) as db:
+        db.execute('PRAGMA foreign_keys=ON')
+        db.execute('INSERT INTO tracks(id,sha256,size) VALUES(?,?,?)', ('track-oversized', 'a' * 64, 1))
+        db.execute(
+            'INSERT INTO locations(path,track_id,mtime_ns,format,available) VALUES(?,?,?,?,1)',
+            ('/music/oversized.flac', 'track-oversized', 1, 'flac'),
+        )
+        db.execute(
+            'INSERT INTO track_metadata(track_id,common_json,tags_json,warnings_json) VALUES(?,?,?,?)',
+            ('track-oversized', '[]', '[]', '[]'),
+        )
+        db.execute(
+            'INSERT INTO track_audio(track_id,duration_seconds,duration_source,status,reason) VALUES(?,?,?,?,?)',
+            ('track-oversized', 120.0, 'mutagen', 'eligible', ''),
+        )
+        db.execute("INSERT INTO runs(id,location,status,detail) VALUES(?,?, 'completed', '')", ('run-oversized', '/music/oversized.flac'))
+        db.execute('INSERT INTO run_tracks(run_id,track_id) VALUES(?,?)', ('run-oversized', 'track-oversized'))
+        db.execute('INSERT INTO stages(run_id,stage,result) VALUES(?,?,zeroblob(?))', ('run-oversized', 'energy', _OVERSIZED_STAGE_BYTES))
 
 
 def _create_canonical_source_revision_database(path: Path) -> None:
@@ -177,6 +202,27 @@ print(digest)
 '''
 
 
+_OVERSIZED_SOURCE_REVISION_SCRIPT = r'''
+import resource
+import sys
+from music_analyzer.application.dto.analysis import AnalysisError
+from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
+
+path = sys.argv[1]
+limit = int(sys.argv[2])
+resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+try:
+    SQLiteAnalysisRepository(path).source_revision()
+except AnalysisError as error:
+    print(str(error))
+    raise SystemExit(42)
+except MemoryError:
+    print('MemoryError', file=sys.stderr)
+    raise SystemExit(73)
+raise SystemExit('expected AnalysisError')
+'''
+
+
 class GraphSourceRevisionMemoryTests(unittest.TestCase):
     def test_source_revision_matches_eager_canonical_digest_and_tracks_relevant_inputs(self):
         with tempfile.TemporaryDirectory() as td:
@@ -208,6 +254,33 @@ class GraphSourceRevisionMemoryTests(unittest.TestCase):
             overridden = repo.source_revision()
             self.assertNotEqual(overridden, moved)
             self.assertEqual(overridden, _eager_source_revision(db_path))
+
+    def test_oversized_stored_stage_fails_before_fetching_raw_source_revision_under_low_address_space(self):
+        _skip_without_posix_address_space_limit()
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            _create_oversized_stage_database(db_path)
+
+            checked = _run_python(_OVERSIZED_SOURCE_REVISION_SCRIPT, db_path)
+
+        self.assertEqual(
+            checked.returncode,
+            42,
+            f'oversized stage should fail with AnalysisError, not MemoryError; '
+            f'stdout={checked.stdout!r} stderr={checked.stderr!r}',
+        )
+        self.assertIn('Oversized stored stage (16 MiB limit)', checked.stdout)
+        self.assertNotIn('MemoryError', checked.stderr)
+
+    def test_graph_build_reports_oversized_stored_stage_before_reading_live_data(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            _create_oversized_stage_database(db_path)
+            writer = SQLiteAnalysisRepository(str(db_path))
+            reader = ReadOnlyExplorerSQLiteRepository(str(db_path))
+
+            with self.assertRaisesRegex(AnalysisError, r'Oversized stored stage \(16 MiB limit\)'):
+                BuildGraphSnapshot(reader, writer).execute()
 
     def test_source_revision_streams_large_stage_results_under_low_address_space(self):
         _skip_without_posix_address_space_limit()
