@@ -21,6 +21,50 @@ class GraphBuildResult:
     source_fingerprint: str
     distance_policy_version: str = DISTANCE_POLICY_VERSION
     neighbour_policy_version: str = NEIGHBOUR_POLICY_VERSION
+    state: str = 'built'
+    reason: str = ''
+
+
+@dataclass(frozen=True)
+class GraphEnsureResult:
+    state: str
+    built: bool
+    edge_count: int | None = None
+    reason: str = ''
+    action: str = ''
+
+
+class EnsureCurrentGraphSnapshot:
+    """Ensure a current durable graph snapshot exists without duplicate work.
+
+    This application service owns the post-analysis orchestration decision.  It
+    asks the persistence port whether the exact v10 graph snapshot for the
+    current source revision and policy is already available or actively being
+    built.  Only stale/missing/failed/interrupted states are delegated to the
+    graph builder.
+    """
+
+    def __init__(self, read_repository, write_repository, sparse_k: int = 10, builder_factory=None):
+        self.read_repository = read_repository
+        self.write_repository = write_repository
+        self.sparse_k = sparse_k
+        self.builder_factory = builder_factory
+
+    def execute(self) -> GraphEnsureResult:
+        source_revision = self.write_repository.source_revision()
+        status = self.write_repository.current_graph_snapshot(self.sparse_k, source_revision)
+        state = status.get('state', '')
+        if state in {'ready', 'building'}:
+            return GraphEnsureResult(state, False, status.get('edge_count'), status.get('reason', ''), status.get('action', ''))
+        builder_factory = self.builder_factory or BuildGraphSnapshot
+        if self.sparse_k == 10:
+            builder = builder_factory(self.read_repository, self.write_repository)
+        else:
+            builder = builder_factory(self.read_repository, self.write_repository, self.sparse_k)
+        result = builder.execute()
+        if getattr(result, 'state', '') == 'building':
+            return GraphEnsureResult('building', False, None, getattr(result, 'reason', 'warm graph build is running'))
+        return GraphEnsureResult('built', True, getattr(result, 'edge_count', None))
 
 
 class BuildGraphSnapshot:
@@ -39,8 +83,13 @@ class BuildGraphSnapshot:
 
     def execute(self) -> GraphBuildResult:
         source_revision = self.write_repository.source_revision() if hasattr(self.write_repository, 'source_revision') else None
-        attempt_id = (self.write_repository.begin_graph_build(self.sparse_k, source_revision)
-                      if source_revision is not None and hasattr(self.write_repository, 'begin_graph_build') else None)
+        claimed = source_revision is None or not hasattr(self.write_repository, 'begin_graph_build')
+        attempt_id = None
+        if source_revision is not None and hasattr(self.write_repository, 'begin_graph_build'):
+            attempt_id = self.write_repository.begin_graph_build(self.sparse_k, source_revision)
+            claimed = attempt_id is not None
+        if not claimed:
+            return GraphBuildResult(0, str(source_revision), state='building', reason='warm graph build is running')
         try:
             _metadata, records = self.read_repository.candidate_snapshot()
             retained = tuple(

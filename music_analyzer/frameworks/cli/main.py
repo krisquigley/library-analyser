@@ -40,7 +40,7 @@ from music_analyzer.infrastructure.environment.probes import (
 )
 from music_analyzer.interface_adapters.presenters.doctor import present_doctor
 from music_analyzer.application.use_cases.projection_artifacts import PrepareProjectionArtifact, RefreshProjectionArtifact
-from music_analyzer.application.use_cases.build_graph import BuildGraphSnapshot
+from music_analyzer.application.use_cases.build_graph import BuildGraphSnapshot, EnsureCurrentGraphSnapshot
 from music_analyzer.infrastructure.filesystem.projection_artifacts import FileProjectionArtifactStore
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 from music_explorer.frameworks.explorer.server import create_server
@@ -114,6 +114,24 @@ def read_catalogue_tracks(track_ids, tracks_file):
         except OSError as error:
             raise ValueError('Unable to read catalogue track file') from error
     return tuple(dict.fromkeys(selected))
+
+
+def ensure_current_graph_snapshot(settings):
+    writer = SQLiteAnalysisRepository(settings.database)
+    reader = ReadOnlyExplorerSQLiteRepository(settings.database)
+    return EnsureCurrentGraphSnapshot(reader, writer, builder_factory=BuildGraphSnapshot).execute()
+
+
+def warn_auto_graph_rebuild(error_or_status, database):
+    detail = str(error_or_status).lower()
+    if 'building' in detail:
+        message = 'graph snapshot is already building and may still be stale'
+    else:
+        message = 'automatic graph rebuild did not complete; graph snapshot is stale'
+    print(
+        f'music-analyzer: warning: {message}. Run graph build with: music-analyzer graph build --database DB',
+        file=sys.stderr,
+    )
 
 
 def build_batch(settings, max_duration, queue=None):
@@ -273,6 +291,13 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 batch, recipe = build_batch(settings, args.max_duration, queue=queue)
                 jobs = batch.execute(recipe, args.limit, args.retry_failed, args.force, args.max_duration, selected_tracks=selected_tracks)
+                if jobs:
+                    try:
+                        graph_result = ensure_current_graph_snapshot(settings)
+                        if graph_result.state == 'building':
+                            warn_auto_graph_rebuild(graph_result.reason or 'graph snapshot is currently building', settings.database)
+                    except Exception as graph_error:
+                        warn_auto_graph_rebuild(graph_error, settings.database)
             output, ready = present_batch(jobs, args.json, queue.ineligible_tracks()), not any(j.state == 'failed' for j in jobs)
         elif args.command == 'analyze':
             if args.file:
@@ -293,12 +318,23 @@ def main(argv: list[str] | None = None) -> int:
             report = analysis.execute(source, args.max_duration)
             output = present_analysis(report, as_json=args.json)
             ready = report.status == 'completed'
+            if ready:
+                settings = load_settings(**overrides)
+                try:
+                    graph_result = ensure_current_graph_snapshot(settings)
+                    if graph_result.state == 'building':
+                        warn_auto_graph_rebuild(graph_result.reason or 'graph snapshot is currently building', settings.database)
+                except Exception as graph_error:
+                    warn_auto_graph_rebuild(graph_error, settings.database)
         elif args.command == 'graph':
             settings = load_settings(**overrides)
             writer = SQLiteAnalysisRepository(settings.database)
             reader = ReadOnlyExplorerSQLiteRepository(settings.database)
             result = BuildGraphSnapshot(reader, writer).execute()
-            output = f'Built {result.edge_count} graph edges'
+            if getattr(result, 'state', '') == 'building':
+                output = result.reason or 'Graph build already running'
+            else:
+                output = f'Built {result.edge_count} graph edges'
             ready = True
         elif args.command == 'explorer':
             if args.host != '127.0.0.1':
