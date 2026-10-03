@@ -13,6 +13,8 @@ from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.domain.projection import ProjectionEdge
 from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID, SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
+from music_explorer.infrastructure.explorer_readonly import AnalysisError as StandaloneAnalysisError
+from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository as StandaloneReadOnlyExplorerSQLiteRepository
 
 
 GRAPH_FEATURE_TABLE_HINTS = {
@@ -142,6 +144,8 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
             SQLiteAnalysisRepository(str(self.path))
         with self.assertRaises(AnalysisError):
             ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+        with self.assertRaises(StandaloneAnalysisError):
+            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
 
     def test_writer_and_readonly_reject_v9_feature_evidence_with_malformed_nested_features(self):
         repository = SQLiteAnalysisRepository(str(self.path))
@@ -163,6 +167,63 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
             SQLiteAnalysisRepository(str(self.path))
         with self.assertRaises(AnalysisError):
             ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+        with self.assertRaises(StandaloneAnalysisError):
+            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+
+    def test_writer_and_readonly_reject_v9_feature_evidence_with_invalid_nested_summary(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository)
+        _complete_graph_relevant_run(repository, identity)
+
+        with closing(sqlite3.connect(self.path)) as db:
+            payload = json.loads(db.execute('SELECT evidence_json FROM graph_feature_evidence').fetchone()[0])
+            payload['features']['mood']['summary']['coverage'] = 1.5
+            canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+            db.execute(
+                'UPDATE graph_feature_evidence SET evidence_json=?, fingerprint=?',
+                (canonical, hashlib.sha256(canonical.encode('utf-8')).hexdigest()),
+            )
+            db.commit()
+
+        with self.assertRaises(AnalysisError):
+            SQLiteAnalysisRepository(str(self.path))
+        with self.assertRaises(AnalysisError):
+            ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+        with self.assertRaises(StandaloneAnalysisError):
+            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+
+    def test_readonly_adapters_accept_valid_partial_missing_and_uncertain_feature_evidence(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository)
+        _complete_graph_relevant_run(repository, identity)
+
+        with closing(sqlite3.connect(self.path)) as db:
+            payload = json.loads(db.execute('SELECT evidence_json FROM graph_feature_evidence').fetchone()[0])
+            payload['features']['genres'] = {
+                'values': [],
+                'summary_values': [],
+                'summary': None,
+                'provenance': [['algorithm', 'test-genre']],
+                'uncertainty': 'genre classifier unavailable; no labels asserted',
+            }
+            payload['features']['mood'] = {
+                'values': [],
+                'summary_values': [],
+                'summary': None,
+                'provenance': [['algorithm', 'test-mood']],
+                'uncertainty': 'mood classifier unavailable; summary intentionally missing',
+            }
+            payload['features']['energy']['uncertainty'] = 'high spread; retain as uncertain evidence'
+            payload['features']['energy']['summary']['uncertainty'] = 'high spread; retain as uncertain evidence'
+            canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+            db.execute(
+                'UPDATE graph_feature_evidence SET evidence_json=?, fingerprint=?',
+                (canonical, hashlib.sha256(canonical.encode('utf-8')).hexdigest()),
+            )
+            db.commit()
+
+        self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids(), (identity.track_id,))
+        self.assertEqual(StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids(), (identity.track_id,))
 
     def test_failed_latest_run_does_not_serve_older_completed_evidence_as_current(self):
         repository = SQLiteAnalysisRepository(str(self.path))
