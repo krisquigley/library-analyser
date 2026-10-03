@@ -689,7 +689,15 @@ class SQLiteAnalysisRepository:
             return self._graph_source_revision(db)
 
     def _graph_source_revision(self, db):
-        rows = []
+        digest = hashlib.sha256()
+        encoder = json.JSONEncoder(sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+
+        def update_json(value):
+            for chunk in encoder.iterencode(value):
+                digest.update(chunk.encode('utf-8'))
+
+        digest.update(b'[')
+        first = True
         for track_id, run_id in db.execute('''
                 SELECT track_id,run_id FROM (
                     SELECT rt.track_id, r.id AS run_id, r.status AS status,
@@ -704,9 +712,13 @@ class SQLiteAnalysisRepository:
                 (track_id, *sorted(GRAPH_SOURCE_OVERRIDE_FIELDS)),
             ))
             active_locations = tuple(db.execute('SELECT path FROM active_locations WHERE track_id=? ORDER BY path', (track_id,)))
-            rows.append((track_id, run_id, active_locations, stages, overrides))
-        payload = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
-        return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+            if first:
+                first = False
+            else:
+                digest.update(b',')
+            update_json((track_id, run_id, active_locations, stages, overrides))
+        digest.update(b']')
+        return digest.hexdigest()
 
     def _graph_build_owner_detail(self) -> str:
         return json.dumps({
