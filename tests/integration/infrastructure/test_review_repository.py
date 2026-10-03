@@ -64,7 +64,7 @@ class ReviewRepositoryTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.path))
         with closing(sqlite3.connect(self.path)) as db, db:
             self.assertEqual(db.execute('SELECT * FROM stages').fetchall(), before)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
 
     def test_v4_migration_rejects_malformed_existing_track_metadata_table(self):
         with closing(sqlite3.connect(self.path)) as db, db:

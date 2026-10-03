@@ -12,6 +12,9 @@ from music_analyzer.application.use_cases.explorer import _axis_node, _map_track
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, _bounded_edges
 
 
+GRAPH_SOURCE_OVERRIDE_FIELDS = frozenset({'bpm', 'key', 'genres', 'mood', 'energy'})
+
+
 @dataclass(frozen=True)
 class GraphBuildResult:
     edge_count: int
@@ -35,19 +38,46 @@ class BuildGraphSnapshot:
         self.sparse_k = sparse_k
 
     def execute(self) -> GraphBuildResult:
-        _metadata, records = self.read_repository.candidate_snapshot()
-        retained = tuple(
-            record for record in records
-            if is_active_library_track(record) and record.run is not None and record.run.status == 'completed'
-        )
-        features = tuple(_features(record) for record in retained)
-        positioned = tuple(record for record in retained if _axis_node(record, _map_track(record), '')[0] is not None)
-        positioned_features = tuple(_features(record) for record in positioned)
-        edges = tuple(_bounded_edges(features, self.sparse_k))
-        positioned_edges = tuple(_bounded_edges(positioned_features, self.sparse_k))
-        fingerprint = _source_fingerprint(retained)
-        self.write_repository.replace_graph_snapshot(edges, self.sparse_k, fingerprint, positioned_edges)
-        return GraphBuildResult(len(edges), fingerprint)
+        source_revision = self.write_repository.source_revision() if hasattr(self.write_repository, 'source_revision') else None
+        attempt_id = (self.write_repository.begin_graph_build(self.sparse_k, source_revision)
+                      if source_revision is not None and hasattr(self.write_repository, 'begin_graph_build') else None)
+        try:
+            _metadata, records = self.read_repository.candidate_snapshot()
+            retained = tuple(
+                record for record in records
+                if _is_graph_source_track(record) and record.run is not None and record.run.status == 'completed'
+            )
+            features = tuple(_features(record) for record in retained)
+            positioned = tuple(record for record in retained if _axis_node(record, _map_track(record), '')[0] is not None)
+            positioned_features = tuple(_features(record) for record in positioned)
+            edges = tuple(_bounded_edges(features, self.sparse_k))
+            positioned_edges = tuple(_bounded_edges(positioned_features, self.sparse_k))
+            fingerprint = _source_fingerprint(retained)
+            self.write_repository.replace_graph_snapshot(
+                edges, self.sparse_k, fingerprint, positioned_edges,
+                source_revision=source_revision, attempt_id=attempt_id,
+            )
+            return GraphBuildResult(len(edges), fingerprint)
+        except KeyboardInterrupt:
+            if attempt_id is not None and hasattr(self.write_repository, 'finish_graph_build_attempt'):
+                self.write_repository.finish_graph_build_attempt(attempt_id, 'interrupted', 'explicit graph build interrupted')
+            raise
+        except Exception as error:
+            if attempt_id is not None and hasattr(self.write_repository, 'finish_graph_build_attempt'):
+                self.write_repository.finish_graph_build_attempt(attempt_id, 'failed', str(error))
+            raise
+
+
+def _is_graph_source_track(record) -> bool:
+    if not is_active_library_track(record):
+        return False
+    available_locations = getattr(record, 'available_locations', None)
+    if available_locations is not None:
+        return int(available_locations) > 0
+    locations = getattr(record, 'locations', None)
+    if locations is not None:
+        return bool(locations)
+    return True
 
 
 def _source_fingerprint(records) -> str:
@@ -72,6 +102,22 @@ def _source_fingerprint(records) -> str:
                     }
                 ),
             })
-        evidence.append({'track_id': record.track_id, 'run_id': record.run.run_id, 'stages': stages})
+        raw_locations = getattr(record, 'source_locations', ()) or getattr(record, 'locations', ())
+        locations = tuple(sorted(str(path) for path in raw_locations))
+        display_label = str(getattr(record, 'display_label', ''))
+        evidence.append({
+            'track_id': record.track_id,
+            'run_id': record.run.run_id,
+            'available_locations': int(getattr(record, 'available_locations', len(locations))),
+            'locations': locations,
+            'display_label': display_label,
+            'overrides': tuple(
+                sorted(
+                    (field, value) for field, value in getattr(record, 'overrides', ())
+                    if field in GRAPH_SOURCE_OVERRIDE_FIELDS
+                )
+            ),
+            'stages': stages,
+        })
     payload = json.dumps(evidence, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
