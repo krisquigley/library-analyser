@@ -690,8 +690,17 @@ class ReadOnlyExplorerSQLiteRepository:
                     or (status == 'completed' and edge_count != historical_edges)
                     or (status == 'failed' and historical_edges != 0)):
                 raise AnalysisError('Unexpected analysis database rows')
+        version = db.execute('PRAGMA user_version').fetchone()[0]
         if current_build is None and db.execute('SELECT 1 FROM graph_edges LIMIT 1').fetchone():
             raise AnalysisError('Unexpected analysis database rows')
+        if (current_build is None and version >= 8
+                and db.execute('SELECT 1 FROM graph_positioned_edges LIMIT 1').fetchone()):
+            raise AnalysisError('Unexpected analysis database rows')
+        if version >= 8:
+            for build_id, edge_count in db.execute('SELECT build_id,edge_count FROM graph_build_positioned_snapshots'):
+                actual_positioned_count = db.execute('SELECT count(*) FROM graph_build_positioned_edges WHERE build_id=?', (build_id,)).fetchone()[0]
+                if not isinstance(edge_count, int) or edge_count < 0 or edge_count != actual_positioned_count:
+                    raise AnalysisError('Unexpected analysis database rows')
         if current_build is not None:
             current_edges = tuple(db.execute('''
                 SELECT source_track_id,target_track_id,score,distance,supported_group_count,
@@ -703,10 +712,28 @@ class ReadOnlyExplorerSQLiteRepository:
                 FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
             if current_edges != historical_current_edges:
                 raise AnalysisError('Unexpected analysis database rows')
-        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute('''
+            if version >= 8:
+                current_positioned_edges = tuple(db.execute('''
+                    SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                           distance_policy_version,neighbour_policy_version
+                    FROM graph_positioned_edges ORDER BY source_track_id,target_track_id'''))
+                historical_current_positioned_edges = tuple(db.execute('''
+                    SELECT source_track_id,target_track_id,score,distance,supported_group_count,
+                           distance_policy_version,neighbour_policy_version
+                    FROM graph_build_positioned_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
+                if current_positioned_edges != historical_current_positioned_edges:
+                    raise AnalysisError('Unexpected analysis database rows')
+        edge_sources_sql = '''
                 SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_edges
                 UNION ALL
-                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges'''):
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges'''
+        if version >= 8:
+            edge_sources_sql += '''
+                UNION ALL
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_positioned_edges
+                UNION ALL
+                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_positioned_edges'''
+        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute(edge_sources_sql):
             if (not isinstance(source, str) or not isinstance(target, str) or source >= target
                     or not isinstance(score, (int, float)) or not 0.0 <= float(score) <= 1.0
                     or not isinstance(distance, (int, float)) or not 0.0 <= float(distance) <= 1.0
