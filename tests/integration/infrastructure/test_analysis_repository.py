@@ -63,7 +63,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
         repository.finish(run, 'failed', 'key: unavailable')
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA application_id').fetchone()[0], APPLICATION_ID)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
             self.assertEqual(db.execute('SELECT location,status,detail FROM runs').fetchone(),
                              ('/music/空 白.flac', 'failed', 'key: unavailable'))
             stage = json.loads(db.execute('SELECT result FROM stages').fetchone()[0])
@@ -101,7 +101,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
             table_info = tuple(db.execute('PRAGMA table_info(track_metadata)'))
             primary_key_columns = tuple(row[1] for row in sorted((row for row in table_info if row[5]), key=lambda row: row[5]))
             self.assertEqual(primary_key_columns, ('track_id',))
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
             self.assertEqual(
                 db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone(),
                 ('[["title","Tagged Song"]]', '[["TIT2",["Tagged Song"]]]', '[]'),
@@ -175,7 +175,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.path))
 
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
             self.assertEqual(db.execute('SELECT id,sha256,size FROM tracks').fetchone(), (track_id, 'b' * 64, 123))
             self.assertEqual(db.execute('SELECT path,track_id,available FROM locations').fetchone(), ('/music/old.flac', track_id, 1))
             self.assertEqual(db.execute('SELECT state,attempts,run_id,detail FROM batch_jobs').fetchone(), ('failed', 2, 'run', 'keep'))

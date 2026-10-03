@@ -92,7 +92,7 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / 'analysis.sqlite'
 
-    def test_v8_migrates_to_v9_without_losing_catalogue_runs_stages_graph_history_or_overrides(self):
+    def test_v8_migrates_to_v10_without_losing_catalogue_runs_stages_graph_history_or_overrides(self):
         repository = SQLiteAnalysisRepository(str(self.path))
         identity = _register_track(repository)
         run_id = _complete_graph_relevant_run(repository, identity)
@@ -104,7 +104,7 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
 
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA application_id').fetchone()[0], APPLICATION_ID)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
             self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone(), ('completed',))
             self.assertEqual(db.execute('SELECT count(*) FROM stages WHERE run_id=?', (run_id,)).fetchone(), (5,))
             self.assertEqual(db.execute('SELECT value FROM overrides WHERE track_id=? AND field=?', (identity.track_id, 'key')).fetchone(), ('9A',))
@@ -118,7 +118,7 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
         run_id = _complete_graph_relevant_run(repository, identity)
 
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
             rows = _current_graph_feature_rows(db)
 
         self.assertEqual(len(rows), 1)

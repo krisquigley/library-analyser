@@ -35,19 +35,34 @@ class BuildGraphSnapshot:
         self.sparse_k = sparse_k
 
     def execute(self) -> GraphBuildResult:
-        _metadata, records = self.read_repository.candidate_snapshot()
-        retained = tuple(
-            record for record in records
-            if is_active_library_track(record) and record.run is not None and record.run.status == 'completed'
-        )
-        features = tuple(_features(record) for record in retained)
-        positioned = tuple(record for record in retained if _axis_node(record, _map_track(record), '')[0] is not None)
-        positioned_features = tuple(_features(record) for record in positioned)
-        edges = tuple(_bounded_edges(features, self.sparse_k))
-        positioned_edges = tuple(_bounded_edges(positioned_features, self.sparse_k))
-        fingerprint = _source_fingerprint(retained)
-        self.write_repository.replace_graph_snapshot(edges, self.sparse_k, fingerprint, positioned_edges)
-        return GraphBuildResult(len(edges), fingerprint)
+        source_revision = self.write_repository.source_revision() if hasattr(self.write_repository, 'source_revision') else None
+        attempt_id = (self.write_repository.begin_graph_build(self.sparse_k, source_revision)
+                      if source_revision is not None and hasattr(self.write_repository, 'begin_graph_build') else None)
+        try:
+            _metadata, records = self.read_repository.candidate_snapshot()
+            retained = tuple(
+                record for record in records
+                if is_active_library_track(record) and record.run is not None and record.run.status == 'completed'
+            )
+            features = tuple(_features(record) for record in retained)
+            positioned = tuple(record for record in retained if _axis_node(record, _map_track(record), '')[0] is not None)
+            positioned_features = tuple(_features(record) for record in positioned)
+            edges = tuple(_bounded_edges(features, self.sparse_k))
+            positioned_edges = tuple(_bounded_edges(positioned_features, self.sparse_k))
+            fingerprint = _source_fingerprint(retained)
+            self.write_repository.replace_graph_snapshot(
+                edges, self.sparse_k, fingerprint, positioned_edges,
+                source_revision=source_revision, attempt_id=attempt_id,
+            )
+            return GraphBuildResult(len(edges), fingerprint)
+        except KeyboardInterrupt:
+            if attempt_id is not None and hasattr(self.write_repository, 'finish_graph_build_attempt'):
+                self.write_repository.finish_graph_build_attempt(attempt_id, 'interrupted', 'explicit graph build interrupted')
+            raise
+        except Exception as error:
+            if attempt_id is not None and hasattr(self.write_repository, 'finish_graph_build_attempt'):
+                self.write_repository.finish_graph_build_attempt(attempt_id, 'failed', str(error))
+            raise
 
 
 def _source_fingerprint(records) -> str:

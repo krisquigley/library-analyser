@@ -108,7 +108,10 @@ class GraphBuildLifecycleRedTests(unittest.TestCase):
                     ) VALUES('build-in-progress','building','explicit graph build is running',0,10,'fp-building','rev-1','attempt-1','distance-test','neighbour-test',0)
                 ''')
                 db.execute('''
-                    INSERT INTO graph_build_edges VALUES('build-in-progress',?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                    INSERT INTO graph_build_edges(
+                        build_id,source_track_id,target_track_id,score,distance,supported_group_count,
+                        distance_policy_version,neighbour_policy_version,built_at
+                    ) VALUES('build-in-progress',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
                 ''', (TRACKS['a'], TRACKS['b'], 0.5, 0.5, 2, 'distance-test', 'neighbour-test'))
 
             status, edges = ReadOnlyExplorerSQLiteRepository(str(path)).current_graph_edges()

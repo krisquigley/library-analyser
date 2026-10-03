@@ -120,11 +120,12 @@ _EXPECTED_GRAPH_SCHEMA = {
     'graph_builds': {
         'columns': ((('id', 'TEXT', False, 1), ('status', 'TEXT', True, 0), ('detail', 'TEXT', True, 0),
                      ('edge_count', 'INTEGER', True, 0), ('sparse_k', 'INTEGER', True, 0), ('source_fingerprint', 'TEXT', True, 0),
+                     ('source_revision', 'TEXT', True, 0), ('attempt_revision', 'TEXT', True, 0),
                      ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
-                     ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0), ('completed_at', 'TEXT', True, 0)),),
+                     ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0), ('completed_at', 'TEXT', False, 0)),),
         'foreign_keys': ((),),
         'unique_indexes': (),
-        'checks': (("CHECK(status IN ('completed','failed'))", 'CHECK(edge_count >= 0)', 'CHECK(sparse_k >= 0)', 'CHECK(is_current IN (0,1))', "CHECK(status = 'completed' OR is_current = 0)"),),
+        'checks': (("CHECK(status IN ('building','completed','failed','interrupted'))", 'CHECK(edge_count >= 0)', 'CHECK(sparse_k >= 0)', 'CHECK(is_current IN (0,1))', "CHECK(status = 'completed' OR is_current = 0)"),),
     },
     'graph_build_edges': {
         'columns': ((('build_id', 'TEXT', True, 1), ('source_track_id', 'TEXT', True, 2), ('target_track_id', 'TEXT', True, 3), ('score', 'REAL', True, 0),
@@ -136,6 +137,18 @@ _EXPECTED_GRAPH_SCHEMA = {
         'checks': (('CHECK(source_track_id < target_track_id)', 'CHECK(score >= 0.0 AND score <= 1.0)', 'CHECK(distance >= 0.0 AND distance <= 1.0)'),),
     },
 }
+_EXPECTED_GRAPH_SCHEMA_LEGACY = {
+    **_EXPECTED_GRAPH_SCHEMA,
+    'graph_builds': {
+        **_EXPECTED_GRAPH_SCHEMA['graph_builds'],
+        'columns': ((('id', 'TEXT', False, 1), ('status', 'TEXT', True, 0), ('detail', 'TEXT', True, 0),
+                     ('edge_count', 'INTEGER', True, 0), ('sparse_k', 'INTEGER', True, 0), ('source_fingerprint', 'TEXT', True, 0),
+                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
+                     ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0), ('completed_at', 'TEXT', True, 0)),),
+        'checks': (("CHECK(status IN ('completed','failed'))", 'CHECK(edge_count >= 0)', 'CHECK(sparse_k >= 0)', 'CHECK(is_current IN (0,1))', "CHECK(status = 'completed' OR is_current = 0)"),),
+    },
+}
+
 _EXPECTED_POSITIONED_GRAPH_SCHEMA = {
     'graph_positioned_edges': _EXPECTED_GRAPH_SCHEMA['graph_edges'],
     'graph_build_positioned_edges': _EXPECTED_GRAPH_SCHEMA['graph_build_edges'],
@@ -295,6 +308,8 @@ class ReadOnlyExplorerSQLiteRepository:
                 return {'state': 'build_needed', 'source': 'graph_build_edges', 'reason': 'no completed warm graph snapshot', 'action': action}, ()
             if latest[0] == 'failed':
                 return {'state': 'failed', 'source': 'graph_build_edges', 'reason': latest[1] or 'latest warm graph build failed', 'action': action}, ()
+            if latest[0] in {'building', 'interrupted'}:
+                return {'state': latest[0], 'source': 'graph_build_edges', 'reason': latest[1] or f'latest warm graph build is {latest[0]}', 'action': action}, ()
             return {'state': 'stale', 'source': 'graph_build_edges', 'reason': 'warm graph snapshot is not current', 'action': action}, ()
         build_id, edge_count, sparse_k, distance_policy, neighbour_policy = current
         if distance_policy != DISTANCE_POLICY_VERSION or neighbour_policy != NEIGHBOUR_POLICY_VERSION:
@@ -605,14 +620,15 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def _validate(self, db):
         version = db.execute('PRAGMA user_version').fetchone()[0]
-        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9):
+        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
             raise AnalysisError('Not a supported music-analyzer analysis database')
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','index')"))
         schema = dict(_EXPECTED_SCHEMA)
         expected_objects = {(name, 'table') for name in schema} | {(name, 'view') for name in _EXPECTED_VIEWS}
         if version >= 7:
-            schema.update(_EXPECTED_GRAPH_SCHEMA)
-            expected_objects |= {(name, 'table') for name in _EXPECTED_GRAPH_SCHEMA} | _EXPECTED_GRAPH_INDEXES
+            graph_schema = _EXPECTED_GRAPH_SCHEMA if version >= 10 else _EXPECTED_GRAPH_SCHEMA_LEGACY
+            schema.update(graph_schema)
+            expected_objects |= {(name, 'table') for name in graph_schema} | _EXPECTED_GRAPH_INDEXES
         if version >= 8:
             schema.update(_EXPECTED_POSITIONED_GRAPH_SCHEMA)
             expected_objects |= {(name, 'table') for name in _EXPECTED_POSITIONED_GRAPH_SCHEMA} | _EXPECTED_POSITIONED_GRAPH_INDEXES
@@ -673,10 +689,11 @@ class ReadOnlyExplorerSQLiteRepository:
         if current_count > 1:
             raise AnalysisError('Unexpected analysis database rows')
         current_build = db.execute('SELECT id FROM graph_builds WHERE is_current=1').fetchone()
+        allowed_build_statuses = {'completed', 'failed'} if db.execute('PRAGMA user_version').fetchone()[0] < 10 else {'building', 'completed', 'failed', 'interrupted'}
         for build_id, status, edge_count, sparse_k, distance_policy, neighbour_policy, is_current in db.execute(
                 'SELECT id,status,edge_count,sparse_k,distance_policy_version,neighbour_policy_version,is_current FROM graph_builds'):
             historical_edges = db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (build_id,)).fetchone()[0]
-            if (status not in {'completed', 'failed'} or not isinstance(edge_count, int) or edge_count < 0
+            if (status not in allowed_build_statuses or not isinstance(edge_count, int) or edge_count < 0
                     or not isinstance(sparse_k, int) or sparse_k < 0
                     or not isinstance(distance_policy, str) or not distance_policy
                     or not isinstance(neighbour_policy, str) or not neighbour_policy
