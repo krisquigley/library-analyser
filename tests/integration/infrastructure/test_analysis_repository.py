@@ -8,6 +8,7 @@ import unittest
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
 from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
 from music_analyzer.domain.catalogue import FileIdentity
+from music_analyzer.domain.analysis import ScoreSummary
 from music_analyzer.application.use_cases.scan_library import ScanLibrary
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository, APPLICATION_ID
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
@@ -30,6 +31,30 @@ class AnalysisRepositoryTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / 'analysis.sqlite'
 
+    def test_unchanged_rescan_keeps_current_graph_feature_evidence(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = FileIdentity('a' * 64, 123)
+        inventory = Inventory('/music', (
+            ScannedFile('/music/song.flac', identity, 1, 'flac', TrackMetadata(duration_seconds=180.0, duration_source='mutagen')),
+        ), (), True)
+        repository.register(inventory)
+        run_id = repository.start(AudioSource('/music/song.flac', identity.track_id))
+        for stage in (
+            StageResult('bpm', (('algorithm', 'test'),), '', (('bpm', 124.0),)),
+            StageResult('key', (('algorithm', 'test'),), '', (('key', '8A'),)),
+            StageResult('genres', (('algorithm', 'test'),), '', (('genre', 'house'),)),
+            StageResult('mood', (('algorithm', 'test'),), '', summary=ScoreSummary(('happy',), (0.75,), (0.70,), (0.80,), 1.0)),
+            StageResult('energy', (('algorithm', 'test'),), '', summary=ScoreSummary(('energy',), (0.66,), (0.60,), (0.70,), 1.0)),
+        ):
+            repository.save_stage(run_id, stage)
+        repository.finish(run_id, 'completed', '')
+
+        repository.register(inventory)
+
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM graph_feature_evidence WHERE is_current=1').fetchone(), (1,))
+            self.assertEqual(db.execute('SELECT run_id FROM graph_feature_evidence WHERE is_current=1').fetchone(), (run_id,))
+
     def test_new_database_has_identity_version_and_durable_stage_provenance(self):
         repository = SQLiteAnalysisRepository(str(self.path))
         run = repository.start(AudioSource('/music/空 白.flac'))
@@ -38,7 +63,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
         repository.finish(run, 'failed', 'key: unavailable')
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA application_id').fetchone()[0], APPLICATION_ID)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
             self.assertEqual(db.execute('SELECT location,status,detail FROM runs').fetchone(),
                              ('/music/空 白.flac', 'failed', 'key: unavailable'))
             stage = json.loads(db.execute('SELECT result FROM stages').fetchone()[0])
@@ -76,7 +101,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
             table_info = tuple(db.execute('PRAGMA table_info(track_metadata)'))
             primary_key_columns = tuple(row[1] for row in sorted((row for row in table_info if row[5]), key=lambda row: row[5]))
             self.assertEqual(primary_key_columns, ('track_id',))
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
             self.assertEqual(
                 db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone(),
                 ('[["title","Tagged Song"]]', '[["TIT2",["Tagged Song"]]]', '[]'),
@@ -150,7 +175,7 @@ class AnalysisRepositoryTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.path))
 
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
             self.assertEqual(db.execute('SELECT id,sha256,size FROM tracks').fetchone(), (track_id, 'b' * 64, 123))
             self.assertEqual(db.execute('SELECT path,track_id,available FROM locations').fetchone(), ('/music/old.flac', track_id, 1))
             self.assertEqual(db.execute('SELECT state,attempts,run_id,detail FROM batch_jobs').fetchone(), ('failed', 2, 'run', 'keep'))

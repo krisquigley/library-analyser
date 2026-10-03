@@ -78,7 +78,7 @@ class CatalogueTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.db))
         SQLiteAnalysisRepository(str(self.db))
         with closing(sqlite3.connect(self.db)) as db, db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (8,))
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (9,))
             self.assertEqual(db.execute('SELECT result FROM stages').fetchone()[0], '{"provenance":"unchanged Unicode é"}')
 
     def test_malformed_v1_not_partially_migrated(self):

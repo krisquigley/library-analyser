@@ -1,4 +1,4 @@
-"""Dedicated analysis database, with transactional v0 -> v1 -> ... -> v7 migrations.
+"""Dedicated analysis database, with transactional v0 -> v1 -> ... -> v9 migrations.
 
 Existing unrelated schemas are rejected before any persistent pragma or DDL.
 Exact-file catalogue identity; each explicit analysis request is still a new run.
@@ -12,6 +12,10 @@ import sqlite3
 from uuid import uuid4
 
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
+from music_analyzer.application.use_cases.graph_feature_evidence import (
+    build_graph_feature_evidence,
+    validate_graph_feature_evidence_payload,
+)
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 from music_analyzer.domain.library_duration_policy import (
     DurationVerification,
@@ -115,6 +119,9 @@ _POSITIONED_GRAPH_COLUMNS = {
     'graph_build_positioned_edges': ('build_id', 'source_track_id', 'target_track_id', 'score', 'distance', 'supported_group_count', 'distance_policy_version', 'neighbour_policy_version', 'built_at'),
     'graph_build_positioned_snapshots': ('build_id', 'edge_count', 'built_at'),
 }
+_GRAPH_FEATURE_COLUMNS = {
+    'graph_feature_evidence': ('track_id', 'run_id', 'fingerprint', 'evidence_json', 'is_current', 'created_at'),
+}
 
 
 class SQLiteAnalysisRepository:
@@ -136,7 +143,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6, 7, 8):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if db.execute('PRAGMA user_version').fetchone()[0] == 1:
                 self._validate(db, 1)
@@ -184,7 +191,11 @@ class SQLiteAnalysisRepository:
                 self._validate(db, 7)
                 self._create_positioned_graph_schema(db)
                 db.execute('PRAGMA user_version=8')
-            self._validate(db, 8)
+            if db.execute('PRAGMA user_version').fetchone()[0] == 8:
+                self._validate(db, 8)
+                self._create_graph_feature_schema(db)
+                db.execute('PRAGMA user_version=9')
+            self._validate(db, 9)
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
@@ -218,9 +229,10 @@ class SQLiteAnalysisRepository:
                 'idx_graph_build_positioned_edges_build_id', 'idx_graph_positioned_edges_target_track_id',
                 'idx_graph_positioned_edges_source_track_id', 'idx_graph_build_edges_target_track_id', 'idx_graph_build_edges_source_track_id',
                 'idx_graph_build_edges_build_id', 'idx_graph_edges_target_track_id',
-                'idx_graph_edges_source_track_id', 'idx_graph_builds_one_current'):
+                'idx_graph_edges_source_track_id', 'idx_graph_feature_evidence_one_current_per_track',
+                'idx_graph_feature_evidence_run_id', 'idx_graph_builds_one_current'):
             db.execute(f'DROP INDEX IF EXISTS {name}')
-        for name in ('graph_build_positioned_snapshots', 'graph_build_positioned_edges', 'graph_positioned_edges', 'graph_build_edges', 'graph_edges', 'graph_builds'):
+        for name in ('graph_feature_evidence', 'graph_build_positioned_snapshots', 'graph_build_positioned_edges', 'graph_positioned_edges', 'graph_build_edges', 'graph_edges', 'graph_builds'):
             db.execute(f'DROP TABLE IF EXISTS {name}')
 
     def _create_graph_schema(self, db):
@@ -268,6 +280,19 @@ class SQLiteAnalysisRepository:
         db.execute('CREATE INDEX idx_graph_build_edges_source_track_id ON graph_build_edges(build_id,source_track_id)')
         db.execute('CREATE INDEX idx_graph_build_edges_target_track_id ON graph_build_edges(build_id,target_track_id)')
 
+    def _create_graph_feature_schema(self, db):
+        db.execute("""CREATE TABLE graph_feature_evidence(
+            track_id TEXT NOT NULL REFERENCES tracks(id),
+            run_id TEXT NOT NULL REFERENCES runs(id),
+            fingerprint TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            is_current INTEGER NOT NULL CHECK(is_current IN (0,1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(track_id,run_id))""")
+        db.execute("""CREATE UNIQUE INDEX idx_graph_feature_evidence_one_current_per_track
+                   ON graph_feature_evidence(track_id) WHERE is_current = 1""")
+        db.execute('CREATE INDEX idx_graph_feature_evidence_run_id ON graph_feature_evidence(run_id)')
+
     def _create_positioned_graph_schema(self, db):
         db.execute("""CREATE TABLE graph_positioned_edges(
             source_track_id TEXT NOT NULL REFERENCES tracks(id),
@@ -302,7 +327,7 @@ class SQLiteAnalysisRepository:
             edge_count INTEGER NOT NULL CHECK(edge_count >= 0),
             built_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
 
-    def _validate(self, db, version=8):
+    def _validate(self, db, version=9):
         if (db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
                 or db.execute('PRAGMA user_version').fetchone()[0] != version):
             raise AnalysisError('Analysis database identity/version changed')
@@ -319,6 +344,8 @@ class SQLiteAnalysisRepository:
             columns_by_table = {**columns_by_table, **_GRAPH_COLUMNS}
         if version >= 8:
             columns_by_table = {**columns_by_table, **_POSITIONED_GRAPH_COLUMNS}
+        if version >= 9:
+            columns_by_table = {**columns_by_table, **_GRAPH_FEATURE_COLUMNS}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         expected = {(name, 'table') for name in columns_by_table}
         if version >= 6:
@@ -327,6 +354,8 @@ class SQLiteAnalysisRepository:
             expected |= {('idx_graph_edges_source_track_id', 'index'), ('idx_graph_edges_target_track_id', 'index'), ('idx_graph_build_edges_build_id', 'index'), ('idx_graph_build_edges_source_track_id', 'index'), ('idx_graph_build_edges_target_track_id', 'index'), ('idx_graph_builds_one_current', 'index')}
         if version >= 8:
             expected |= {('idx_graph_positioned_edges_source_track_id', 'index'), ('idx_graph_positioned_edges_target_track_id', 'index'), ('idx_graph_build_positioned_edges_build_id', 'index'), ('idx_graph_build_positioned_edges_source_track_id', 'index'), ('idx_graph_build_positioned_edges_target_track_id', 'index')}
+        if version >= 9:
+            expected |= {('idx_graph_feature_evidence_one_current_per_track', 'index'), ('idx_graph_feature_evidence_run_id', 'index')}
         if version in (2, 3):
             migration_tables = {'batch_jobs', 'run_tracks', 'overrides', 'track_metadata'} if version == 2 else {'run_tracks', 'overrides', 'track_metadata'}
             expected = {item for item in expected if item[0] not in migration_tables}
@@ -334,12 +363,14 @@ class SQLiteAnalysisRepository:
         if version < 7:
             graph_objects = {
                 'graph_edges', 'graph_builds', 'graph_build_edges', 'graph_positioned_edges', 'graph_build_positioned_edges', 'graph_build_positioned_snapshots',
+                'graph_feature_evidence',
                 'idx_graph_edges_source_track_id', 'idx_graph_edges_target_track_id',
                 'idx_graph_build_edges_build_id', 'idx_graph_build_edges_source_track_id',
                 'idx_graph_build_edges_target_track_id', 'idx_graph_builds_one_current',
                 'idx_graph_positioned_edges_source_track_id', 'idx_graph_positioned_edges_target_track_id',
                 'idx_graph_build_positioned_edges_build_id', 'idx_graph_build_positioned_edges_source_track_id',
                 'idx_graph_build_positioned_edges_target_track_id',
+                'idx_graph_feature_evidence_one_current_per_track', 'idx_graph_feature_evidence_run_id',
             }
             objects = {item for item in objects if item[0] not in graph_objects}
         if version == 4:
@@ -400,10 +431,21 @@ class SQLiteAnalysisRepository:
                         or 'CHECK(is_current IN (0,1))' not in sql
                         or "CHECK(status = 'completed' OR is_current = 0)" not in sql):
                     raise AnalysisError('Unexpected analysis database constraints')
+            if version >= 9 and table == 'graph_feature_evidence':
+                sql = ' '.join(db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='graph_feature_evidence'").fetchone()[0].split())
+                if ('PRIMARY KEY(track_id,run_id)' not in sql
+                        or 'CHECK(is_current IN (0,1))' not in sql):
+                    raise AnalysisError('Unexpected analysis database constraints')
+                foreign_keys = tuple((row[3], row[2], row[4]) for row in db.execute('PRAGMA foreign_key_list(graph_feature_evidence)'))
+                if (('track_id', 'tracks', 'id') not in foreign_keys
+                        or ('run_id', 'runs', 'id') not in foreign_keys):
+                    raise AnalysisError('Unexpected analysis database constraints')
         if version >= 6:
             self._validate_track_audio_rows(db)
         if version >= 7:
             self._validate_graph_rows(db)
+        if version >= 9:
+            self._validate_graph_feature_rows(db)
 
     def _validate_track_audio_rows(self, db):
         if db.execute('SELECT 1 FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE a.track_id IS NULL LIMIT 1').fetchone():
@@ -488,6 +530,38 @@ class SQLiteAnalysisRepository:
                     or not isinstance(distance_policy, str) or not distance_policy
                     or not isinstance(neighbour_policy, str) or not neighbour_policy):
                 raise AnalysisError('Unexpected analysis database rows')
+
+    def _validate_graph_feature_rows(self, db):
+        for track_id, run_id, fingerprint, evidence_json, is_current in db.execute(
+                'SELECT track_id,run_id,fingerprint,evidence_json,is_current FROM graph_feature_evidence'):
+            if (not isinstance(track_id, str) or not track_id
+                    or not isinstance(run_id, str) or not run_id
+                    or not isinstance(fingerprint, str) or len(fingerprint) != 64
+                    or any(ch not in '0123456789abcdef' for ch in fingerprint)
+                    or is_current not in (0, 1)):
+                raise AnalysisError('Unexpected analysis database rows')
+            run = db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone()
+            if run != ('completed',):
+                raise AnalysisError('Unexpected analysis database rows')
+            linked = db.execute('SELECT 1 FROM run_tracks WHERE run_id=? AND track_id=?', (run_id, track_id)).fetchone()
+            if not linked:
+                raise AnalysisError('Unexpected analysis database rows')
+            if is_current:
+                latest = db.execute('''
+                    SELECT r.id,r.status FROM runs r JOIN run_tracks t ON t.run_id=r.id
+                    WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1''', (track_id,)).fetchone()
+                if latest != (run_id, 'completed'):
+                    raise AnalysisError('Unexpected analysis database rows')
+            try:
+                payload = json.loads(evidence_json)
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                raise AnalysisError('Unexpected analysis database rows') from error
+            try:
+                validate_graph_feature_evidence_payload(track_id, run_id, fingerprint, payload)
+            except ValueError as error:
+                raise AnalysisError('Unexpected analysis database rows') from error
+        for (track_id,) in db.execute('SELECT track_id FROM graph_feature_evidence WHERE is_current=1 GROUP BY track_id HAVING count(*) > 1'):
+            raise AnalysisError('Unexpected analysis database rows')
 
 
     @contextmanager
@@ -581,13 +655,20 @@ class SQLiteAnalysisRepository:
             )
         return build_id
 
-    def _invalidate_current_graph_snapshot(self, db):
-        if db.execute('PRAGMA user_version').fetchone()[0] < 7:
+    def _invalidate_current_graph_snapshot(self, db, track_id=None):
+        version = db.execute('PRAGMA user_version').fetchone()[0]
+        if version < 7:
             return
         db.execute('UPDATE graph_builds SET is_current=0 WHERE is_current=1')
         db.execute('DELETE FROM graph_edges')
-        if db.execute('PRAGMA user_version').fetchone()[0] >= 8:
+        if version >= 8:
             db.execute('DELETE FROM graph_positioned_edges')
+        if version >= 9 and track_id:
+            self._invalidate_current_graph_feature_evidence(db, track_id)
+
+    def _invalidate_current_graph_feature_evidence(self, db, track_id):
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 9 and track_id:
+            db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (track_id,))
 
     def start(self, source: AudioSource) -> str:
         run_id = str(uuid4())
@@ -595,7 +676,7 @@ class SQLiteAnalysisRepository:
             db.execute('INSERT INTO runs(id,location,status) VALUES(?,?,?)', (run_id, source.location, 'running'))
             self._link_run(db, run_id, source.expected_identity)
             if source.expected_identity:
-                self._invalidate_current_graph_snapshot(db)
+                self._invalidate_current_graph_snapshot(db, source.expected_identity)
         return run_id
 
     def save_stage(self, run_id: str, result: StageResult) -> None:
@@ -606,18 +687,51 @@ class SQLiteAnalysisRepository:
                 raise AnalysisError('Stage requires an existing running analysis')
             db.execute('INSERT INTO stages(run_id,stage,result) VALUES(?,?,?)', (run_id, result.stage, payload))
             if result.stage in {'bpm', 'key', 'genres', 'mood', 'energy'}:
-                self._invalidate_current_graph_snapshot(db)
+                self._invalidate_current_graph_snapshot(db, self._run_track_id(db, run_id))
 
     def finish(self, run_id: str, status: str, detail: str) -> None:
         if status not in {'completed', 'failed', 'interrupted'}:
             raise AnalysisError('Invalid terminal analysis status')
         with self._transaction() as db:
+            track_id = self._run_track_id(db, run_id)
             cursor = db.execute("UPDATE runs SET status=?,detail=? WHERE id=? AND status='running'",
                                 (status, detail, run_id))
             if cursor.rowcount != 1:
                 raise AnalysisError('Finish requires an existing running analysis')
             if status == 'completed':
-                self._invalidate_current_graph_snapshot(db)
+                self._invalidate_current_graph_snapshot(db, track_id)
+                self._persist_graph_feature_evidence(db, track_id, run_id)
+
+    def _run_track_id(self, db, run_id):
+        row = db.execute('SELECT track_id FROM run_tracks WHERE run_id=?', (run_id,)).fetchone()
+        return row[0] if row else None
+
+    def _persist_graph_feature_evidence(self, db, track_id, run_id):
+        if not track_id or db.execute('PRAGMA user_version').fetchone()[0] < 9:
+            return
+        from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_mapping
+        stages = []
+        for stage_name, payload in db.execute('SELECT stage,result FROM stages WHERE run_id=? ORDER BY stage', (run_id,)):
+            try:
+                stage = stage_from_mapping(json.loads(payload))
+                if stage.stage != stage_name:
+                    raise ValueError('Stage name mismatch')
+                stages.append(stage)
+            except (ValueError, KeyError, TypeError, IndexError) as error:
+                raise AnalysisError('Invalid stored stage: ' + str(error)) from error
+        evidence = build_graph_feature_evidence(track_id, run_id, stages)
+        if evidence is None:
+            return
+        db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (track_id,))
+        db.execute(
+            '''INSERT INTO graph_feature_evidence(track_id,run_id,fingerprint,evidence_json,is_current)
+               VALUES(?,?,?,?,1)
+               ON CONFLICT(track_id,run_id) DO UPDATE SET
+                   fingerprint=excluded.fingerprint,
+                   evidence_json=excluded.evidence_json,
+                   is_current=1''',
+            (track_id, run_id, evidence.fingerprint, evidence.payload_json()),
+        )
 
     def register(self, inventory):
         missing = []
@@ -635,13 +749,17 @@ class SQLiteAnalysisRepository:
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
                 db.execute('INSERT INTO track_metadata VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET common_json=excluded.common_json,tags_json=excluded.tags_json,warnings_json=excluded.warnings_json',
                            (identity.track_id, json.dumps(file.metadata.common, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.tags, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.warnings, ensure_ascii=False, allow_nan=False)))
-                stored_audio = db.execute('SELECT duration_seconds,duration_source FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone()
+                stored_audio_state = db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone()
+                stored_audio = stored_audio_state[:2] if stored_audio_state else None
                 duration, source = _coalesced_duration(file, inventory.files, stored_audio)
                 duration = _normalized_sqlite_duration(duration)
                 reason = _duration_eligibility_reason(duration, source)
                 status = _duration_status(duration, source)
+                new_audio_state = (duration, source, status, reason)
                 db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET duration_seconds=excluded.duration_seconds,duration_source=excluded.duration_source,status=excluded.status,reason=excluded.reason',
-                           (identity.track_id, duration, source, status, reason))
+                           (identity.track_id, *new_audio_state))
+                if stored_audio_state is not None and stored_audio_state != new_audio_state:
+                    self._invalidate_current_graph_feature_evidence(db, identity.track_id)
             if inventory.complete:
                 for (path,) in db.execute('SELECT path FROM scan_roots WHERE root=?', (inventory.root,)):
                     if path not in seen:
@@ -716,4 +834,4 @@ class SQLiteAnalysisRepository:
             else:
                 db.execute('INSERT INTO overrides VALUES(?,?,?) ON CONFLICT(track_id,field) DO UPDATE SET value=excluded.value', (track_id, field, value))
             if field in {'bpm', 'key', 'genres', 'mood', 'energy'}:
-                self._invalidate_current_graph_snapshot(db)
+                self._invalidate_current_graph_snapshot(db, track_id)
