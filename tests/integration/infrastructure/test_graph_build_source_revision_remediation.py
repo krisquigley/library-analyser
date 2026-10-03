@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -54,6 +55,123 @@ def _scanned_file(db_path: Path, path: str, track_id: str, mtime_ns: int = 2) ->
 
 
 class GraphBuildSourceRevisionRemediationTests(unittest.TestCase):
+    def test_source_revision_uses_deferred_read_transaction_so_writer_can_begin_immediate(self):
+        class BlockingSourceRevisionRepository(SQLiteAnalysisRepository):
+            def __init__(self, path, entered, release):
+                super().__init__(path)
+                self.entered = entered
+                self.release = release
+
+            def _graph_source_revision(self, db):
+                db.execute('SELECT count(*) FROM active_tracks').fetchone()
+                self.entered.set()
+                if not self.release.wait(5):
+                    raise AssertionError('timed out waiting to release source_revision probe')
+                return super()._graph_source_revision(db)
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            create_three_track_graph_db(db_path)
+            entered = threading.Event()
+            release = threading.Event()
+            repo = BlockingSourceRevisionRepository(str(db_path), entered, release)
+            result = {}
+
+            def run_source_revision():
+                try:
+                    result['revision'] = repo.source_revision()
+                except BaseException as error:  # pragma: no cover - surfaced below
+                    result['error'] = error
+
+            worker = threading.Thread(target=run_source_revision, daemon=True)
+            worker.start()
+            self.assertTrue(entered.wait(5), 'source_revision did not enter read transaction')
+            try:
+                with closing(sqlite3.connect(db_path, timeout=0.2)) as db:
+                    self.assertEqual(db.execute('PRAGMA journal_mode').fetchone()[0].lower(), 'delete')
+                    db.execute('BEGIN IMMEDIATE')
+                    db.execute('ROLLBACK')
+            finally:
+                release.set()
+                worker.join(5)
+            self.assertFalse(worker.is_alive(), 'source_revision probe thread did not stop')
+            if 'error' in result:
+                raise result['error']
+            self.assertEqual(result['revision'], SQLiteAnalysisRepository(str(db_path)).source_revision())
+
+    def test_in_flight_aba_graph_source_mutation_interrupts_attempt_without_promoting_b_edges_as_a(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            track_ids = create_three_track_graph_db(db_path)
+            writer = SQLiteAnalysisRepository(str(db_path))
+            reader = ReadOnlyExplorerSQLiteRepository(str(db_path))
+
+            rev_a = writer.source_revision()
+            attempt_id = writer.begin_graph_build(10, rev_a)
+            writer.set_override(track_ids[0], 'bpm', '121.0')
+            rev_b = writer.source_revision()
+            self.assertNotEqual(rev_b, rev_a)
+            _metadata, records_b = reader.candidate_snapshot()
+            retained_b = tuple(record for record in records_b if record.run is not None and record.run.status == 'completed')
+            features_b = tuple(_features(record) for record in retained_b)
+            edges_b = tuple(_bounded_edges(features_b, 10))
+            fingerprint_b = _source_fingerprint(retained_b)
+            self.assertGreater(len(edges_b), 0)
+
+            writer.set_override(track_ids[0], 'bpm', None)
+            self.assertEqual(writer.source_revision(), rev_a)
+
+            with self.assertRaisesRegex(AnalysisError, 'Graph source changed before snapshot promotion'):
+                writer.replace_graph_snapshot(edges_b, 10, fingerprint_b, source_revision=rev_a, attempt_id=attempt_id)
+
+            with closing(sqlite3.connect(db_path)) as db:
+                self.assertEqual(
+                    db.execute(
+                        'SELECT status,is_current,source_fingerprint,source_revision,edge_count FROM graph_builds WHERE id=?',
+                        (attempt_id,),
+                    ).fetchone(),
+                    ('interrupted', 0, rev_a, rev_a, 0),
+                )
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_edges').fetchone()[0], 0)
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (attempt_id,)).fetchone()[0], 0)
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0], 0)
+
+    def test_in_flight_unchanged_rescan_does_not_interrupt_valid_no_change_promotion(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'analysis.sqlite'
+            track_ids = create_three_track_graph_db(db_path)
+            _register_available_paths_as_scan_root(db_path)
+            writer = SQLiteAnalysisRepository(str(db_path))
+            reader = ReadOnlyExplorerSQLiteRepository(str(db_path))
+
+            source_revision = writer.source_revision()
+            attempt_id = writer.begin_graph_build(10, source_revision)
+            _metadata, records = reader.candidate_snapshot()
+            retained = tuple(record for record in records if record.run is not None and record.run.status == 'completed')
+            features = tuple(_features(record) for record in retained)
+            edges = tuple(_bounded_edges(features, 10))
+            fingerprint = _source_fingerprint(retained)
+
+            writer.register(Inventory(
+                '/music',
+                (
+                    _scanned_file(db_path, '/music/Alpha.flac', track_ids[0], mtime_ns=1),
+                    _scanned_file(db_path, '/music/Beta.flac', track_ids[1], mtime_ns=1),
+                ),
+                (),
+                True,
+            ))
+
+            build_id = writer.replace_graph_snapshot(edges, 10, fingerprint, source_revision=source_revision, attempt_id=attempt_id)
+
+            self.assertEqual(build_id, attempt_id)
+            with closing(sqlite3.connect(db_path)) as db:
+                self.assertEqual(
+                    db.execute('SELECT status,is_current,source_revision,edge_count FROM graph_builds WHERE id=?', (attempt_id,)).fetchone(),
+                    ('completed', 1, source_revision, len(edges)),
+                )
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_edges').fetchone()[0], len(edges))
+
     def test_complete_rescan_path_move_changes_fingerprint_and_rebuild_revision_matches(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / 'analysis.sqlite'
@@ -253,7 +371,7 @@ class GraphBuildSourceRevisionRemediationTests(unittest.TestCase):
                         'SELECT status,is_current,edge_count,source_revision FROM graph_builds WHERE id=?',
                         (attempt_id,),
                     ).fetchone(),
-                    ('building', 0, 0, stale_revision),
+                    ('interrupted', 0, 0, stale_revision),
                 )
                 self.assertEqual(db.execute('SELECT count(*) FROM graph_edges').fetchone()[0], 0)
                 self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (attempt_id,)).fetchone()[0], 0)

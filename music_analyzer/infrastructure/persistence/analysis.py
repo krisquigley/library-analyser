@@ -686,8 +686,15 @@ class SQLiteAnalysisRepository:
             self._validate(db, 10)
             yield db
 
+    @contextmanager
+    def _read_transaction(self):
+        with self._connection() as db:
+            db.execute('BEGIN')
+            self._validate(db, 10)
+            yield db
+
     def source_revision(self) -> str:
-        with self._transaction() as db:
+        with self._read_transaction() as db:
             return self._graph_source_revision(db)
 
     def _graph_source_revision(self, db):
@@ -885,11 +892,14 @@ class SQLiteAnalysisRepository:
                 )
                 if cursor.rowcount != 1:
                     attempt = db.execute(
-                        'SELECT status,is_current,source_revision FROM graph_builds WHERE id=?',
+                        'SELECT status,is_current,source_revision,detail FROM graph_builds WHERE id=?',
                         (build_id,),
                     ).fetchone()
                     if (attempt is not None and attempt[0] == 'building' and attempt[1] == 0
                             and attempt[2] != current_source_revision):
+                        raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
+                    if (attempt is not None and attempt[0] == 'interrupted'
+                            and str(attempt[3]).startswith('graph source changed while warm graph build was running')):
                         raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
                     raise AnalysisError('Graph build attempt is no longer promotable; run graph build again')
             for edge in edges:
@@ -944,8 +954,11 @@ class SQLiteAnalysisRepository:
                    WHERE id=? AND status='building' AND is_current=0''',
                 (status, str(detail)[:1000], str(build_id)),
             )
-            if cursor.rowcount != 1:
-                raise AnalysisError('Graph build attempt is no longer active')
+            if cursor.rowcount == 1:
+                return
+            if db.execute('SELECT 1 FROM graph_builds WHERE id=?', (str(build_id),)).fetchone():
+                return
+            raise AnalysisError('Graph build attempt is no longer active')
 
     def record_graph_failure(self, sparse_k: int, source_fingerprint: str, detail: str, source_revision: str | None = None) -> str:
         build_id = str(uuid4())
@@ -965,6 +978,13 @@ class SQLiteAnalysisRepository:
         version = db.execute('PRAGMA user_version').fetchone()[0]
         if version < 7:
             return
+        if version >= 10:
+            db.execute(
+                """UPDATE graph_builds
+                   SET status='interrupted', detail=?, completed_at=CURRENT_TIMESTAMP
+                   WHERE status='building' AND is_current=0""",
+                ('graph source changed while warm graph build was running; retry is safe',),
+            )
         db.execute('UPDATE graph_builds SET is_current=0 WHERE is_current=1')
         db.execute('DELETE FROM graph_edges')
         if version >= 8:
@@ -1042,14 +1062,23 @@ class SQLiteAnalysisRepository:
     def register(self, inventory):
         missing = []
         with self._transaction() as db:
+            source_changed = False
             seen = {file.location for file in inventory.files}
             for file in inventory.files:
                 identity = file.identity
-                db.execute('INSERT OR IGNORE INTO tracks VALUES(?,?,?)',
-                           (identity.track_id, identity.sha256, identity.size))
-                stored = db.execute('SELECT sha256,size FROM tracks WHERE id=?', (identity.track_id,)).fetchone()
-                if stored != (identity.sha256, identity.size):
+                stored_track = db.execute('SELECT sha256,size FROM tracks WHERE id=?', (identity.track_id,)).fetchone()
+                if stored_track is None:
+                    source_changed = True
+                    db.execute('INSERT INTO tracks VALUES(?,?,?)', (identity.track_id, identity.sha256, identity.size))
+                    stored_track = (identity.sha256, identity.size)
+                if stored_track != (identity.sha256, identity.size):
                     raise AnalysisError('Duplicate track identity changed while scanning; scan again')
+                stored_location = db.execute(
+                    'SELECT track_id,mtime_ns,format,available FROM locations WHERE path=?',
+                    (file.location,),
+                ).fetchone()
+                if stored_location != (identity.track_id, file.mtime_ns, file.format, 1):
+                    source_changed = True
                 db.execute('INSERT INTO locations VALUES(?,?,?,?,1) ON CONFLICT(path) DO UPDATE SET track_id=excluded.track_id,mtime_ns=excluded.mtime_ns,format=excluded.format,available=1',
                            (file.location, identity.track_id, file.mtime_ns, file.format))
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
@@ -1062,16 +1091,19 @@ class SQLiteAnalysisRepository:
                 reason = _duration_eligibility_reason(duration, source)
                 status = _duration_status(duration, source)
                 new_audio_state = (duration, source, status, reason)
+                if stored_audio_state is None or stored_audio_state[2] != new_audio_state[2]:
+                    source_changed = True
                 db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET duration_seconds=excluded.duration_seconds,duration_source=excluded.duration_source,status=excluded.status,reason=excluded.reason',
                            (identity.track_id, *new_audio_state))
                 if stored_audio_state is not None and stored_audio_state != new_audio_state:
                     self._invalidate_current_graph_feature_evidence(db, identity.track_id)
             if inventory.complete:
-                for (path,) in db.execute('SELECT path FROM scan_roots WHERE root=?', (inventory.root,)):
-                    if path not in seen:
+                for (path, available) in db.execute('SELECT path,available FROM scan_roots JOIN locations USING(path) WHERE root=?', (inventory.root,)):
+                    if path not in seen and available:
                         missing.append(path)
+                        source_changed = True
                         db.execute('UPDATE locations SET available=0 WHERE path=?', (path,))
-            if inventory.files or missing:
+            if source_changed:
                 self._invalidate_current_graph_snapshot(db)
         return tuple(sorted(missing))
 
