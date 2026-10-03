@@ -706,6 +706,32 @@ class SQLiteAnalysisRepository:
         payload = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
+    def current_graph_snapshot(self, sparse_k: int, source_revision: str) -> dict:
+        action = 'Run music-analyzer graph build --database DB before loading the mood-axis graph.'
+        with self._transaction() as db:
+            current = db.execute('''
+                SELECT id,edge_count,sparse_k,source_revision,distance_policy_version,neighbour_policy_version
+                FROM graph_builds WHERE is_current=1 AND status='completed'
+            ''').fetchone()
+            if current is not None:
+                build_id, edge_count, stored_k, stored_revision, distance_policy, neighbour_policy = current
+                if (int(stored_k) == int(sparse_k) and stored_revision == str(source_revision)
+                        and distance_policy == DISTANCE_POLICY_VERSION and neighbour_policy == NEIGHBOUR_POLICY_VERSION):
+                    return {'state': 'ready', 'build_id': build_id, 'edge_count': int(edge_count), 'sparse_k': int(stored_k)}
+            latest = db.execute('''
+                SELECT id,status,detail,sparse_k,source_revision,distance_policy_version,neighbour_policy_version
+                FROM graph_builds ORDER BY created_at DESC,rowid DESC LIMIT 1
+            ''').fetchone()
+            if latest is None:
+                return {'state': 'build_needed', 'reason': 'no completed warm graph snapshot', 'action': action}
+            build_id, status, detail, stored_k, stored_revision, distance_policy, neighbour_policy = latest
+            if status == 'building' and int(stored_k) == int(sparse_k) and stored_revision == str(source_revision) \
+                    and distance_policy == DISTANCE_POLICY_VERSION and neighbour_policy == NEIGHBOUR_POLICY_VERSION:
+                return {'state': 'building', 'build_id': build_id, 'reason': detail or 'warm graph build is running', 'action': action}
+            if status in {'failed', 'interrupted'} and int(stored_k) == int(sparse_k) and stored_revision == str(source_revision):
+                return {'state': status, 'build_id': build_id, 'reason': detail or f'latest warm graph build {status}', 'action': action}
+            return {'state': 'stale', 'reason': 'warm graph snapshot is not current', 'action': action}
+
     def begin_graph_build(self, sparse_k: int, source_revision: str) -> str:
         build_id = str(uuid4())
         with self._transaction() as db:
