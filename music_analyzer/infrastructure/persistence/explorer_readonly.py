@@ -25,6 +25,16 @@ from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_m
 
 _SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 _TRACK_ID_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
+_SQLITE_OCTET_LENGTH_VERSION = (3, 43, 0)
+
+
+def _stage_result_size_expression():
+    if sqlite3.sqlite_version_info >= _SQLITE_OCTET_LENGTH_VERSION:
+        return 'octet_length(result)'
+    # Older SQLite runtimes lack octet_length(). Keep the byte-accurate TEXT
+    # fallback rather than length(result), accepting that CAST may materialize
+    # large stage payloads during this read-only preflight on those runtimes.
+    return 'length(CAST(result AS BLOB))'
 
 
 def _duration_decision(duration_seconds, source):
@@ -591,7 +601,8 @@ class ReadOnlyExplorerSQLiteRepository:
         run = None
         if row:
             stages = []
-            stage_sizes = tuple(db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (row[0],)))
+            size_expression = _stage_result_size_expression()
+            stage_sizes = tuple(db.execute(f'SELECT stage,{size_expression} FROM stages WHERE run_id=? ORDER BY stage', (row[0],)))
             for _stage, size in stage_sizes:
                 if int(size) > 16 * 1024 * 1024:
                     raise AnalysisError('Oversized stored stage (16 MiB limit)')

@@ -439,7 +439,7 @@ class _FakeReadTrackCursor:
 
 
 class _FakeOversizedReadTrackDb:
-    def __init__(self, expected_size_expression='length(CAST(result AS BLOB))'):
+    def __init__(self, expected_size_expression=None):
         self.queries = []
         self.expected_size_expression = expected_size_expression
 
@@ -452,7 +452,12 @@ class _FakeOversizedReadTrackDb:
             return _FakeReadTrackCursor((('/music/Oversized.flac',),))
         if compact.startswith('SELECT r.id,r.status,r.detail FROM runs'):
             return _FakeReadTrackCursor((('run-oversized', 'completed', ''),))
-        if compact.startswith(f'SELECT stage,{self.expected_size_expression} FROM stages'):
+        if self.expected_size_expression is None and (
+            compact.startswith('SELECT stage,octet_length(result) FROM stages')
+            or compact.startswith('SELECT stage,length(CAST(result AS BLOB)) FROM stages')
+        ):
+            return _FakeReadTrackCursor((('bpm', 17 * 1024 * 1024), ('energy', 1)))
+        if self.expected_size_expression is not None and compact.startswith(f'SELECT stage,{self.expected_size_expression} FROM stages'):
             return _FakeReadTrackCursor((('bpm', 17 * 1024 * 1024), ('energy', 1)))
         if compact.startswith('SELECT result FROM stages'):
             raise MemoryError('stage payload was fetched before size preflight')
