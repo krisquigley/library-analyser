@@ -1,12 +1,22 @@
 import json
+import os
+import resource
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
+from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
+import music_explorer.infrastructure.explorer_readonly as standalone_explorer_readonly_module
 from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
 
 APP_ID = 0x4D414E41
+_MEMORY_LIMIT_BYTES = 128 * 1024 * 1024
+_OVERSIZED_STAGE_BYTES = 24 * 1024 * 1024
+_TIMEOUT_SECONDS = 15
 
 
 def create_db(path):
@@ -381,3 +391,285 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class _FakeCompactCursor:
+    def __init__(self, rows):
+        self._rows = tuple(rows)
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _FakeCompactDb:
+    def __init__(self, expected_size_expression=None):
+        self.queries = []
+        self.expected_size_expression = expected_size_expression
+
+    def execute(self, sql, params=()):
+        compact = ' '.join(sql.split())
+        self.queries.append(compact)
+        if 'SELECT t.id, t.sha256, t.size' in compact:
+            return _FakeCompactCursor(())
+        if 'FROM latest_run JOIN stages s' in compact:
+            if ', s.result' in compact:
+                raise MemoryError('stage payload was fetched before size preflight')
+            if self.expected_size_expression is not None:
+                expected = f'SELECT s.run_id, s.stage, {self.expected_size_expression} FROM latest_run JOIN stages s'
+                if expected not in compact:
+                    raise AssertionError('unexpected stage size SQL: ' + compact)
+            return _FakeCompactCursor((('run', 'bpm', 17 * 1024 * 1024),))
+        if 'FROM overrides o' in compact:
+            return _FakeCompactCursor(())
+        raise AssertionError('unexpected SQL: ' + compact)
+
+
+class _FakeReadTrackCursor:
+    def __init__(self, rows):
+        self._rows = tuple(rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _FakeOversizedReadTrackDb:
+    def __init__(self, expected_size_expression=None):
+        self.queries = []
+        self.expected_size_expression = expected_size_expression
+
+    def execute(self, sql, params=()):
+        compact = ' '.join(sql.split())
+        self.queries.append(compact)
+        if compact.startswith('SELECT id,sha256,size FROM tracks'):
+            return _FakeReadTrackCursor((('sha256:' + '8' * 64, '8' * 64, 1),))
+        if compact.startswith('SELECT path FROM locations'):
+            return _FakeReadTrackCursor((('/music/Oversized.flac',),))
+        if compact.startswith('SELECT r.id,r.status,r.detail FROM runs'):
+            return _FakeReadTrackCursor((('run-oversized', 'completed', ''),))
+        if self.expected_size_expression is None and (
+            compact.startswith('SELECT stage,octet_length(result) FROM stages')
+            or compact.startswith('SELECT stage,length(CAST(result AS BLOB)) FROM stages')
+        ):
+            return _FakeReadTrackCursor((('bpm', 17 * 1024 * 1024), ('energy', 1)))
+        if self.expected_size_expression is not None and compact.startswith(f'SELECT stage,{self.expected_size_expression} FROM stages'):
+            return _FakeReadTrackCursor((('bpm', 17 * 1024 * 1024), ('energy', 1)))
+        if compact.startswith('SELECT result FROM stages'):
+            raise MemoryError('stage payload was fetched before size preflight')
+        raise AssertionError('unexpected SQL: ' + compact)
+
+
+class StandaloneReadOnlyExplorerStagePayloadGuardTests(unittest.TestCase):
+    def test_read_track_rejects_oversized_stage_before_fetching_any_stage_payload(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeOversizedReadTrackDb()
+
+        with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+            repo._read_track(fake_db, 'sha256:' + '8' * 64)
+
+        self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+    def test_read_track_uses_octet_length_preflight_on_modern_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeOversizedReadTrackDb('octet_length(result)')
+        original_version = standalone_explorer_readonly_module.sqlite3.sqlite_version_info
+        standalone_explorer_readonly_module.sqlite3.sqlite_version_info = (3, 43, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._read_track(fake_db, 'sha256:' + '8' * 64)
+        finally:
+            standalone_explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if query.startswith('SELECT stage,')]
+        self.assertEqual(['SELECT stage,octet_length(result) FROM stages WHERE run_id=? ORDER BY stage'], size_queries)
+        self.assertFalse(any('CAST(result AS BLOB)' in query for query in size_queries))
+        self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+    def test_read_track_falls_back_to_byte_accurate_cast_preflight_on_old_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeOversizedReadTrackDb('length(CAST(result AS BLOB))')
+        original_version = standalone_explorer_readonly_module.sqlite3.sqlite_version_info
+        standalone_explorer_readonly_module.sqlite3.sqlite_version_info = (3, 42, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._read_track(fake_db, 'sha256:' + '8' * 64)
+        finally:
+            standalone_explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if query.startswith('SELECT stage,')]
+        self.assertEqual(['SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage'], size_queries)
+
+    @unittest.skipIf(sqlite3.sqlite_version_info < (3, 43, 0), 'SQLite octet_length unavailable before 3.43')
+    def test_octet_length_preflight_measures_utf8_bytes_not_characters(self):
+        self.assertEqual('octet_length(result)', standalone_explorer_readonly_module._stage_result_size_expression())
+        with closing(sqlite3.connect(':memory:')) as db:
+            size = db.execute(
+                f'SELECT {standalone_explorer_readonly_module._stage_result_size_expression()} FROM (SELECT ? AS result)',
+                ('é',),
+            ).fetchone()[0]
+        self.assertEqual(len('é'.encode('utf-8')), size)
+
+
+
+class StandaloneCompactGraphResourceTests(unittest.TestCase):
+    def test_compact_graph_rejects_oversized_stage_before_fetching_payload(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb()
+
+        with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+            repo._compact_graph_tracks(fake_db)
+
+        self.assertFalse(any(', s.result' in query for query in fake_db.queries))
+
+    def test_compact_graph_uses_octet_length_preflight_on_modern_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb('octet_length(s.result)')
+        original_version = standalone_explorer_readonly_module.sqlite3.sqlite_version_info
+        standalone_explorer_readonly_module.sqlite3.sqlite_version_info = (3, 43, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._compact_graph_tracks(fake_db)
+        finally:
+            standalone_explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if 'FROM latest_run JOIN stages s' in query]
+        self.assertEqual(1, len(size_queries))
+        self.assertIn('octet_length(s.result)', size_queries[0])
+        self.assertNotIn('CAST(s.result AS BLOB)', size_queries[0])
+        self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+    def test_compact_graph_falls_back_to_byte_accurate_cast_preflight_on_old_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb('length(CAST(s.result AS BLOB))')
+        original_version = standalone_explorer_readonly_module.sqlite3.sqlite_version_info
+        standalone_explorer_readonly_module.sqlite3.sqlite_version_info = (3, 42, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._compact_graph_tracks(fake_db)
+        finally:
+            standalone_explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if 'FROM latest_run JOIN stages s' in query]
+        self.assertEqual(1, len(size_queries))
+        self.assertIn('length(CAST(s.result AS BLOB))', size_queries[0])
+
+
+def _skip_without_posix_address_space_limit():
+    if os.name != 'posix' or not hasattr(resource, 'RLIMIT_AS'):
+        raise unittest.SkipTest('POSIX RLIMIT_AS is required for deterministic low-memory standalone compact graph coverage')
+
+
+def _create_standalone_oversized_stage_database(path: Path) -> None:
+    SQLiteAnalysisRepository(str(path))
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute('PRAGMA foreign_keys=ON')
+        track_id = 'sha256:' + 'c' * 64
+        db.execute('INSERT INTO tracks(id,sha256,size) VALUES(?,?,?)', (track_id, 'c' * 64, 1))
+        db.execute(
+            'INSERT INTO locations(path,track_id,mtime_ns,format,available) VALUES(?,?,?,?,1)',
+            ('/music/standalone-oversized.flac', track_id, 1, 'flac'),
+        )
+        db.execute(
+            'INSERT INTO track_metadata(track_id,common_json,tags_json,warnings_json) VALUES(?,?,?,?)',
+            (track_id, '[]', '[]', '[]'),
+        )
+        db.execute(
+            'INSERT INTO track_audio(track_id,duration_seconds,duration_source,status,reason) VALUES(?,?,?,?,?)',
+            (track_id, 120.0, 'mutagen', 'eligible', ''),
+        )
+        db.execute("INSERT INTO runs(id,location,status,detail) VALUES(?,?, 'completed', '')", ('run-standalone-oversized', '/music/standalone-oversized.flac'))
+        db.execute('INSERT INTO run_tracks(run_id,track_id) VALUES(?,?)', ('run-standalone-oversized', track_id))
+        db.execute('INSERT INTO stages(run_id,stage,result) VALUES(?,?,zeroblob(?))', ('run-standalone-oversized', 'energy', _OVERSIZED_STAGE_BYTES))
+
+
+_STANDALONE_OVERSIZED_COMPACT_SCRIPT = r'''
+import resource
+import sys
+from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
+
+path = sys.argv[1]
+limit = int(sys.argv[2])
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+try:
+    ReadOnlyExplorerSQLiteRepository(path).mood_axis_graph_snapshot()
+except AnalysisError as error:
+    print(str(error))
+    raise SystemExit(42)
+except MemoryError:
+    print('MemoryError', file=sys.stderr)
+    raise SystemExit(73)
+raise SystemExit('expected AnalysisError')
+'''
+
+
+class StandaloneCompactGraphLowMemoryTests(unittest.TestCase):
+    def test_standalone_mood_axis_preflights_oversized_stage_under_low_address_space(self):
+        _skip_without_posix_address_space_limit()
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            _create_standalone_oversized_stage_database(path)
+            result = subprocess.run(
+                [sys.executable, '-c', _STANDALONE_OVERSIZED_COMPACT_SCRIPT, str(path), str(_MEMORY_LIMIT_BYTES)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+        self.assertEqual(result.returncode, 42, (result.stdout, result.stderr))
+        self.assertIn('Oversized stored stage (16 MiB limit)', result.stdout)
+        self.assertNotIn('MemoryError', result.stderr)
+
+
+_STANDALONE_OVERSIZED_DETAIL_SCRIPT = r"""
+import resource
+import sys
+from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
+
+path = sys.argv[1]
+track_id = sys.argv[2]
+limit = int(sys.argv[3])
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+try:
+    ReadOnlyExplorerSQLiteRepository(path).read_track(track_id)
+except AnalysisError as error:
+    print(str(error))
+    raise SystemExit(42)
+except MemoryError:
+    print('MemoryError', file=sys.stderr)
+    raise SystemExit(73)
+raise SystemExit('expected AnalysisError')
+"""
+
+
+class StandaloneDetailReadLowMemoryTests(unittest.TestCase):
+    def test_standalone_read_track_preflights_oversized_stage_under_low_address_space(self):
+        _skip_without_posix_address_space_limit()
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            _create_standalone_oversized_stage_database(path)
+            track_id = 'sha256:' + 'c' * 64
+            result = subprocess.run(
+                [sys.executable, '-c', _STANDALONE_OVERSIZED_DETAIL_SCRIPT, str(path), track_id, str(_MEMORY_LIMIT_BYTES)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+        self.assertEqual(result.returncode, 42, (result.stdout, result.stderr))
+        self.assertIn('Oversized stored stage (16 MiB limit)', result.stdout)
+        self.assertNotIn('MemoryError', result.stderr)

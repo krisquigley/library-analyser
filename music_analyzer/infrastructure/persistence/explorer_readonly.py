@@ -25,6 +25,18 @@ from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_m
 
 _SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 _TRACK_ID_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
+_SQLITE_OCTET_LENGTH_VERSION = (3, 43, 0)
+
+
+def _stage_result_size_expression(column='result'):
+    if column not in ('result', 's.result'):
+        raise ValueError('Unsupported stage result column')
+    if sqlite3.sqlite_version_info >= _SQLITE_OCTET_LENGTH_VERSION:
+        return f'octet_length({column})'
+    # Older SQLite runtimes lack octet_length(). Keep the byte-accurate TEXT
+    # fallback rather than length(result), accepting that CAST may materialize
+    # large stage payloads during this read-only preflight on those runtimes.
+    return f'length(CAST({column} AS BLOB))'
 
 
 def _duration_decision(duration_seconds, source):
@@ -518,7 +530,8 @@ class ReadOnlyExplorerSQLiteRepository:
             ORDER BY t.id
         ''').fetchall()
         stages_by_run = {}
-        for run_id, stage, size, payload in db.execute('''
+        size_expression = _stage_result_size_expression('s.result')
+        stage_sizes = tuple(db.execute(f'''
             WITH latest_run AS (
                 SELECT track_id, run_id FROM (
                     SELECT rt.track_id, r.id AS run_id,
@@ -527,10 +540,15 @@ class ReadOnlyExplorerSQLiteRepository:
                     JOIN active_tracks at ON at.id=rt.track_id
                 ) WHERE rn=1
             )
-            SELECT s.run_id, s.stage, length(CAST(s.result AS BLOB)), s.result
+            SELECT s.run_id, s.stage, {size_expression}
             FROM latest_run JOIN stages s ON s.run_id=latest_run.run_id
             ORDER BY latest_run.track_id, s.stage
-        '''):
+        '''))
+        for run_id, stage, size in stage_sizes:
+            if size > 16 * 1024 * 1024:
+                raise AnalysisError('Oversized stored stage (16 MiB limit)')
+        for run_id, stage, size in stage_sizes:
+            payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (run_id, stage)).fetchone()[0]
             stages_by_run.setdefault(run_id, []).append(self._stage_from_payload(stage, size, payload))
         overrides_by_track = {}
         for track_id, field, value in db.execute('''
@@ -586,7 +604,12 @@ class ReadOnlyExplorerSQLiteRepository:
         run = None
         if row:
             stages = []
-            for stage, size in db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (row[0],)):
+            size_expression = _stage_result_size_expression()
+            stage_sizes = tuple(db.execute(f'SELECT stage,{size_expression} FROM stages WHERE run_id=? ORDER BY stage', (row[0],)))
+            for _stage, size in stage_sizes:
+                if int(size) > 16 * 1024 * 1024:
+                    raise AnalysisError('Oversized stored stage (16 MiB limit)')
+            for stage, size in stage_sizes:
                 payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (row[0], stage)).fetchone()[0]
                 stages.append(self._stage_from_payload(stage, size, payload))
             run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
