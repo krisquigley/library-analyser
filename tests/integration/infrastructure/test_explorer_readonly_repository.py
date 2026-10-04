@@ -699,5 +699,51 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             db.close()
 
 
+class _FakeReadTrackCursor:
+    def __init__(self, rows):
+        self._rows = tuple(rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _FakeOversizedReadTrackDb:
+    def __init__(self):
+        self.queries = []
+
+    def execute(self, sql, params=()):
+        compact = ' '.join(sql.split())
+        self.queries.append(compact)
+        if compact.startswith('SELECT id,sha256,size FROM tracks'):
+            return _FakeReadTrackCursor((('sha256:' + '9' * 64, '9' * 64, 1),))
+        if compact.startswith('SELECT path FROM locations'):
+            return _FakeReadTrackCursor((('/music/Oversized.flac',),))
+        if compact.startswith('SELECT r.id,r.status,r.detail FROM runs'):
+            return _FakeReadTrackCursor((('run-oversized', 'completed', ''),))
+        if compact.startswith('SELECT stage,length(CAST(result AS BLOB)) FROM stages'):
+            return _FakeReadTrackCursor((('bpm', 17 * 1024 * 1024), ('energy', 1)))
+        if compact.startswith('SELECT result FROM stages'):
+            raise MemoryError('stage payload was fetched before size preflight')
+        raise AssertionError('unexpected SQL: ' + compact)
+
+
+class ReadOnlyExplorerStagePayloadGuardTests(unittest.TestCase):
+    def test_read_track_rejects_oversized_stage_before_fetching_any_stage_payload(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeOversizedReadTrackDb()
+
+        with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+            repo._read_track(fake_db, 'sha256:' + '9' * 64)
+
+        self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+
+
 if __name__ == '__main__':
     unittest.main()

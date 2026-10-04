@@ -423,6 +423,52 @@ class _FakeCompactDb:
         raise AssertionError('unexpected SQL: ' + compact)
 
 
+class _FakeReadTrackCursor:
+    def __init__(self, rows):
+        self._rows = tuple(rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _FakeOversizedReadTrackDb:
+    def __init__(self):
+        self.queries = []
+
+    def execute(self, sql, params=()):
+        compact = ' '.join(sql.split())
+        self.queries.append(compact)
+        if compact.startswith('SELECT id,sha256,size FROM tracks'):
+            return _FakeReadTrackCursor((('sha256:' + '8' * 64, '8' * 64, 1),))
+        if compact.startswith('SELECT path FROM locations'):
+            return _FakeReadTrackCursor((('/music/Oversized.flac',),))
+        if compact.startswith('SELECT r.id,r.status,r.detail FROM runs'):
+            return _FakeReadTrackCursor((('run-oversized', 'completed', ''),))
+        if compact.startswith('SELECT stage,length(CAST(result AS BLOB)) FROM stages'):
+            return _FakeReadTrackCursor((('bpm', 17 * 1024 * 1024), ('energy', 1)))
+        if compact.startswith('SELECT result FROM stages'):
+            raise MemoryError('stage payload was fetched before size preflight')
+        raise AssertionError('unexpected SQL: ' + compact)
+
+
+class StandaloneReadOnlyExplorerStagePayloadGuardTests(unittest.TestCase):
+    def test_read_track_rejects_oversized_stage_before_fetching_any_stage_payload(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeOversizedReadTrackDb()
+
+        with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+            repo._read_track(fake_db, 'sha256:' + '8' * 64)
+
+        self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+
+
 class StandaloneCompactGraphResourceTests(unittest.TestCase):
     def test_compact_graph_rejects_oversized_stage_before_fetching_payload(self):
         repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
@@ -491,6 +537,48 @@ class StandaloneCompactGraphLowMemoryTests(unittest.TestCase):
             _create_standalone_oversized_stage_database(path)
             result = subprocess.run(
                 [sys.executable, '-c', _STANDALONE_OVERSIZED_COMPACT_SCRIPT, str(path), str(_MEMORY_LIMIT_BYTES)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+        self.assertEqual(result.returncode, 42, (result.stdout, result.stderr))
+        self.assertIn('Oversized stored stage (16 MiB limit)', result.stdout)
+        self.assertNotIn('MemoryError', result.stderr)
+
+
+_STANDALONE_OVERSIZED_DETAIL_SCRIPT = r"""
+import resource
+import sys
+from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
+
+path = sys.argv[1]
+track_id = sys.argv[2]
+limit = int(sys.argv[3])
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+try:
+    ReadOnlyExplorerSQLiteRepository(path).read_track(track_id)
+except AnalysisError as error:
+    print(str(error))
+    raise SystemExit(42)
+except MemoryError:
+    print('MemoryError', file=sys.stderr)
+    raise SystemExit(73)
+raise SystemExit('expected AnalysisError')
+"""
+
+
+class StandaloneDetailReadLowMemoryTests(unittest.TestCase):
+    def test_standalone_read_track_preflights_oversized_stage_under_low_address_space(self):
+        _skip_without_posix_address_space_limit()
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            _create_standalone_oversized_stage_database(path)
+            track_id = 'sha256:' + 'c' * 64
+            result = subprocess.run(
+                [sys.executable, '-c', _STANDALONE_OVERSIZED_DETAIL_SCRIPT, str(path), track_id, str(_MEMORY_LIMIT_BYTES)],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
