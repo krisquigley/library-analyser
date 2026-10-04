@@ -87,6 +87,7 @@ def current_graph_feature_rows(path: Path) -> tuple[tuple[str, str, str, int], .
         return tuple(db.execute('''
             SELECT track_id, run_id, fingerprint, is_current
             FROM graph_feature_evidence
+            WHERE is_current=1
             ORDER BY track_id, run_id
         '''))
 

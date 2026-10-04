@@ -1117,15 +1117,18 @@ class SQLiteAnalysisRepository:
             'cleared_stale_current': 0,
         }
         for track_id, run_id, status in self._graph_feature_backfill_candidates():
+            mutations = stats['backfilled'] + stats['cleared_stale_current']
             if status != 'completed':
+                if mutations >= limit:
+                    break
                 stats['skipped_latest_not_completed'] += 1
                 stats['cleared_stale_current'] += self._clear_stale_graph_feature_current(track_id)
                 continue
             if self._graph_feature_current_matches(track_id, run_id):
                 stats['already_current'] += 1
                 continue
-            if stats['backfilled'] >= limit:
-                continue
+            if mutations >= limit:
+                break
             evidence = self._build_historical_graph_feature_evidence(track_id, run_id)
             if evidence is None:
                 stats['skipped_missing_features'] += 1
@@ -1168,24 +1171,41 @@ class SQLiteAnalysisRepository:
 
     def _graph_feature_current_matches(self, track_id, run_id):
         with self._backfill_transaction() as db:
-            return db.execute(
-                'SELECT 1 FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
+            current = db.execute(
+                'SELECT fingerprint,evidence_json FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
                 (track_id, run_id),
-            ).fetchone() is not None
+            ).fetchone()
+        if current is None:
+            return False
+        fingerprint, payload_json = current
+        try:
+            payload = json.loads(payload_json)
+            validate_graph_feature_evidence_payload(track_id, run_id, fingerprint, payload)
+        except (TypeError, ValueError, json.JSONDecodeError, AnalysisError):
+            return False
+        return True
 
     def _build_historical_graph_feature_evidence(self, track_id, run_id):
         from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_mapping
         placeholders = ','.join('?' for _ in GRAPH_RELEVANT_STAGES)
         with self._backfill_transaction() as db:
-            rows = tuple(db.execute(
-                f'''SELECT stage,length(CAST(result AS BLOB)),result FROM stages
+            sizes = tuple(db.execute(
+                f'''SELECT stage,length(CAST(result AS BLOB)) FROM stages
                     WHERE run_id=? AND stage IN ({placeholders}) ORDER BY stage''',
                 (run_id, *GRAPH_RELEVANT_STAGES),
             ))
+            for _stage_name, size in sizes:
+                if int(size) > _MAX_STORED_STAGE_RESULT_BYTES:
+                    raise AnalysisError('Oversized stored stage (16 MiB limit)')
+            rows = tuple(
+                (stage_name, db.execute(
+                    'SELECT result FROM stages WHERE run_id=? AND stage=?',
+                    (run_id, stage_name),
+                ).fetchone()[0])
+                for stage_name, _size in sizes
+            )
         stages = []
-        for stage_name, size, payload in rows:
-            if int(size) > _MAX_STORED_STAGE_RESULT_BYTES:
-                raise AnalysisError('Oversized stored stage (16 MiB limit)')
+        for stage_name, payload in rows:
             try:
                 stage = stage_from_mapping(json.loads(payload))
                 if stage.stage != stage_name:
@@ -1205,22 +1225,22 @@ class SQLiteAnalysisRepository:
 
     def _clear_stale_graph_feature_current(self, track_id):
         with self._backfill_transaction(immediate=True) as db:
-            cursor = db.execute('DELETE FROM graph_feature_evidence WHERE track_id=? AND is_current=1', (track_id,))
+            cursor = db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (track_id,))
             return cursor.rowcount
 
     def _publish_historical_graph_feature_evidence(self, evidence):
         payload = evidence.payload
         validate_graph_feature_evidence_payload(evidence.track_id, evidence.run_id, evidence.fingerprint, payload)
+        payload_json = evidence.payload_json()
         with self._backfill_transaction(immediate=True) as db:
             latest = self._latest_active_run_for_track(db, evidence.track_id)
             if latest != (evidence.run_id, 'completed'):
-                cursor = db.execute('DELETE FROM graph_feature_evidence WHERE track_id=? AND is_current=1', (evidence.track_id,))
-                return 'stale_cleared' if cursor.rowcount else 'stale_skipped'
+                return 'stale_skipped'
             current = db.execute(
                 'SELECT fingerprint,evidence_json FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
                 (evidence.track_id, evidence.run_id),
             ).fetchone()
-            if current == (evidence.fingerprint, evidence.payload_json()):
+            if current == (evidence.fingerprint, payload_json):
                 return 'already_current'
             db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (evidence.track_id,))
             db.execute(
@@ -1230,11 +1250,11 @@ class SQLiteAnalysisRepository:
                        fingerprint=excluded.fingerprint,
                        evidence_json=excluded.evidence_json,
                        is_current=1''',
-                (evidence.track_id, evidence.run_id, evidence.fingerprint, evidence.payload_json()),
+                (evidence.track_id, evidence.run_id, evidence.fingerprint, payload_json),
             )
             latest_after = self._latest_active_run_for_track(db, evidence.track_id)
             if latest_after != (evidence.run_id, 'completed'):
-                db.execute('DELETE FROM graph_feature_evidence WHERE track_id=? AND run_id=?', (evidence.track_id, evidence.run_id))
+                db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND run_id=?', (evidence.track_id, evidence.run_id))
                 return 'stale_skipped'
             return 'backfilled'
 

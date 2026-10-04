@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from music_analyzer.application.dto.analysis import AudioSource, StageResult
+from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
 from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
 from music_analyzer.domain.analysis import ScoreSummary
 from music_analyzer.domain.catalogue import FileIdentity
@@ -203,3 +203,73 @@ class GraphFeatureEvidenceBackfillRedTests(unittest.TestCase):
             self.assertEqual(tuple(db.execute('SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges WHERE build_id=?', (build_id,))), before_edges)
             self.assertEqual(tuple(db.execute('SELECT build_id FROM graph_build_positioned_snapshots WHERE build_id=?', (build_id,))), before_positioned)
         self.assertIn((identity.track_id, run_id), [(track_id, run_id) for track_id, run_id, _fingerprint, _payload, _current in _current_evidence_rows(self.path)])
+
+
+class GraphFeatureEvidenceBackfillRemediationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / 'analysis.sqlite'
+
+    def test_stale_publish_cannot_delete_newer_current_evidence_for_latest_completed_run(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository, 'a', '/music/a.flac')
+        older_run = _complete_run(repository, identity, '/music/a.flac', seed=0)
+        newer_run = _complete_run(repository, identity, '/music/a.flac', seed=1)
+        newer_before = _current_evidence_rows(self.path)
+        self.assertEqual(newer_before[0][1], newer_run)
+
+        stats = repository._publish_historical_graph_feature_evidence(
+            repository._build_historical_graph_feature_evidence(identity.track_id, older_run)
+        )
+
+        self.assertEqual(stats, 'stale_skipped')
+        self.assertEqual(_current_evidence_rows(self.path), newer_before)
+
+    def test_corrupt_current_evidence_for_latest_run_is_repaired_not_counted_already_current(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository, 'a', '/music/a.flac')
+        run_id = _complete_run(repository, identity, '/music/a.flac')
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute('UPDATE graph_feature_evidence SET fingerprint=?, evidence_json=? WHERE run_id=?', ('bad', '{bad', run_id))
+            db.commit()
+
+        code, stdout, stderr = _run_backfill(self.path)
+
+        self.assertEqual((code, stderr), (0, ''))
+        self.assertIn('backfilled=1', stdout)
+        row = _current_evidence_rows(self.path)[0]
+        self.assertRegex(row[2], r'^[0-9a-f]{64}$')
+        json.loads(row[3])
+
+    def test_limit_one_counts_one_actionable_mutation_and_does_not_clear_and_backfill_same_invocation(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        a = _register_track(repository, 'a', '/music/a.flac')
+        a_run = _complete_run(repository, a, '/music/a.flac')
+        fail = repository.start(AudioSource('/music/a.flac', a.track_id))
+        repository.finish(fail, 'failed', 'failed')
+        b = _register_track(repository, 'b', '/music/b.flac')
+        b_run = _complete_run(repository, b, '/music/b.flac')
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute('UPDATE graph_feature_evidence SET is_current=1 WHERE run_id=?', (a_run,))
+            db.execute('DELETE FROM graph_feature_evidence WHERE run_id=?', (b_run,))
+            db.commit()
+
+        code, stdout, stderr = _run_backfill(self.path, '--limit', '1')
+
+        self.assertEqual((code, stderr), (0, ''))
+        self.assertIn('cleared_stale=1', stdout)
+        self.assertIn('backfilled=0', stdout)
+        self.assertEqual(_current_evidence_rows(self.path), ())
+
+    def test_oversized_stage_is_rejected_by_size_preflight_before_fetching_result(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository, 'a', '/music/a.flac')
+        run_id = _complete_run(repository, identity, '/music/a.flac')
+        _remove_all_feature_evidence(self.path)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute('UPDATE stages SET result=? WHERE run_id=? AND stage=?', ('x' * (24 * 1024 * 1024), run_id, 'bpm'))
+            db.commit()
+
+        with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+            repository.backfill_graph_feature_evidence()

@@ -518,7 +518,7 @@ class ReadOnlyExplorerSQLiteRepository:
             ORDER BY t.id
         ''').fetchall()
         stages_by_run = {}
-        for run_id, stage, size, payload in db.execute('''
+        stage_sizes = tuple(db.execute('''
             WITH latest_run AS (
                 SELECT track_id, run_id FROM (
                     SELECT rt.track_id, r.id AS run_id,
@@ -527,10 +527,15 @@ class ReadOnlyExplorerSQLiteRepository:
                     JOIN active_tracks at ON at.id=rt.track_id
                 ) WHERE rn=1
             )
-            SELECT s.run_id, s.stage, length(CAST(s.result AS BLOB)), s.result
+            SELECT s.run_id, s.stage, length(CAST(s.result AS BLOB))
             FROM latest_run JOIN stages s ON s.run_id=latest_run.run_id
             ORDER BY latest_run.track_id, s.stage
-        '''):
+        '''))
+        for run_id, stage, size in stage_sizes:
+            if size > 16 * 1024 * 1024:
+                raise AnalysisError('Oversized stored stage (16 MiB limit)')
+        for run_id, stage, size in stage_sizes:
+            payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (run_id, stage)).fetchone()[0]
             stages_by_run.setdefault(run_id, []).append(self._stage_from_payload(stage, size, payload))
         overrides_by_track = {}
         for track_id, field, value in db.execute('''
