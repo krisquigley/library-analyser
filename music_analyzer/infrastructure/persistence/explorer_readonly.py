@@ -591,7 +591,11 @@ class ReadOnlyExplorerSQLiteRepository:
         run = None
         if row:
             stages = []
-            for stage, size in db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (row[0],)):
+            stage_sizes = tuple(db.execute('SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (row[0],)))
+            for _stage, size in stage_sizes:
+                if int(size) > 16 * 1024 * 1024:
+                    raise AnalysisError('Oversized stored stage (16 MiB limit)')
+            for stage, size in stage_sizes:
                 payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (row[0], stage)).fetchone()[0]
                 stages.append(self._stage_from_payload(stage, size, payload))
             run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
