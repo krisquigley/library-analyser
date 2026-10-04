@@ -700,6 +700,43 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             db.close()
 
 
+class _FakeCompactCursor:
+    def __init__(self, rows):
+        self._rows = tuple(rows)
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _FakeCompactDb:
+    def __init__(self, expected_size_expression=None):
+        self.queries = []
+        self.expected_size_expression = expected_size_expression
+
+    def execute(self, sql, params=()):
+        compact = ' '.join(sql.split())
+        self.queries.append(compact)
+        if 'SELECT t.id, t.sha256, t.size' in compact:
+            return _FakeCompactCursor(())
+        if 'FROM latest_run JOIN stages s' in compact:
+            if ', s.result' in compact:
+                raise MemoryError('stage payload was fetched before size preflight')
+            if self.expected_size_expression is not None:
+                expected = f'SELECT s.run_id, s.stage, {self.expected_size_expression} FROM latest_run JOIN stages s'
+                if expected not in compact:
+                    raise AssertionError('unexpected stage size SQL: ' + compact)
+            return _FakeCompactCursor((('run', 'bpm', 17 * 1024 * 1024),))
+        if 'FROM overrides o' in compact:
+            return _FakeCompactCursor(())
+        raise AssertionError('unexpected SQL: ' + compact)
+
+
 class _FakeReadTrackCursor:
     def __init__(self, rows):
         self._rows = tuple(rows)
@@ -738,6 +775,49 @@ class _FakeOversizedReadTrackDb:
         if compact.startswith('SELECT result FROM stages'):
             raise MemoryError('stage payload was fetched before size preflight')
         raise AssertionError('unexpected SQL: ' + compact)
+
+
+class CompactGraphResourceTests(unittest.TestCase):
+    def test_compact_graph_rejects_oversized_stage_before_fetching_payload(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb()
+
+        with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+            repo._compact_graph_tracks(fake_db)
+
+        self.assertFalse(any(', s.result' in query for query in fake_db.queries))
+
+    def test_compact_graph_uses_octet_length_preflight_on_modern_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb('octet_length(s.result)')
+        original_version = explorer_readonly_module.sqlite3.sqlite_version_info
+        explorer_readonly_module.sqlite3.sqlite_version_info = (3, 43, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._compact_graph_tracks(fake_db)
+        finally:
+            explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if 'FROM latest_run JOIN stages s' in query]
+        self.assertEqual(1, len(size_queries))
+        self.assertIn('octet_length(s.result)', size_queries[0])
+        self.assertNotIn('CAST(s.result AS BLOB)', size_queries[0])
+        self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+    def test_compact_graph_falls_back_to_byte_accurate_cast_preflight_on_old_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb('length(CAST(s.result AS BLOB))')
+        original_version = explorer_readonly_module.sqlite3.sqlite_version_info
+        explorer_readonly_module.sqlite3.sqlite_version_info = (3, 42, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._compact_graph_tracks(fake_db)
+        finally:
+            explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if 'FROM latest_run JOIN stages s' in query]
+        self.assertEqual(1, len(size_queries))
+        self.assertIn('length(CAST(s.result AS BLOB))', size_queries[0])
 
 
 class ReadOnlyExplorerStagePayloadGuardTests(unittest.TestCase):

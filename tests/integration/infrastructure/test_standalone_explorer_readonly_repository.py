@@ -408,8 +408,9 @@ class _FakeCompactCursor:
 
 
 class _FakeCompactDb:
-    def __init__(self):
+    def __init__(self, expected_size_expression=None):
         self.queries = []
+        self.expected_size_expression = expected_size_expression
 
     def execute(self, sql, params=()):
         compact = ' '.join(sql.split())
@@ -419,6 +420,10 @@ class _FakeCompactDb:
         if 'FROM latest_run JOIN stages s' in compact:
             if ', s.result' in compact:
                 raise MemoryError('stage payload was fetched before size preflight')
+            if self.expected_size_expression is not None:
+                expected = f'SELECT s.run_id, s.stage, {self.expected_size_expression} FROM latest_run JOIN stages s'
+                if expected not in compact:
+                    raise AssertionError('unexpected stage size SQL: ' + compact)
             return _FakeCompactCursor((('run', 'bpm', 17 * 1024 * 1024),))
         if 'FROM overrides o' in compact:
             return _FakeCompactCursor(())
@@ -526,6 +531,38 @@ class StandaloneCompactGraphResourceTests(unittest.TestCase):
             repo._compact_graph_tracks(fake_db)
 
         self.assertFalse(any(', s.result' in query for query in fake_db.queries))
+
+    def test_compact_graph_uses_octet_length_preflight_on_modern_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb('octet_length(s.result)')
+        original_version = standalone_explorer_readonly_module.sqlite3.sqlite_version_info
+        standalone_explorer_readonly_module.sqlite3.sqlite_version_info = (3, 43, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._compact_graph_tracks(fake_db)
+        finally:
+            standalone_explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if 'FROM latest_run JOIN stages s' in query]
+        self.assertEqual(1, len(size_queries))
+        self.assertIn('octet_length(s.result)', size_queries[0])
+        self.assertNotIn('CAST(s.result AS BLOB)', size_queries[0])
+        self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+    def test_compact_graph_falls_back_to_byte_accurate_cast_preflight_on_old_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb('length(CAST(s.result AS BLOB))')
+        original_version = standalone_explorer_readonly_module.sqlite3.sqlite_version_info
+        standalone_explorer_readonly_module.sqlite3.sqlite_version_info = (3, 42, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._compact_graph_tracks(fake_db)
+        finally:
+            standalone_explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if 'FROM latest_run JOIN stages s' in query]
+        self.assertEqual(1, len(size_queries))
+        self.assertIn('length(CAST(s.result AS BLOB))', size_queries[0])
 
 
 def _skip_without_posix_address_space_limit():

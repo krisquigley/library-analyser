@@ -80,13 +80,15 @@ _TRACK_ID_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
 _SQLITE_OCTET_LENGTH_VERSION = (3, 43, 0)
 
 
-def _stage_result_size_expression():
+def _stage_result_size_expression(column='result'):
+    if column not in ('result', 's.result'):
+        raise ValueError('Unsupported stage result column')
     if sqlite3.sqlite_version_info >= _SQLITE_OCTET_LENGTH_VERSION:
-        return 'octet_length(result)'
+        return f'octet_length({column})'
     # Older SQLite runtimes lack octet_length(). Keep the byte-accurate TEXT
     # fallback rather than length(result), accepting that CAST may materialize
     # large stage payloads during this read-only preflight on those runtimes.
-    return 'length(CAST(result AS BLOB))'
+    return f'length(CAST({column} AS BLOB))'
 
 
 _EXPECTED_SCHEMA = {
@@ -460,7 +462,8 @@ class ReadOnlyExplorerSQLiteRepository:
             ORDER BY t.id
         ''').fetchall()
         stages_by_run = {}
-        stage_sizes = tuple(db.execute('''
+        size_expression = _stage_result_size_expression('s.result')
+        stage_sizes = tuple(db.execute(f'''
             WITH latest_run AS (
                 SELECT track_id, run_id FROM (
                     SELECT rt.track_id, r.id AS run_id,
@@ -469,7 +472,7 @@ class ReadOnlyExplorerSQLiteRepository:
                     JOIN active_tracks at ON at.id=rt.track_id
                 ) WHERE rn=1
             )
-            SELECT s.run_id, s.stage, length(CAST(s.result AS BLOB))
+            SELECT s.run_id, s.stage, {size_expression}
             FROM latest_run JOIN stages s ON s.run_id=latest_run.run_id
             ORDER BY latest_run.track_id, s.stage
         '''))
