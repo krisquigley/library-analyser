@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
+import music_explorer.infrastructure.explorer_readonly as standalone_explorer_readonly_module
 from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
 
 APP_ID = 0x4D414E41
@@ -438,8 +439,9 @@ class _FakeReadTrackCursor:
 
 
 class _FakeOversizedReadTrackDb:
-    def __init__(self):
+    def __init__(self, expected_size_expression='length(CAST(result AS BLOB))'):
         self.queries = []
+        self.expected_size_expression = expected_size_expression
 
     def execute(self, sql, params=()):
         compact = ' '.join(sql.split())
@@ -450,7 +452,7 @@ class _FakeOversizedReadTrackDb:
             return _FakeReadTrackCursor((('/music/Oversized.flac',),))
         if compact.startswith('SELECT r.id,r.status,r.detail FROM runs'):
             return _FakeReadTrackCursor((('run-oversized', 'completed', ''),))
-        if compact.startswith('SELECT stage,length(CAST(result AS BLOB)) FROM stages'):
+        if compact.startswith(f'SELECT stage,{self.expected_size_expression} FROM stages'):
             return _FakeReadTrackCursor((('bpm', 17 * 1024 * 1024), ('energy', 1)))
         if compact.startswith('SELECT result FROM stages'):
             raise MemoryError('stage payload was fetched before size preflight')
@@ -466,6 +468,46 @@ class StandaloneReadOnlyExplorerStagePayloadGuardTests(unittest.TestCase):
             repo._read_track(fake_db, 'sha256:' + '8' * 64)
 
         self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+    def test_read_track_uses_octet_length_preflight_on_modern_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeOversizedReadTrackDb('octet_length(result)')
+        original_version = standalone_explorer_readonly_module.sqlite3.sqlite_version_info
+        standalone_explorer_readonly_module.sqlite3.sqlite_version_info = (3, 43, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._read_track(fake_db, 'sha256:' + '8' * 64)
+        finally:
+            standalone_explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if query.startswith('SELECT stage,')]
+        self.assertEqual(['SELECT stage,octet_length(result) FROM stages WHERE run_id=? ORDER BY stage'], size_queries)
+        self.assertFalse(any('CAST(result AS BLOB)' in query for query in size_queries))
+        self.assertFalse(any(query.startswith('SELECT result FROM stages') for query in fake_db.queries))
+
+    def test_read_track_falls_back_to_byte_accurate_cast_preflight_on_old_sqlite(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeOversizedReadTrackDb('length(CAST(result AS BLOB))')
+        original_version = standalone_explorer_readonly_module.sqlite3.sqlite_version_info
+        standalone_explorer_readonly_module.sqlite3.sqlite_version_info = (3, 42, 0)
+        try:
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+                repo._read_track(fake_db, 'sha256:' + '8' * 64)
+        finally:
+            standalone_explorer_readonly_module.sqlite3.sqlite_version_info = original_version
+
+        size_queries = [query for query in fake_db.queries if query.startswith('SELECT stage,')]
+        self.assertEqual(['SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage'], size_queries)
+
+    @unittest.skipIf(sqlite3.sqlite_version_info < (3, 43, 0), 'SQLite octet_length unavailable before 3.43')
+    def test_octet_length_preflight_measures_utf8_bytes_not_characters(self):
+        self.assertEqual('octet_length(result)', standalone_explorer_readonly_module._stage_result_size_expression())
+        with sqlite3.connect(':memory:') as db:
+            size = db.execute(
+                f'SELECT {standalone_explorer_readonly_module._stage_result_size_expression()} FROM (SELECT ? AS result)',
+                ('é',),
+            ).fetchone()[0]
+        self.assertEqual(len('é'.encode('utf-8')), size)
 
 
 
