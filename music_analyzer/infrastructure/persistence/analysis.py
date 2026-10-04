@@ -17,6 +17,7 @@ from uuid import uuid4
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
 from music_analyzer.application.use_cases.build_graph import GRAPH_SOURCE_OVERRIDE_FIELDS
 from music_analyzer.application.use_cases.graph_feature_evidence import (
+    GRAPH_RELEVANT_STAGES,
     build_graph_feature_evidence,
     validate_graph_feature_evidence_payload,
 )
@@ -1077,6 +1078,165 @@ class SQLiteAnalysisRepository:
                    is_current=1''',
             (track_id, run_id, evidence.fingerprint, evidence.payload_json()),
         )
+
+    @classmethod
+    def backfill_graph_feature_evidence_at_path(cls, path: str, limit: int = 100) -> dict:
+        repository = cls.__new__(cls)
+        repository._path = Path(path).absolute()
+        repository._check_path()
+        return repository.backfill_graph_feature_evidence(limit)
+
+    @contextmanager
+    def _backfill_transaction(self, immediate: bool = False):
+        with self._connection() as db:
+            db.execute('BEGIN IMMEDIATE' if immediate else 'BEGIN')
+            identity = db.execute('PRAGMA application_id').fetchone()[0]
+            version = db.execute('PRAGMA user_version').fetchone()[0]
+            if identity != APPLICATION_ID or version != 10:
+                raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
+            yield db
+
+    def backfill_graph_feature_evidence(self, limit: int = 100) -> dict:
+        """Explicitly backfill missing current graph feature evidence for v10 databases.
+
+        Historical databases can contain completed analysis runs from before graph
+        feature evidence existed.  This opt-in maintenance operation reads and
+        parses retained graph-relevant stages outside the write transaction, then
+        publishes each row in a short guarded transaction that rechecks the latest
+        active run before and after the write.
+        """
+        limit = int(limit)
+        if limit <= 0:
+            raise AnalysisError('Evidence backfill limit must be positive')
+        stats = {
+            'backfilled': 0,
+            'already_current': 0,
+            'skipped_latest_not_completed': 0,
+            'skipped_missing_features': 0,
+            'stale_skipped': 0,
+            'cleared_stale_current': 0,
+        }
+        for track_id, run_id, status in self._graph_feature_backfill_candidates():
+            if status != 'completed':
+                stats['skipped_latest_not_completed'] += 1
+                stats['cleared_stale_current'] += self._clear_stale_graph_feature_current(track_id)
+                continue
+            if self._graph_feature_current_matches(track_id, run_id):
+                stats['already_current'] += 1
+                continue
+            if stats['backfilled'] >= limit:
+                continue
+            evidence = self._build_historical_graph_feature_evidence(track_id, run_id)
+            if evidence is None:
+                stats['skipped_missing_features'] += 1
+                continue
+            outcome = self._publish_historical_graph_feature_evidence(evidence)
+            if outcome == 'backfilled':
+                stats['backfilled'] += 1
+            elif outcome == 'already_current':
+                stats['already_current'] += 1
+            else:
+                stats['stale_skipped'] += 1
+                if outcome == 'stale_cleared':
+                    stats['cleared_stale_current'] += 1
+        stats['cleared_stale'] = stats['cleared_stale_current']
+        return stats
+
+    def _graph_feature_backfill_candidates(self):
+        after = ''
+        page_size = 100
+        while True:
+            with self._backfill_transaction() as db:
+                page = tuple(db.execute('''
+                    SELECT rt.track_id,r.id,r.status
+                    FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                    JOIN active_tracks at ON at.id=rt.track_id
+                    WHERE rt.track_id > ?
+                      AND r.rowid = (
+                          SELECT max(r2.rowid)
+                          FROM run_tracks rt2 JOIN runs r2 ON r2.id=rt2.run_id
+                          WHERE rt2.track_id=rt.track_id
+                      )
+                    ORDER BY rt.track_id
+                    LIMIT ?
+                ''', (after, page_size)))
+            if not page:
+                return
+            for row in page:
+                yield row
+            after = page[-1][0]
+
+    def _graph_feature_current_matches(self, track_id, run_id):
+        with self._backfill_transaction() as db:
+            return db.execute(
+                'SELECT 1 FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
+                (track_id, run_id),
+            ).fetchone() is not None
+
+    def _build_historical_graph_feature_evidence(self, track_id, run_id):
+        from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_mapping
+        placeholders = ','.join('?' for _ in GRAPH_RELEVANT_STAGES)
+        with self._backfill_transaction() as db:
+            rows = tuple(db.execute(
+                f'''SELECT stage,length(CAST(result AS BLOB)),result FROM stages
+                    WHERE run_id=? AND stage IN ({placeholders}) ORDER BY stage''',
+                (run_id, *GRAPH_RELEVANT_STAGES),
+            ))
+        stages = []
+        for stage_name, size, payload in rows:
+            if int(size) > _MAX_STORED_STAGE_RESULT_BYTES:
+                raise AnalysisError('Oversized stored stage (16 MiB limit)')
+            try:
+                stage = stage_from_mapping(json.loads(payload))
+                if stage.stage != stage_name:
+                    raise ValueError('Stage name mismatch')
+                stages.append(stage)
+            except (ValueError, KeyError, TypeError, IndexError) as error:
+                raise AnalysisError('Invalid stored stage: ' + str(error)) from error
+        return build_graph_feature_evidence(track_id, run_id, stages)
+
+    def _latest_active_run_for_track(self, db, track_id):
+        return db.execute('''
+            SELECT r.id,r.status FROM runs r JOIN run_tracks rt ON rt.run_id=r.id
+            JOIN active_tracks at ON at.id=rt.track_id
+            WHERE rt.track_id=?
+            ORDER BY r.rowid DESC LIMIT 1
+        ''', (track_id,)).fetchone()
+
+    def _clear_stale_graph_feature_current(self, track_id):
+        with self._backfill_transaction(immediate=True) as db:
+            cursor = db.execute('DELETE FROM graph_feature_evidence WHERE track_id=? AND is_current=1', (track_id,))
+            return cursor.rowcount
+
+    def _publish_historical_graph_feature_evidence(self, evidence):
+        payload = evidence.payload
+        validate_graph_feature_evidence_payload(evidence.track_id, evidence.run_id, evidence.fingerprint, payload)
+        with self._backfill_transaction(immediate=True) as db:
+            latest = self._latest_active_run_for_track(db, evidence.track_id)
+            if latest != (evidence.run_id, 'completed'):
+                cursor = db.execute('DELETE FROM graph_feature_evidence WHERE track_id=? AND is_current=1', (evidence.track_id,))
+                return 'stale_cleared' if cursor.rowcount else 'stale_skipped'
+            current = db.execute(
+                'SELECT fingerprint,evidence_json FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
+                (evidence.track_id, evidence.run_id),
+            ).fetchone()
+            if current == (evidence.fingerprint, evidence.payload_json()):
+                return 'already_current'
+            db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (evidence.track_id,))
+            db.execute(
+                '''INSERT INTO graph_feature_evidence(track_id,run_id,fingerprint,evidence_json,is_current)
+                   VALUES(?,?,?,?,1)
+                   ON CONFLICT(track_id,run_id) DO UPDATE SET
+                       fingerprint=excluded.fingerprint,
+                       evidence_json=excluded.evidence_json,
+                       is_current=1''',
+                (evidence.track_id, evidence.run_id, evidence.fingerprint, evidence.payload_json()),
+            )
+            latest_after = self._latest_active_run_for_track(db, evidence.track_id)
+            if latest_after != (evidence.run_id, 'completed'):
+                db.execute('DELETE FROM graph_feature_evidence WHERE track_id=? AND run_id=?', (evidence.track_id, evidence.run_id))
+                return 'stale_skipped'
+            return 'backfilled'
 
     def register(self, inventory):
         missing = []

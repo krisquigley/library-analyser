@@ -231,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
     graph_actions = graph.add_subparsers(dest='graph_action', required=True)
     graph_build = graph_actions.add_parser('build', help='Persist the current bounded related-track graph snapshot.')
     add_configuration_options(graph_build)
+    graph_evidence_backfill = graph_actions.add_parser('evidence-backfill', help='Backfill missing current graph feature evidence for historical completed runs.')
+    add_configuration_options(graph_evidence_backfill)
+    graph_evidence_backfill.add_argument('--limit', type=int, default=100, help='Maximum evidence rows to backfill this invocation; default 100.')
     projection = commands.add_parser('prepare-projection', help='Prepare or refresh the read-only explorer projection artifact.')
     add_configuration_options(projection)
     projection.add_argument('--artifact', required=True, help='Projection artifact JSON path, separate from the analysis database.')
@@ -249,6 +252,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error('Batch options cannot be used with --file or --track')
         if catalogue_selected and (args.limit is not None or args.force or not args.retry_failed):
             parser.error('--catalogue-track/--catalogue-tracks-file require --retry-failed and cannot be combined with --limit or --force')
+    if args.command == 'graph' and args.graph_action == 'evidence-backfill' and args.limit <= 0:
+        parser.error('--limit must be positive')
     try:
         overrides = {key: value for key, value in vars(args).items()
                      if key in {'config', 'database', 'model_directory'}}
@@ -328,13 +333,19 @@ def main(argv: list[str] | None = None) -> int:
                     warn_auto_graph_rebuild(graph_error, settings.database)
         elif args.command == 'graph':
             settings = load_settings(**overrides)
-            writer = SQLiteAnalysisRepository(settings.database)
-            reader = ReadOnlyExplorerSQLiteRepository(settings.database)
-            result = BuildGraphSnapshot(reader, writer).execute()
-            if getattr(result, 'state', '') == 'building':
-                output = result.reason or 'Graph build already running'
+            if args.graph_action == 'evidence-backfill':
+                stats = SQLiteAnalysisRepository.backfill_graph_feature_evidence_at_path(settings.database, args.limit)
+                keys = ('backfilled', 'already_current', 'skipped_latest_not_completed',
+                        'skipped_missing_features', 'stale_skipped', 'cleared_stale_current', 'cleared_stale')
+                output = ' '.join(f'{key}={stats[key]}' for key in keys)
             else:
-                output = f'Built {result.edge_count} graph edges'
+                writer = SQLiteAnalysisRepository(settings.database)
+                reader = ReadOnlyExplorerSQLiteRepository(settings.database)
+                result = BuildGraphSnapshot(reader, writer).execute()
+                if getattr(result, 'state', '') == 'building':
+                    output = result.reason or 'Graph build already running'
+                else:
+                    output = f'Built {result.edge_count} graph edges'
             ready = True
         elif args.command == 'explorer':
             if args.host != '127.0.0.1':
