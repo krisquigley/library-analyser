@@ -783,7 +783,7 @@ class ReadOnlyExplorerStagePayloadGuardTests(unittest.TestCase):
     @unittest.skipIf(sqlite3.sqlite_version_info < (3, 43, 0), 'SQLite octet_length unavailable before 3.43')
     def test_octet_length_preflight_measures_utf8_bytes_not_characters(self):
         self.assertEqual('octet_length(result)', explorer_readonly_module._stage_result_size_expression())
-        with sqlite3.connect(':memory:') as db:
+        with closing(sqlite3.connect(':memory:')) as db:
             size = db.execute(
                 f'SELECT {explorer_readonly_module._stage_result_size_expression()} FROM (SELECT ? AS result)',
                 ('é',),

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
@@ -507,7 +508,7 @@ class StandaloneReadOnlyExplorerStagePayloadGuardTests(unittest.TestCase):
     @unittest.skipIf(sqlite3.sqlite_version_info < (3, 43, 0), 'SQLite octet_length unavailable before 3.43')
     def test_octet_length_preflight_measures_utf8_bytes_not_characters(self):
         self.assertEqual('octet_length(result)', standalone_explorer_readonly_module._stage_result_size_expression())
-        with sqlite3.connect(':memory:') as db:
+        with closing(sqlite3.connect(':memory:')) as db:
             size = db.execute(
                 f'SELECT {standalone_explorer_readonly_module._stage_result_size_expression()} FROM (SELECT ? AS result)',
                 ('é',),
@@ -534,7 +535,7 @@ def _skip_without_posix_address_space_limit():
 
 def _create_standalone_oversized_stage_database(path: Path) -> None:
     SQLiteAnalysisRepository(str(path))
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.execute('PRAGMA foreign_keys=ON')
         track_id = 'sha256:' + 'c' * 64
         db.execute('INSERT INTO tracks(id,sha256,size) VALUES(?,?,?)', (track_id, 'c' * 64, 1))
