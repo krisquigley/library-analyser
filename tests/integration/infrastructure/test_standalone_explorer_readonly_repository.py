@@ -1,12 +1,20 @@
 import json
+import os
+import resource
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
 
 APP_ID = 0x4D414E41
+_MEMORY_LIMIT_BYTES = 128 * 1024 * 1024
+_OVERSIZED_STAGE_BYTES = 24 * 1024 * 1024
+_TIMEOUT_SECONDS = 15
 
 
 def create_db(path):
@@ -381,3 +389,114 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class _FakeCompactCursor:
+    def __init__(self, rows):
+        self._rows = tuple(rows)
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _FakeCompactDb:
+    def __init__(self):
+        self.queries = []
+
+    def execute(self, sql, params=()):
+        compact = ' '.join(sql.split())
+        self.queries.append(compact)
+        if 'SELECT t.id, t.sha256, t.size' in compact:
+            return _FakeCompactCursor(())
+        if 'FROM latest_run JOIN stages s' in compact:
+            if ', s.result' in compact:
+                raise MemoryError('stage payload was fetched before size preflight')
+            return _FakeCompactCursor((('run', 'bpm', 17 * 1024 * 1024),))
+        if 'FROM overrides o' in compact:
+            return _FakeCompactCursor(())
+        raise AssertionError('unexpected SQL: ' + compact)
+
+
+class StandaloneCompactGraphResourceTests(unittest.TestCase):
+    def test_compact_graph_rejects_oversized_stage_before_fetching_payload(self):
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+        fake_db = _FakeCompactDb()
+
+        with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
+            repo._compact_graph_tracks(fake_db)
+
+        self.assertFalse(any(', s.result' in query for query in fake_db.queries))
+
+
+def _skip_without_posix_address_space_limit():
+    if os.name != 'posix' or not hasattr(resource, 'RLIMIT_AS'):
+        raise unittest.SkipTest('POSIX RLIMIT_AS is required for deterministic low-memory standalone compact graph coverage')
+
+
+def _create_standalone_oversized_stage_database(path: Path) -> None:
+    SQLiteAnalysisRepository(str(path))
+    with sqlite3.connect(path) as db:
+        db.execute('PRAGMA foreign_keys=ON')
+        track_id = 'sha256:' + 'c' * 64
+        db.execute('INSERT INTO tracks(id,sha256,size) VALUES(?,?,?)', (track_id, 'c' * 64, 1))
+        db.execute(
+            'INSERT INTO locations(path,track_id,mtime_ns,format,available) VALUES(?,?,?,?,1)',
+            ('/music/standalone-oversized.flac', track_id, 1, 'flac'),
+        )
+        db.execute(
+            'INSERT INTO track_metadata(track_id,common_json,tags_json,warnings_json) VALUES(?,?,?,?)',
+            (track_id, '[]', '[]', '[]'),
+        )
+        db.execute(
+            'INSERT INTO track_audio(track_id,duration_seconds,duration_source,status,reason) VALUES(?,?,?,?,?)',
+            (track_id, 120.0, 'mutagen', 'eligible', ''),
+        )
+        db.execute("INSERT INTO runs(id,location,status,detail) VALUES(?,?, 'completed', '')", ('run-standalone-oversized', '/music/standalone-oversized.flac'))
+        db.execute('INSERT INTO run_tracks(run_id,track_id) VALUES(?,?)', ('run-standalone-oversized', track_id))
+        db.execute('INSERT INTO stages(run_id,stage,result) VALUES(?,?,zeroblob(?))', ('run-standalone-oversized', 'energy', _OVERSIZED_STAGE_BYTES))
+
+
+_STANDALONE_OVERSIZED_COMPACT_SCRIPT = r'''
+import resource
+import sys
+from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
+
+path = sys.argv[1]
+limit = int(sys.argv[2])
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+try:
+    ReadOnlyExplorerSQLiteRepository(path).mood_axis_graph_snapshot()
+except AnalysisError as error:
+    print(str(error))
+    raise SystemExit(42)
+except MemoryError:
+    print('MemoryError', file=sys.stderr)
+    raise SystemExit(73)
+raise SystemExit('expected AnalysisError')
+'''
+
+
+class StandaloneCompactGraphLowMemoryTests(unittest.TestCase):
+    def test_standalone_mood_axis_preflights_oversized_stage_under_low_address_space(self):
+        _skip_without_posix_address_space_limit()
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            _create_standalone_oversized_stage_database(path)
+            result = subprocess.run(
+                [sys.executable, '-c', _STANDALONE_OVERSIZED_COMPACT_SCRIPT, str(path), str(_MEMORY_LIMIT_BYTES)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+        self.assertEqual(result.returncode, 42, (result.stdout, result.stderr))
+        self.assertIn('Oversized stored stage (16 MiB limit)', result.stdout)
+        self.assertNotIn('MemoryError', result.stderr)

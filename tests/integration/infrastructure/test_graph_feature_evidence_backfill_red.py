@@ -273,3 +273,52 @@ class GraphFeatureEvidenceBackfillRemediationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
             repository.backfill_graph_feature_evidence()
+
+    def test_stale_failed_candidate_clear_does_not_demote_newer_completed_current_evidence(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository, 'a', '/music/a.flac')
+        older_run = _complete_run(repository, identity, '/music/a.flac', seed=0)
+        newer_run = repository.start(AudioSource('/music/a.flac', identity.track_id))
+        for stage in _graph_relevant_stages(seed=1):
+            repository.save_stage(newer_run, stage)
+        stale_read_candidates = ((identity.track_id, newer_run, 'failed'),)
+        original_candidates = repository._graph_feature_backfill_candidates
+        original_clear = repository._clear_stale_graph_feature_current
+
+        def stale_candidates():
+            yield from stale_read_candidates
+
+        def complete_newer_before_clear(*args):
+            repository.finish(newer_run, 'completed', '')
+            return original_clear(*args)
+
+        repository._graph_feature_backfill_candidates = stale_candidates
+        repository._clear_stale_graph_feature_current = complete_newer_before_clear
+        self.addCleanup(setattr, repository, '_graph_feature_backfill_candidates', original_candidates)
+        self.addCleanup(setattr, repository, '_clear_stale_graph_feature_current', original_clear)
+
+        stats = repository.backfill_graph_feature_evidence()
+
+        self.assertEqual(stats['cleared_stale_current'], 0)
+        rows = _current_evidence_rows(self.path)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][1], newer_run)
+        self.assertNotEqual(rows[0][1], older_run)
+
+    def test_finishing_older_running_run_after_newer_completed_run_keeps_newer_current_evidence_and_graph_snapshot(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity = _register_track(repository, 'a', '/music/a.flac')
+        other = _register_track(repository, 'b', '/music/b.flac')
+        older_run = repository.start(AudioSource('/music/a.flac', identity.track_id))
+        for stage in _graph_relevant_stages(seed=0):
+            repository.save_stage(older_run, stage)
+        newer_run = _complete_run(repository, identity, '/music/a.flac', seed=1)
+        build_id = repository.replace_graph_snapshot((ProjectionEdge(identity.track_id, other.track_id, 0.25, 2),), 10, 'source-fp')
+        newer_before = _current_evidence_rows(self.path)
+        self.assertEqual(newer_before[0][1], newer_run)
+
+        repository.finish(older_run, 'completed', '')
+
+        self.assertEqual(_current_evidence_rows(self.path), newer_before)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT is_current,status FROM graph_builds WHERE id=?', (build_id,)).fetchone(), (1, 'completed'))

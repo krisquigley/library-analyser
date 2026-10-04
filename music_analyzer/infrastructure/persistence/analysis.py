@@ -1044,7 +1044,7 @@ class SQLiteAnalysisRepository:
                                 (status, detail, run_id))
             if cursor.rowcount != 1:
                 raise AnalysisError('Finish requires an existing running analysis')
-            if status == 'completed':
+            if status == 'completed' and self._latest_active_run_for_track(db, track_id) == (run_id, 'completed'):
                 self._invalidate_current_graph_snapshot(db, track_id)
                 self._persist_graph_feature_evidence(db, track_id, run_id)
 
@@ -1067,6 +1067,8 @@ class SQLiteAnalysisRepository:
                 raise AnalysisError('Invalid stored stage: ' + str(error)) from error
         evidence = build_graph_feature_evidence(track_id, run_id, stages)
         if evidence is None:
+            return
+        if self._latest_active_run_for_track(db, track_id) != (run_id, 'completed'):
             return
         db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (track_id,))
         db.execute(
@@ -1122,7 +1124,7 @@ class SQLiteAnalysisRepository:
                 if mutations >= limit:
                     break
                 stats['skipped_latest_not_completed'] += 1
-                stats['cleared_stale_current'] += self._clear_stale_graph_feature_current(track_id)
+                stats['cleared_stale_current'] += self._clear_stale_graph_feature_current(track_id, run_id, status)
                 continue
             if self._graph_feature_current_matches(track_id, run_id):
                 stats['already_current'] += 1
@@ -1223,8 +1225,12 @@ class SQLiteAnalysisRepository:
             ORDER BY r.rowid DESC LIMIT 1
         ''', (track_id,)).fetchone()
 
-    def _clear_stale_graph_feature_current(self, track_id):
+    def _clear_stale_graph_feature_current(self, track_id, candidate_run_id, candidate_status):
+        if candidate_status not in {'failed', 'interrupted'}:
+            return 0
         with self._backfill_transaction(immediate=True) as db:
+            if self._latest_active_run_for_track(db, track_id) != (candidate_run_id, candidate_status):
+                return 0
             cursor = db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (track_id,))
             return cursor.rowcount
 
