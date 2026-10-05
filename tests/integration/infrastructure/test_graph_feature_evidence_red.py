@@ -258,3 +258,76 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone(), ('running',))
             self.assertEqual(_current_graph_feature_rows(db), ())
+
+class GraphFeatureEvidenceValidationPerformanceTests(unittest.TestCase):
+    def test_readonly_validation_uses_set_based_latest_run_checks(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            repository = SQLiteAnalysisRepository(str(path))
+            for index, suffix in enumerate('0123456789ab'):
+                identity = _register_track(repository, suffix, f'/music/{index}.flac')
+                _complete_graph_relevant_run(repository, identity, f'/music/{index}.flac')
+            readonly = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+            statements = []
+            with closing(sqlite3.connect(path)) as db:
+                db.set_trace_callback(statements.append)
+                readonly._validate_graph_feature_rows(db)
+
+            per_track_latest_selects = tuple(
+                statement for statement in statements
+                if 'ORDER BY r.rowid DESC LIMIT 1' in ' '.join(statement.split())
+            )
+            self.assertEqual((), per_track_latest_selects)
+
+    def test_readonly_validation_preserves_latest_run_and_link_correctness(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            repository = SQLiteAnalysisRepository(str(path))
+            identity = _register_track(repository, 'a', '/music/a.flac')
+            _complete_graph_relevant_run(repository, identity, '/music/a.flac')
+            _complete_graph_relevant_run(repository, identity, '/music/a.flac')
+            readonly = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
+            with closing(sqlite3.connect(path)) as db:
+                readonly._validate_graph_feature_rows(db)
+
+            for status in ('failed', 'running'):
+                invalid_path = Path(td) / f'{status}.sqlite'
+                source = sqlite3.connect(path)
+                try:
+                    target = sqlite3.connect(invalid_path)
+                    try:
+                        source.backup(target)
+                    finally:
+                        target.close()
+                finally:
+                    source.close()
+                with closing(sqlite3.connect(invalid_path)) as db, db:
+                    db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', (f'latest-{status}', '/music/a.flac', status, ''))
+                    db.execute('INSERT INTO run_tracks VALUES(?,?)', (f'latest-{status}', identity.track_id))
+                with closing(sqlite3.connect(invalid_path)) as db:
+                    with self.assertRaises(AnalysisError):
+                        readonly._validate_graph_feature_rows(db)
+
+            broken_link_path = Path(td) / 'broken-link.sqlite'
+            source = sqlite3.connect(path)
+            try:
+                target = sqlite3.connect(broken_link_path)
+                try:
+                    source.backup(target)
+                finally:
+                    target.close()
+            finally:
+                source.close()
+            with closing(sqlite3.connect(broken_link_path)) as db, db:
+                other = 'sha256:' + 'b' * 64
+                db.execute('INSERT INTO tracks VALUES(?,?,?)', (other, 'b' * 64, 10))
+                run_id, fingerprint, payload = db.execute(
+                    'SELECT run_id,fingerprint,evidence_json FROM graph_feature_evidence WHERE is_current=1 LIMIT 1'
+                ).fetchone()
+                db.execute(
+                    'INSERT INTO graph_feature_evidence(track_id,run_id,fingerprint,evidence_json,is_current) VALUES(?,?,?,?,0)',
+                    (other, run_id, fingerprint, payload),
+                )
+            with closing(sqlite3.connect(broken_link_path)) as db:
+                with self.assertRaises(AnalysisError):
+                    readonly._validate_graph_feature_rows(db)

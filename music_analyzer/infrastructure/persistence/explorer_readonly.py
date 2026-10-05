@@ -26,6 +26,33 @@ from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_m
 _SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 _TRACK_ID_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
 _SQLITE_OCTET_LENGTH_VERSION = (3, 43, 0)
+_GRAPH_FEATURE_EVIDENCE_JSON_LIMIT = 16 * 1024 * 1024
+
+
+
+def _graph_feature_evidence_size_expression(column='evidence_json'):
+    if column not in ('evidence_json', 'g.evidence_json'):
+        raise ValueError('Unsupported graph feature evidence column')
+    if sqlite3.sqlite_version_info >= _SQLITE_OCTET_LENGTH_VERSION:
+        return f'octet_length({column})'
+    # Older SQLite runtimes lack octet_length(). CAST(... AS BLOB) keeps the
+    # preflight byte-accurate for UTF-8 TEXT before JSON materialization.
+    return f'length(CAST({column} AS BLOB))'
+
+
+def _database_schema_version(db, default=10):
+    try:
+        row = db.execute('PRAGMA user_version').fetchone()
+        return int(row[0]) if row is not None else default
+    except Exception:
+        # Test fakes and already-validated read handles may not implement PRAGMA;
+        # default to the current compact-evidence schema for those narrow calls.
+        return default
+
+
+def _chunked(values, size):
+    for start in range(0, len(values), size):
+        yield values[start:start + size]
 
 
 def _stage_result_size_expression(column='result'):
@@ -279,7 +306,13 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def graph_source_tracks(self):
         with self._transaction() as db:
-            rows = db.execute('''
+            version = _database_schema_version(db)
+            evidence_size_expression = _graph_feature_evidence_size_expression('g.evidence_json')
+            evidence_columns = f'g.fingerprint,{evidence_size_expression}' if version >= 9 else 'NULL AS fingerprint,NULL AS evidence_json_size'
+            evidence_join = """
+                LEFT JOIN graph_feature_evidence g ON g.track_id=t.id AND g.run_id=latest_run.run_id AND g.is_current=1
+            """ if version >= 9 else ''
+            rows = db.execute(f"""
                 WITH first_location AS (
                     SELECT track_id, min(path) AS path, count(*) AS available_locations
                     FROM active_locations GROUP BY track_id
@@ -295,15 +328,15 @@ class ReadOnlyExplorerSQLiteRepository:
                        COALESCE(first_location.available_locations,0),latest_run.run_id,
                        latest_run.status,COALESCE(tm.common_json,'[]'),COALESCE(tm.tags_json,'[]'),
                        COALESCE(tm.warnings_json,'[]'),a.duration_seconds,a.duration_source,
-                       g.fingerprint,g.evidence_json
+                       {evidence_columns}
                 FROM active_tracks t
                 JOIN first_location ON first_location.track_id=t.id
                 LEFT JOIN latest_run ON latest_run.track_id=t.id
-                LEFT JOIN graph_feature_evidence g ON g.track_id=t.id AND g.run_id=latest_run.run_id AND g.is_current=1
+                {evidence_join}
                 LEFT JOIN track_metadata tm ON tm.track_id=t.id
                 LEFT JOIN track_audio a ON a.track_id=t.id
                 ORDER BY t.id
-            ''')
+            """)
             for row in rows:
                 record = self._graph_source_track_from_row(db, row)
                 if record is not None:
@@ -339,7 +372,7 @@ class ReadOnlyExplorerSQLiteRepository:
             return self._read_track(db, track_id)
 
     def _current_graph_edges(self, db, requested_sparse_k=None):
-        version = db.execute('PRAGMA user_version').fetchone()[0]
+        version = _database_schema_version(db)
         if version < 7:
             return None, ()
         current = db.execute("""
@@ -405,7 +438,7 @@ class ReadOnlyExplorerSQLiteRepository:
         return status, edges
 
     def _current_positioned_graph_edges(self, db, requested_sparse_k=None):
-        version = db.execute('PRAGMA user_version').fetchone()[0]
+        version = _database_schema_version(db)
         action = 'Run music-analyzer graph build --database DB before loading the mood-axis graph.'
         if version < 8:
             return {'state': 'build_needed', 'source': 'graph_build_positioned_edges', 'reason': 'exact positioned warm graph snapshot requires schema v8 rebuild', 'action': action}, ()
@@ -447,12 +480,13 @@ class ReadOnlyExplorerSQLiteRepository:
     def _graph_source_track_from_row(self, db, row):
         (track_id, sha256, size, first_path, available_locations, run_id, status,
          common_json, tags_json, warnings_json, duration_seconds, duration_source,
-         evidence_fingerprint, evidence_json) = row
+         evidence_fingerprint, evidence_json_size) = row
         if run_id is None or status != 'completed':
             return None
-        if evidence_json is None:
+        if evidence_fingerprint is None:
             return self._read_track(db, track_id)
         try:
+            evidence_json = self._load_graph_feature_evidence_payload(db, track_id, run_id, evidence_json_size)
             payload = json.loads(evidence_json)
             validate_graph_feature_evidence_payload(track_id, run_id, evidence_fingerprint, payload)
             metadata = self._metadata_from_json(common_json, tags_json, warnings_json, (duration_seconds, duration_source))
@@ -504,7 +538,14 @@ class ReadOnlyExplorerSQLiteRepository:
         return tuple(stages)
 
     def _compact_graph_tracks(self, db):
-        rows = db.execute('''
+        version = _database_schema_version(db)
+        evidence_size_expression = _graph_feature_evidence_size_expression('g.evidence_json')
+        evidence_columns = f'g.fingerprint, {evidence_size_expression}' if version >= 9 else 'NULL AS fingerprint, NULL AS evidence_json_size'
+        evidence_join = """
+            LEFT JOIN graph_feature_evidence g
+                   ON g.track_id=t.id AND g.run_id=latest_run.run_id AND g.is_current=1
+        """ if version >= 9 else ''
+        rows = db.execute(f"""
             WITH first_location AS (
                 SELECT track_id, min(path) AS path, count(*) AS available_locations
                 FROM active_locations GROUP BY track_id
@@ -521,29 +562,49 @@ class ReadOnlyExplorerSQLiteRepository:
                    COALESCE(first_location.available_locations, 0) AS available_locations,
                    latest_run.run_id, latest_run.status, latest_run.detail,
                    COALESCE(tm.common_json, '[]'), COALESCE(tm.tags_json, '[]'), COALESCE(tm.warnings_json, '[]'),
-                   a.duration_seconds, a.duration_source
+                   a.duration_seconds, a.duration_source,
+                   {evidence_columns}
             FROM active_tracks t
             LEFT JOIN first_location ON first_location.track_id=t.id
             LEFT JOIN latest_run ON latest_run.track_id=t.id
+            {evidence_join}
             LEFT JOIN track_metadata tm ON tm.track_id=t.id
             LEFT JOIN track_audio a ON a.track_id=t.id
             ORDER BY t.id
-        ''').fetchall()
+        """).fetchall()
         stages_by_run = {}
+        compact_stages_by_run = {}
+        legacy_run_ids = tuple(
+            row[5] for row in rows
+            if row[5] is not None and not (row[6] == 'completed' and row[13] is not None)
+        )
         size_expression = _stage_result_size_expression('s.result')
-        stage_sizes = tuple(db.execute(f'''
-            WITH latest_run AS (
-                SELECT track_id, run_id FROM (
-                    SELECT rt.track_id, r.id AS run_id,
-                           row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
-                    FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
-                    JOIN active_tracks at ON at.id=rt.track_id
-                ) WHERE rn=1
-            )
-            SELECT s.run_id, s.stage, {size_expression}
-            FROM latest_run JOIN stages s ON s.run_id=latest_run.run_id
-            ORDER BY latest_run.track_id, s.stage
-        '''))
+        stage_sizes = []
+        if legacy_run_ids:
+            for run_id_chunk in _chunked(legacy_run_ids, 500):
+                placeholders = ','.join('?' for _run_id in run_id_chunk)
+                stage_sizes.extend(db.execute(f"""
+                    SELECT s.run_id, s.stage, {size_expression}
+                    FROM stages s
+                    WHERE s.run_id IN ({placeholders})
+                    ORDER BY s.run_id, s.stage
+                """, run_id_chunk))
+        else:
+            stage_sizes.extend(db.execute(f"""
+                WITH latest_run AS (
+                    SELECT track_id, run_id FROM (
+                        SELECT rt.track_id, r.id AS run_id,
+                               row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
+                        FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                        JOIN active_tracks at ON at.id=rt.track_id
+                    ) WHERE rn=1
+                )
+                SELECT s.run_id, s.stage, {size_expression}
+                FROM latest_run JOIN stages s ON s.run_id=latest_run.run_id
+                WHERE 0
+                ORDER BY latest_run.track_id, s.stage
+            """))
+        stage_sizes = tuple(stage_sizes)
         for run_id, stage, size in stage_sizes:
             if size > 16 * 1024 * 1024:
                 raise AnalysisError('Oversized stored stage (16 MiB limit)')
@@ -551,23 +612,51 @@ class ReadOnlyExplorerSQLiteRepository:
             payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (run_id, stage)).fetchone()[0]
             stages_by_run.setdefault(run_id, []).append(self._stage_from_payload(stage, size, payload))
         overrides_by_track = {}
-        for track_id, field, value in db.execute('''
+        for track_id, field, value in db.execute("""
             SELECT o.track_id,o.field,o.value FROM overrides o
             JOIN active_tracks at ON at.id=o.track_id
             ORDER BY o.track_id,o.field
-        '''):
+        """):
             overrides_by_track.setdefault(track_id, []).append((field, value))
+        compact_evidence_rows = tuple(
+            (row[0], row[5], row[13], row[14]) for row in rows
+            if row[5] is not None and row[6] == 'completed' and row[13] is not None
+        )
+        for _track_id, _run_id, _fingerprint, evidence_json_size in compact_evidence_rows:
+            if evidence_json_size is None:
+                raise AnalysisError('Invalid stored graph feature evidence')
+            if int(evidence_json_size) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
+                raise AnalysisError('Oversized stored graph feature evidence (16 MiB limit)')
+        compact_evidence_by_identity = {
+            (track_id, run_id): fingerprint
+            for track_id, run_id, fingerprint, _size in compact_evidence_rows
+        }
+        loaded_compact_identities = set()
+        for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
+                db, tuple((track_id, run_id) for track_id, run_id, _fingerprint, _size in compact_evidence_rows), current_only=True):
+            for track_id, run_id, evidence_json in payload_chunk:
+                loaded_compact_identities.add((track_id, run_id))
+                try:
+                    payload = json.loads(evidence_json)
+                    validate_graph_feature_evidence_payload(track_id, run_id, compact_evidence_by_identity[(track_id, run_id)], payload)
+                    compact_stages_by_run[run_id] = self._stages_from_graph_feature_payload(payload)
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    raise AnalysisError('Invalid stored graph feature evidence') from error
+        if loaded_compact_identities != set(compact_evidence_by_identity):
+            raise AnalysisError('Invalid stored graph feature evidence')
         records = []
         for row in rows:
             (track_id, sha256, size, first_path, available_locations, run_id, status, detail,
-             common_json, tags_json, warnings_json, duration_seconds, duration_source) = row
-            run = None
-            if run_id is not None:
-                run = AnalysisReport(run_id, status, tuple(stages_by_run.get(run_id, ())), detail or '')
+             common_json, tags_json, warnings_json, duration_seconds, duration_source,
+             evidence_fingerprint, evidence_json_size) = row
             try:
                 metadata = self._metadata_from_json(common_json, tags_json, warnings_json, (duration_seconds, duration_source))
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                raise AnalysisError('Invalid stored metadata') from error
+                raise AnalysisError('Invalid stored graph feature evidence') from error
+            run = None
+            if run_id is not None:
+                stages = compact_stages_by_run.get(run_id, tuple(stages_by_run.get(run_id, ())))
+                run = AnalysisReport(run_id, status, tuple(stages), detail or '')
             records.append(ExplorerStoredTrack(
                 track_id,
                 sha256,
@@ -579,6 +668,40 @@ class ReadOnlyExplorerSQLiteRepository:
                 metadata,
             ))
         return tuple(records)
+
+    def _load_graph_feature_evidence_payload(self, db, track_id, run_id, size):
+        if size is None:
+            raise AnalysisError('Invalid stored graph feature evidence')
+        if int(size) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
+            raise AnalysisError('Oversized stored graph feature evidence (16 MiB limit)')
+        payloads = self._load_graph_feature_evidence_payloads(db, ((track_id, run_id),))
+        try:
+            return payloads[(track_id, run_id)]
+        except KeyError as error:
+            raise AnalysisError('Invalid stored graph feature evidence') from error
+
+    def _load_graph_feature_evidence_payloads(self, db, identities):
+        payloads = {}
+        for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(db, identities, current_only=True):
+            for track_id, run_id, evidence_json in payload_chunk:
+                payloads[(track_id, run_id)] = evidence_json
+        return payloads
+
+    def _iter_graph_feature_evidence_payload_chunks(self, db, identities, *, current_only):
+        current_clause = 'is_current=1 AND ' if current_only else ''
+        for identity_chunk in _chunked(tuple(identities), 450):
+            placeholders = ','.join('(?,?)' for _identity in identity_chunk)
+            parameters = tuple(value for identity in identity_chunk for value in identity)
+            cursor = db.execute(f'''
+                SELECT track_id,run_id,evidence_json FROM graph_feature_evidence
+                WHERE {current_clause}(track_id,run_id) IN ({placeholders})
+            ''', parameters)
+            try:
+                yield cursor
+            finally:
+                close = getattr(cursor, 'close', None)
+                if close is not None:
+                    close()
 
     def _stage_from_payload(self, stage, size, payload):
         if size > 16 * 1024 * 1024:
@@ -734,7 +857,7 @@ class ReadOnlyExplorerSQLiteRepository:
             db.execute('COMMIT')
 
     def _validate(self, db):
-        version = db.execute('PRAGMA user_version').fetchone()[0]
+        version = _database_schema_version(db)
         if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
             raise AnalysisError('Not a supported music-analyzer analysis database')
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','index')"))
@@ -869,31 +992,54 @@ class ReadOnlyExplorerSQLiteRepository:
                 raise AnalysisError('Unexpected analysis database rows')
 
     def _validate_graph_feature_rows(self, db):
-        for track_id, run_id, fingerprint, evidence_json, is_current in db.execute(
-                'SELECT track_id,run_id,fingerprint,evidence_json,is_current FROM graph_feature_evidence'):
+        evidence_size_expression = _graph_feature_evidence_size_expression('g.evidence_json')
+        rows = tuple(db.execute(f'''
+            WITH latest_run AS (
+                SELECT track_id, run_id, status FROM (
+                    SELECT rt.track_id, r.id AS run_id, r.status AS status,
+                           row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
+                    FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                ) WHERE rn=1
+            )
+            SELECT g.track_id,g.run_id,g.fingerprint,{evidence_size_expression},g.is_current,
+                   r.status, linked.run_id, latest_run.run_id, latest_run.status
+            FROM graph_feature_evidence g
+            LEFT JOIN runs r ON r.id=g.run_id
+            LEFT JOIN run_tracks linked ON linked.run_id=g.run_id AND linked.track_id=g.track_id
+            LEFT JOIN latest_run ON latest_run.track_id=g.track_id
+            ORDER BY g.track_id,g.run_id
+        '''))
+        for track_id, run_id, fingerprint, evidence_json_size, is_current, status, linked_run_id, latest_run_id, latest_status in rows:
             if (not isinstance(track_id, str) or not _TRACK_ID_RE.fullmatch(track_id)
                     or not isinstance(run_id, str) or not run_id
                     or not isinstance(fingerprint, str) or not _SHA256_RE.fullmatch(fingerprint)
                     or is_current not in (0, 1)):
                 raise AnalysisError('Unexpected analysis database rows')
-            if db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone() != ('completed',):
+            if status != 'completed' or linked_run_id is None:
                 raise AnalysisError('Unexpected analysis database rows')
-            if not db.execute('SELECT 1 FROM run_tracks WHERE run_id=? AND track_id=?', (run_id, track_id)).fetchone():
+            if is_current and (latest_run_id != run_id or latest_status != 'completed'):
                 raise AnalysisError('Unexpected analysis database rows')
-            if is_current:
-                latest = db.execute('''
-                    SELECT r.id,r.status FROM runs r JOIN run_tracks t ON t.run_id=r.id
-                    WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1''', (track_id,)).fetchone()
-                if latest != (run_id, 'completed'):
-                    raise AnalysisError('Unexpected analysis database rows')
-            try:
-                payload = json.loads(evidence_json)
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                raise AnalysisError('Unexpected analysis database rows') from error
-            try:
-                validate_graph_feature_evidence_payload(track_id, run_id, fingerprint, payload)
-            except ValueError as error:
-                raise AnalysisError('Unexpected analysis database rows') from error
+            if int(evidence_json_size) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
+                raise AnalysisError('Oversized stored graph feature evidence (16 MiB limit)')
+        fingerprints_by_identity = {
+            (track_id, run_id): fingerprint
+            for track_id, run_id, fingerprint, _evidence_json_size, _is_current, *_rest in rows
+        }
+        loaded_identities = set()
+        for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
+                db, tuple(fingerprints_by_identity), current_only=False):
+            for track_id, run_id, evidence_json in payload_chunk:
+                loaded_identities.add((track_id, run_id))
+                try:
+                    payload = json.loads(evidence_json)
+                except (TypeError, ValueError, json.JSONDecodeError) as error:
+                    raise AnalysisError('Unexpected analysis database rows') from error
+                try:
+                    validate_graph_feature_evidence_payload(track_id, run_id, fingerprints_by_identity[(track_id, run_id)], payload)
+                except (KeyError, ValueError) as error:
+                    raise AnalysisError('Unexpected analysis database rows') from error
+        if loaded_identities != set(fingerprints_by_identity):
+            raise AnalysisError('Unexpected analysis database rows')
 
     def _foreign_keys(self, db, table):
         keys = {}

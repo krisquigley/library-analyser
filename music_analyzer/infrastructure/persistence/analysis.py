@@ -30,6 +30,20 @@ from music_analyzer.domain.library_duration_policy import (
 )
 
 
+_SQLITE_OCTET_LENGTH_VERSION = (3, 43, 0)
+_GRAPH_FEATURE_EVIDENCE_JSON_LIMIT = 16 * 1024 * 1024
+
+
+def _graph_feature_evidence_size_expression(column='evidence_json'):
+    if column != 'evidence_json':
+        raise ValueError('Unsupported graph feature evidence column')
+    if sqlite3.sqlite_version_info >= _SQLITE_OCTET_LENGTH_VERSION:
+        return f'octet_length({column})'
+    # Older SQLite runtimes lack octet_length(). CAST(... AS BLOB) keeps the
+    # preflight byte-accurate for UTF-8 TEXT before JSON materialization.
+    return f'length(CAST({column} AS BLOB))'
+
+
 def _normalized_sqlite_duration(duration_seconds):
     if isinstance(duration_seconds, (int, float)) and not isinstance(duration_seconds, bool) and not isfinite(duration_seconds):
         return None
@@ -633,8 +647,9 @@ class SQLiteAnalysisRepository:
                 raise AnalysisError('Unexpected analysis database rows')
 
     def _validate_graph_feature_rows(self, db):
-        for track_id, run_id, fingerprint, evidence_json, is_current in db.execute(
-                'SELECT track_id,run_id,fingerprint,evidence_json,is_current FROM graph_feature_evidence'):
+        evidence_size_expression = _graph_feature_evidence_size_expression()
+        for track_id, run_id, fingerprint, evidence_json_size, is_current in db.execute(
+                f'SELECT track_id,run_id,fingerprint,{evidence_size_expression},is_current FROM graph_feature_evidence'):
             if (not isinstance(track_id, str) or not track_id
                     or not isinstance(run_id, str) or not run_id
                     or not isinstance(fingerprint, str) or len(fingerprint) != 64
@@ -653,8 +668,16 @@ class SQLiteAnalysisRepository:
                     WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1''', (track_id,)).fetchone()
                 if latest != (run_id, 'completed'):
                     raise AnalysisError('Unexpected analysis database rows')
+            if int(evidence_json_size) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
+                raise AnalysisError('Oversized stored graph feature evidence (16 MiB limit)')
             try:
-                payload = json.loads(evidence_json)
+                evidence_row = db.execute(
+                    'SELECT evidence_json FROM graph_feature_evidence WHERE track_id=? AND run_id=?',
+                    (track_id, run_id),
+                ).fetchone()
+                if evidence_row is None:
+                    raise ValueError('Missing graph feature evidence payload')
+                payload = json.loads(evidence_row[0])
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 raise AnalysisError('Unexpected analysis database rows') from error
             try:

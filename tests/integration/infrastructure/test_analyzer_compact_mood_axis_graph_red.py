@@ -1,11 +1,11 @@
+from contextlib import closing, contextmanager
 import re
 import sqlite3
 import tempfile
 import unittest
-from contextlib import closing, contextmanager
 from pathlib import Path
 
-from music_analyzer.application.dto.analysis import AudioSource, StageResult
+from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
 from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
 from music_analyzer.application.use_cases.explorer import BuildMoodAxisGraph
 from music_analyzer.domain.analysis import ScoreSummary
@@ -13,9 +13,6 @@ from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.domain.projection import ProjectionEdge
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
-from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph as StandaloneBuildMoodAxisGraph
-from music_explorer.infrastructure.explorer_readonly import AnalysisError as StandaloneAnalysisError
-from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository as StandaloneReadOnlyExplorerSQLiteRepository
 
 
 def summary(labels, values, provisional=True):
@@ -158,14 +155,14 @@ def add_positioned_track_identity(repository, identity, location, *, bpm=120.0, 
     return identity.track_id
 
 
-class CompactMoodAxisGraphReadTests(unittest.TestCase):
-    def test_standalone_evidence_payload_chunks_stream_rows_without_materializing_raw_payloads(self):
+class AnalyzerCompactMoodAxisGraphReadTests(unittest.TestCase):
+    def test_evidence_payload_chunks_stream_rows_without_materializing_raw_payloads(self):
         rows = (
             ('sha256:' + 'a' * 64, 'run-a', '{"features":{}}'),
             ('sha256:' + 'b' * 64, 'run-b', '{"features":{}}'),
         )
         db = BoundedEvidenceDb(rows)
-        repo = StandaloneReadOnlyExplorerSQLiteRepository.__new__(StandaloneReadOnlyExplorerSQLiteRepository)
+        repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
 
         chunks = repo._iter_graph_feature_evidence_payload_chunks(
             db,
@@ -183,7 +180,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
         chunks.close()
         self.assertTrue(db.cursor.closed)
 
-    def test_standalone_mood_axis_graph_uses_compact_evidence_without_decoding_raw_stages(self):
+    def test_mood_axis_graph_uses_compact_evidence_without_decoding_raw_stages(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             writer = SQLiteAnalysisRepository(str(path))
@@ -192,22 +189,17 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             writer.replace_graph_snapshot(
                 (ProjectionEdge(first, second, 0.25, 2),),
                 10,
-                'synthetic-standalone-compact-red',
+                'synthetic-analyzer-compact-red',
                 positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
             )
-            with closing(sqlite3.connect(path)) as db:
-                self.assertEqual(
-                    2,
-                    db.execute('SELECT count(*) FROM graph_feature_evidence WHERE is_current=1').fetchone()[0],
-                )
-            repo = StandaloneReadOnlyExplorerSQLiteRepository(str(path))
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
 
             def fail_raw_stage_decode(*args, **kwargs):
                 raise AssertionError('_stage_from_payload should not be called for tracks with current compact graph_feature_evidence')
 
             repo._stage_from_payload = fail_raw_stage_decode
 
-            graph = StandaloneBuildMoodAxisGraph(repo).execute('relaxing')
+            graph = BuildMoodAxisGraph(repo).execute('relaxing')
 
             self.assertEqual(tuple(node.track_id for node in graph.positioned), (first, second))
             self.assertEqual(tuple((edge.a, edge.b, edge.score) for edge in graph.edges), ((first, second, 0.75),))
@@ -216,7 +208,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             self.assertEqual(graph.metadata['graph_status']['state'], 'ready')
             self.assertEqual(graph.metadata['graph_status']['source'], 'graph_build_positioned_edges')
 
-    def test_standalone_mixed_compact_and_legacy_tracks_read_raw_stages_only_for_legacy_fallback(self):
+    def test_mixed_compact_and_legacy_tracks_match_verbose_graph_without_reading_compact_raw_stages(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             writer = SQLiteAnalysisRepository(str(path))
@@ -226,10 +218,10 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             writer.replace_graph_snapshot(
                 (ProjectionEdge(compact_a, compact_b, 0.25, 2), ProjectionEdge(compact_a, legacy, 0.5, 1)),
                 10,
-                'synthetic-standalone-mixed-red',
+                'synthetic-analyzer-mixed-red',
                 positioned_edges=(ProjectionEdge(compact_a, compact_b, 0.25, 2), ProjectionEdge(compact_a, legacy, 0.5, 1)),
             )
-            expected = StandaloneBuildMoodAxisGraph(StandaloneReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
+            expected = BuildMoodAxisGraph(ReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
 
             with closing(sqlite3.connect(path)) as db, db:
                 legacy_run = db.execute('SELECT run_id FROM run_tracks WHERE track_id=?', (legacy,)).fetchone()[0]
@@ -240,7 +232,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
                 )
                 self.assertEqual(db.execute('SELECT count(*) FROM stages WHERE run_id=?', (legacy_run,)).fetchone()[0], 5)
 
-            repo = StandaloneReadOnlyExplorerSQLiteRepository(str(path))
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
             original_stage_from_payload = repo._stage_from_payload
 
             def fail_only_if_compact_track_raw_stage_is_decoded(stage, size, payload):
@@ -250,7 +242,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
 
             repo._stage_from_payload = fail_only_if_compact_track_raw_stage_is_decoded
 
-            graph = StandaloneBuildMoodAxisGraph(repo).execute('relaxing')
+            graph = BuildMoodAxisGraph(repo).execute('relaxing')
 
             self.assertEqual(graph.selected_mood, expected.selected_mood)
             self.assertEqual(graph.available_moods, expected.available_moods)
@@ -263,7 +255,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             self.assertEqual(tuple((edge.a, edge.b, edge.score, edge.supported_group_count) for edge in graph.edges), tuple((edge.a, edge.b, edge.score, edge.supported_group_count) for edge in expected.edges))
             self.assertEqual(graph.metadata['graph_status'], expected.metadata['graph_status'])
 
-    def test_standalone_all_compact_snapshot_does_not_select_raw_stage_result_sql(self):
+    def test_all_compact_snapshot_does_not_select_raw_stage_result_sql(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             writer = SQLiteAnalysisRepository(str(path))
@@ -272,13 +264,13 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             writer.replace_graph_snapshot(
                 (ProjectionEdge(first, second, 0.25, 2),),
                 10,
-                'synthetic-standalone-sql-trace-red',
+                'synthetic-analyzer-sql-trace-red',
                 positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
             )
 
             graph, statements = trace_graph_sql(
-                StandaloneReadOnlyExplorerSQLiteRepository(str(path)),
-                lambda repo: StandaloneBuildMoodAxisGraph(repo).execute('relaxing'),
+                ReadOnlyExplorerSQLiteRepository(str(path)),
+                lambda repo: BuildMoodAxisGraph(repo).execute('relaxing'),
             )
 
             self.assertEqual(tuple(node.track_id for node in graph.positioned), (first, second))
@@ -289,7 +281,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
                 'size-only octet_length(s.result) probes are the only permitted stages.result reference',
             )
 
-    def test_standalone_mixed_snapshot_selects_raw_stage_result_sql_only_for_legacy_run(self):
+    def test_mixed_snapshot_selects_raw_stage_result_sql_only_for_legacy_run(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             writer = SQLiteAnalysisRepository(str(path))
@@ -299,7 +291,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             writer.replace_graph_snapshot(
                 (ProjectionEdge(compact_a, compact_b, 0.25, 2), ProjectionEdge(compact_a, legacy, 0.5, 1)),
                 10,
-                'synthetic-standalone-mixed-sql-trace-red',
+                'synthetic-analyzer-mixed-sql-trace-red',
                 positioned_edges=(ProjectionEdge(compact_a, compact_b, 0.25, 2), ProjectionEdge(compact_a, legacy, 0.5, 1)),
             )
             with closing(sqlite3.connect(path)) as db, db:
@@ -313,8 +305,8 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
                 db.execute('DELETE FROM graph_feature_evidence WHERE track_id=?', (legacy,))
 
             graph, statements = trace_graph_sql(
-                StandaloneReadOnlyExplorerSQLiteRepository(str(path)),
-                lambda repo: StandaloneBuildMoodAxisGraph(repo).execute('relaxing'),
+                ReadOnlyExplorerSQLiteRepository(str(path)),
+                lambda repo: BuildMoodAxisGraph(repo).execute('relaxing'),
             )
             raw_selects = raw_stage_result_selects(statements)
 
@@ -329,7 +321,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
                 f'compact run raw payloads must never be selected; compact_runs={compact_runs!r}, selects={raw_selects!r}',
             )
 
-    def test_standalone_malformed_current_compact_evidence_fails_closed_without_raw_fallback(self):
+    def test_malformed_current_compact_evidence_fails_closed_without_raw_fallback(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             writer = SQLiteAnalysisRepository(str(path))
@@ -338,7 +330,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             writer.replace_graph_snapshot(
                 (ProjectionEdge(first, second, 0.25, 2),),
                 10,
-                'synthetic-standalone-malformed-evidence-red',
+                'synthetic-analyzer-malformed-evidence-red',
                 positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
             )
             with closing(sqlite3.connect(path)) as db, db:
@@ -347,10 +339,10 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
                     ('not-a-valid-fingerprint', first),
                 )
 
-            with self.assertRaises(StandaloneAnalysisError):
-                StandaloneBuildMoodAxisGraph(StandaloneReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
+            with self.assertRaises(AnalysisError):
+                BuildMoodAxisGraph(ReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
 
-    def test_standalone_supported_v8_warm_positioned_snapshot_uses_raw_stage_fallback_without_graph_feature_evidence(self):
+    def test_supported_v8_warm_positioned_snapshot_uses_raw_stage_fallback_without_graph_feature_evidence(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             writer = SQLiteAnalysisRepository(str(path))
@@ -359,12 +351,12 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             writer.replace_graph_snapshot(
                 (ProjectionEdge(first, second, 0.25, 2),),
                 10,
-                'synthetic-standalone-v8-red',
+                'synthetic-analyzer-v8-red',
                 positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
             )
             downgrade_to_schema_v8_without_graph_feature_evidence(path)
 
-            graph = StandaloneBuildMoodAxisGraph(StandaloneReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
+            graph = BuildMoodAxisGraph(ReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
 
             self.assertEqual(tuple(node.track_id for node in graph.positioned), (first, second))
             self.assertEqual(tuple((edge.a, edge.b, edge.score) for edge in graph.edges), ((first, second, 0.75),))
@@ -372,7 +364,21 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             self.assertEqual(graph.metadata['graph_status']['state'], 'ready')
             self.assertEqual(graph.metadata['graph_status']['source'], 'graph_build_positioned_edges')
 
-    def test_standalone_oversized_current_compact_evidence_fails_before_json_materialization(self):
+    def test_supported_v8_graph_source_tracks_falls_back_to_raw_stages_without_graph_feature_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            first = add_positioned_track(writer, 'a')
+            writer.replace_graph_snapshot((), 10, 'synthetic-analyzer-source-v8-red', positioned_edges=())
+            downgrade_to_schema_v8_without_graph_feature_evidence(path)
+
+            records = tuple(ReadOnlyExplorerSQLiteRepository(str(path)).graph_source_tracks())
+
+            self.assertEqual(tuple(record.track_id for record in records), (first,))
+            self.assertEqual(records[0].run.status, 'completed')
+            self.assertEqual(tuple(stage.stage for stage in records[0].run.stages), ('bpm', 'energy', 'genres', 'key', 'mood'))
+
+    def test_oversized_current_compact_evidence_fails_before_json_materialization(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             writer = SQLiteAnalysisRepository(str(path))
@@ -381,7 +387,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             writer.replace_graph_snapshot(
                 (ProjectionEdge(first, second, 0.25, 2),),
                 10,
-                'synthetic-standalone-oversized-evidence-red',
+                'synthetic-analyzer-oversized-evidence-red',
                 positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
             )
             oversized = '{"pad":"' + ('€' * ((16 * 1024 * 1024) // len('€'.encode('utf-8')) + 1)) + '"}'
@@ -392,15 +398,15 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
                     (oversized, '0' * 64, first),
                 )
 
-            with self.assertRaisesRegex(StandaloneAnalysisError, 'Oversized stored graph feature evidence'):
-                StandaloneBuildMoodAxisGraph(StandaloneReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
+            with self.assertRaisesRegex(AnalysisError, 'Oversized stored graph feature evidence'):
+                BuildMoodAxisGraph(ReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
 
-    def test_standalone_1000_plus_legacy_runs_do_not_exceed_old_sqlite_variable_limit(self):
+    def test_1000_plus_legacy_runs_do_not_exceed_old_sqlite_variable_limit(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             writer = SQLiteAnalysisRepository(str(path))
             first = add_positioned_track(writer, 'a')
-            writer.replace_graph_snapshot((), 10, 'synthetic-standalone-legacy-limit-red', positioned_edges=())
+            writer.replace_graph_snapshot((), 10, 'synthetic-analyzer-legacy-limit-red', positioned_edges=())
             with closing(sqlite3.connect(path)) as db, db:
                 source_run = db.execute('SELECT run_id FROM run_tracks WHERE track_id=?', (first,)).fetchone()[0]
                 source_stages = tuple(db.execute('SELECT stage,result FROM stages WHERE run_id=?', (source_run,)))
@@ -419,7 +425,7 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
                 db.execute('DELETE FROM graph_feature_evidence')
                 prior_limit = db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
                 self.assertGreaterEqual(prior_limit, 999)
-            repo = StandaloneReadOnlyExplorerSQLiteRepository(str(path))
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
             original_connection = repo._connection
 
             @contextmanager
@@ -430,93 +436,11 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
 
             repo._connection = limited_connection
             try:
-                graph = StandaloneBuildMoodAxisGraph(repo).execute('relaxing')
+                graph = BuildMoodAxisGraph(repo).execute('relaxing')
             finally:
                 repo._connection = original_connection
 
             self.assertEqual(len(graph.positioned) + len(graph.unpositioned), 1001)
-
-    def test_warm_v9_compact_graph_batches_current_evidence_payload_reads(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / 'analysis.sqlite'
-            writer = SQLiteAnalysisRepository(str(path))
-            for index in range(8):
-                add_positioned_track_identity(writer, FileIdentity(f'{index:064x}', 10), f'/music/{index}.flac')
-            writer.replace_graph_snapshot((), 10, 'synthetic-compact-batched-evidence-red', positioned_edges=())
-            graph, statements = trace_graph_sql(
-                ReadOnlyExplorerSQLiteRepository(str(path)),
-                lambda repo: BuildMoodAxisGraph(repo).execute('relaxing'),
-            )
-
-            evidence_payload_selects = tuple(
-                statement for statement in statements
-                if 'evidence_json FROM graph_feature_evidence' in ' '.join(statement.split())
-            )
-
-            self.assertEqual(8, len(graph.positioned) + len(graph.unpositioned))
-            self.assertLessEqual(len(evidence_payload_selects), 2, evidence_payload_selects)
-            self.assertTrue(evidence_payload_selects)
-            self.assertTrue(all(' IN ' in statement.upper() for statement in evidence_payload_selects))
-
-    def test_warm_v9_compact_graph_rejects_oversized_evidence_before_payload_select(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / 'analysis.sqlite'
-            writer = SQLiteAnalysisRepository(str(path))
-            first = add_positioned_track(writer, 'a')
-            writer.replace_graph_snapshot((), 10, 'synthetic-compact-oversized-preflight-red', positioned_edges=())
-            with closing(sqlite3.connect(path)) as db, db:
-                db.execute(
-                    'UPDATE graph_feature_evidence SET evidence_json=?, fingerprint=? WHERE track_id=? AND is_current=1',
-                    ('{"pad":"' + ('x' * (16 * 1024 * 1024 + 1)) + '"}', '0' * 64, first),
-                )
-            repo = ReadOnlyExplorerSQLiteRepository(str(path))
-            statements = []
-            original_connection = repo._connection
-
-            @contextmanager
-            def traced_connection():
-                with original_connection() as db:
-                    db.set_trace_callback(statements.append)
-                    yield db
-
-            repo._connection = traced_connection
-            try:
-                with self.assertRaisesRegex(Exception, 'Oversized stored graph feature evidence'):
-                    BuildMoodAxisGraph(repo).execute('relaxing')
-            finally:
-                repo._connection = original_connection
-
-            evidence_payload_selects = tuple(
-                statement for statement in statements
-                if 'evidence_json FROM graph_feature_evidence' in ' '.join(statement.split())
-            )
-            self.assertEqual((), evidence_payload_selects)
-
-    def test_warm_v8_endpoint_uses_compact_reader_without_per_track_hydration(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / 'analysis.sqlite'
-            writer = SQLiteAnalysisRepository(str(path))
-            first = add_positioned_track(writer, 'a')
-            second = add_positioned_track(writer, 'b', bpm=128.0, genres=(('rock', 'jazz'), (0.05, 0.8)))
-            writer.replace_graph_snapshot(
-                (ProjectionEdge(first, second, 0.25, 2),),
-                10,
-                'synthetic-compact-red',
-                positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
-            )
-            repo = ReadOnlyExplorerSQLiteRepository(str(path))
-
-            def fail_per_track_read(*args, **kwargs):
-                raise AssertionError('_read_track should not be called by the warm v8 compact mood-axis graph path')
-
-            repo._read_track = fail_per_track_read
-
-            graph = BuildMoodAxisGraph(repo).execute('relaxing')
-
-            self.assertEqual(tuple(node.track_id for node in graph.positioned), (first, second))
-            self.assertEqual(tuple((edge.a, edge.b, edge.score) for edge in graph.edges), ((first, second, 0.75),))
-            self.assertEqual(graph.metadata['graph_status']['state'], 'ready')
-            self.assertEqual(graph.metadata['graph_status']['source'], 'graph_build_positioned_edges')
 
 
 if __name__ == '__main__':
