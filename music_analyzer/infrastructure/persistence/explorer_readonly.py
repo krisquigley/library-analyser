@@ -695,7 +695,6 @@ class ReadOnlyExplorerSQLiteRepository:
             cursor = db.execute(f'''
                 SELECT track_id,run_id,evidence_json FROM graph_feature_evidence
                 WHERE {current_clause}(track_id,run_id) IN ({placeholders})
-                ORDER BY track_id,run_id
             ''', parameters)
             try:
                 yield cursor
