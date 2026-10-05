@@ -1661,5 +1661,107 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
 
+    def test_load_graph_requests_opt_in_compact_v2_contract_in_standalone_and_analyzer_assets(self):
+        """RED: the browser must negotiate the compact graph DTO explicitly.
+
+        This source-level guard still runs in environments without Node. The
+        Node-backed tests below exercise the same contract through loadGraph's
+        public test seam when Node is available.
+        """
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                source = app.read_text(encoding='utf-8')
+                start = source.index('async function loadGraph()')
+                end = source.index('function applyCurrentGraphFilters()', start)
+                load_graph = source[start:end]
+                self.assertIn('contract=v2', load_graph, 'loadGraph must opt in to the compact graph HTTP contract')
+                self.assertNotIn("api('/api/mood-axis-graph'+graphQueryFromControls())", load_graph, 'loadGraph must not silently use the legacy verbose graph endpoint')
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for compact graph DTO parity tests')
+    def test_compact_graph_dto_normalizes_to_existing_verbose_graph_model(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const legacy = {
+  selected_mood:'relaxing',
+  available_moods:['relaxing','heavy'],
+  metadata:{graph_status:{state:'ready'}, source_revision:'rev-1', fingerprint:'fp-1'},
+  positioned:[
+    {track_id:'a', display_label:'Alpha', x:{raw:-0.5, normalized:0.25, scale:'native'}, y:{raw:0.75, normalized:0.875, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.9,normalized:0.9}, bpm:120, genres:[['rock',0.6]], genre_threshold:0.5, reasons:['energy available']},
+    {track_id:'b', display_label:'Beta', x:{raw:0.5, normalized:0.75, scale:'native'}, y:{raw:-0.25, normalized:0.375, scale:'native'}, z:{label:'BPM', raw:140, normalized:7, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.2,normalized:0.2}, bpm:140, genres:[['jazz',0.7]], genre_threshold:0.5, reasons:['genre threshold met']}
+  ],
+  unpositioned:[{track_id:'c', display_label:'Gamma', reasons:['missing energy']}],
+  edges:[{a:'a', b:'b', score:0.77, explanation:'warm cache', provenance:[['edge-cache','synthetic']], supported_group_count:3}]
+};
+const compact = {
+  dto_version:'mood-axis-graph-compact-v1',
+  selected_mood:legacy.selected_mood,
+  available_moods:legacy.available_moods,
+  metadata:legacy.metadata,
+  nodes: legacy.positioned.map(n => ({
+    id:n.track_id, label:n.display_label, x:n.x, y:n.y, z:n.z,
+    bpm:n.bpm, genres:n.genres, genre_threshold:n.genre_threshold,
+    mood_score:n.mood_score, reasons:n.reasons
+  })),
+  unpositioned:[{id:'c', label:'Gamma', reasons:['missing energy']}],
+  links:[{source:'a', target:'b', score:0.77, explanation:'warm cache', provenance:[['edge-cache','synthetic']], supported_group_count:3}]
+};
+assert.strictEqual(typeof app.normalizeMoodAxisGraphDto, 'function', 'normalizer must be exported through the browser asset test seam');
+const normalized = app.normalizeMoodAxisGraphDto(compact);
+assert.deepStrictEqual(normalized, legacy, 'compact DTO normalizes to the existing verbose graph shape before model building');
+const compactModel = app.buildMoodGraphModel(normalized);
+const verboseModel = app.buildMoodGraphModel(legacy);
+assert.deepStrictEqual(compactModel.nodes.map(n => [n.id,n.label,n.x,n.y,n.z,n.bpm,n.genres,n.moodScore.raw,n.reasons]), verboseModel.nodes.map(n => [n.id,n.label,n.x,n.y,n.z,n.bpm,n.genres,n.moodScore.raw,n.reasons]));
+assert.deepStrictEqual(compactModel.links, verboseModel.links);
+assert.deepStrictEqual(compactModel.unpositioned, verboseModel.unpositioned);
+assert.deepStrictEqual(app.applyMoodGraphFilters(compactModel,{bpmMin:130,genres:['jazz']}).nodes.map(n=>n.id), ['b']);
+assert.throws(() => app.normalizeMoodAxisGraphDto({dto_version:'mood-axis-graph-compact-v999', nodes:[], links:[]}), /unknown|unsupported|dto/i);
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for compact graph request negotiation tests')
+    def test_load_graph_fetches_compact_v2_contract_and_preserves_single_in_flight_graph_request(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+function makeElement(tag){
+  const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null, parentElement:null, clientWidth:900, clientHeight:700,
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children=[]; this.textContent=''; this.append(...nodes);},
+    setAttribute(name,value){this.attributes[name]=String(value);},
+    removeAttribute(name){delete this.attributes[name];},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};},
+    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
+  };
+  return el;
+}
+const elements = {'graph-load-status': makeElement('section'), graph3d: makeElement('div'), map: makeElement('canvas'), 'mood-strip': null, 'mood-strip-picker': null, 'mood-strip-value': null};
+global.document = {createElement: makeElement, getElementById:id=>elements[id]||null, querySelectorAll:()=>[]};
+global.requestAnimationFrame = cb => cb();
+global.ForceGraph3D = undefined;
+app.setGraphControlsForTesting({mood:'heavy', bpmMin:null, bpmMax:null, genres:[]});
+const requests = [];
+global.fetch = async path => {
+  requests.push(String(path));
+  return {ok:true, json:async()=>({dto_version:'mood-axis-graph-compact-v1', selected_mood:'heavy', available_moods:['heavy'], metadata:{graph_status:{state:'ready'}}, nodes:[{id:'a', label:'Alpha', x:{raw:0,normalized:0.5}, y:{raw:0,normalized:0.5}, z:{label:'BPM',raw:120,normalized:6}, mood_score:{label:'heavy',raw:0.8}, bpm:120, genres:[], genre_threshold:0.5, reasons:[]}], links:[], unpositioned:[]})};
+};
+(async()=>{
+  const first = app.loadGraph();
+  const second = app.loadGraph();
+  await Promise.all([first, second]);
+  assert(requests.every(path => path.startsWith('/api/mood-axis-graph')), 'only graph requests are issued by loadGraph');
+  assert(requests.every(path => /(?:\?|&)contract=v2(?:&|$)/.test(path)), 'each graph request explicitly opts into compact v2');
+  assert(requests.every(path => /(?:\?|&)mood=heavy(?:&|$)/.test(path)), 'compact negotiation preserves selected mood query');
+  assert(!requests.some(path => path === '/api/mood-axis-graph' || path === '/api/mood-axis-graph?mood=heavy'), 'browser must not fall back to the legacy verbose graph URL');
+  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a']);
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+
 if __name__ == '__main__':
     unittest.main()
