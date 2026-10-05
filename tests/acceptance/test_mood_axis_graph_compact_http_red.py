@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import tempfile
 import threading
@@ -82,8 +83,9 @@ class CompactMoodAxisGraphHttpContractRedTests(unittest.TestCase):
             base = f'http://127.0.0.1:{server.server_port}'
             with self.assertRaises(HTTPError) as raised:
                 urlopen(base + '/api/mood-axis-graph?contract=', timeout=5)
-            self.assertEqual(raised.exception.code, 400)
-            body = raised.exception.read().decode('utf-8')
+            with closing(raised.exception) as error:
+                self.assertEqual(error.code, 400)
+                body = error.read().decode('utf-8')
             self.assertIn('contract', body.lower())
         finally:
             server.shutdown(); server.server_close(); td.cleanup()
@@ -94,8 +96,9 @@ class CompactMoodAxisGraphHttpContractRedTests(unittest.TestCase):
             base = f'http://127.0.0.1:{server.server_port}'
             with self.assertRaises(HTTPError) as raised:
                 urlopen(base + '/api/mood-axis-graph?contract=v2&contract=v2', timeout=5)
-            self.assertEqual(raised.exception.code, 400)
-            body = raised.exception.read().decode('utf-8')
+            with closing(raised.exception) as error:
+                self.assertEqual(error.code, 400)
+                body = error.read().decode('utf-8')
             self.assertIn('contract', body.lower())
         finally:
             server.shutdown(); server.server_close(); td.cleanup()
@@ -106,8 +109,9 @@ class CompactMoodAxisGraphHttpContractRedTests(unittest.TestCase):
             base = f'http://127.0.0.1:{server.server_port}'
             with self.assertRaises(HTTPError) as raised:
                 urlopen(base + '/api/mood-axis-graph?contract=v2&contract=legacy', timeout=5)
-            self.assertEqual(raised.exception.code, 400)
-            body = raised.exception.read().decode('utf-8')
+            with closing(raised.exception) as error:
+                self.assertEqual(error.code, 400)
+                body = error.read().decode('utf-8')
             self.assertIn('contract', body.lower())
         finally:
             server.shutdown(); server.server_close(); td.cleanup()
