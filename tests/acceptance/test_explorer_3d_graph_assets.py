@@ -373,10 +373,21 @@ const mood = findById(root, 'selected-mood');
 let requests = [];
 global.fetch = async path => {
   requests.push(String(path));
-  const heavy = String(path).includes('mood=heavy');
-  return {ok:true, json:async()=>({selected_mood:heavy?'heavy':'relaxing', available_moods:['relaxing','heavy'], positioned:[
-    {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed'}, mood_score:{label:heavy?'heavy':'relaxing',raw:heavy?0.8:0.1}, bpm:120, genres:[], reasons:[]}
-  ], edges:[], unpositioned:[]})};
+  const url = new URL(String(path), 'http://example.test');
+  const selectedMood = url.searchParams.get('mood') || 'relaxing';
+  assert.strictEqual(url.searchParams.get('contract'), 'v2', 'graph reloads must opt into the compact v2 contract');
+  const heavy = selectedMood === 'heavy';
+  return {ok:true, json:async()=>({
+    dto_version:'mood-axis-graph-compact-v1',
+    selected_mood:selectedMood,
+    available_moods:['relaxing','heavy'],
+    metadata:{graph_status:{state:'ready'}},
+    nodes:[
+      {id:'a', label:'Alpha', axis:{x:{label:'valence',raw:0.7, normalized:0.7, scale:'native'}, y:{label:'arousal',raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed'}}, mood_score:{label:selectedMood,raw:heavy?0.8:0.1,normalized:heavy?0.8:0.1}, bpm:120, genres:[], reasons:[]}
+    ],
+    links:[],
+    unpositioned:[]
+  })};
 };
 (async()=>{
   mood.value = 'heavy';
@@ -384,12 +395,12 @@ global.fetch = async path => {
   if (before && before.then) await before;
   assert.deepStrictEqual(requests, [], 'changing the mood before Load graph only stores the choice and never auto-fetches');
   await app.loadGraph();
-  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy'], 'manual Load graph uses the stored mood');
+  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v2'], 'manual Load graph uses the stored mood and compact contract');
   assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'heavy');
   mood.value = 'relaxing';
   const after = mood.onchange();
   if (after && after.then) await after;
-  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy','/api/mood-axis-graph?mood=relaxing'], 'changing the mood after the graph is ready reloads graph data');
+  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v2','/api/mood-axis-graph?mood=relaxing&contract=v2'], 'changing the mood after the graph is ready reloads compact graph data');
   assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'relaxing');
   assert.strictEqual(app.buildMoodStrip(app.getVisibleGraphForTesting(), null)[0].score, 0.1, 'strip uses the reloaded mood score');
 })().catch(error=>{console.error(error); process.exit(1);});
