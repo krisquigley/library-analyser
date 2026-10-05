@@ -22,6 +22,42 @@ def summary(labels, values, provisional=True):
     return ScoreSummary(tuple(labels), tuple(values), tuple(values), tuple(values), 1.0, provisional, '')
 
 
+def downgrade_to_schema_v8_without_graph_feature_evidence(path):
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute('PRAGMA foreign_keys=OFF')
+        db.execute('PRAGMA legacy_alter_table=ON')
+        db.execute('DROP INDEX IF EXISTS idx_graph_feature_evidence_one_current_per_track')
+        db.execute('DROP INDEX IF EXISTS idx_graph_feature_evidence_run_id')
+        db.execute('DROP TABLE graph_feature_evidence')
+        db.execute('ALTER TABLE graph_builds RENAME TO graph_builds_v10')
+        db.execute("""CREATE TABLE graph_builds(
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK(status IN ('completed','failed')),
+            detail TEXT NOT NULL DEFAULT '',
+            edge_count INTEGER NOT NULL CHECK(edge_count >= 0),
+            sparse_k INTEGER NOT NULL CHECK(sparse_k >= 0),
+            source_fingerprint TEXT NOT NULL,
+            distance_policy_version TEXT NOT NULL,
+            neighbour_policy_version TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 0 CHECK(is_current IN (0,1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK(status = 'completed' OR is_current = 0))""")
+        db.execute("""INSERT INTO graph_builds(
+            id,status,detail,edge_count,sparse_k,source_fingerprint,
+            distance_policy_version,neighbour_policy_version,is_current,created_at,completed_at)
+            SELECT id,status,detail,edge_count,sparse_k,source_fingerprint,
+                   distance_policy_version,neighbour_policy_version,is_current,created_at,completed_at
+            FROM graph_builds_v10""")
+        db.execute('DROP TABLE graph_builds_v10')
+        db.execute("""CREATE UNIQUE INDEX idx_graph_builds_one_current
+                   ON graph_builds(is_current) WHERE is_current = 1""")
+        db.execute('PRAGMA user_version=8')
+        db.execute('PRAGMA legacy_alter_table=OFF')
+        db.execute('PRAGMA foreign_keys=ON')
+        assert db.execute("SELECT 1 FROM sqlite_master WHERE name='graph_feature_evidence'").fetchone() is None
+
+
 def trace_graph_sql(repo, execute_graph):
     statements = []
     original_connection = repo._connection
@@ -58,6 +94,10 @@ def raw_stage_result_selects(statements):
 def add_positioned_track(repository, suffix, *, bpm=120.0, genres=(('rock', 'jazz'), (0.9, 0.1)), mood=(('relaxing', 'heavy'), (0.8, 0.2))):
     identity = FileIdentity(suffix * 64, 10)
     location = f'/music/{suffix}.flac'
+    return add_positioned_track_identity(repository, identity, location, bpm=bpm, genres=genres, mood=mood)
+
+
+def add_positioned_track_identity(repository, identity, location, *, bpm=120.0, genres=(('rock', 'jazz'), (0.9, 0.1)), mood=(('relaxing', 'heavy'), (0.8, 0.2))):
     repository.register(Inventory('/music', (
         ScannedFile(location, identity, 1, 'flac', TrackMetadata(duration_seconds=120.0, duration_source='mutagen')),
     ), (), False))
@@ -253,6 +293,92 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
 
             with self.assertRaises(StandaloneAnalysisError):
                 StandaloneBuildMoodAxisGraph(StandaloneReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
+
+    def test_standalone_supported_v8_warm_positioned_snapshot_uses_raw_stage_fallback_without_graph_feature_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            first = add_positioned_track(writer, 'a')
+            second = add_positioned_track(writer, 'b', bpm=128.0, genres=(('rock', 'jazz'), (0.05, 0.8)))
+            writer.replace_graph_snapshot(
+                (ProjectionEdge(first, second, 0.25, 2),),
+                10,
+                'synthetic-standalone-v8-red',
+                positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
+            )
+            downgrade_to_schema_v8_without_graph_feature_evidence(path)
+
+            graph = StandaloneBuildMoodAxisGraph(StandaloneReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
+
+            self.assertEqual(tuple(node.track_id for node in graph.positioned), (first, second))
+            self.assertEqual(tuple((edge.a, edge.b, edge.score) for edge in graph.edges), ((first, second, 0.75),))
+            self.assertEqual(graph.metadata['schema_version'], 8)
+            self.assertEqual(graph.metadata['graph_status']['state'], 'ready')
+            self.assertEqual(graph.metadata['graph_status']['source'], 'graph_build_positioned_edges')
+
+    def test_standalone_oversized_current_compact_evidence_fails_before_json_materialization(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            first = add_positioned_track(writer, 'a')
+            second = add_positioned_track(writer, 'b', bpm=128.0, genres=(('rock', 'jazz'), (0.05, 0.8)))
+            writer.replace_graph_snapshot(
+                (ProjectionEdge(first, second, 0.25, 2),),
+                10,
+                'synthetic-standalone-oversized-evidence-red',
+                positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
+            )
+            oversized = '{"pad":"' + ('€' * ((16 * 1024 * 1024) // len('€'.encode('utf-8')) + 1)) + '"}'
+            self.assertGreater(len(oversized.encode('utf-8')), 16 * 1024 * 1024)
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute(
+                    'UPDATE graph_feature_evidence SET evidence_json=?, fingerprint=? WHERE track_id=? AND is_current=1',
+                    (oversized, '0' * 64, first),
+                )
+
+            with self.assertRaisesRegex(StandaloneAnalysisError, 'Oversized stored graph feature evidence'):
+                StandaloneBuildMoodAxisGraph(StandaloneReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
+
+    def test_standalone_1000_plus_legacy_runs_do_not_exceed_old_sqlite_variable_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            first = add_positioned_track(writer, 'a')
+            writer.replace_graph_snapshot((), 10, 'synthetic-standalone-legacy-limit-red', positioned_edges=())
+            with closing(sqlite3.connect(path)) as db, db:
+                source_run = db.execute('SELECT run_id FROM run_tracks WHERE track_id=?', (first,)).fetchone()[0]
+                source_stages = tuple(db.execute('SELECT stage,result FROM stages WHERE run_id=?', (source_run,)))
+                for index in range(1, 1001):
+                    sha = f'{index:064x}'
+                    track_id = f'sha256:{sha}'
+                    run_id = f'legacy-run-{index:04d}'
+                    db.execute('INSERT INTO tracks VALUES(?,?,?)', (track_id, sha, 10))
+                    db.execute('INSERT INTO locations VALUES(?,?,?,?,1)', (f'/music/{sha}.flac', track_id, 1, 'flac'))
+                    db.execute('INSERT INTO scan_roots VALUES(?,?)', ('/music', f'/music/{sha}.flac'))
+                    db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)', (track_id, '[]', '[]', '[]'))
+                    db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (track_id, 120.0, 'mutagen', 'eligible', ''))
+                    db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', (run_id, f'/music/{sha}.flac', 'completed', ''))
+                    db.execute('INSERT INTO run_tracks VALUES(?,?)', (run_id, track_id))
+                    db.executemany('INSERT INTO stages VALUES(?,?,?)', ((run_id, stage, result) for stage, result in source_stages))
+                db.execute('DELETE FROM graph_feature_evidence')
+                prior_limit = db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+                self.assertGreaterEqual(prior_limit, 999)
+            repo = StandaloneReadOnlyExplorerSQLiteRepository(str(path))
+            original_connection = repo._connection
+
+            @contextmanager
+            def limited_connection():
+                with original_connection() as db:
+                    db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+                    yield db
+
+            repo._connection = limited_connection
+            try:
+                graph = StandaloneBuildMoodAxisGraph(repo).execute('relaxing')
+            finally:
+                repo._connection = original_connection
+
+            self.assertEqual(len(graph.positioned) + len(graph.unpositioned), 1001)
 
     def test_warm_v8_endpoint_uses_compact_reader_without_per_track_hydration(self):
         with tempfile.TemporaryDirectory() as td:
