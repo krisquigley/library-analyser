@@ -76,6 +76,42 @@ class CompactMoodAxisGraphHttpContractRedTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); td.cleanup()
 
+    def test_blank_mood_axis_graph_contract_is_rejected_clearly(self):
+        td, server, _ids = self._with_server()
+        try:
+            base = f'http://127.0.0.1:{server.server_port}'
+            with self.assertRaises(HTTPError) as raised:
+                urlopen(base + '/api/mood-axis-graph?contract=', timeout=5)
+            self.assertEqual(raised.exception.code, 400)
+            body = raised.exception.read().decode('utf-8')
+            self.assertIn('contract', body.lower())
+        finally:
+            server.shutdown(); server.server_close(); td.cleanup()
+
+    def test_duplicate_same_mood_axis_graph_contract_is_rejected_clearly(self):
+        td, server, _ids = self._with_server()
+        try:
+            base = f'http://127.0.0.1:{server.server_port}'
+            with self.assertRaises(HTTPError) as raised:
+                urlopen(base + '/api/mood-axis-graph?contract=v2&contract=v2', timeout=5)
+            self.assertEqual(raised.exception.code, 400)
+            body = raised.exception.read().decode('utf-8')
+            self.assertIn('contract', body.lower())
+        finally:
+            server.shutdown(); server.server_close(); td.cleanup()
+
+    def test_duplicate_conflicting_mood_axis_graph_contract_is_rejected_clearly(self):
+        td, server, _ids = self._with_server()
+        try:
+            base = f'http://127.0.0.1:{server.server_port}'
+            with self.assertRaises(HTTPError) as raised:
+                urlopen(base + '/api/mood-axis-graph?contract=v2&contract=legacy', timeout=5)
+            self.assertEqual(raised.exception.code, 400)
+            body = raised.exception.read().decode('utf-8')
+            self.assertIn('contract', body.lower())
+        finally:
+            server.shutdown(); server.server_close(); td.cleanup()
+
     def test_compact_payload_is_substantially_smaller_than_legacy_on_synthetic_fixture(self):
         td, server, _ids = self._with_server()
         try:

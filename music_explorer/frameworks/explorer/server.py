@@ -165,9 +165,9 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json(_to_json(projection))
             if path == '/api/mood-axis-graph':
                 query = parse_qs(parsed.query)
-                contract = query.get('contract', [None])[0]
-                if contract not in (None, '', 'v2'):
-                    return self._json({'error': f'Unsupported mood-axis-graph contract: {contract}'}, HTTPStatus.BAD_REQUEST)
+                contract, contract_error = _parse_mood_axis_graph_contract(parsed.query)
+                if contract_error:
+                    return self._json({'error': contract_error}, HTTPStatus.BAD_REQUEST)
                 mood = query.get('mood', [None])[0]
                 graph = BuildMoodAxisGraph(repository).execute(mood)
                 bpm_min = _optional_float(query.get('bpm_min', [None])[0])
@@ -242,6 +242,20 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             return
 
     return ThreadingHTTPServer((host, port), Handler)
+
+
+def _parse_mood_axis_graph_contract(query_string):
+    values = parse_qs(query_string, keep_blank_values=True).get('contract', [])
+    if not values:
+        return None, None
+    if len(values) != 1:
+        return None, 'Exactly one mood-axis-graph contract value is allowed'
+    contract = values[0]
+    if contract == 'v2':
+        return contract, None
+    if contract == '':
+        return None, 'Mood-axis-graph contract must not be blank'
+    return None, f'Unsupported mood-axis-graph contract: {contract}'
 
 
 def _parse_controls(values):
