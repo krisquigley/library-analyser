@@ -380,6 +380,62 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
 
             self.assertEqual(len(graph.positioned) + len(graph.unpositioned), 1001)
 
+    def test_warm_v9_compact_graph_batches_current_evidence_payload_reads(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            for index in range(8):
+                add_positioned_track_identity(writer, FileIdentity(f'{index:064x}', 10), f'/music/{index}.flac')
+            writer.replace_graph_snapshot((), 10, 'synthetic-compact-batched-evidence-red', positioned_edges=())
+            graph, statements = trace_graph_sql(
+                ReadOnlyExplorerSQLiteRepository(str(path)),
+                lambda repo: BuildMoodAxisGraph(repo).execute('relaxing'),
+            )
+
+            evidence_payload_selects = tuple(
+                statement for statement in statements
+                if 'evidence_json FROM graph_feature_evidence' in ' '.join(statement.split())
+            )
+
+            self.assertEqual(8, len(graph.positioned) + len(graph.unpositioned))
+            self.assertLessEqual(len(evidence_payload_selects), 2, evidence_payload_selects)
+            self.assertTrue(evidence_payload_selects)
+            self.assertTrue(all(' IN ' in statement.upper() for statement in evidence_payload_selects))
+
+    def test_warm_v9_compact_graph_rejects_oversized_evidence_before_payload_select(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            first = add_positioned_track(writer, 'a')
+            writer.replace_graph_snapshot((), 10, 'synthetic-compact-oversized-preflight-red', positioned_edges=())
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute(
+                    'UPDATE graph_feature_evidence SET evidence_json=?, fingerprint=? WHERE track_id=? AND is_current=1',
+                    ('{"pad":"' + ('x' * (16 * 1024 * 1024 + 1)) + '"}', '0' * 64, first),
+                )
+            repo = ReadOnlyExplorerSQLiteRepository(str(path))
+            statements = []
+            original_connection = repo._connection
+
+            @contextmanager
+            def traced_connection():
+                with original_connection() as db:
+                    db.set_trace_callback(statements.append)
+                    yield db
+
+            repo._connection = traced_connection
+            try:
+                with self.assertRaisesRegex(Exception, 'Oversized stored graph feature evidence'):
+                    BuildMoodAxisGraph(repo).execute('relaxing')
+            finally:
+                repo._connection = original_connection
+
+            evidence_payload_selects = tuple(
+                statement for statement in statements
+                if 'evidence_json FROM graph_feature_evidence' in ' '.join(statement.split())
+            )
+            self.assertEqual((), evidence_payload_selects)
+
     def test_warm_v8_endpoint_uses_compact_reader_without_per_track_hydration(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
