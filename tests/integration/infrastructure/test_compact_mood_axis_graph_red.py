@@ -1,7 +1,8 @@
+import re
 import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from music_analyzer.application.dto.analysis import AudioSource, StageResult
@@ -13,11 +14,45 @@ from music_analyzer.domain.projection import ProjectionEdge
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph as StandaloneBuildMoodAxisGraph
+from music_explorer.infrastructure.explorer_readonly import AnalysisError as StandaloneAnalysisError
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository as StandaloneReadOnlyExplorerSQLiteRepository
 
 
 def summary(labels, values, provisional=True):
     return ScoreSummary(tuple(labels), tuple(values), tuple(values), tuple(values), 1.0, provisional, '')
+
+
+def trace_graph_sql(repo, execute_graph):
+    statements = []
+    original_connection = repo._connection
+
+    @contextmanager
+    def traced_connection():
+        with original_connection() as db:
+            db.set_trace_callback(statements.append)
+            yield db
+
+    repo._connection = traced_connection
+    try:
+        graph = execute_graph(repo)
+    finally:
+        repo._connection = original_connection
+    return graph, tuple(statements)
+
+
+def raw_stage_result_selects(statements):
+    selects = []
+    for statement in statements:
+        normalized = ' '.join(statement.split()).upper()
+        if ' STAGES' not in normalized:
+            continue
+        match = re.search(r'\bSELECT\b(?P<select>.*?)\bFROM\b', normalized)
+        if match is None:
+            continue
+        select_list = re.sub(r'\b(?:OCTET_LENGTH|LENGTH)\s*\([^)]*\bRESULT\b[^)]*\)', '', match.group('select'))
+        if re.search(r'\b(?:[A-Z_][A-Z0-9_]*\.)?RESULT\b', select_list):
+            selects.append(statement)
+    return tuple(selects)
 
 
 def add_positioned_track(repository, suffix, *, bpm=120.0, genres=(('rock', 'jazz'), (0.9, 0.1)), mood=(('relaxing', 'heavy'), (0.8, 0.2))):
@@ -131,6 +166,93 @@ class CompactMoodAxisGraphReadTests(unittest.TestCase):
             self.assertEqual(tuple((item.track_id, item.reasons) for item in graph.unpositioned), tuple((item.track_id, item.reasons) for item in expected.unpositioned))
             self.assertEqual(tuple((edge.a, edge.b, edge.score, edge.supported_group_count) for edge in graph.edges), tuple((edge.a, edge.b, edge.score, edge.supported_group_count) for edge in expected.edges))
             self.assertEqual(graph.metadata['graph_status'], expected.metadata['graph_status'])
+
+    def test_standalone_all_compact_snapshot_does_not_select_raw_stage_result_sql(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            first = add_positioned_track(writer, 'a')
+            second = add_positioned_track(writer, 'b', bpm=128.0, genres=(('rock', 'jazz'), (0.05, 0.8)))
+            writer.replace_graph_snapshot(
+                (ProjectionEdge(first, second, 0.25, 2),),
+                10,
+                'synthetic-standalone-sql-trace-red',
+                positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
+            )
+
+            graph, statements = trace_graph_sql(
+                StandaloneReadOnlyExplorerSQLiteRepository(str(path)),
+                lambda repo: StandaloneBuildMoodAxisGraph(repo).execute('relaxing'),
+            )
+
+            self.assertEqual(tuple(node.track_id for node in graph.positioned), (first, second))
+            self.assertEqual(
+                (),
+                raw_stage_result_selects(statements),
+                'all-compact graph reads must not execute SQL that selects raw stages.result payloads; '
+                'size-only octet_length(s.result) probes are the only permitted stages.result reference',
+            )
+
+    def test_standalone_mixed_snapshot_selects_raw_stage_result_sql_only_for_legacy_run(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            compact_a = add_positioned_track(writer, 'a')
+            compact_b = add_positioned_track(writer, 'b', bpm=128.0, genres=(('rock', 'jazz'), (0.05, 0.8)))
+            legacy = add_positioned_track(writer, 'c', bpm=96.0, mood=(('relaxing', 'heavy'), (0.1, 0.9)))
+            writer.replace_graph_snapshot(
+                (ProjectionEdge(compact_a, compact_b, 0.25, 2), ProjectionEdge(compact_a, legacy, 0.5, 1)),
+                10,
+                'synthetic-standalone-mixed-sql-trace-red',
+                positioned_edges=(ProjectionEdge(compact_a, compact_b, 0.25, 2), ProjectionEdge(compact_a, legacy, 0.5, 1)),
+            )
+            with closing(sqlite3.connect(path)) as db, db:
+                compact_runs = tuple(
+                    row[0] for row in db.execute(
+                        'SELECT run_id FROM run_tracks WHERE track_id IN (?,?) ORDER BY track_id',
+                        (compact_a, compact_b),
+                    )
+                )
+                legacy_run = db.execute('SELECT run_id FROM run_tracks WHERE track_id=?', (legacy,)).fetchone()[0]
+                db.execute('DELETE FROM graph_feature_evidence WHERE track_id=?', (legacy,))
+
+            graph, statements = trace_graph_sql(
+                StandaloneReadOnlyExplorerSQLiteRepository(str(path)),
+                lambda repo: StandaloneBuildMoodAxisGraph(repo).execute('relaxing'),
+            )
+            raw_selects = raw_stage_result_selects(statements)
+
+            self.assertEqual(tuple(node.track_id for node in graph.positioned), (compact_a, compact_b, legacy))
+            self.assertTrue(raw_selects, 'legacy fallback must perform bounded raw stage payload reads for the legacy track')
+            self.assertTrue(
+                all(legacy_run in statement for statement in raw_selects),
+                f'raw stage payload SELECTs must be bounded to legacy run {legacy_run}; got {raw_selects!r}',
+            )
+            self.assertFalse(
+                any(compact_run in statement for compact_run in compact_runs for statement in raw_selects),
+                f'compact run raw payloads must never be selected; compact_runs={compact_runs!r}, selects={raw_selects!r}',
+            )
+
+    def test_standalone_malformed_current_compact_evidence_fails_closed_without_raw_fallback(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            writer = SQLiteAnalysisRepository(str(path))
+            first = add_positioned_track(writer, 'a')
+            second = add_positioned_track(writer, 'b', bpm=128.0, genres=(('rock', 'jazz'), (0.05, 0.8)))
+            writer.replace_graph_snapshot(
+                (ProjectionEdge(first, second, 0.25, 2),),
+                10,
+                'synthetic-standalone-malformed-evidence-red',
+                positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
+            )
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute(
+                    "UPDATE graph_feature_evidence SET fingerprint=? WHERE track_id=? AND is_current=1",
+                    ('not-a-valid-fingerprint', first),
+                )
+
+            with self.assertRaises(StandaloneAnalysisError):
+                StandaloneBuildMoodAxisGraph(StandaloneReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
 
     def test_warm_v8_endpoint_uses_compact_reader_without_per_track_hydration(self):
         with tempfile.TemporaryDirectory() as td:
