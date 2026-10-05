@@ -1511,7 +1511,8 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
                 self.assertNotIn("/api/mood-axis-graph", refresh_source, 'startup refresh must not request graph before user clicks Load graph')
                 self.assertIn('renderGraphLoadStatus()', refresh_source)
                 load_graph_source = source[source.index('async function loadGraph()'):source.index('function renderInitialDetail')]
-                self.assertIn("const graph=await api('/api/mood-axis-graph'+graphQueryFromControls())", load_graph_source)
+                self.assertIn("const controlQuery=graphQueryFromControls()", load_graph_source)
+                self.assertIn("const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v2')", load_graph_source)
                 self.assertIn('load-graph', source)
                 self.assertIn('Load graph', source)
                 self.assertIn('loadGraph', source[source.index('module.exports'):])

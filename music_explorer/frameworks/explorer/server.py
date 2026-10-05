@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from music_explorer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
+from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
@@ -164,12 +165,18 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json(_to_json(projection))
             if path == '/api/mood-axis-graph':
                 query = parse_qs(parsed.query)
+                contract = query.get('contract', [None])[0]
+                if contract not in (None, '', 'v2'):
+                    return self._json({'error': f'Unsupported mood-axis-graph contract: {contract}'}, HTTPStatus.BAD_REQUEST)
                 mood = query.get('mood', [None])[0]
                 graph = BuildMoodAxisGraph(repository).execute(mood)
                 bpm_min = _optional_float(query.get('bpm_min', [None])[0])
                 bpm_max = _optional_float(query.get('bpm_max', [None])[0])
                 genres = tuple(g for g in query.get('genre', ()) if g)
-                return self._json(_to_json(FilterMoodAxisGraph().execute(graph, bpm_min, bpm_max, genres)))
+                filtered = FilterMoodAxisGraph().execute(graph, bpm_min, bpm_max, genres)
+                if contract == 'v2':
+                    return self._json(to_compact_mood_axis_graph_http(filtered))
+                return self._json(_to_json(filtered))
             return self._json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
 
         def _route_post(self):
