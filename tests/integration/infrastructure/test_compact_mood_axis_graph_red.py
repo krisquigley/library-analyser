@@ -76,6 +76,38 @@ def trace_graph_sql(repo, execute_graph):
     return graph, tuple(statements)
 
 
+class BoundedEvidenceCursor:
+    def __init__(self, rows):
+        self._rows = tuple(rows)
+        self.rows_yielded = 0
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.rows_yielded >= len(self._rows):
+            raise StopIteration
+        row = self._rows[self.rows_yielded]
+        self.rows_yielded += 1
+        return row
+
+    def close(self):
+        self.closed = True
+
+
+class BoundedEvidenceDb:
+    def __init__(self, rows):
+        self.cursor = BoundedEvidenceCursor(rows)
+        self.statements = []
+        self.parameters = []
+
+    def execute(self, statement, parameters=()):
+        self.statements.append(statement)
+        self.parameters.append(tuple(parameters))
+        return self.cursor
+
+
 def raw_stage_result_selects(statements):
     selects = []
     for statement in statements:
@@ -127,6 +159,30 @@ def add_positioned_track_identity(repository, identity, location, *, bpm=120.0, 
 
 
 class CompactMoodAxisGraphReadTests(unittest.TestCase):
+    def test_standalone_evidence_payload_chunks_stream_rows_without_materializing_raw_payloads(self):
+        rows = (
+            ('sha256:' + 'a' * 64, 'run-a', '{"features":{}}'),
+            ('sha256:' + 'b' * 64, 'run-b', '{"features":{}}'),
+        )
+        db = BoundedEvidenceDb(rows)
+        repo = StandaloneReadOnlyExplorerSQLiteRepository.__new__(StandaloneReadOnlyExplorerSQLiteRepository)
+
+        chunks = repo._iter_graph_feature_evidence_payload_chunks(
+            db,
+            tuple((track_id, run_id) for track_id, run_id, _payload in rows),
+            current_only=True,
+        )
+        first_chunk = next(chunks)
+
+        self.assertEqual(0, db.cursor.rows_yielded)
+        self.assertIs(first_chunk, db.cursor)
+        self.assertEqual(rows[0], next(iter(first_chunk)))
+        self.assertEqual(1, db.cursor.rows_yielded)
+        self.assertEqual((rows[0][0], rows[0][1], rows[1][0], rows[1][1]), db.parameters[0])
+        self.assertFalse(db.cursor.closed)
+        chunks.close()
+        self.assertTrue(db.cursor.closed)
+
     def test_standalone_mood_axis_graph_uses_compact_evidence_without_decoding_raw_stages(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'

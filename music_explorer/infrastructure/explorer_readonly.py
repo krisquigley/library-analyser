@@ -617,11 +617,17 @@ class ReadOnlyExplorerSQLiteRepository:
         for identity_chunk in _chunked(tuple(identities), 450):
             placeholders = ','.join('(?,?)' for _identity in identity_chunk)
             parameters = tuple(value for identity in identity_chunk for value in identity)
-            yield tuple(db.execute(f'''
+            cursor = db.execute(f'''
                 SELECT track_id,run_id,evidence_json FROM graph_feature_evidence
                 WHERE {current_clause}(track_id,run_id) IN ({placeholders})
                 ORDER BY track_id,run_id
-            ''', parameters))
+            ''', parameters)
+            try:
+                yield cursor
+            finally:
+                close = getattr(cursor, 'close', None)
+                if close is not None:
+                    close()
 
     def _stages_from_graph_feature_payload(self, payload):
         stages = []
