@@ -453,29 +453,47 @@ class ReadOnlyExplorerSQLiteRepository:
                    COALESCE(first_location.available_locations, 0) AS available_locations,
                    latest_run.run_id, latest_run.status, latest_run.detail,
                    COALESCE(tm.common_json, '[]'), COALESCE(tm.tags_json, '[]'), COALESCE(tm.warnings_json, '[]'),
-                   a.duration_seconds, a.duration_source
+                   a.duration_seconds, a.duration_source,
+                   g.fingerprint, g.evidence_json
             FROM active_tracks t
             LEFT JOIN first_location ON first_location.track_id=t.id
             LEFT JOIN latest_run ON latest_run.track_id=t.id
+            LEFT JOIN graph_feature_evidence g
+                   ON g.track_id=t.id AND g.run_id=latest_run.run_id AND g.is_current=1
             LEFT JOIN track_metadata tm ON tm.track_id=t.id
             LEFT JOIN track_audio a ON a.track_id=t.id
             ORDER BY t.id
         ''').fetchall()
         stages_by_run = {}
+        compact_stages_by_run = {}
+        legacy_run_ids = tuple(
+            row[5] for row in rows
+            if row[5] is not None and not (row[6] == 'completed' and row[13] is not None)
+        )
         size_expression = _stage_result_size_expression('s.result')
-        stage_sizes = tuple(db.execute(f'''
-            WITH latest_run AS (
-                SELECT track_id, run_id FROM (
-                    SELECT rt.track_id, r.id AS run_id,
-                           row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
-                    FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
-                    JOIN active_tracks at ON at.id=rt.track_id
-                ) WHERE rn=1
-            )
-            SELECT s.run_id, s.stage, {size_expression}
-            FROM latest_run JOIN stages s ON s.run_id=latest_run.run_id
-            ORDER BY latest_run.track_id, s.stage
-        '''))
+        if legacy_run_ids:
+            placeholders = ','.join('?' for _run_id in legacy_run_ids)
+            stage_sizes = tuple(db.execute(f'''
+                SELECT s.run_id, s.stage, {size_expression}
+                FROM stages s
+                WHERE s.run_id IN ({placeholders})
+                ORDER BY s.run_id, s.stage
+            ''', legacy_run_ids))
+        else:
+            stage_sizes = tuple(db.execute(f'''
+                WITH latest_run AS (
+                    SELECT track_id, run_id FROM (
+                        SELECT rt.track_id, r.id AS run_id,
+                               row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
+                        FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                        JOIN active_tracks at ON at.id=rt.track_id
+                    ) WHERE rn=1
+                )
+                SELECT s.run_id, s.stage, {size_expression}
+                FROM latest_run JOIN stages s ON s.run_id=latest_run.run_id
+                WHERE 0
+                ORDER BY latest_run.track_id, s.stage
+            '''))
         for _run_id, _stage, size in stage_sizes:
             if int(size) > 16 * 1024 * 1024:
                 raise AnalysisError('Oversized stored stage (16 MiB limit)')
@@ -495,14 +513,20 @@ class ReadOnlyExplorerSQLiteRepository:
         records = []
         for row in rows:
             (track_id, sha256, size, first_path, available_locations, run_id, status, detail,
-             common_json, tags_json, warnings_json, duration_seconds, duration_source) = row
-            run = None
-            if run_id is not None:
-                run = AnalysisReport(run_id, status, tuple(stages_by_run.get(run_id, ())), detail or '')
+             common_json, tags_json, warnings_json, duration_seconds, duration_source,
+             evidence_fingerprint, evidence_json) = row
             try:
                 metadata = self._metadata_from_json(common_json, tags_json, warnings_json, (duration_seconds, duration_source))
+                if run_id is not None and status == 'completed' and evidence_json is not None:
+                    payload = json.loads(evidence_json)
+                    validate_graph_feature_evidence_payload(track_id, run_id, evidence_fingerprint, payload)
+                    compact_stages_by_run[run_id] = self._stages_from_graph_feature_payload(payload)
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                raise AnalysisError('Invalid stored metadata') from error
+                raise AnalysisError('Invalid stored graph feature evidence') from error
+            run = None
+            if run_id is not None:
+                stages = compact_stages_by_run.get(run_id, tuple(stages_by_run.get(run_id, ())))
+                run = AnalysisReport(run_id, status, tuple(stages), detail or '')
             records.append(ExplorerStoredTrack(
                 track_id,
                 sha256,
@@ -514,6 +538,33 @@ class ReadOnlyExplorerSQLiteRepository:
                 metadata,
             ))
         return tuple(records)
+
+    def _stages_from_graph_feature_payload(self, payload):
+        stages = []
+        for stage_name in sorted(payload['features']):
+            feature = payload['features'][stage_name]
+            summary = None
+            if feature.get('summary') is not None:
+                raw = feature['summary']
+                summary = ScoreSummary(
+                    tuple(raw['labels']),
+                    tuple(raw['mean']),
+                    tuple(raw['minimum']),
+                    tuple(raw['maximum']),
+                    float(raw['coverage']),
+                    bool(raw['provisional']),
+                    str(raw['uncertainty']),
+                )
+            stages.append(StageResult(
+                str(stage_name),
+                tuple((str(key), str(value)) for key, value in feature.get('provenance', ())),
+                str(feature.get('uncertainty', '')),
+                tuple((str(key), value) for key, value in feature.get('values', ())),
+                (),
+                summary,
+                (),
+            ))
+        return tuple(stages)
 
     def _stage_from_payload(self, stage, size, payload):
         if size > 16 * 1024 * 1024:
