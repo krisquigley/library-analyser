@@ -223,6 +223,44 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
         self.assertIn('error', payload)
         self.assertRegex(payload['error'], 'start|bpm|length')
 
+    def test_download_m3u_endpoint_reports_noninteger_length_and_count_as_uniform_validation_error(self):
+        expected = 'Playlist length must be positive and between 1 and 1000'
+        for parameter_name in ('length', 'count'):
+            with self.subTest(parameter_name=parameter_name):
+                query = urlencode({
+                    'start_track_id': self.first,
+                    'bpm_min': '119',
+                    'bpm_max': '125',
+                    parameter_name: 'abc',
+                })
+
+                with self.assertRaises(HTTPError) as raised:
+                    self._get('/api/playlists/m3u?' + query)
+
+                self.assertEqual(raised.exception.code, 400)
+                self.assertEqual(raised.exception.headers.get_content_type(), 'application/json')
+                payload = json.loads(raised.exception.read().decode('utf-8'))
+                self.assertEqual(payload, {'error': expected})
+
+    def test_download_m3u_endpoint_preserves_length_range_validation_message(self):
+        expected = 'Playlist length must be positive and between 1 and 1000'
+        invalid_cases = ({'length': '0'}, {'length': '1001'}, {'count': '0'}, {'count': '1001'}, {})
+        for overrides in invalid_cases:
+            with self.subTest(overrides=overrides):
+                query_values = {
+                    'start_track_id': self.first,
+                    'bpm_min': '119',
+                    'bpm_max': '125',
+                }
+                query_values.update(overrides)
+
+                with self.assertRaises(HTTPError) as raised:
+                    self._get('/api/playlists/m3u?' + urlencode(query_values))
+
+                self.assertEqual(raised.exception.code, 400)
+                payload = json.loads(raised.exception.read().decode('utf-8'))
+                self.assertEqual(payload, {'error': expected})
+
 
 if __name__ == '__main__':
     unittest.main()
