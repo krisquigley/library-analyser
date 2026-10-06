@@ -143,6 +143,46 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
             self.assertEqual([candidate.bpm for candidate in candidates], [118.0, 122.0])
             self.assertEqual([candidate.path for candidate in candidates], [str(playable_paths[track_ids[0]]), str(playable_paths[track_ids[1]])])
 
+    def test_playlist_export_uses_first_existing_regular_path_when_track_has_multiple_active_locations(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / 'analysis.sqlite'
+            track_ids = tuple('sha256:' + digit * 64 for digit in ('1', '2', '3', '4'))
+            playable = root / '20-playable.flac'
+            playable.write_bytes(b'not audio; existence sentinel only')
+            other_track_playable = root / '21-other-track.flac'
+            other_track_playable.write_bytes(b'not audio; must not leak to first track')
+            absent_first = root / '00-absent-first.flac'
+            directory_first = root / '01-directory-first.flac'
+            directory_first.mkdir()
+            unavailable_regular = root / '02-unavailable-regular.flac'
+            unavailable_regular.write_bytes(b'not audio; unavailable location must be ignored')
+            excluded_regular = root / '03-excluded-regular.flac'
+            excluded_regular.write_bytes(b'not audio; excluded track location must be ignored')
+            playable_paths = {
+                track_ids[0]: playable,
+                track_ids[1]: root / '11-absent-only.flac',
+                track_ids[2]: excluded_regular,
+                track_ids[3]: other_track_playable,
+            }
+            _create_playlist_fixture_db(db_path, playable_paths)
+            with sqlite3.connect(db_path) as db:
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', (str(absent_first), track_ids[0], 10, 'flac', 1))
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', (str(directory_first), track_ids[0], 11, 'flac', 1))
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', (str(unavailable_regular), track_ids[0], 12, 'flac', 0))
+                db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', (str(root / '04-excluded-active-location.flac'), track_ids[2], 13, 'flac', 1))
+            before = db_path.read_bytes()
+            repository = ReadOnlyExplorerSQLiteRepository(str(db_path))
+
+            with patch('builtins.open', side_effect=AssertionError('playlist export must not open/read audio file bytes')):
+                candidates = repository.playlist_export_tracks()
+
+            self.assertEqual(db_path.read_bytes(), before, 'playlist export must not write or migrate the analysis database')
+            self.assertEqual(
+                [(candidate.track_id, candidate.path) for candidate in candidates],
+                [(track_ids[0], str(playable))],
+            )
+
     def test_playlist_export_accepts_only_regular_local_files_and_allowed_regular_symlinks(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
