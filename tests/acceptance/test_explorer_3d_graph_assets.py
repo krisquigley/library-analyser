@@ -104,9 +104,14 @@ const payload = {selected_mood:'relaxing', available_moods:['relaxing','heavy'],
 const model = graph.buildMoodGraphModel(payload);
 assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
 assert(model.nodes.every(n => Math.abs(n.x) > 1), 'render coordinates are scaled for browser visibility');
-assert.strictEqual(model.nodes[0].x, model.nodes[0].axis.x.normalized * 180, 'X display spacing remains unchanged');
+assert.strictEqual(model.nodes[0].x, model.nodes[0].axis.x.normalized * 360, 'X display spacing is doubled from the current display origin');
 assert.strictEqual(model.nodes[0].fx, model.nodes[0].x, 'fixed X coordinate matches displayed X');
-assert.strictEqual(model.nodes[0].y, model.nodes[0].axis.y.normalized * 180, 'Y display spacing is unchanged');
+assert.strictEqual(model.nodes[0].y, model.nodes[0].axis.y.normalized * 360, 'Y display spacing is doubled from the current display origin');
+assert.strictEqual(model.nodes[0].fy, model.nodes[0].y, 'fixed Y coordinate matches displayed Y');
+assert.strictEqual(model.nodes[0].axis.x.raw, 0.7, 'raw X value is unchanged by display scaling');
+assert.strictEqual(model.nodes[0].axis.x.normalized, 0.7, 'normalized X value is unchanged by display scaling');
+assert.strictEqual(model.nodes[0].axis.y.raw, 0.2, 'raw Y value is unchanged by display scaling');
+assert.strictEqual(model.nodes[0].axis.y.normalized, 0.2, 'normalized Y value is unchanged by display scaling');
 const before = new Map(model.nodes.map(n => [n.id, JSON.stringify([n.x,n.y,n.z,n.fx,n.fy,n.fz])]));
 for (const node of model.nodes) {
   assert.strictEqual(node.z, node.axis.z.normalized * 360, 'fixed BPM depth is half its previous display scale');
@@ -116,6 +121,8 @@ assert.strictEqual(model.nodes[1].z-model.nodes[0].z, 180, '10 BPM retains visib
 const other = graph.buildMoodGraphModel({...payload,selected_mood:'heavy',positioned:payload.positioned.map(n=>({...n,mood_score:{label:'heavy',raw:0.5,normalized:0.5}}))});
 assert.deepStrictEqual(other.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]),model.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]));
 assert.deepStrictEqual(graph.graphCameraFrame(other.nodes,{width:900,height:700},50),graph.graphCameraFrame(model.nodes,{width:900,height:700},50));
+const expandedCamera = graph.graphCameraFrame(model.nodes,{width:900,height:700},50);
+assert.deepStrictEqual(expandedCamera.target, {x:180,y:108,z:2250}, 'initial camera frame centers the doubled X/Y display geometry and unchanged Z geometry');
 assert.deepStrictEqual(other.links,model.links);
 assert.deepStrictEqual(model.genreOptions, ['jazz','rock']);
 const visible = graph.applyMoodGraphFilters(model, {bpmMin:119,bpmMax:121,genres:['jazz']});
@@ -138,7 +145,9 @@ const bordered = graph.canvasPoint(
 assert.deepStrictEqual(bordered, {x:90, y:120});
 """;
         if shutil.which('node'):
-            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+            for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+                with self.subTest(app=app):
+                    subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
         else:
             source = APP_JS.read_text(encoding='utf-8')
             self.assertIn('function buildGraphModel', source)
@@ -150,6 +159,129 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
             self.assertIn('canvasPoint', source[source.index('module.exports'):])
             self.assertIn('module.exports', source)
 
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for graph display spacing tests')
+    def test_graph_axis_guides_and_canvas_fallback_use_doubled_xy_display_spacing(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const payload = {selected_mood:'relaxing', available_moods:['relaxing'], metadata:{}, unpositioned:[], positioned:[
+  {track_id:'a', display_label:'Alpha', x:{raw:0.2, normalized:0.2, scale:'native'}, y:{raw:0.3, normalized:0.3, scale:'native'}, z:{label:'BPM', raw:120, normalized:12, scale:'fixed-BPM/10-display-units'}, mood_score:{label:'relaxing',raw:0.9,normalized:0.9}, bpm:120, genres:[], reasons:[]},
+  {track_id:'b', display_label:'Beta', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.5, normalized:0.5, scale:'native'}, z:{label:'BPM', raw:128, normalized:12.8, scale:'fixed-BPM/10-display-units'}, mood_score:{label:'relaxing',raw:0.2,normalized:0.2}, bpm:128, genres:[], reasons:[]}
+], edges:[{a:'a',b:'b',score:0.77,explanation:'axis-independent relatedness'}]};
+const model = app.buildMoodGraphModel(payload);
+const close = (actual, expected, label) => assert(Math.abs(actual - expected) <= 1e-9, `${label}: expected ${expected}, got ${actual}`);
+assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
+for (const [node, expected] of [[model.nodes[0], {x:72,y:108,z:4320}], [model.nodes[1], {x:252,y:180,z:4608}]]) {
+  close(node.x, expected.x, `${node.id} x display`);
+  close(node.fx, expected.x, `${node.id} fx display`);
+  close(node.y, expected.y, `${node.id} y display`);
+  close(node.fy, expected.y, `${node.id} fy display`);
+  assert.strictEqual(node.z, expected.z, `${node.id} z display remains unchanged`);
+  assert.strictEqual(node.fz, expected.z, `${node.id} fz display remains unchanged`);
+}
+assert.deepStrictEqual(model.links.map(l => [l.source,l.target]), [['a','b']], 'links remain attached to the same displayed nodes');
+const axes = app.graphAxisSpec(model.nodes);
+assert.deepStrictEqual(axes.map(a => a.references), [['0.2','0.7'],['0.3','0.5'],['120.0','128.0']], 'axis labels show native values, not display units');
+assert.deepStrictEqual(axes.map(a => [a.key,a.start,a.end]), [
+  ['x',{x:54,y:90,z:4302},{x:270,y:90,z:4302}],
+  ['y',{x:54,y:90,z:4302},{x:54,y:198,z:4302}],
+  ['z',{x:54,y:90,z:4302},{x:54,y:90,z:4626}],
+], 'axis visual guides are laid out in doubled X/Y display coordinates with unchanged Z coordinates');
+const arcs = [];
+let graph3d = null;
+let mapCanvas = null;
+const makeCanvas = () => ({clientWidth:600, clientHeight:400, parentElement:null, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(x,y,r){arcs.push([x,y,r]);}, fill(){}, set fillStyle(value){}};}});
+mapCanvas = makeCanvas();
+mapCanvas.replaceWith = node => {graph3d = node; mapCanvas = null;};
+global.document = {
+  getElementById:id => id === 'graph3d' ? graph3d : (id === 'map' ? mapCanvas : null),
+  createElement: tag => tag === 'canvas' ? makeCanvas() : {id:'', clientWidth:600, clientHeight:400, parentElement:null}
+};
+app.setStateForTesting({current_track_id:'b'});
+app.renderMap(model);
+assert(graph3d && graph3d.id === 'graph3d', 'renderMap replaces the legacy map canvas with the graph container before falling back');
+assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'fallback canvas mirrors doubled X/Y display coordinates from the canvas origin');
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for raw graph axis labels tests')
+    def test_graph_axis_labels_use_raw_axis_values_when_display_positions_are_scaled(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const payload = {selected_mood:'focus', available_moods:['focus'], metadata:{}, unpositioned:[], positioned:[
+  {track_id:'native-a', display_label:'Native A', x:{raw:-2.46, normalized:0.2, scale:'native-valence'}, y:{raw:10.01, normalized:0.3, scale:'native-arousal'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'focus',raw:0.6,normalized:0.6}, bpm:120, genres:[], reasons:[]},
+  {track_id:'native-b', display_label:'Native B', x:{raw:3.35, normalized:0.7, scale:'native-valence'}, y:{raw:30.08, normalized:0.5, scale:'native-arousal'}, z:{label:'BPM', raw:128, normalized:6.4, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'focus',raw:0.4,normalized:0.4}, bpm:128, genres:[], reasons:[]}
+], edges:[]};
+const model = app.buildMoodGraphModel(payload);
+const close = (actual, expected, label) => assert(Math.abs(actual - expected) <= 1e-9, `${label}: expected ${expected}, got ${actual}`);
+assert.deepStrictEqual(model.nodes.map(n => n.id), ['native-a','native-b']);
+for (const [node, expected] of [[model.nodes[0], {x:72,y:108,z:2160}], [model.nodes[1], {x:252,y:180,z:2304}]]) {
+  close(node.x, expected.x, `${node.id} x display`);
+  close(node.y, expected.y, `${node.id} y display`);
+  close(node.z, expected.z, `${node.id} z display`);
+}
+const axes = app.graphAxisSpec(model.nodes);
+assert.deepStrictEqual(axes.map(a => [a.key, a.references]), [
+  ['x', ['-2.5', '3.4']],
+  ['y', ['10.0', '30.1']],
+  ['z', ['120.0', '128.0']],
+], 'axis reference labels must come from node.axis raw DTO values, not scaled display positions');
+assert.deepStrictEqual(axes.map(a => [a.key, a.start, a.end]), [
+  ['x',{x:54,y:90,z:2142},{x:270,y:90,z:2142}],
+  ['y',{x:54,y:90,z:2142},{x:54,y:198,z:2142}],
+  ['z',{x:54,y:90,z:2142},{x:54,y:90,z:2322}],
+], 'axis visual guide geometry remains display-coordinate based');
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for fallback graph canvas attachment tests')
+    def test_canvas_fallback_draws_into_visible_graph_container_after_replacing_legacy_map(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const model = {nodes:[
+  {id:'a', label:'Alpha', x:72, y:108, z:2160, fx:72, fy:108, fz:2160, color:'#123', axis:{x:{raw:-2.46}, y:{raw:10.01}, z:{raw:120}}, moodScore:null},
+  {id:'b', label:'Beta', x:252, y:180, z:2304, fx:252, fy:180, fz:2304, color:'#456', axis:{x:{raw:3.35}, y:{raw:30.08}, z:{raw:128}}, moodScore:null}
+], links:[], unpositioned:[]};
+const arcs = [];
+let graph3d = null;
+let legacyMap = null;
+function makeElement(tag){
+  return {tagName:tag.toUpperCase(), id:'', children:[], parentElement:null, clientWidth:600, clientHeight:400,
+    width:0, height:0,
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children = []; this.append(...nodes);},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(x,y,r){arcs.push([x,y,r]);}, fill(){}, set fillStyle(value){}};}
+  };
+}
+legacyMap = makeElement('canvas');
+legacyMap.id = 'map';
+legacyMap.replaceWith = node => { graph3d = node; graph3d.parentElement = {clientWidth:600}; legacyMap = null; };
+global.document = {
+  getElementById:id => id === 'graph3d' ? graph3d : (id === 'map' ? legacyMap : null),
+  createElement: tag => makeElement(tag)
+};
+global.getComputedStyle = () => ({paddingLeft:'0', paddingRight:'0', borderLeftWidth:'0', borderRightWidth:'0'});
+app.setGraphModelForTesting(model);
+app.setStateForTesting({current_track_id:'b'});
+app.renderMap(model);
+assert(graph3d && graph3d.id === 'graph3d', 'legacy #map is replaced by visible #graph3d before fallback rendering');
+assert.strictEqual(graph3d.children.length, 1, 'fallback canvas is attached to the visible #graph3d container');
+const canvas = graph3d.children[0];
+assert.strictEqual(canvas.tagName, 'CANVAS');
+assert.strictEqual(canvas.parentElement, graph3d);
+assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'visible fallback canvas draws doubled X/Y node positions');
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
     def test_graph_filter_source_separates_mood_tracker_control(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
@@ -888,7 +1020,7 @@ assert(app.nodeLabel(raw.nodes[0]).includes('arousal 3.4 (native)'));
 assert(app.nodeLabel(raw.nodes[0]).includes('BPM 128.1 (raw)'));
 assert(app.nodeLabel(raw.nodes[0]).includes('calm 0.2 / 1'));
 assert.strictEqual(raw.nodes[0].moodScore.raw,0.151);
-assert.deepStrictEqual(app.graphAxisSpec([{x:36,y:54,z:4320},{x:126,y:90,z:4608}]).map(a=>a.references),[['0.2','0.7'],['0.3','0.5'],['120.0','128.0']]);
+assert.deepStrictEqual(app.graphAxisSpec([{x:72,y:108,z:4320},{x:252,y:180,z:4608}]).map(a=>a.references),[['0.2','0.7'],['0.3','0.5'],['120.0','128.0']]);
 
 assert.strictEqual(app.graphColorLegend({colorRanges:{valence:[-2.46,3.35],arousal:[10.01,30.08]}}).includes('-2.5 to 3.4'),true);
 assert.strictEqual(model.nodes[0].color, app.moodNodeColor(0,0));
