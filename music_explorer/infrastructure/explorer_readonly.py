@@ -407,7 +407,7 @@ class ReadOnlyExplorerSQLiteRepository:
                 bpm = _bpm_from_stage_payload(bpm_payload)
                 if bpm is None:
                     continue
-                candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, Path(path).exists(), True, True))
+                candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, Path(path).is_file(), True, True))
             return tuple(candidate for candidate in candidates if candidate.exists)
 
     def read_track(self, track_id: str):
