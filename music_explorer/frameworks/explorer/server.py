@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from music_explorer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
+from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
@@ -163,6 +164,15 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path == '/api/projection':
                 projection = BuildLiveProjection(repository).execute()
                 return self._json(_to_json(projection))
+            if path == '/api/playlists/m3u':
+                query = parse_qs(parsed.query)
+                result = GenerateBpmGraphM3UPlaylist(repository).execute(
+                    start_track_id=query.get('start_track_id', query.get('start', ['']))[0],
+                    bpm_min=query.get('bpm_min', [None])[0],
+                    bpm_max=query.get('bpm_max', [None])[0],
+                    length=int(query.get('length', query.get('count', ['0']))[0]),
+                )
+                return self._m3u(result.content)
             if path == '/api/mood-axis-graph':
                 query = parse_qs(parsed.query)
                 contract, contract_error = _parse_mood_axis_graph_contract(parsed.query)
@@ -229,6 +239,15 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             self.send_header('Content-Length', str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+
+        def _m3u(self, content: str):
+            encoded = content.encode('utf-8')
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', 'audio/x-mpegurl; charset=utf-8')
+            self.send_header('Content-Disposition', 'attachment; filename="library-graph-playlist.m3u"')
+            self.send_header('Content-Length', str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
 
         def _json(self, payload, status=HTTPStatus.OK):
             encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False).encode('utf-8')

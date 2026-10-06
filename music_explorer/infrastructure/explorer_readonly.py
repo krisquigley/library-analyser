@@ -14,6 +14,7 @@ import sqlite3
 
 from music_analyzer.application.use_cases.graph_feature_evidence import validate_graph_feature_evidence_payload
 from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, MoodAxisEdge, ScoreSummary, StageResult, TrackMetadata
+from music_explorer.application.dto.playlists import PlayableTrackCandidate
 from music_explorer.application.use_cases.explorer import _build_mood_axis_graph
 from music_explorer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 
@@ -49,6 +50,17 @@ def _expected_audio_status(duration_seconds, source):
     if source in TRUSTED_DURATION_SOURCES and duration_seconds is not None:
         return 'excluded'
     return 'unknown'
+
+
+def _bpm_from_stage_payload(payload):
+    try:
+        data = json.loads(payload)
+        for label, value in data.get('values', ()):
+            if label == 'bpm' and _finite_number(value):
+                return float(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return None
 
 
 def stage_from_mapping(data):
@@ -367,6 +379,36 @@ class ReadOnlyExplorerSQLiteRepository:
     def available_audio_paths(self):
         with self._transaction() as db:
             return tuple(row[0] for row in db.execute('SELECT path FROM active_locations ORDER BY path'))
+
+    def playlist_export_tracks(self):
+        with self._connection() as db:
+            db.execute('BEGIN')
+            self._validate_core(db)
+            self._validate_graph_rows(db)
+            rows = db.execute('''
+                WITH latest_run AS (
+                    SELECT track_id, run_id FROM (
+                        SELECT rt.track_id, r.id AS run_id,
+                               row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
+                        FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                        JOIN active_tracks at ON at.id=rt.track_id
+                        WHERE r.status='completed'
+                    ) WHERE rn=1
+                )
+                SELECT al.track_id, s.result, min(al.path) AS path
+                FROM active_locations al
+                JOIN latest_run lr ON lr.track_id=al.track_id
+                JOIN stages s ON s.run_id=lr.run_id AND s.stage='bpm'
+                GROUP BY al.track_id
+                ORDER BY al.track_id
+            ''').fetchall()
+            candidates = []
+            for track_id, bpm_payload, path in rows:
+                bpm = _bpm_from_stage_payload(bpm_payload)
+                if bpm is None:
+                    continue
+                candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, Path(path).exists(), True, True))
+            return tuple(candidate for candidate in candidates if candidate.exists)
 
     def read_track(self, track_id: str):
         with self._transaction() as db:
@@ -857,6 +899,11 @@ class ReadOnlyExplorerSQLiteRepository:
             self._validate_graph_rows(db)
         if version >= 9:
             self._validate_graph_feature_rows(db)
+
+    def _validate_core(self, db):
+        version = _database_schema_version(db)
+        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
+            raise AnalysisError('Not a supported music-analyzer analysis database')
 
     def _validate_rows(self, db):
         for track_id, sha256, size in db.execute('SELECT id,sha256,size FROM tracks'):
