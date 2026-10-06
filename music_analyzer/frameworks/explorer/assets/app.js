@@ -382,8 +382,16 @@ function createSelectedNodeHalo(graph,scene,node,selectedMesh){
   else halo=makeFallbackHalo(node);
   updateHaloPosition(halo,node,selectedMesh);
   scene.add(halo);
-  selectedNodeHalo={graph,scene,mesh:halo,trackId:node.id};
+  selectedNodeHalo={graph,scene,mesh:halo,trackId:node.id,nodeMesh:selectedMesh||null};
   return halo;
+}
+function cachedSelectedNodeMesh(graph,scene,selectedId){
+  if(!selectedNodeHalo||selectedNodeHalo.graph!==graph||selectedNodeHalo.scene!==scene||selectedNodeHalo.trackId!==selectedId) return null;
+  const halo=selectedNodeHalo.mesh;
+  if(!halo||halo.disposed||halo.parent===null) return null;
+  const mesh=selectedNodeHalo.nodeMesh;
+  if(!mesh||mesh.disposed||mesh.parent===null) return null;
+  return mesh;
 }
 function syncSelectedNodeHalo(graph,data){
   if(!graph||typeof graph.scene!=='function'){disposeSelectedNodeHalo();return null;}
@@ -392,8 +400,11 @@ function syncSelectedNodeHalo(graph,data){
   const selectedNode=selectedId?nodes.find(n=>n.id===selectedId):null;
   const scene=graph.scene();
   if(!selectedNode||!scene||typeof scene.add!=='function'){disposeSelectedNodeHalo();return null;}
+  const cachedMesh=cachedSelectedNodeMesh(graph,scene,selectedId);
+  if(cachedMesh){updateHaloPosition(selectedNodeHalo.mesh,selectedNode,cachedMesh);return selectedNodeHalo.mesh;}
+  if(selectedNodeHalo&&selectedNodeHalo.graph===graph&&selectedNodeHalo.trackId===selectedId) disposeSelectedNodeHalo();
   const selectedMesh=findSceneObject(scene,obj=>obj!==scene && graphObjectTrackId(obj)===selectedId && obj.name!=='selected-node-halo' && !(obj.userData&&obj.userData.role==='selected-node-halo') && obj.geometry && obj.material);
-  if(selectedNodeHalo&&selectedNodeHalo.graph===graph&&selectedNodeHalo.trackId===selectedId){updateHaloPosition(selectedNodeHalo.mesh,selectedNode,selectedMesh);return selectedNodeHalo.mesh;}
+  if(selectedNodeHalo&&selectedNodeHalo.graph===graph&&selectedNodeHalo.trackId===selectedId){updateHaloPosition(selectedNodeHalo.mesh,selectedNode,selectedMesh);selectedNodeHalo.nodeMesh=selectedMesh||null;return selectedNodeHalo.mesh;}
   disposeSelectedNodeHalo();
   return createSelectedNodeHalo(graph,scene,selectedNode,selectedMesh);
 }
@@ -462,7 +473,7 @@ function renderMoodStrip(data){
   picker.oninput=show; show();
   canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
 }
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {disposeSelectedNodeHalo();renderCanvasFallback(data);} renderMoodStrip(data);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {disposeSelectedNodeHalo();renderCanvasFallback(data);} renderMoodStrip(data);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}

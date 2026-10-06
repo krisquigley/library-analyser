@@ -39,6 +39,40 @@ assert.equal(scene.children.length,1);
         result = subprocess.run(['node', '-e', script, str(APP_JS)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    @unittest.skipUnless(shutil.which('node'), 'Node required for browser model tests')
+    def test_selected_node_halo_uses_cached_mesh_without_recursive_scene_walk(self):
+        script = r'''
+const assert=require('assert');
+const {syncSelectedNodeHalo,setStateForTesting}=require(process.argv[1]);
+class Sphere {constructor(radius){this.radius=radius;this.parameters={radius}} dispose(){this.disposed=true}}
+class Material {constructor(props){this.props=props} dispose(){this.disposed=true}}
+class Mesh {constructor(geometry,material){this.geometry=geometry;this.material=material;this.position={x:0,y:0,z:0,set:(x,y,z)=>{this.position.x=x;this.position.y=y;this.position.z=z}};this.scale={x:1,y:1,z:1,setScalar:value=>{this.scale.value=value}};this.userData={}}}
+class Scene {constructor(){this.children=[]} add(o){this.children.push(o);o.parent=this} remove(o){const i=this.children.indexOf(o);if(i>=0)this.children.splice(i,1)}}
+const scene=new Scene();
+const selectedMesh=new Mesh(new Sphere(4),new Material({color:'#123'}));
+selectedMesh.userData={id:'selected'};
+selectedMesh.position.x=11;selectedMesh.position.y=12;selectedMesh.position.z=13;
+let recursiveChildReads=0;
+const coldBranch={};
+Object.defineProperty(coldBranch,'children',{get(){recursiveChildReads += 1; return [{children:[{children:[]}]}];}});
+scene.children.push(coldBranch, selectedMesh);
+const graph={scene:()=>scene};
+const data={nodes:[{id:'selected',x:1,y:2,z:3,color:'#246'}],links:[]};
+setStateForTesting({current_track_id:'selected'});
+const halo=syncSelectedNodeHalo(graph,data);
+assert(halo, 'first sync creates selected-node halo');
+assert.deepStrictEqual([halo.position.x, halo.position.y, halo.position.z], [11,12,13]);
+assert(recursiveChildReads > 0, 'the setup proves an uncached lookup must recursively inspect cold branches');
+recursiveChildReads = 0;
+selectedMesh.position.x=21;selectedMesh.position.y=22;selectedMesh.position.z=23;
+const sameHalo=syncSelectedNodeHalo(graph,data);
+assert.strictEqual(sameHalo, halo, 'stable selected graph reuses the existing halo');
+assert.deepStrictEqual([sameHalo.position.x, sameHalo.position.y, sameHalo.position.z], [21,22,23], 'halo follows the live selected mesh position');
+assert.strictEqual(recursiveChildReads, 0, 'stable selected graph must use the cached mesh instead of recursively walking the scene each RAF');
+'''
+        result = subprocess.run(['node', '-e', script, str(APP_JS)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 @unittest.skipUnless(__import__('os').environ.get('RUN_BROWSER_SMOKE') == '1', 'opt-in Chromium')
 class GraphAxesBrowserTests(unittest.TestCase):
     def test_orbit_mood_change_and_node_picking(self):
