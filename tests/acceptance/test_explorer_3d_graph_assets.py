@@ -1939,6 +1939,96 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for M3U download browser tests')
+    def test_m3u_download_requires_explicit_click_and_sends_selected_start_bpm_and_count(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const assetSource = require('fs').readFileSync(process.argv[1], 'utf8');
+assert(assetSource.includes('download-m3u'), 'browser asset must implement an explicit Download M3U control; current graph load behavior correctly avoids auto-fetch but offers no playlist action');
+function makeElement(tag){
+  const classes = new Set();
+  return {tagName: tag.toUpperCase(), children: [], parentElement: null, attributes: {}, dataset: {}, style: {}, id: '', hidden: false, value: '', selectedOptions: [], textContent: '', onclick: null, onchange: null, type: '', name: '', className: '', clientWidth: 900, clientHeight: 700, width: 0, height: 0,
+    classList: {add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c)},
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children = []; this.append(...nodes);},
+    setAttribute(name, value){this.attributes[name] = String(value); if(name === 'id') this.id = String(value);},
+    removeAttribute(name){delete this.attributes[name];},
+    querySelector(selector){return find(this, selector);},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}, stroke(){}, moveTo(){}, lineTo(){}, set fillStyle(_v){}, set strokeStyle(_v){}};}
+  };
+}
+function find(root, selector){
+  const wantedId = selector.startsWith('#') ? selector.slice(1) : null;
+  const wantedTag = wantedId ? null : selector.toUpperCase();
+  const stack = [...(root.children || [])];
+  while(stack.length){
+    const node = stack.shift();
+    if(!node || typeof node !== 'object') continue;
+    if((wantedId && node.id === wantedId) || (wantedTag && node.tagName === wantedTag)) return node;
+    stack.unshift(...(node.children || []));
+  }
+  return null;
+}
+function response(payload){return {ok:true, json:async()=>payload, text:async()=>JSON.stringify(payload)};}
+const elements = {};
+for (const id of ['library-loading','loading-status','loading-error','loading-retry','tracks','detail','map','controls','graph-load-status','track-search','selected-mood','genre-filter','mood-strip','mood-strip-picker','mood-strip-value']) { elements[id] = makeElement(id === 'map' || id === 'mood-strip' ? 'canvas' : id === 'track-search' ? 'input' : 'div'); elements[id].id = id; }
+elements.map.parentElement = makeElement('div');
+global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
+const frames = [];
+global.requestAnimationFrame = cb => frames.push(cb);
+function runFrames(){while(frames.length) frames.shift()();}
+const graph = {dto_version:'mood-axis-graph-compact-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{graph_status:{state:'ready'}}, nodes:[
+  {id:'track-start', label:'Start Track', x:{raw:0.4, normalized:0.4, scale:'native'}, y:{raw:0.5, normalized:0.5, scale:'native'}, z:{label:'BPM', raw:124, normalized:6.2, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.8}, bpm:124, genres:[], reasons:[]},
+  {id:'track-neighbor', label:'Neighbor Track', x:{raw:0.5, normalized:0.5, scale:'native'}, y:{raw:0.6, normalized:0.6, scale:'native'}, z:{label:'BPM', raw:126, normalized:6.3, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.7}, bpm:126, genres:[], reasons:[]}
+], edges:[{a:'track-start', b:'track-neighbor', score:0.91, explanation:'synthetic'}], unpositioned:[]};
+const requests = [];
+global.fetch = async path => {
+  requests.push(String(path));
+  if (String(path).startsWith('/api/mood-axis-graph')) return response(graph);
+  if (String(path).startsWith('/api/playlists/m3u')) return {ok:true, text:async()=> '#EXTM3U\n/safe/track.flac\n', json:async()=>({})};
+  if (path === '/api/state') return response({current_track_id:'track-start', history:[]});
+  if (String(path).startsWith('/api/tracks/summary')) return response({tracks:[{handle:'track-start', title:'Start Track', artist:'Synthetic'}]});
+  if (path === '/api/tracks/track-start') return response({handle:'track-start', metadata:{common:[['title','Start Track']], tags:[]}, fields:{bpm:{effective:124}}});
+  throw new Error('unexpected fetch '+path);
+};
+(async () => {
+  app.setStateForTesting({current_track_id:'track-start'});
+  app.renderGraphLoadStatus();
+  assert(!requests.some(path => path.includes('m3u')), 'rendering graph controls must not auto-fetch a playlist');
+  const load = elements['graph-load-status'].querySelector('#load-graph');
+  assert(load, 'graph status exposes Load graph before explicit graph request');
+  const loading = load.onclick();
+  runFrames();
+  await loading;
+  assert(!requests.some(path => path.includes('m3u')), 'loading/rendering the graph must not auto-fetch a playlist');
+  function textOf(node){return String(node.textContent || '') + (node.children || []).map(textOf).join(' ');}
+  const panelText = textOf(elements['graph-load-status']);
+  const button = elements['graph-load-status'].querySelector('#download-m3u');
+  assert(button, 'Explorer graph controls must expose a Download M3U button after graph load; it must be explicit user-click only, not an automatic fetch');
+  assert(/Download\s+M3U/.test(panelText), 'the explicit playlist control must be labelled Download M3U');
+  const bpmMin = elements['graph-load-status'].querySelector('#m3u-bpm-min');
+  const bpmMax = elements['graph-load-status'].querySelector('#m3u-bpm-max');
+  const count = elements['graph-load-status'].querySelector('#m3u-count');
+  assert(bpmMin && bpmMax && count, 'M3U controls must expose bounded BPM and playlist length inputs');
+  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10';
+  await button.onclick();
+  const playlistRequests = requests.filter(path => path.includes('m3u'));
+  assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
+    def test_mirrored_browser_assets_advertise_explicit_m3u_download_without_startup_fetch(self):
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                source = app.read_text(encoding='utf-8')
+                self.assertIn('download-m3u', source, 'mirrored Explorer assets must expose an explicit Download M3U button')
+                self.assertIn('/api/playlists/m3u', source, 'browser assets must call the M3U endpoint only from the explicit download action')
+                startup_slice = source[source.index('async function refresh()'):source.index('function graphQueryFromControls()') if 'function graphQueryFromControls()' in source else source.index('function renderTracks')]
+                self.assertNotIn('/api/playlists/m3u', startup_slice, 'initial refresh must not auto-fetch M3U playlists')
+
+
     def test_load_graph_requests_opt_in_compact_v2_contract_in_standalone_and_analyzer_assets(self):
         """RED: the browser must negotiate the compact graph DTO explicitly.
 
