@@ -166,11 +166,16 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json(_to_json(projection))
             if path == '/api/playlists/m3u':
                 query = parse_qs(parsed.query)
+                raw_length = query.get('length', query.get('count', ['0']))[0]
+                try:
+                    length = int(raw_length)
+                except (TypeError, ValueError):
+                    raise ValueError('Playlist length must be positive and between 1 and 1000')
                 result = GenerateBpmGraphM3UPlaylist(repository).execute(
                     start_track_id=query.get('start_track_id', query.get('start', ['']))[0],
                     bpm_min=query.get('bpm_min', [None])[0],
                     bpm_max=query.get('bpm_max', [None])[0],
-                    length=int(query.get('length', query.get('count', ['0']))[0]),
+                    length=length,
                 )
                 return self._m3u(result.content, result.warning)
             if path == '/api/mood-axis-graph':
