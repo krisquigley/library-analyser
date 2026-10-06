@@ -395,20 +395,27 @@ class ReadOnlyExplorerSQLiteRepository:
                         WHERE r.status='completed'
                     ) WHERE rn=1
                 )
-                SELECT al.track_id, s.result, min(al.path) AS path
+                SELECT al.track_id, s.result, al.path
                 FROM active_locations al
                 JOIN latest_run lr ON lr.track_id=al.track_id
                 JOIN stages s ON s.run_id=lr.run_id AND s.stage='bpm'
-                GROUP BY al.track_id
-                ORDER BY al.track_id
+                ORDER BY al.track_id, al.path
             ''').fetchall()
             candidates = []
+            selected_track_ids = set()
             for track_id, bpm_payload, path in rows:
+                if track_id in selected_track_ids:
+                    continue
                 bpm = _bpm_from_stage_payload(bpm_payload)
                 if bpm is None:
+                    selected_track_ids.add(track_id)
                     continue
-                candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, Path(path).is_file(), True, True))
-            return tuple(candidate for candidate in candidates if candidate.exists)
+                exists = Path(path).is_file()
+                if not exists:
+                    continue
+                candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, exists, True, True))
+                selected_track_ids.add(track_id)
+            return tuple(candidates)
 
     def read_track(self, track_id: str):
         with self._transaction() as db:
