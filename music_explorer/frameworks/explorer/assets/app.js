@@ -348,10 +348,11 @@ function updateHaloPosition(halo,node,selectedMesh){
   const z=Number.isFinite(sourcePosition&&sourcePosition.z)?sourcePosition.z:node.z;
   if(halo.position&&typeof halo.position.set==='function') halo.position.set(x,y,z); else halo.position={x,y,z};
 }
+function sceneChildren(root){return root&&Array.isArray(root.children)?root.children:[];}
 function findSceneObject(root,predicate){
   if(!root) return null;
   if(predicate(root)) return root;
-  for(const child of root.children||[]){const found=findSceneObject(child,predicate); if(found) return found;}
+  for(const child of sceneChildren(root)){const found=findSceneObject(child,predicate); if(found) return found;}
   return null;
 }
 function selectedHaloRadius(mesh){
@@ -403,7 +404,7 @@ function syncGraphAxes(graph,spec,element){
   if(graphAxes && graphAxes.graph===graph && graphAxes.signature===signature) return graphAxes.group;
   const scene=graph.scene();
   if(!spec.length){disposeGraphAxes(graphAxes?.group);graphAxes=null;return null;}
-  const findNode=obj=>obj.__graphObjType==='node' && obj.geometry && obj.material ? obj : (obj.children||[]).map(findNode).find(Boolean);
+  const findNode=obj=>obj.__graphObjType==='node' && obj.geometry && obj.material ? obj : sceneChildren(obj).map(findNode).find(Boolean);
   const sample=findNode(scene);
   if(!sample){disposeGraphAxes(graphAxes?.group);graphAxes=null;return null;} // Objects may arrive one frame after graphData().
   disposeGraphAxes(graphAxes?.group);
