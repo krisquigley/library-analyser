@@ -98,6 +98,35 @@ app.loadGraph().then(async () => {
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+    def test_m3u_download_failure_is_reported_as_safe_status_text(self):
+        if not shutil.which('node'):
+            source = APP_JS.read_text(encoding='utf-8')
+            if 'm3u-download-status' not in source or 'textContent' not in source:
+                self.fail('M3U download failures must be reported via safe status text')
+            return
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const elements = {};
+function makeElement(tag){return {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, style:{}, className:'', id:'', hidden:false, value:'', min:'', max:'', type:'', textContent:'', innerHTML:'', parentElement:null, clientWidth:600, clientHeight:400, append(...nodes){for(const node of nodes){if(node && typeof node === 'object') node.parentElement=this; this.children.push(node); if(node && node.id) elements[node.id]=node;}}, replaceChildren(...nodes){this.children=[]; this.append(...nodes);}, setAttribute(k,v){this.attributes[k]=String(v);}, remove(){this.removed=true;}, click(){}, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}};}
+elements['graph-load-status'] = makeElement('section'); elements.graph3d = makeElement('div'); elements['mood-strip'] = makeElement('canvas'); elements['mood-strip-picker'] = makeElement('input'); elements['mood-strip-value'] = makeElement('span');
+global.document = {body: makeElement('body'), createElement: makeElement, createTextNode: text => ({textContent:String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
+global.requestAnimationFrame = cb => cb();
+global.fetch = async path => {if(String(path).startsWith('/api/mood-axis-graph')) return {ok:true, json:async()=>({dto_version:'mood-axis-graph-compact-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{graph_status:{state:'ready'}}, nodes:[], links:[], unpositioned:[]})}; return {ok:false, status:500, text:async()=> '<b>server refused</b>'};};
+app.setStateForTesting({current_track_id:'start-track'});
+app.loadGraph().then(async () => {
+  const button = elements['download-m3u'];
+  await button.onclick();
+  const status = elements['m3u-download-status'];
+  assert(status, 'M3U controls must include a status element for errors');
+  assert.strictEqual(status.attributes.role, 'alert');
+  assert.match(status.textContent, /M3U download failed/);
+  assert.match(status.textContent, /server refused/);
+  assert.strictEqual(status.innerHTML, '', 'download errors must not be written with innerHTML');
+}).catch(error => {console.error(error && error.stack || error); process.exit(1);});
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
 
 if __name__ == '__main__':
     unittest.main()
