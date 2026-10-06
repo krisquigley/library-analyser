@@ -37,7 +37,12 @@ def _register_track(repository, suffix='a', location='/music/song.flac'):
 def _graph_relevant_stages():
     return (
         StageResult('bpm', (('algorithm', 'test-bpm'),), 'steady enough for graph feature', (('bpm', 124.0),)),
-        StageResult('key', (('algorithm', 'test-key'),), 'classifier top label only', (('key', '8A'),)),
+        StageResult(
+            'key',
+            (('algorithm', 'test-key'),),
+            'classifier top label with scale and uncalibrated confidence',
+            (('key', '8A'), ('scale', 'minor'), ('strength', 0.731), ('coverage', 1.0)),
+        ),
         StageResult('genres', (('algorithm', 'test-genre'),), 'multi-label summary', (('genre', 'house'), ('genre', 'deep house'))),
         StageResult(
             'mood',

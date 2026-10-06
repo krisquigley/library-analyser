@@ -93,7 +93,7 @@ def validate_graph_feature_evidence_payload(track_id: str, run_id: str, fingerpr
     if not isinstance(features, dict) or set(features) != set(GRAPH_RELEVANT_STAGES):
         raise ValueError('Invalid graph feature evidence features')
     _validate_scalar_stage(features['bpm'], _is_finite_number)
-    _validate_scalar_stage(features['key'], _is_nonempty_string)
+    _validate_key_stage(features['key'])
     _validate_genres_stage(features['genres'])
     _validate_summary_stage(features['mood'])
     _validate_summary_stage(features['energy'])
@@ -123,6 +123,30 @@ def _validate_scalar_stage(stage_payload: object, value_validator) -> None:
             or not _is_sequence(stage.get('values'))
             or any(not _is_pair(item, _is_nonempty_string, value_validator) for item in stage.get('values'))):
         raise ValueError('Invalid graph feature evidence scalar stage')
+
+
+def _validate_key_stage(stage_payload: object) -> None:
+    stage = _validate_stage_common(stage_payload)
+    values = stage.get('values')
+    if (stage.get('summary') is not None
+            or tuple(stage.get('summary_values')) != ()
+            or not _is_sequence(values)):
+        raise ValueError('Invalid graph feature evidence key stage')
+    seen = set()
+    validators = {
+        'key': _is_nonempty_string,
+        'scale': _is_nonempty_string,
+        'strength': _is_finite_number,
+        'coverage': _is_finite_number,
+    }
+    for item in values:
+        if not (_is_sequence(item) and len(item) == 2 and _is_nonempty_string(item[0])):
+            raise ValueError('Invalid graph feature evidence key stage')
+        label, value = item
+        validator = validators.get(label)
+        if validator is None or label in seen or not validator(value):
+            raise ValueError('Invalid graph feature evidence key stage')
+        seen.add(label)
 
 
 def _validate_genres_stage(stage_payload: object) -> None:
