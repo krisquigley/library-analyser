@@ -467,6 +467,140 @@ assert.deepStrictEqual(data.links.map(alpha), [0.18,0.45,0.72,0.18]);
                 subprocess.run(['node', '-e', script, str(app), str(app.parent / 'vendor/3d-force-graph/3d-force-graph.min.js')], check=True, cwd=REPO_ROOT)
 
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for selected node halo renderer tests')
+    def test_selected_node_halo_syncs_without_replacing_graph_data(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const context = {module:{exports:{}}, console, URLSearchParams, setTimeout, clearTimeout};
+vm.createContext(context);
+vm.runInContext(source, context);
+const scene = makeScene();
+const graph = makeGraph(scene);
+context.ForceGraph3D = () => () => graph;
+context.document = {getElementById:id => id === 'graph3d' ? {clientWidth:900,clientHeight:500} : null, querySelectorAll:() => []};
+const data = sampleGraph();
+context.setGraphModelForTesting({...data, metadata:{}});
+context.setVisibleGraphForTesting(data);
+context.renderMap(data);
+assert.strictEqual(graph.graphDataCalls, 1, 'initial render loads graph data once');
+context.setStateForTesting({current_track_id:'a'});
+context.updateSelectedTrackVisuals();
+let halos = selectedNodeHalos(scene);
+assert.strictEqual(halos.length, 1, 'selecting node a adds exactly one halo');
+assert.strictEqual(halos[0].userData.trackId, 'a');
+const aHalo = halos[0];
+context.setStateForTesting({current_track_id:'b'});
+context.updateSelectedTrackVisuals();
+halos = selectedNodeHalos(scene);
+assert.strictEqual(halos.length, 1, 'changing selection replaces stale halo with exactly one current halo');
+assert.strictEqual(halos[0].userData.trackId, 'b');
+assert(aHalo.disposed, 'old halo is removed/disposed when selection changes');
+context.setStateForTesting({current_track_id:null});
+context.updateSelectedTrackVisuals();
+assert.strictEqual(selectedNodeHalos(scene).length, 0, 'clearing selection removes halo');
+assert.strictEqual(graph.graphDataCalls, 1, 'selection-only halo sync must not replace graph data');
+assert.deepStrictEqual(data.nodes.map(n => Object.keys(n).sort()), sampleGraph().nodes.map(n => Object.keys(n).sort()), 'halo sync does not add coordinates/properties to DTO nodes');
+assert.deepStrictEqual(data.links, sampleGraph().links, 'halo sync does not mutate links');
+function sampleGraph(){return {nodes:[
+  {id:'a',label:'Alpha',x:10,y:20,z:30,fx:10,fy:20,fz:30,color:'#336699',axis:{x:{raw:0.1,scale:'native'},y:{raw:0.2,scale:'native'},z:{label:'BPM',raw:120,scale:'fixed'}},moodScore:{label:'relaxing',raw:0.8}},
+  {id:'b',label:'Beta',x:40,y:50,z:60,fx:40,fy:50,fz:60,color:'#993366',axis:{x:{raw:0.3,scale:'native'},y:{raw:0.4,scale:'native'},z:{label:'BPM',raw:130,scale:'fixed'}},moodScore:{label:'relaxing',raw:0.2}}
+], links:[{source:'a',target:'b',score:0.7}], unpositioned:[]};}
+function makeScene(){return {children:[], add(obj){this.children.push(obj);}, remove(obj){this.children=this.children.filter(child => child !== obj); obj.disposed = true; if (obj.geometry && obj.geometry.dispose) obj.geometry.dispose(); if (obj.material && obj.material.dispose) obj.material.dispose();}};}
+function makeGraph(scene){let data = {nodes:[],links:[]}; const graph = {graphDataCalls:0, scene(){return scene;}, camera(){return {fov:60};}, graphData(next){if(arguments.length){this.graphDataCalls += 1; data = next; return graph;} return data;}, refresh(){return graph;}}; for (const name of ['enableNodeDrag','cooldownTicks','nodeId','nodeRelSize','nodeLabel','nodeColor','nodeVal','linkLabel','linkOpacity','linkColor','linkWidth','onNodeClick','numDimensions','d3AlphaDecay','d3VelocityDecay','cameraPosition','width','height']) graph[name] = () => graph; return graph;}
+function selectedNodeHalos(scene){return scene.children.filter(obj => obj.name === 'selected-node-halo' || (obj.userData && obj.userData.role === 'selected-node-halo'));}
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for selected node halo material tests')
+    def test_selected_node_halo_uses_translucent_non_pickable_shell_material(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const context = {module:{exports:{}}, console, URLSearchParams, setTimeout, clearTimeout};
+vm.createContext(context);
+vm.runInContext(source, context);
+const scene = makeSceneWithThree();
+const graph = makeGraph(scene);
+context.ForceGraph3D = () => () => graph;
+context.document = {getElementById:id => id === 'graph3d' ? {clientWidth:900,clientHeight:500} : null, querySelectorAll:() => []};
+const data = {nodes:[{id:'a',label:'Alpha',x:10,y:20,z:30,fx:10,fy:20,fz:30,color:'#336699',axis:{x:{raw:0.1,scale:'native'},y:{raw:0.2,scale:'native'},z:{label:'BPM',raw:120,scale:'fixed'}},moodScore:{label:'relaxing',raw:0.8}}], links:[], unpositioned:[]};
+context.setGraphModelForTesting({...data, metadata:{}});
+context.setVisibleGraphForTesting(data);
+context.renderMap(data);
+context.setStateForTesting({current_track_id:'a'});
+context.updateSelectedTrackVisuals();
+const halo = scene.children.find(obj => obj.name === 'selected-node-halo' || (obj.userData && obj.userData.role === 'selected-node-halo'));
+assert(halo, 'selected node halo mesh is added to the graph scene');
+assert(Math.abs((halo.geometry.radius / scene.selectedNodeMesh.geometry.radius) - 1.3) < 0.05, `halo radius ${halo.geometry.radius} should be about 1.3x actual selected node sphere radius ${scene.selectedNodeMesh.geometry.radius}`);
+assert.strictEqual(halo.material.transparent, true, 'halo shell material is transparent');
+assert(Math.abs(halo.material.opacity - 0.25) <= 0.03, `halo opacity ${halo.material.opacity} should be approximately 25%`);
+assert.strictEqual(halo.material.depthWrite, false, 'halo should not occlude graph geometry in depth buffer');
+assert.notStrictEqual(halo.material.color, '#336699', 'halo color should contrast with the selected node color');
+assert.strictEqual(typeof halo.raycast, 'function', 'halo supplies a raycast override');
+const intersections = [];
+halo.raycast({}, intersections);
+assert.deepStrictEqual(intersections, [], 'halo raycast is a no-op and cannot intercept picking');
+function makeSceneWithThree(){
+  class Geometry { constructor(radius){this.radius = radius;} dispose(){this.disposed = true;} }
+  class Material { constructor(params){Object.assign(this, params);} dispose(){this.disposed = true;} }
+  class Mesh { constructor(geometry, material){this.geometry = geometry; this.material = material; this.position = {set:(x,y,z)=>{this.x=x; this.y=y; this.z=z;}}; this.userData = {}; this.name = ''; this.scale = {setScalar:value=>{this.scale.value=value;}};} }
+  Mesh.prototype.isMesh = true;
+  const selectedNodeMesh = new Mesh(new Geometry(16), new Material({color:'#336699'}));
+  selectedNodeMesh.__THREE = {SphereGeometry: Geometry, MeshBasicMaterial: Material, Mesh};
+  selectedNodeMesh.userData = {id:'a'};
+  selectedNodeMesh.__data = {id:'a'};
+  const scene = {children:[selectedNodeMesh], selectedNodeMesh, constructor:function Group(){this.children=[]; this.add=o=>this.children.push(o);}, add(obj){this.children.push(obj);}, remove(obj){this.children=this.children.filter(child => child !== obj);}};
+  return scene;
+}
+function makeGraph(scene){let data = {nodes:[],links:[]}; const graph = {scene(){return scene;}, camera(){return {fov:60};}, graphData(next){if(arguments.length){data = next; return graph;} return data;}, refresh(){return graph;}}; for (const name of ['enableNodeDrag','cooldownTicks','nodeId','nodeRelSize','nodeLabel','nodeColor','nodeVal','linkLabel','linkOpacity','linkColor','linkWidth','onNodeClick','numDimensions','d3AlphaDecay','d3VelocityDecay','cameraPosition','width','height']) graph[name] = () => graph; return graph;}
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for selected node halo filter tests')
+    def test_selected_node_halo_removed_when_filtered_node_not_visible(self):
+        script = r"""
+const assert = require('assert');
+const fs = require('fs'), vm = require('vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const context = {module:{exports:{}}, console, URLSearchParams, setTimeout, clearTimeout};
+vm.createContext(context);
+vm.runInContext(source, context);
+const scene = makeScene();
+const graph = makeGraph(scene);
+context.ForceGraph3D = () => () => graph;
+context.document = {getElementById:id => id === 'graph3d' ? {clientWidth:900,clientHeight:500} : null, querySelectorAll:() => []};
+const all = sampleGraph();
+context.setGraphModelForTesting({...all, metadata:{}});
+context.setVisibleGraphForTesting(all);
+context.renderMap(all);
+context.setStateForTesting({current_track_id:'a'});
+context.updateSelectedTrackVisuals();
+assert.strictEqual(selectedNodeHalos(scene).length, 1, 'precondition: selected visible node has a halo');
+const filtered = {nodes:[all.nodes[1]], links:[], unpositioned:[]};
+context.setVisibleGraphForTesting(filtered);
+context.renderMap(filtered);
+assert.strictEqual(context.getStateForTesting().current_track_id, 'a', 'filtering can leave current selection set to a hidden track');
+assert.strictEqual(selectedNodeHalos(scene).length, 0, 'halo is removed when selected node is no longer visible');
+function sampleGraph(){return {nodes:[
+  {id:'a',label:'Alpha',x:10,y:20,z:30,fx:10,fy:20,fz:30,color:'#336699',axis:{x:{raw:0.1,scale:'native'},y:{raw:0.2,scale:'native'},z:{label:'BPM',raw:120,scale:'fixed'}},moodScore:{label:'relaxing',raw:0.8}},
+  {id:'b',label:'Beta',x:40,y:50,z:60,fx:40,fy:50,fz:60,color:'#993366',axis:{x:{raw:0.3,scale:'native'},y:{raw:0.4,scale:'native'},z:{label:'BPM',raw:130,scale:'fixed'}},moodScore:{label:'relaxing',raw:0.2}}
+], links:[{source:'a',target:'b',score:0.7}], unpositioned:[]};}
+function makeScene(){return {children:[], add(obj){this.children.push(obj);}, remove(obj){this.children=this.children.filter(child => child !== obj); obj.disposed = true;}};}
+function makeGraph(scene){let data = {nodes:[],links:[]}; const graph = {scene(){return scene;}, camera(){return {fov:60};}, graphData(next){if(arguments.length){data = next; return graph;} return data;}, refresh(){return graph;}}; for (const name of ['enableNodeDrag','cooldownTicks','nodeId','nodeRelSize','nodeLabel','nodeColor','nodeVal','linkLabel','linkOpacity','linkColor','linkWidth','onNodeClick','numDimensions','d3AlphaDecay','d3VelocityDecay','cameraPosition','width','height']) graph[name] = () => graph; return graph;}
+function selectedNodeHalos(scene){return scene.children.filter(obj => obj.name === 'selected-node-halo' || (obj.userData && obj.userData.role === 'selected-node-halo'));}
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for tracks table tests')
     def test_tracks_render_as_searchable_title_artist_table(self):
         script = r"""
