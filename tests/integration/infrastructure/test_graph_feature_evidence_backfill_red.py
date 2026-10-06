@@ -29,7 +29,12 @@ def _register_track(repository, suffix, location):
 def _graph_relevant_stages(seed=0):
     return (
         StageResult('bpm', (('algorithm', 'test-bpm'),), 'steady enough for graph feature', (('bpm', 120.0 + seed),)),
-        StageResult('key', (('algorithm', 'test-key'),), 'classifier top label only', (('key', f'{8 + seed}A'),)),
+        StageResult(
+            'key',
+            (('algorithm', 'test-key'),),
+            'classifier top label with scale and uncalibrated confidence',
+            (('key', f'{8 + seed}A'), ('scale', 'minor'), ('strength', 0.70 + seed / 100.0), ('coverage', 1.0)),
+        ),
         StageResult('genres', (('algorithm', 'test-genre'),), 'multi-label summary', (('genre', 'house'), ('genre', 'deep house'))),
         StageResult(
             'mood',

@@ -52,5 +52,68 @@ class GraphFeatureEvidenceTests(unittest.TestCase):
         self.assertIsNone(build_graph_feature_evidence('track-1', 'run-1', stages))
 
 
+import hashlib
+import json
+
+from music_analyzer.application.use_cases.graph_feature_evidence import validate_graph_feature_evidence_payload
+
+
+def _canonical_json(payload):
+    return json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+
+
+def _fingerprint(payload):
+    return hashlib.sha256(_canonical_json(payload).encode('utf-8')).hexdigest()
+
+
+def _producer_key_evidence_payload(key_values=(('key', '8A'), ('scale', 'minor'), ('strength', 0.731), ('coverage', 1.0))):
+    stages = (
+        StageResult('bpm', (('algorithm', 'test-bpm'),), 'tempo uncertainty', (('bpm', 120.0),)),
+        StageResult('key', (('algorithm', 'test-key'),), 'producer key uncertainty', key_values),
+        StageResult('genres', (('algorithm', 'test-genre'),), '', (('genre', 'house'),)),
+        StageResult('mood', (('algorithm', 'test-mood'),), '', summary=ScoreSummary(('happy',), (0.8,), (0.7,), (0.9,), 1.0)),
+        StageResult('energy', (('algorithm', 'test-energy'),), '', summary=ScoreSummary(('energy',), (0.6,), (0.5,), (0.7,), 1.0)),
+    )
+    evidence = build_graph_feature_evidence('track-1', 'run-1', stages)
+    assert evidence is not None
+    return evidence.payload
+
+
+class GraphFeatureEvidenceKeyContractRedTests(unittest.TestCase):
+    def test_validator_accepts_current_producer_generated_mixed_key_stage_values(self):
+        payload = _producer_key_evidence_payload()
+
+        validate_graph_feature_evidence_payload('track-1', 'run-1', _fingerprint(payload), payload)
+
+    def test_validator_preserves_legacy_minimal_key_only_fixture(self):
+        payload = _producer_key_evidence_payload((('key', '8A'),))
+
+        validate_graph_feature_evidence_payload('track-1', 'run-1', _fingerprint(payload), payload)
+
+    def test_validator_rejects_unknown_key_label_even_with_recomputed_fingerprint(self):
+        payload = _producer_key_evidence_payload((('key', '8A'), ('mode', 'dorian')))
+
+        with self.assertRaises(ValueError):
+            validate_graph_feature_evidence_payload('track-1', 'run-1', _fingerprint(payload), payload)
+
+    def test_validator_rejects_duplicate_key_labels_even_with_recomputed_fingerprint(self):
+        payload = _producer_key_evidence_payload((('key', '8A'), ('key', '9A')))
+
+        with self.assertRaises(ValueError):
+            validate_graph_feature_evidence_payload('track-1', 'run-1', _fingerprint(payload), payload)
+
+    def test_validator_rejects_wrong_type_boolean_and_nonfinite_key_values(self):
+        invalid_values = (
+            (('key', '8A'), ('scale', 'minor'), ('strength', '0.7'), ('coverage', 1.0)),
+            (('key', '8A'), ('scale', True), ('strength', 0.7), ('coverage', 1.0)),
+            (('key', '8A'), ('scale', 'minor'), ('strength', True), ('coverage', 1.0)),
+            (('key', ''), ('scale', 'minor'), ('strength', 0.7), ('coverage', 1.0)),
+        )
+        for values in invalid_values:
+            with self.subTest(values=values):
+                payload = _producer_key_evidence_payload(values)
+                with self.assertRaises((ValueError, OverflowError)):
+                    validate_graph_feature_evidence_payload('track-1', 'run-1', _fingerprint(payload), payload)
+
 if __name__ == '__main__':
     unittest.main()
