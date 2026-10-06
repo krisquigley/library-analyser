@@ -166,13 +166,13 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
 const assert = require('assert');
 const app = require(process.argv[1]);
 const payload = {selected_mood:'relaxing', available_moods:['relaxing'], metadata:{}, unpositioned:[], positioned:[
-  {track_id:'a', display_label:'Alpha', x:{raw:0.2, normalized:0.2, scale:'native'}, y:{raw:0.3, normalized:0.3, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.9,normalized:0.9}, bpm:120, genres:[], reasons:[]},
-  {track_id:'b', display_label:'Beta', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.5, normalized:0.5, scale:'native'}, z:{label:'BPM', raw:128, normalized:6.4, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.2,normalized:0.2}, bpm:128, genres:[], reasons:[]}
+  {track_id:'a', display_label:'Alpha', x:{raw:0.2, normalized:0.2, scale:'native'}, y:{raw:0.3, normalized:0.3, scale:'native'}, z:{label:'BPM', raw:120, normalized:12, scale:'fixed-BPM/10-display-units'}, mood_score:{label:'relaxing',raw:0.9,normalized:0.9}, bpm:120, genres:[], reasons:[]},
+  {track_id:'b', display_label:'Beta', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.5, normalized:0.5, scale:'native'}, z:{label:'BPM', raw:128, normalized:12.8, scale:'fixed-BPM/10-display-units'}, mood_score:{label:'relaxing',raw:0.2,normalized:0.2}, bpm:128, genres:[], reasons:[]}
 ], edges:[{a:'a',b:'b',score:0.77,explanation:'axis-independent relatedness'}]};
 const model = app.buildMoodGraphModel(payload);
 const close = (actual, expected, label) => assert(Math.abs(actual - expected) <= 1e-9, `${label}: expected ${expected}, got ${actual}`);
 assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
-for (const [node, expected] of [[model.nodes[0], {x:72,y:108,z:2160}], [model.nodes[1], {x:252,y:180,z:2304}]]) {
+for (const [node, expected] of [[model.nodes[0], {x:72,y:108,z:4320}], [model.nodes[1], {x:252,y:180,z:4608}]]) {
   close(node.x, expected.x, `${node.id} x display`);
   close(node.fx, expected.x, `${node.id} fx display`);
   close(node.y, expected.y, `${node.id} y display`);
@@ -184,9 +184,9 @@ assert.deepStrictEqual(model.links.map(l => [l.source,l.target]), [['a','b']], '
 const axes = app.graphAxisSpec(model.nodes);
 assert.deepStrictEqual(axes.map(a => a.references), [['0.2','0.7'],['0.3','0.5'],['120.0','128.0']], 'axis labels show native values, not display units');
 assert.deepStrictEqual(axes.map(a => [a.key,a.start,a.end]), [
-  ['x',{x:54,y:90,z:2142},{x:270,y:90,z:2142}],
-  ['y',{x:54,y:90,z:2142},{x:54,y:198,z:2142}],
-  ['z',{x:54,y:90,z:2142},{x:54,y:90,z:2322}],
+  ['x',{x:54,y:90,z:4302},{x:270,y:90,z:4302}],
+  ['y',{x:54,y:90,z:4302},{x:54,y:198,z:4302}],
+  ['z',{x:54,y:90,z:4302},{x:54,y:90,z:4626}],
 ], 'axis visual guides are laid out in doubled X/Y display coordinates with unchanged Z coordinates');
 const arcs = [];
 const canvas = {clientWidth:600, clientHeight:400, parentElement:null, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(x,y,r){arcs.push([x,y,r]);}, fill(){}, set fillStyle(value){}};}};
