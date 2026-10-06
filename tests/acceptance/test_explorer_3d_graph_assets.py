@@ -170,10 +170,16 @@ const payload = {selected_mood:'relaxing', available_moods:['relaxing'], metadat
   {track_id:'b', display_label:'Beta', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.5, normalized:0.5, scale:'native'}, z:{label:'BPM', raw:128, normalized:6.4, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.2,normalized:0.2}, bpm:128, genres:[], reasons:[]}
 ], edges:[{a:'a',b:'b',score:0.77,explanation:'axis-independent relatedness'}]};
 const model = app.buildMoodGraphModel(payload);
-assert.deepStrictEqual(model.nodes.map(n => [n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]), [
-  ['a',72,108,2160,72,108,2160],
-  ['b',252,180,2304,252,180,2304],
-]);
+const close = (actual, expected, label) => assert(Math.abs(actual - expected) <= 1e-9, `${label}: expected ${expected}, got ${actual}`);
+assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
+for (const [node, expected] of [[model.nodes[0], {x:72,y:108,z:2160}], [model.nodes[1], {x:252,y:180,z:2304}]]) {
+  close(node.x, expected.x, `${node.id} x display`);
+  close(node.fx, expected.x, `${node.id} fx display`);
+  close(node.y, expected.y, `${node.id} y display`);
+  close(node.fy, expected.y, `${node.id} fy display`);
+  assert.strictEqual(node.z, expected.z, `${node.id} z display remains unchanged`);
+  assert.strictEqual(node.fz, expected.z, `${node.id} fz display remains unchanged`);
+}
 assert.deepStrictEqual(model.links.map(l => [l.source,l.target]), [['a','b']], 'links remain attached to the same displayed nodes');
 const axes = app.graphAxisSpec(model.nodes);
 assert.deepStrictEqual(axes.map(a => a.references), [['0.2','0.7'],['0.3','0.5'],['120.0','128.0']], 'axis labels show native values, not display units');

@@ -314,7 +314,7 @@ function graphAxisSpec(nodes){
   const min={},max={};
   for(const key of ['x','y','z']){min[key]=Math.min(...valid.map(n=>n[key]));max[key]=Math.max(...valid.map(n=>n[key]));}
   const start={x:min.x-18,y:min.y-18,z:min.z-18};
-  return [['x','X valence (native)','#ff7777',180],['y','Y arousal (native)','#76dfa0',180],['z','Z BPM','#84b9ff',36]].map(([key,label,color,units])=>{
+  return [['x','X valence (native)','#ff7777',360],['y','Y arousal (native)','#76dfa0',360],['z','Z BPM','#84b9ff',36]].map(([key,label,color,units])=>{
     const end={...start,[key]:Math.max(max[key]+18,start[key]+36)};
     const format=n=>displayNumber(n/units);
     return {key,label,color,start,end,references:[format(min[key]),format(max[key])]};
