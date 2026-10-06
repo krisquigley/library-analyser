@@ -98,6 +98,44 @@ app.loadGraph().then(async () => {
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+
+    def test_m3u_download_click_failure_cleans_blob_url_and_anchor_and_reports_safe_status(self):
+        if not shutil.which('node'):
+            source = APP_JS.read_text(encoding='utf-8')
+            if 'finally' not in source or 'revokeObjectURL' not in source:
+                self.fail('M3U download must clean object URLs and temporary anchors even when anchor.click throws')
+            return
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const removed = [];
+const revoked = [];
+const elements = {};
+function makeElement(tag){return {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, style:{}, className:'', id:'', hidden:false, value:'', min:'', max:'', type:'', textContent:'', innerHTML:'', download:'', href:'', parentElement:null, clientWidth:600, clientHeight:400, append(...nodes){for(const node of nodes){if(node && typeof node === 'object') node.parentElement=this; this.children.push(node); if(node && node.id) elements[node.id]=node;}}, replaceChildren(...nodes){this.children=[]; this.append(...nodes);}, setAttribute(k,v){this.attributes[k]=String(v);}, remove(){this.removed=true; removed.push({tag:this.tagName, href:this.href, download:this.download});}, click(){throw new Error('<img src=x onerror=alert(1)> click failed');}, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}};}
+elements['graph-load-status'] = makeElement('section'); elements.graph3d = makeElement('div'); elements['mood-strip'] = makeElement('canvas'); elements['mood-strip-picker'] = makeElement('input'); elements['mood-strip-value'] = makeElement('span');
+global.document = {body: makeElement('body'), createElement: makeElement, createTextNode: text => ({textContent:String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
+global.requestAnimationFrame = cb => cb();
+global.URL = {createObjectURL: blob => {assert(blob, 'download should wrap response body in a Blob'); return 'blob:playlist-click-fails';}, revokeObjectURL: url => revoked.push(url)};
+global.Blob = class Blob { constructor(parts, options){this.parts=parts; this.options=options;} };
+global.fetch = async path => {if(String(path).startsWith('/api/mood-axis-graph')) return {ok:true, json:async()=>({dto_version:'mood-axis-graph-compact-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{graph_status:{state:'ready'}}, nodes:[], links:[], unpositioned:[]})}; return {ok:true, headers:{get:name => name.toLowerCase()==='content-disposition' ? 'attachment; filename="journey.m3u"' : 'audio/x-mpegurl'}, text:async()=> '#EXTM3U\n/song.mp3\n'};};
+app.setStateForTesting({current_track_id:'start-track'});
+app.setGraphControlsForTesting({m3uBpmMin:'90', m3uBpmMax:'130', m3uCount:'25'});
+app.loadGraph().then(async () => {
+  const button = elements['download-m3u'];
+  assert(button && typeof button.onclick === 'function', 'ready graph must render an explicit M3U download button');
+  await button.onclick();
+  assert.deepStrictEqual(removed, [{tag:'A', href:'blob:playlist-click-fails', download:'journey.m3u'}], 'temporary download anchor must be removed even when click throws');
+  assert.deepStrictEqual(revoked, ['blob:playlist-click-fails'], 'object URL must be revoked even when click throws');
+  const status = elements['m3u-download-status'];
+  assert(status, 'M3U controls must include a status element for errors');
+  assert.strictEqual(status.attributes.role, 'alert');
+  assert.match(status.textContent, /M3U download failed/);
+  assert.match(status.textContent, /click failed/);
+  assert.strictEqual(status.innerHTML, '', 'download errors must not be written with innerHTML');
+}).catch(error => {console.error(error && error.stack || error); process.exit(1);});
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
     def test_m3u_download_failure_is_reported_as_safe_status_text(self):
         if not shutil.which('node'):
             source = APP_JS.read_text(encoding='utf-8')
