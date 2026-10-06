@@ -189,10 +189,18 @@ assert.deepStrictEqual(axes.map(a => [a.key,a.start,a.end]), [
   ['z',{x:54,y:90,z:4302},{x:54,y:90,z:4626}],
 ], 'axis visual guides are laid out in doubled X/Y display coordinates with unchanged Z coordinates');
 const arcs = [];
-const canvas = {clientWidth:600, clientHeight:400, parentElement:null, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(x,y,r){arcs.push([x,y,r]);}, fill(){}, set fillStyle(value){}};}};
-global.document = {getElementById:id => id === 'map' ? canvas : null, createElement: tag => ({id:'', clientWidth:600, clientHeight:400, parentElement:null, getContext:canvas.getContext})};
+let graph3d = null;
+let mapCanvas = null;
+const makeCanvas = () => ({clientWidth:600, clientHeight:400, parentElement:null, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(x,y,r){arcs.push([x,y,r]);}, fill(){}, set fillStyle(value){}};}});
+mapCanvas = makeCanvas();
+mapCanvas.replaceWith = node => {graph3d = node; mapCanvas = null;};
+global.document = {
+  getElementById:id => id === 'graph3d' ? graph3d : (id === 'map' ? mapCanvas : null),
+  createElement: tag => tag === 'canvas' ? makeCanvas() : {id:'', clientWidth:600, clientHeight:400, parentElement:null}
+};
 app.setStateForTesting({current_track_id:'b'});
 app.renderMap(model);
+assert(graph3d && graph3d.id === 'graph3d', 'renderMap replaces the legacy map canvas with the graph container before falling back');
 assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'fallback canvas mirrors doubled X/Y display coordinates from the canvas origin');
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
