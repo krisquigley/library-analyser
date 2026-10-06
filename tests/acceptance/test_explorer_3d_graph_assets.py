@@ -208,6 +208,81 @@ assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'fallback
                 subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for raw graph axis labels tests')
+    def test_graph_axis_labels_use_raw_axis_values_when_display_positions_are_scaled(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const payload = {selected_mood:'focus', available_moods:['focus'], metadata:{}, unpositioned:[], positioned:[
+  {track_id:'native-a', display_label:'Native A', x:{raw:-2.46, normalized:0.2, scale:'native-valence'}, y:{raw:10.01, normalized:0.3, scale:'native-arousal'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'focus',raw:0.6,normalized:0.6}, bpm:120, genres:[], reasons:[]},
+  {track_id:'native-b', display_label:'Native B', x:{raw:3.35, normalized:0.7, scale:'native-valence'}, y:{raw:30.08, normalized:0.5, scale:'native-arousal'}, z:{label:'BPM', raw:128, normalized:6.4, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'focus',raw:0.4,normalized:0.4}, bpm:128, genres:[], reasons:[]}
+], edges:[]};
+const model = app.buildMoodGraphModel(payload);
+const close = (actual, expected, label) => assert(Math.abs(actual - expected) <= 1e-9, `${label}: expected ${expected}, got ${actual}`);
+assert.deepStrictEqual(model.nodes.map(n => n.id), ['native-a','native-b']);
+for (const [node, expected] of [[model.nodes[0], {x:72,y:108,z:2160}], [model.nodes[1], {x:252,y:180,z:2304}]]) {
+  close(node.x, expected.x, `${node.id} x display`);
+  close(node.y, expected.y, `${node.id} y display`);
+  close(node.z, expected.z, `${node.id} z display`);
+}
+const axes = app.graphAxisSpec(model.nodes);
+assert.deepStrictEqual(axes.map(a => [a.key, a.references]), [
+  ['x', ['-2.5', '3.4']],
+  ['y', ['10.0', '30.1']],
+  ['z', ['120.0', '128.0']],
+], 'axis reference labels must come from node.axis raw DTO values, not scaled display positions');
+assert.deepStrictEqual(axes.map(a => [a.key, a.start, a.end]), [
+  ['x',{x:54,y:90,z:2142},{x:270,y:90,z:2142}],
+  ['y',{x:54,y:90,z:2142},{x:54,y:198,z:2142}],
+  ['z',{x:54,y:90,z:2142},{x:54,y:90,z:2322}],
+], 'axis visual guide geometry remains display-coordinate based');
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for fallback graph canvas attachment tests')
+    def test_canvas_fallback_draws_into_visible_graph_container_after_replacing_legacy_map(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const model = {nodes:[
+  {id:'a', label:'Alpha', x:72, y:108, z:2160, fx:72, fy:108, fz:2160, color:'#123', axis:{x:{raw:-2.46}, y:{raw:10.01}, z:{raw:120}}, moodScore:null},
+  {id:'b', label:'Beta', x:252, y:180, z:2304, fx:252, fy:180, fz:2304, color:'#456', axis:{x:{raw:3.35}, y:{raw:30.08}, z:{raw:128}}, moodScore:null}
+], links:[], unpositioned:[]};
+const arcs = [];
+let graph3d = null;
+let legacyMap = null;
+function makeElement(tag){
+  return {tagName:tag.toUpperCase(), id:'', children:[], parentElement:null, clientWidth:600, clientHeight:400,
+    width:0, height:0,
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children = []; this.append(...nodes);},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(x,y,r){arcs.push([x,y,r]);}, fill(){}, set fillStyle(value){}};}
+  };
+}
+legacyMap = makeElement('canvas');
+legacyMap.id = 'map';
+legacyMap.replaceWith = node => { graph3d = node; graph3d.parentElement = {clientWidth:600}; legacyMap = null; };
+global.document = {
+  getElementById:id => id === 'graph3d' ? graph3d : (id === 'map' ? legacyMap : null),
+  createElement: tag => makeElement(tag)
+};
+global.getComputedStyle = () => ({paddingLeft:'0', paddingRight:'0', borderLeftWidth:'0', borderRightWidth:'0'});
+app.setGraphModelForTesting(model);
+app.setStateForTesting({current_track_id:'b'});
+app.renderMap(model);
+assert(graph3d && graph3d.id === 'graph3d', 'legacy #map is replaced by visible #graph3d before fallback rendering');
+assert.strictEqual(graph3d.children.length, 1, 'fallback canvas is attached to the visible #graph3d container');
+const canvas = graph3d.children[0];
+assert.strictEqual(canvas.tagName, 'CANVAS');
+assert.strictEqual(canvas.parentElement, graph3d);
+assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'visible fallback canvas draws doubled X/Y node positions');
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
     def test_graph_filter_source_separates_mood_tracker_control(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
