@@ -177,6 +177,41 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
         self.assertEqual(_table_counts(self.db_path), before_counts)
         self.assertEqual(self.db_path.read_bytes(), before_bytes)
 
+    def test_download_m3u_endpoint_propagates_dead_end_warning_safely(self):
+        query = urlencode({
+            'start_track_id': self.first,
+            'bpm_min': '119',
+            'bpm_max': '125',
+            'length': '3',
+        })
+
+        with self._get('/api/playlists/m3u?' + query) as response:
+            body = response.read().decode('utf-8')
+            warning = response.headers.get('X-Music-Explorer-Playlist-Warning')
+
+        self.assertEqual(response.status, 200)
+        self.assertIsNotNone(warning)
+        self.assertIn('shorter than requested', warning)
+        self.assertIn('dead end', warning)
+        self.assertNotRegex(warning, r'[\r\n<>]')
+        self.assertEqual(body.splitlines()[0], '#EXTM3U')
+        self.assertIn('#PLAYLIST-WARNING: ', body)
+        self.assertIn('shorter than requested', body)
+        self.assertIn(str(self.first_path), body)
+        self.assertIn(str(self.second_path), body)
+        self.assertNotIn('<', body)
+        self.assertNotIn('>', body)
+
+        branch_query = urlencode({
+            'start_track_id': self.first,
+            'bpm_min': '119',
+            'bpm_max': '125',
+            'length': '2',
+        })
+        with self._get('/api/playlists/m3u?' + branch_query) as complete_response:
+            self.assertIsNone(complete_response.headers.get('X-Music-Explorer-Playlist-Warning'))
+            self.assertNotIn('#PLAYLIST-WARNING:', complete_response.read().decode('utf-8'))
+
     def test_download_m3u_endpoint_reports_validation_errors_as_json_400(self):
         invalid_query = urlencode({'start_track_id': '', 'bpm_min': '130', 'bpm_max': '120', 'length': '0'})
         with self.assertRaises(HTTPError) as raised:

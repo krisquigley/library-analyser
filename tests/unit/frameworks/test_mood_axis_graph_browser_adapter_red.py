@@ -66,6 +66,38 @@ app.loadGraph().then(() => {
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
+    def test_m3u_download_click_creates_real_browser_download_instead_of_fetch_discard(self):
+        if not shutil.which('node'):
+            source = APP_JS.read_text(encoding='utf-8')
+            if 'URL.createObjectURL' not in source and 'window.location' not in source:
+                self.fail('M3U download must create a real browser download via Blob/object URL/anchor click or window.location')
+            return
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const clicked = [];
+const revoked = [];
+const elements = {};
+function makeElement(tag){return {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, style:{}, className:'', id:'', hidden:false, value:'', min:'', max:'', type:'', textContent:'', download:'', href:'', parentElement:null, clientWidth:600, clientHeight:400, append(...nodes){for(const node of nodes){if(node && typeof node === 'object') node.parentElement=this; this.children.push(node); if(node && node.id) elements[node.id]=node;}}, replaceChildren(...nodes){this.children=[]; this.append(...nodes);}, setAttribute(k,v){this.attributes[k]=String(v);}, remove(){this.removed=true;}, click(){clicked.push({tag:this.tagName, href:this.href, download:this.download});}, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}};}
+elements['graph-load-status'] = makeElement('section'); elements.graph3d = makeElement('div'); elements['mood-strip'] = makeElement('canvas'); elements['mood-strip-picker'] = makeElement('input'); elements['mood-strip-value'] = makeElement('span');
+global.document = {body: makeElement('body'), createElement: makeElement, createTextNode: text => ({textContent:String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
+global.requestAnimationFrame = cb => cb();
+global.URL = {createObjectURL: blob => {assert(blob, 'download should wrap response body in a Blob'); return 'blob:playlist';}, revokeObjectURL: url => revoked.push(url)};
+global.Blob = class Blob { constructor(parts, options){this.parts=parts; this.options=options;} };
+let requestNumber = 0;
+global.fetch = async path => {requestNumber += 1; if(String(path).startsWith('/api/mood-axis-graph')) return {ok:true, json:async()=>({dto_version:'mood-axis-graph-compact-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{graph_status:{state:'ready'}}, nodes:[], links:[], unpositioned:[]})}; return {ok:true, headers:{get:name => name.toLowerCase()==='content-disposition' ? 'attachment; filename="journey.m3u"' : 'audio/x-mpegurl'}, text:async()=> '#EXTM3U\n/song.mp3\n'};};
+app.setStateForTesting({current_track_id:'start-track'});
+app.setGraphControlsForTesting({m3uBpmMin:'90', m3uBpmMax:'130', m3uCount:'25'});
+app.loadGraph().then(async () => {
+  const button = elements['download-m3u'];
+  assert(button && typeof button.onclick === 'function', 'ready graph must render an explicit M3U download button');
+  await button.onclick();
+  assert.deepStrictEqual(clicked, [{tag:'A', href:'blob:playlist', download:'journey.m3u'}], 'explicit click must trigger an anchor download, not fetch and discard the body');
+  assert.deepStrictEqual(revoked, ['blob:playlist']);
+}).catch(error => {console.error(error && error.stack || error); process.exit(1);});
+"""
+        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,4 +1,6 @@
 import json
+import os
+import socket
 import sqlite3
 import tempfile
 import unittest
@@ -140,6 +142,57 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
             self.assertEqual([candidate.track_id for candidate in candidates], [track_ids[0], track_ids[1]])
             self.assertEqual([candidate.bpm for candidate in candidates], [118.0, 122.0])
             self.assertEqual([candidate.path for candidate in candidates], [str(playable_paths[track_ids[0]]), str(playable_paths[track_ids[1]])])
+
+    def test_playlist_export_accepts_only_regular_local_files_and_allowed_regular_symlinks(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / 'analysis.sqlite'
+            regular = root / 'regular.flac'
+            regular.write_bytes(b'not audio; regular-file sentinel only')
+            directory = root / 'directory.flac'
+            directory.mkdir()
+            fifo = root / 'fifo.flac'
+            os.mkfifo(fifo)
+            socket_path = root / 'socket.flac'
+            unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.addCleanup(unix_socket.close)
+            unix_socket.bind(str(socket_path))
+            symlink_to_regular = root / 'regular-link.flac'
+            symlink_to_regular.symlink_to(regular)
+            symlink_to_fifo = root / 'fifo-link.flac'
+            symlink_to_fifo.symlink_to(fifo)
+            track_paths = (
+                regular,
+                directory,
+                fifo,
+                socket_path,
+                symlink_to_regular,
+                symlink_to_fifo,
+            )
+            track_ids = tuple(f'sha256:{index}' + str(index) * 63 for index in range(1, len(track_paths) + 1))
+            _create_playlist_fixture_db(db_path, dict(zip(track_ids[:4], track_paths[:4], strict=True)))
+            with sqlite3.connect(db_path) as db:
+                db.execute('UPDATE track_audio SET status=\'eligible\', reason=\'\'')
+                db.execute('UPDATE locations SET available=1')
+                for index, (track_id, path) in enumerate(zip(track_ids[4:], track_paths[4:], strict=True), start=5):
+                    db.execute('INSERT INTO tracks VALUES(?,?,?)', (track_id, track_id.split(':')[1], 10))
+                    db.execute('INSERT INTO locations VALUES(?,?,?,?,?)', (str(path), track_id, index, 'flac', 1))
+                    db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', (f'run-{index}', str(path), 'completed', ''))
+                    db.execute('INSERT INTO run_tracks VALUES(?,?)', (f'run-{index}', track_id))
+                    db.execute('INSERT INTO stages VALUES(?,?,?)', (f'run-{index}', 'bpm', _stage('bpm', 120.0 + index)))
+                    db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (track_id, 120.0, 'mutagen', 'eligible', ''))
+            before = db_path.read_bytes()
+            repository = ReadOnlyExplorerSQLiteRepository(str(db_path))
+
+            with patch('builtins.open', side_effect=AssertionError('playlist export must not open/read audio file bytes')):
+                candidates = repository.playlist_export_tracks()
+
+            self.assertEqual(db_path.read_bytes(), before, 'playlist export must not write or migrate the analysis database')
+            self.assertEqual(
+                [candidate.path for candidate in candidates],
+                [str(regular), str(symlink_to_regular)],
+                'M3U export must require regular files: reject directories, FIFOs, sockets, and symlinks to nonregular targets',
+            )
 
 
 if __name__ == '__main__':
