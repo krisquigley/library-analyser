@@ -47,8 +47,26 @@ const indexed = {dto_version:'mood-axis-graph-indexed-v1', selected_mood:'relaxi
 ], unpositioned:[['c','Missing',[1]]], links:[[0,1,0.77,3]]};
 assert.strictEqual(typeof app.normalizeMoodAxisGraphDto, 'function');
 assert.deepStrictEqual(app.normalizeMoodAxisGraphDto(indexed), verbose);
-assert.deepStrictEqual(app.buildMoodGraphModel(indexed), app.buildMoodGraphModel(verbose));
-assert.deepStrictEqual(app.applyMoodGraphFilters(app.buildMoodGraphModel(indexed), {genres:['jazz']}).nodes.map(n => n.id), ['a']);
+const indexedModel = app.buildMoodGraphModel(indexed);
+const verboseModel = app.buildMoodGraphModel(verbose);
+const withoutThresholdApplicability = model => ({...model, nodes:model.nodes.map(({genreThresholdApplies, ...node}) => node)});
+assert.deepStrictEqual(withoutThresholdApplicability(indexedModel), withoutThresholdApplicability(verboseModel));
+assert(indexedModel.nodes.every(node => node.genreThresholdApplies), 'indexed v3 nodes apply their persisted genre thresholds');
+assert(verboseModel.nodes.every(node => !node.genreThresholdApplies), 'legacy/verbose nodes preserve the existing >0.1 genre filter');
+assert.deepStrictEqual(app.applyMoodGraphFilters(app.buildMoodGraphModel(indexed), {genres:['jazz']}).nodes.map(n => n.id), [], 'scores below the per-node threshold must not pass v3 genre filters');
+assert.deepStrictEqual(app.applyMoodGraphFilters(app.buildMoodGraphModel(indexed), {genres:['rock']}).nodes.map(n => n.id), ['a','b']);
+
+const thresholdProbe = {dto_version:'mood-axis-graph-indexed-v1', selected_mood:'relaxing', available_moods:[], metadata:{}, axis:[
+  {key:'x', label:'valence', scale:'native-emomusic-valence-regression'},
+  {key:'y', label:'arousal', scale:'native-emomusic-arousal-regression'},
+  {key:'z', label:'BPM', scale:'fixed-BPM/20-display-units'}
+], genre_labels:['rock'], reason_text:[], explanation_table:[], provenance_table:[], link_defaults:{}, nodes:[
+  ['below','Below',0,0,0,0,120,6,0.1,0.1,[[0,0.2]],[],0.35],
+  ['at','At',0,0,0,0,120,6,0.1,0.1,[[0,0.35]],[],0.35],
+  ['above','Above',0,0,0,0,120,6,0.1,0.1,[[0,0.36]],[],0.35],
+  ['missing-fallback','Missing fallback',0,0,0,0,120,6,0.1,0.1,[[0,0.2]],[]]
+], unpositioned:[], links:[]};
+assert.deepStrictEqual(app.applyMoodGraphFilters(app.buildMoodGraphModel(thresholdProbe), {genres:['rock']}).nodes.map(n => n.id), ['above','missing-fallback'], 'v3 filtering is strict above per-node threshold and preserves 0.1 fallback when threshold is absent');
 """)
 
     def test_load_graph_reports_v3_fetch_errors_with_retry_without_legacy_or_v2_fallback(self):

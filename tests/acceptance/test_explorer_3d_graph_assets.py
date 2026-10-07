@@ -160,6 +160,30 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
             self.assertIn('module.exports', source)
 
 
+    def test_indexed_v3_genre_filter_respects_node_threshold_in_both_mirrored_assets(self):
+        script = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const graph = {dto_version:'mood-axis-graph-indexed-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{}, axis:[
+  {key:'x', label:'valence', scale:'native-emomusic-valence-regression'},
+  {key:'y', label:'arousal', scale:'native-emomusic-arousal-regression'},
+  {key:'z', label:'BPM', scale:'fixed-BPM/20-display-units'}
+], genre_labels:['rock'], reason_text:[], explanation_table:[], provenance_table:[], link_defaults:{}, nodes:[
+  ['below','Below threshold',0.1,0.1,0.1,0.1,120,6,0.2,0.2,[[0,0.2]],[],0.35],
+  ['at','At threshold',0.2,0.2,0.2,0.2,121,6.05,0.2,0.2,[[0,0.35]],[],0.35],
+  ['above','Above threshold',0.3,0.3,0.3,0.3,122,6.1,0.2,0.2,[[0,0.36]],[],0.35],
+  ['missing-fallback','Missing threshold fallback',0.4,0.4,0.4,0.4,123,6.15,0.2,0.2,[[0,0.2]],[]]
+], unpositioned:[], links:[[0,2,0.5,1]]};
+const model = app.buildMoodGraphModel(graph);
+assert.deepStrictEqual(model.nodes.map(n => [n.id, n.genreThreshold]), [['below',0.35],['at',0.35],['above',0.35],['missing-fallback',0.1]]);
+assert.deepStrictEqual(app.applyMoodGraphFilters(model, {genres:['rock']}).nodes.map(n => n.id), ['above','missing-fallback']);
+assert.deepStrictEqual(app.applyMoodGraphFilters(model, {genres:['rock']}).links, [], 'links to filtered-out nodes are still removed');
+"""
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for graph display spacing tests')
     def test_graph_axis_guides_and_canvas_fallback_use_doubled_xy_display_spacing(self):
         script = r"""
