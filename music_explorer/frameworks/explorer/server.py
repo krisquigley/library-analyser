@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from music_explorer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
+from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
@@ -163,6 +164,20 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path == '/api/projection':
                 projection = BuildLiveProjection(repository).execute()
                 return self._json(_to_json(projection))
+            if path == '/api/playlists/m3u':
+                query = parse_qs(parsed.query)
+                raw_length = query.get('length', query.get('count', ['0']))[0]
+                try:
+                    length = int(raw_length)
+                except (TypeError, ValueError):
+                    raise ValueError('Playlist length must be positive and between 1 and 1000')
+                result = GenerateBpmGraphM3UPlaylist(repository).execute(
+                    start_track_id=query.get('start_track_id', query.get('start', ['']))[0],
+                    bpm_min=query.get('bpm_min', [None])[0],
+                    bpm_max=query.get('bpm_max', [None])[0],
+                    length=length,
+                )
+                return self._m3u(result.content, result.warning)
             if path == '/api/mood-axis-graph':
                 query = parse_qs(parsed.query)
                 contract, contract_error = _parse_mood_axis_graph_contract(parsed.query)
@@ -230,6 +245,20 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             self.end_headers()
             self.wfile.write(payload)
 
+        def _m3u(self, content: str, warning: str | None = None):
+            safe_warning = _safe_playlist_warning(warning)
+            if safe_warning:
+                content = content.replace('#EXTM3U\n', f'#EXTM3U\n#PLAYLIST-WARNING: {safe_warning}\n', 1)
+            encoded = content.encode('utf-8')
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', 'audio/x-mpegurl; charset=utf-8')
+            self.send_header('Content-Disposition', 'attachment; filename="library-graph-playlist.m3u"')
+            if safe_warning:
+                self.send_header('X-Music-Explorer-Playlist-Warning', safe_warning)
+            self.send_header('Content-Length', str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def _json(self, payload, status=HTTPStatus.OK):
             encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False).encode('utf-8')
             self.send_response(status)
@@ -242,6 +271,12 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             return
 
     return ThreadingHTTPServer((host, port), Handler)
+
+
+def _safe_playlist_warning(warning):
+    if not warning:
+        return None
+    return ''.join(ch if ch not in '<>\r\n' and ord(ch) >= 32 and ord(ch) != 127 else ' ' for ch in str(warning)).strip()
 
 
 def _parse_mood_axis_graph_contract(query_string):
