@@ -114,6 +114,7 @@ def to_indexed_mood_axis_graph_http(graph: MoodAxisGraph) -> dict[str, Any]:
             _optional_finite(node.mood_score.normalized, 'mood score') if node.mood_score is not None else None,
             [[genre_labels.index(label), _finite(score, 'genre score')] for label, score in node.genres],
             [reason_text.index(reason) for reason in node.reasons],
+            _finite(node.genre_threshold, 'genre threshold'),
         ])
 
     unpositioned = [

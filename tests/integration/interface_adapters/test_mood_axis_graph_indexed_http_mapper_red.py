@@ -36,7 +36,7 @@ class IndexedMoodAxisGraphHttpMapperRedTests(unittest.TestCase):
                     bpm=120.0,
                     genres=(('rock', 0.8), ('jazz', 0.2)),
                     reasons=('genre threshold 0.5',),
-                    genre_threshold=0.5,
+                    genre_threshold=0.35,
                     mood_score=AxisValue('relaxing', 0.9, 0.9, 'sigmoid_mean_score_0_1', (('mood-model', 'sha'),)),
                 ),
                 MoodAxisNode(
@@ -83,6 +83,7 @@ class IndexedMoodAxisGraphHttpMapperRedTests(unittest.TestCase):
         self.assertEqual(indexed['nodes'][0][0], 'sha256:' + 'a' * 64)
         self.assertEqual(indexed['nodes'][0][10], [[0, 0.8], [1, 0.2]])
         self.assertEqual(indexed['nodes'][0][11], [0])
+        self.assertEqual(indexed['nodes'][0][12], 0.35)
         self.assertEqual(indexed['unpositioned'][0], ['sha256:' + 'c' * 64, 'Missing.flac', [0]])
         self.assertEqual(indexed['links'][0], [0, 1, 0.77, 3])
         reconstructed_edge = indexed['links'][0]
