@@ -8,7 +8,12 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
+from music_analyzer.application.dto.analysis import AudioSource, StageResult
+from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata as AnalyzerTrackMetadata
+from music_analyzer.domain.analysis import ScoreSummary
+from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 import music_explorer.infrastructure.explorer_readonly as standalone_explorer_readonly_module
 from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
@@ -17,6 +22,28 @@ APP_ID = 0x4D414E41
 _MEMORY_LIMIT_BYTES = 128 * 1024 * 1024
 _OVERSIZED_STAGE_BYTES = 24 * 1024 * 1024
 _TIMEOUT_SECONDS = 15
+
+
+def _register_graph_track(repository, suffix, location):
+    identity = FileIdentity(suffix * 64, 123)
+    repository.register(Inventory('/music', (
+        ScannedFile(location, identity, 1, 'flac', AnalyzerTrackMetadata(duration_seconds=180.0, duration_source='mutagen')),
+    ), (), True))
+    return identity
+
+
+def _complete_graph_feature_run(repository, identity, location):
+    run_id = repository.start(AudioSource(location, identity.track_id))
+    for stage in (
+        StageResult('bpm', (('algorithm', 'test-bpm'),), 'steady', (('bpm', 124.0),)),
+        StageResult('key', (('algorithm', 'test-key'),), 'classified', (('key', '8A'), ('scale', 'minor'), ('strength', 0.731), ('coverage', 1.0))),
+        StageResult('genres', (('algorithm', 'test-genre'),), 'labels', (('genre', 'house'), ('genre', 'deep house'))),
+        StageResult('mood', (('algorithm', 'test-mood'),), 'scores', summary=ScoreSummary(('happy', 'dark'), (0.75, 0.20), (0.70, 0.10), (0.80, 0.30), 1.0)),
+        StageResult('energy', (('algorithm', 'test-energy'),), 'score', summary=ScoreSummary(('energy',), (0.66,), (0.60,), (0.70,), 1.0)),
+    ):
+        repository.save_stage(run_id, stage)
+    repository.finish(run_id, 'completed', '')
+    return run_id
 
 
 def create_db(path):
@@ -523,6 +550,38 @@ class StandaloneReadOnlyExplorerStagePayloadGuardTests(unittest.TestCase):
 
 
 class StandaloneCompactGraphResourceTests(unittest.TestCase):
+    def test_warm_compact_graph_validates_each_feature_evidence_row_once_per_request(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'analysis.sqlite'
+            repository = SQLiteAnalysisRepository(str(path))
+            identities = (
+                _register_graph_track(repository, 'a', '/music/alpha.flac'),
+                _register_graph_track(repository, 'b', '/music/beta.flac'),
+            )
+            for identity, location in zip(identities, ('/music/alpha.flac', '/music/beta.flac')):
+                _complete_graph_feature_run(repository, identity, location)
+
+            with closing(sqlite3.connect(path)) as db:
+                expected_identities = tuple(db.execute(
+                    'SELECT track_id,run_id FROM graph_feature_evidence WHERE is_current=1 ORDER BY track_id,run_id'
+                ))
+            original_validator = standalone_explorer_readonly_module.validate_graph_feature_evidence_payload
+            calls = []
+
+            def counting_validator(track_id, run_id, fingerprint, payload):
+                calls.append((track_id, run_id))
+                return original_validator(track_id, run_id, fingerprint, payload)
+
+            with patch.object(standalone_explorer_readonly_module, 'validate_graph_feature_evidence_payload', counting_validator):
+                graph = ReadOnlyExplorerSQLiteRepository(str(path)).mood_axis_graph_snapshot()
+
+        self.assertIsNotNone(graph)
+        self.assertEqual(
+            expected_identities,
+            tuple(calls),
+            'warm compact graph reads should semantically validate each current compact evidence row exactly once per request',
+        )
+
     def test_compact_graph_rejects_oversized_stage_before_fetching_payload(self):
         repo = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
         fake_db = _FakeCompactDb()

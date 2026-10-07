@@ -356,12 +356,13 @@ class ReadOnlyExplorerSQLiteRepository:
             return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
 
     def mood_axis_graph_snapshot(self, mood: str | None = None, sparse_k: int = 10):
-        with self._transaction() as db:
+        with self._transaction(collect_current_graph_feature_payloads=True) as transaction:
+            db, validated_current_graph_feature_payloads = transaction
             metadata = self._metadata(db)
             if int(metadata.get('schema_version', 0)) < 8:
                 return None
             warm_edges = self._current_positioned_graph_edges(db, sparse_k)
-            records = self._compact_graph_tracks(db)
+            records = self._compact_graph_tracks(db, validated_current_graph_feature_payloads)
             return _build_mood_axis_graph(metadata, records, self, sparse_k, mood, warm_edges=warm_edges)
 
     def current_graph_edges(self, sparse_k: int | None = None):
@@ -511,7 +512,7 @@ class ReadOnlyExplorerSQLiteRepository:
             'read_policy': 'bounded_read_transaction',
         }
 
-    def _compact_graph_tracks(self, db):
+    def _compact_graph_tracks(self, db, validated_current_graph_feature_payloads=None):
         version = _database_schema_version(db)
         evidence_size_expression = _graph_feature_evidence_size_expression('g.evidence_json')
         evidence_columns = f'g.fingerprint, {evidence_size_expression}' if version >= 9 else 'NULL AS fingerprint, NULL AS evidence_json_size'
@@ -605,19 +606,31 @@ class ReadOnlyExplorerSQLiteRepository:
             (track_id, run_id): fingerprint
             for track_id, run_id, fingerprint, _size in compact_evidence_rows
         }
-        loaded_compact_identities = set()
-        for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
-                db, tuple((track_id, run_id) for track_id, run_id, _fingerprint, _size in compact_evidence_rows), current_only=True):
-            for track_id, run_id, evidence_json in payload_chunk:
-                loaded_compact_identities.add((track_id, run_id))
+        if validated_current_graph_feature_payloads is None:
+            loaded_compact_identities = set()
+            for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
+                    db, tuple((track_id, run_id) for track_id, run_id, _fingerprint, _size in compact_evidence_rows), current_only=True):
+                for track_id, run_id, evidence_json in payload_chunk:
+                    loaded_compact_identities.add((track_id, run_id))
+                    try:
+                        payload = json.loads(evidence_json)
+                        validate_graph_feature_evidence_payload(track_id, run_id, compact_evidence_by_identity[(track_id, run_id)], payload)
+                        compact_stages_by_run[run_id] = self._stages_from_graph_feature_payload(payload)
+                    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                        raise AnalysisError('Invalid stored graph feature evidence') from error
+            if loaded_compact_identities != set(compact_evidence_by_identity):
+                raise AnalysisError('Invalid stored graph feature evidence')
+        else:
+            if set(compact_evidence_by_identity) - set(validated_current_graph_feature_payloads):
+                raise AnalysisError('Invalid stored graph feature evidence')
+            for identity, fingerprint in compact_evidence_by_identity.items():
                 try:
-                    payload = json.loads(evidence_json)
-                    validate_graph_feature_evidence_payload(track_id, run_id, compact_evidence_by_identity[(track_id, run_id)], payload)
-                    compact_stages_by_run[run_id] = self._stages_from_graph_feature_payload(payload)
-                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    payload, validated_fingerprint = validated_current_graph_feature_payloads[identity]
+                    if validated_fingerprint != fingerprint:
+                        raise ValueError('Mismatched graph feature evidence fingerprint')
+                    compact_stages_by_run[identity[1]] = self._stages_from_graph_feature_payload(payload)
+                except (KeyError, TypeError, ValueError) as error:
                     raise AnalysisError('Invalid stored graph feature evidence') from error
-        if loaded_compact_identities != set(compact_evidence_by_identity):
-            raise AnalysisError('Invalid stored graph feature evidence')
         records = []
         for row in rows:
             (track_id, sha256, size, first_path, available_locations, run_id, status, detail,
@@ -852,14 +865,14 @@ class ReadOnlyExplorerSQLiteRepository:
                 db.close()
 
     @contextmanager
-    def _transaction(self):
+    def _transaction(self, *, collect_current_graph_feature_payloads=False):
         with self._connection() as db:
             db.execute('BEGIN')
-            self._validate(db)
-            yield db
+            validation = self._validate(db, collect_current_graph_feature_payloads=collect_current_graph_feature_payloads)
+            yield (db, validation) if collect_current_graph_feature_payloads else db
             db.execute('COMMIT')
 
-    def _validate(self, db):
+    def _validate(self, db, *, collect_current_graph_feature_payloads=False):
         version = _database_schema_version(db)
         if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
             raise AnalysisError('Not a supported music-analyzer analysis database')
@@ -905,7 +918,11 @@ class ReadOnlyExplorerSQLiteRepository:
         if version >= 7:
             self._validate_graph_rows(db)
         if version >= 9:
-            self._validate_graph_feature_rows(db)
+            return self._validate_graph_feature_rows(
+                db,
+                collect_current_payloads=collect_current_graph_feature_payloads,
+            )
+        return {}
 
     def _validate_core(self, db):
         version = _database_schema_version(db)
@@ -999,7 +1016,7 @@ class ReadOnlyExplorerSQLiteRepository:
                     or not isinstance(neighbour_policy, str) or not neighbour_policy):
                 raise AnalysisError('Unexpected analysis database rows')
 
-    def _validate_graph_feature_rows(self, db):
+    def _validate_graph_feature_rows(self, db, *, collect_current_payloads=False):
         evidence_size_expression = _graph_feature_evidence_size_expression('g.evidence_json')
         rows = tuple(db.execute(f'''
             WITH latest_run AS (
@@ -1033,6 +1050,12 @@ class ReadOnlyExplorerSQLiteRepository:
             (track_id, run_id): fingerprint
             for track_id, run_id, fingerprint, _evidence_json_size, _is_current, *_rest in rows
         }
+        current_identities = {
+            (track_id, run_id)
+            for track_id, run_id, _fingerprint, _evidence_json_size, is_current, *_rest in rows
+            if is_current
+        }
+        validated_current_payloads = {}
         loaded_identities = set()
         for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
                 db, tuple(fingerprints_by_identity), current_only=False):
@@ -1044,10 +1067,15 @@ class ReadOnlyExplorerSQLiteRepository:
                     raise AnalysisError('Unexpected analysis database rows') from error
                 try:
                     validate_graph_feature_evidence_payload(track_id, run_id, fingerprints_by_identity[(track_id, run_id)], payload)
+                    if collect_current_payloads and (track_id, run_id) in current_identities:
+                        validated_current_payloads[(track_id, run_id)] = (payload, fingerprints_by_identity[(track_id, run_id)])
                 except (KeyError, ValueError) as error:
                     raise AnalysisError('Unexpected analysis database rows') from error
         if loaded_identities != set(fingerprints_by_identity):
             raise AnalysisError('Unexpected analysis database rows')
+        if collect_current_payloads and set(validated_current_payloads) != current_identities:
+            raise AnalysisError('Unexpected analysis database rows')
+        return validated_current_payloads
 
     def _foreign_keys(self, db, table):
         keys = {}
