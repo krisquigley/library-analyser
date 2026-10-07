@@ -93,7 +93,7 @@ const indexed = {dto_version:'mood-axis-graph-indexed-v1', selected_mood:'relaxi
 global.fetch = async path => {requested.push(String(path)); return {ok:true, json:async()=> indexed};};
 app.setGraphControlsForTesting({mood:'relaxing', bpmMin:119, bpmMax:121, genres:['rock']});
 app.loadGraph().then(() => {
-  assert.deepStrictEqual(requested, ['/api/mood-axis-graph?mood=relaxing&bpm_min=119&bpm_max=121&genre=rock&contract=v3']);
+  assert.deepStrictEqual(requested, ['/api/mood-axis-graph?mood=relaxing&contract=v3']);
   const visible = app.getVisibleGraphForTesting();
   assert.deepStrictEqual(visible.nodes.map(node => [node.id, node.name, node.axis.z.raw, node.genres, node.genreThreshold, node.reasons]), [['a','Alpha',120,[['rock',0.8]],0.5,['complete evidence']]]);
   assert(elements['download-m3u'], 'ready indexed graph response must render the existing M3U controls');

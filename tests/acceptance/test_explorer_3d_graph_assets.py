@@ -507,7 +507,7 @@ global.fetch = async path => {
   requests.push(String(path));
   const url = new URL(String(path), 'http://example.test');
   const selectedMood = url.searchParams.get('mood') || 'relaxing';
-  assert.strictEqual(url.searchParams.get('contract'), 'v2', 'graph reloads must opt into the compact v2 contract');
+  assert.strictEqual(url.searchParams.get('contract'), 'v3', 'graph reloads must opt into the indexed v3 contract');
   const heavy = selectedMood === 'heavy';
   return {ok:true, json:async()=>({
     dto_version:'mood-axis-graph-compact-v1',
@@ -527,12 +527,12 @@ global.fetch = async path => {
   if (before && before.then) await before;
   assert.deepStrictEqual(requests, [], 'changing the mood before Load graph only stores the choice and never auto-fetches');
   await app.loadGraph();
-  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v2'], 'manual Load graph uses the stored mood and compact contract');
+  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v3'], 'manual Load graph uses the stored mood and indexed contract');
   assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'heavy');
   mood.value = 'relaxing';
   const after = mood.onchange();
   if (after && after.then) await after;
-  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v2','/api/mood-axis-graph?mood=relaxing&contract=v2'], 'changing the mood after the graph is ready reloads compact graph data');
+  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v3','/api/mood-axis-graph?mood=relaxing&contract=v3'], 'changing the mood after the graph is ready reloads indexed graph data');
   assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'relaxing');
   assert.strictEqual(app.buildMoodStrip(app.getVisibleGraphForTesting(), null)[0].score, 0.1, 'strip uses the reloaded mood score');
 })().catch(error=>{console.error(error); process.exit(1);});
@@ -1789,7 +1789,7 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
                 self.assertIn('renderGraphLoadStatus()', refresh_source)
                 load_graph_source = source[source.index('async function loadGraph()'):source.index('function renderInitialDetail')]
                 self.assertIn("const controlQuery=graphQueryFromControls()", load_graph_source)
-                self.assertIn("const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v2')", load_graph_source)
+                self.assertIn("const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v3')", load_graph_source)
                 self.assertIn('load-graph', source)
                 self.assertIn('Load graph', source)
                 self.assertIn('loadGraph', source[source.index('module.exports'):])
@@ -2029,8 +2029,8 @@ global.fetch = async path => {
                 self.assertNotIn('/api/playlists/m3u', startup_slice, 'initial refresh must not auto-fetch M3U playlists')
 
 
-    def test_load_graph_requests_opt_in_compact_v2_contract_in_standalone_and_analyzer_assets(self):
-        """RED: the browser must negotiate the compact graph DTO explicitly.
+    def test_load_graph_requests_opt_in_indexed_v3_contract_in_standalone_and_analyzer_assets(self):
+        """RED: the browser must negotiate the indexed graph DTO explicitly.
 
         This source-level guard still runs in environments without Node. The
         Node-backed tests below exercise the same contract through loadGraph's
@@ -2042,7 +2042,7 @@ global.fetch = async path => {
                 start = source.index('async function loadGraph()')
                 end = source.index('function applyCurrentGraphFilters()', start)
                 load_graph = source[start:end]
-                self.assertIn('contract=v2', load_graph, 'loadGraph must opt in to the compact graph HTTP contract')
+                self.assertIn('contract=v3', load_graph, 'loadGraph must opt in to the indexed graph HTTP contract')
                 self.assertNotIn("api('/api/mood-axis-graph'+graphQueryFromControls())", load_graph, 'loadGraph must not silently use the legacy verbose graph endpoint')
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for compact graph DTO parity tests')
@@ -2089,8 +2089,8 @@ assert.throws(() => app.normalizeMoodAxisGraphDto({dto_version:'mood-axis-graph-
             with self.subTest(app=app):
                 subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
-    @unittest.skipUnless(shutil.which('node'), 'Node is required for compact graph request negotiation tests')
-    def test_load_graph_fetches_compact_v2_contract_and_preserves_single_in_flight_graph_request(self):
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for indexed graph request negotiation tests')
+    def test_load_graph_fetches_indexed_v3_contract_and_preserves_single_in_flight_graph_request(self):
         script = r"""
 const assert = require('assert');
 const app = require(process.argv[1]);
@@ -2120,8 +2120,8 @@ global.fetch = async path => {
   const second = app.loadGraph();
   await Promise.all([first, second]);
   assert(requests.every(path => path.startsWith('/api/mood-axis-graph')), 'only graph requests are issued by loadGraph');
-  assert(requests.every(path => /(?:\?|&)contract=v2(?:&|$)/.test(path)), 'each graph request explicitly opts into compact v2');
-  assert(requests.every(path => /(?:\?|&)mood=heavy(?:&|$)/.test(path)), 'compact negotiation preserves selected mood query');
+  assert(requests.every(path => /(?:\?|&)contract=v3(?:&|$)/.test(path)), 'each graph request explicitly opts into indexed v3');
+  assert(requests.every(path => /(?:\?|&)mood=heavy(?:&|$)/.test(path)), 'indexed negotiation preserves selected mood query');
   assert(!requests.some(path => path === '/api/mood-axis-graph' || path === '/api/mood-axis-graph?mood=heavy'), 'browser must not fall back to the legacy verbose graph URL');
   assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a']);
 })().catch(error => { console.error(error); process.exit(1); });

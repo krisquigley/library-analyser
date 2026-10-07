@@ -40,12 +40,12 @@ assert.deepStrictEqual(app.applyMoodGraphFilters(fromCompact, {bpmMin:119,bpmMax
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
 
-    def test_load_graph_explicitly_requests_compact_contract_v2(self):
+    def test_load_graph_explicitly_requests_indexed_contract_v3(self):
         if not shutil.which('node'):
             source = APP_JS.read_text(encoding='utf-8')
             load_graph = source[source.index('async function loadGraph'):source.index('function graphStatusMessage')]
-            if 'contract=v2' not in load_graph or 'graphQueryFromControls' not in load_graph:
-                self.fail('loadGraph must request /api/mood-axis-graph with contract=v2 while preserving graphQueryFromControls mood negotiation')
+            if 'contract=v3' not in load_graph or 'graphQueryFromControls' not in load_graph:
+                self.fail('loadGraph must request /api/mood-axis-graph with contract=v3 while preserving graphQueryFromControls mood negotiation')
             return
         script = r"""
 const assert = require('assert');
@@ -60,7 +60,7 @@ app.setGraphControlsForTesting({mood:'relaxing', bpmMin:90, bpmMax:150, genres:[
 app.loadGraph().then(() => {
   assert.strictEqual(requested.length, 1);
   assert.match(requested[0], /^\/api\/mood-axis-graph\?/);
-  assert(requested[0].includes('contract=v2'), 'browser must opt into compact graph contract');
+  assert(requested[0].includes('contract=v3'), 'browser must opt into indexed graph contract');
   assert(requested[0].includes('mood=relaxing'), 'mood negotiation must be preserved');
 }).catch(error => {console.error(error && error.stack || error); process.exit(1);});
 """
