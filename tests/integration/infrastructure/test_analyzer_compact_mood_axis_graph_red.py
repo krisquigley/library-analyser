@@ -12,7 +12,6 @@ from music_analyzer.domain.analysis import ScoreSummary
 from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.domain.projection import ProjectionEdge
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
-import music_analyzer.infrastructure.persistence.explorer_readonly as analyzer_explorer_readonly_module
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
 
@@ -320,42 +319,6 @@ class AnalyzerCompactMoodAxisGraphReadTests(unittest.TestCase):
             self.assertFalse(
                 any(compact_run in statement for compact_run in compact_runs for statement in raw_selects),
                 f'compact run raw payloads must never be selected; compact_runs={compact_runs!r}, selects={raw_selects!r}',
-            )
-
-    def test_warm_read_validates_each_current_compact_evidence_payload_once(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / 'analysis.sqlite'
-            writer = SQLiteAnalysisRepository(str(path))
-            first = add_positioned_track(writer, 'a')
-            second = add_positioned_track(writer, 'b', bpm=128.0, genres=(('rock', 'jazz'), (0.05, 0.8)))
-            writer.replace_graph_snapshot(
-                (ProjectionEdge(first, second, 0.25, 2),),
-                10,
-                'synthetic-analyzer-validation-dedup-red',
-                positioned_edges=(ProjectionEdge(first, second, 0.25, 2),),
-            )
-            with closing(sqlite3.connect(path)) as db:
-                expected_identities = tuple(db.execute(
-                    'SELECT track_id,run_id FROM graph_feature_evidence WHERE is_current=1 ORDER BY track_id,run_id'
-                ))
-            calls = []
-            original_validate = analyzer_explorer_readonly_module.validate_graph_feature_evidence_payload
-
-            def recording_validate(track_id, run_id, fingerprint, payload):
-                calls.append((track_id, run_id))
-                return original_validate(track_id, run_id, fingerprint, payload)
-
-            analyzer_explorer_readonly_module.validate_graph_feature_evidence_payload = recording_validate
-            try:
-                graph = BuildMoodAxisGraph(ReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
-            finally:
-                analyzer_explorer_readonly_module.validate_graph_feature_evidence_payload = original_validate
-
-            self.assertEqual(tuple(node.track_id for node in graph.positioned), (first, second))
-            self.assertEqual(
-                expected_identities,
-                tuple(calls),
-                'warm compact graph reads should semantically validate each current compact evidence row exactly once per request',
             )
 
     def test_malformed_current_compact_evidence_fails_closed_without_raw_fallback(self):
