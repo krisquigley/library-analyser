@@ -187,7 +187,7 @@ class GraphReadWorkCharacterizationTests(unittest.TestCase):
 
     Constructor validation is excluded. Each measured request starts fresh
     counters; the semantic validator still parses every nested rule/canonical
-    hash. The current baseline is deliberately 2N+H, not the future N+H goal.
+    hash. The streaming warm reader requires N+H complete validations per request.
     """
     def _measure_work(self, module, builder, path):
         repo = module.ReadOnlyExplorerSQLiteRepository(str(path))
@@ -210,10 +210,10 @@ class GraphReadWorkCharacterizationTests(unittest.TestCase):
         self.assertEqual(len(graph.positioned), 2)
         return raw_rows, validations
 
-    def test_real_readers_revalidate_all_identities_on_each_request_at_2n_plus_h(self):
+    def test_real_readers_revalidate_all_identities_on_each_request_at_n_plus_h(self):
         self._characterize(require_report=False)
 
-    def test_observed_per_identity_work_report_preserves_baseline_counts(self):
+    def test_observed_per_identity_work_report_preserves_streaming_counts(self):
         self._characterize(require_report=True)
 
     def _characterize(self, *, require_report):
@@ -225,8 +225,8 @@ class GraphReadWorkCharacterizationTests(unittest.TestCase):
             add_positioned_track(writer, 'b')
             with closing(sqlite3.connect(path)) as db, db:
                 identities = tuple(db.execute('SELECT track_id,run_id,is_current FROM graph_feature_evidence'))
-            expected = Counter({(track, run): 2 if current else 1 for track, run, current in identities})
-            self.assertEqual(sum(expected.values()), 2 * 2 + 1)
+            expected = Counter({(track, run): 1 for track, run, _current in identities})
+            self.assertEqual(sum(expected.values()), 2 + 1)
             for module, builder in ((analyzer_reader, AnalyzerGraph), (standalone_reader, StandaloneGraph)):
                 for request in range(2):
                     with self.subTest(reader=module.__name__, request=request):
@@ -238,8 +238,8 @@ class GraphReadWorkCharacterizationTests(unittest.TestCase):
                         report = _call('summarize_work', raw_rows=raw_rows, validations=validations)
                         self.assertEqual(report['raw_rows'], dict(expected))
                         self.assertEqual(report['validations'], dict(expected))
-                        self.assertEqual(report['raw_row_total'], 5)
-                        self.assertEqual(report['validation_total'], 5)
+                        self.assertEqual(report['raw_row_total'], 3)
+                        self.assertEqual(report['validation_total'], 3)
 
 
 if __name__ == '__main__':

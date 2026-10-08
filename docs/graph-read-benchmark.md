@@ -39,10 +39,15 @@ always report sample count and method, and retain failures separately.
 keyed by `(track_id, run_id)`, plus totals. It does not instrument a reader or
 infer work from SQL text. The contract tests count actual yielded rows and wrap
 the real semantic validator in **both** readers, excluding constructor work.
-The unchanged baseline performs `2N + H` raw-row deliveries and complete
+The pre-PR-B baseline performed `2N + H` raw-row deliveries and complete
 validations per request (N selected current identities, H other evidence
-identities); repeated requests must validate again. These are work
-characterization results, not the future `N + H` optimization or a speed claim.
+identities). The bounded warm reader now performs `N + H`: every evidence row
+is fully semantically and canonically validated once per request, including
+historical rows. Selected current rows are immediately mapped into the
+application-owned incremental projection, rather than retained as decoded
+payload dictionaries or complete records. Repeated requests validate again;
+there is no cross-request validation cache. This structural work reduction is
+not a wall-clock latency or real-library memory-cap claim.
 
 ## Focused checks
 
@@ -57,7 +62,15 @@ python3 -m unittest -v \
 
 This bounded delivery does **not** provide full-header/transfer timing, process
 warm/cache labeling, N=8/32/451 profile generation, 5k/20k throughput, browser
-render evidence, or OOM/resource-cap acceptance. There is no production reader
-optimization, schema change, trust relaxation, or claim that Issue #44's latency
-goals are met. Future timing/resource runs need separate explicit scope and
-synthetic fixtures; container operations must use Podman, never Docker.
+render evidence, or OOM/resource-cap acceptance. The smoke itself measures no
+production reader optimization. PR B changes no
+schema or validation trust policy and does not establish that Issue #44's
+latency goals are met. Warm graph requests retain the existing raw-row size cap,
+graph integrity checks and legacy fallback, and must finish validating all
+current and historical evidence before returning success. Final graph output
+still grows with the library; bounded per-row intermediates are not a universal
+1GiB guarantee for arbitrary graphs or concurrent requests. Existing legacy
+raw-stage fallback retains its pre-existing stage loading behavior; the bounded
+intermediate guarantee here concerns compact evidence rows. Future
+timing/resource runs need separate explicit scope and synthetic fixtures;
+container operations must use Podman, never Docker.

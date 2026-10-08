@@ -6,6 +6,7 @@ adapter opens SQLite with ``mode=ro`` so committed WAL frames are visible, avoid
 schemas.
 """
 from contextlib import contextmanager
+from dataclasses import replace
 from math import isfinite
 import json
 from pathlib import Path
@@ -343,13 +344,20 @@ class ReadOnlyExplorerSQLiteRepository:
                     yield record
 
     def mood_axis_graph_snapshot(self, mood: str | None = None, sparse_k: int = 10):
-        with self._transaction() as db:
+        # Feature validation is deferred, not omitted: the record iterator drains
+        # all current/historical evidence before the application returns a graph.
+        with self._transaction(validate_evidence=False) as db:
             metadata = self._metadata(db)
             if int(metadata.get('schema_version', 0)) < 8:
                 return None
             warm_edges = self._current_positioned_graph_edges(db, sparse_k)
             records = self._compact_graph_tracks(db)
-            return _build_mood_axis_graph(metadata, records, self, sparse_k, mood, warm_edges=warm_edges)
+            graph = _build_mood_axis_graph(metadata, records, self, sparse_k, mood, warm_edges=warm_edges)
+            # Evidence delivery is deliberately unordered; public DTO order remains
+            # the original active-track order (ORDER BY t.id).
+            return replace(graph,
+                           positioned=tuple(sorted(graph.positioned, key=lambda node: node.track_id)),
+                           unpositioned=tuple(sorted(graph.unpositioned, key=lambda node: node.track_id)))
 
     def current_graph_edges(self, sparse_k: int | None = None):
         with self._transaction() as db:
@@ -572,8 +580,9 @@ class ReadOnlyExplorerSQLiteRepository:
             LEFT JOIN track_audio a ON a.track_id=t.id
             ORDER BY t.id
         """).fetchall()
+        # Preserve the legacy raw-stage fallback; compact evidence never enters
+        # this cache and is projected one validated row at a time below.
         stages_by_run = {}
-        compact_stages_by_run = {}
         legacy_run_ids = tuple(
             row[5] for row in rows
             if row[5] is not None and not (row[6] == 'completed' and row[13] is not None)
@@ -631,21 +640,10 @@ class ReadOnlyExplorerSQLiteRepository:
             (track_id, run_id): fingerprint
             for track_id, run_id, fingerprint, _size in compact_evidence_rows
         }
-        loaded_compact_identities = set()
-        for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
-                db, tuple((track_id, run_id) for track_id, run_id, _fingerprint, _size in compact_evidence_rows), current_only=True):
-            for track_id, run_id, evidence_json in payload_chunk:
-                loaded_compact_identities.add((track_id, run_id))
-                try:
-                    payload = json.loads(evidence_json)
-                    validate_graph_feature_evidence_payload(track_id, run_id, compact_evidence_by_identity[(track_id, run_id)], payload)
-                    compact_stages_by_run[run_id] = self._stages_from_graph_feature_payload(payload)
-                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-                    raise AnalysisError('Invalid stored graph feature evidence') from error
-        if loaded_compact_identities != set(compact_evidence_by_identity):
-            raise AnalysisError('Invalid stored graph feature evidence')
-        records = []
-        for row in rows:
+        rows_by_identity = {(row[0], row[5]): row for row in rows
+                            if (row[0], row[5]) in compact_evidence_by_identity}
+
+        def record_from_row(row, stages):
             (track_id, sha256, size, first_path, available_locations, run_id, status, detail,
              common_json, tags_json, warnings_json, duration_seconds, duration_source,
              evidence_fingerprint, evidence_json_size) = row
@@ -655,9 +653,8 @@ class ReadOnlyExplorerSQLiteRepository:
                 raise AnalysisError('Invalid stored graph feature evidence') from error
             run = None
             if run_id is not None:
-                stages = compact_stages_by_run.get(run_id, tuple(stages_by_run.get(run_id, ())))
                 run = AnalysisReport(run_id, status, tuple(stages), detail or '')
-            records.append(ExplorerStoredTrack(
+            return ExplorerStoredTrack(
                 track_id,
                 sha256,
                 size,
@@ -666,8 +663,21 @@ class ReadOnlyExplorerSQLiteRepository:
                 run,
                 tuple(overrides_by_track.get(track_id, ())),
                 metadata,
-            ))
-        return tuple(records)
+            )
+
+        if version >= 9:
+            for track_id, run_id, payload in self._iter_validated_graph_feature_rows(db):
+                row = rows_by_identity.pop((track_id, run_id), None)
+                if row is not None:
+                    # The application consumes and projects this temporary record
+                    # before this generator requests another evidence row.
+                    yield record_from_row(row, self._stages_from_graph_feature_payload(payload))
+                del payload, row
+            if rows_by_identity:
+                raise AnalysisError('Invalid stored graph feature evidence')
+        for row in rows:
+            if (row[0], row[5]) not in compact_evidence_by_identity:
+                yield record_from_row(row, tuple(stages_by_run.get(row[5], ())))
 
     def _load_graph_feature_evidence_payload(self, db, track_id, run_id, size):
         if size is None:
@@ -849,14 +859,14 @@ class ReadOnlyExplorerSQLiteRepository:
                 db.close()
 
     @contextmanager
-    def _transaction(self):
+    def _transaction(self, *, validate_evidence=True):
         with self._connection() as db:
             db.execute('BEGIN')
-            self._validate(db)
+            self._validate(db, validate_evidence=validate_evidence)
             yield db
             db.execute('COMMIT')
 
-    def _validate(self, db):
+    def _validate(self, db, *, validate_evidence=True):
         version = _database_schema_version(db)
         if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
             raise AnalysisError('Not a supported music-analyzer analysis database')
@@ -901,7 +911,7 @@ class ReadOnlyExplorerSQLiteRepository:
         self._validate_rows(db)
         if version >= 7:
             self._validate_graph_rows(db)
-        if version >= 9:
+        if version >= 9 and validate_evidence:
             self._validate_graph_feature_rows(db)
 
     def _validate_rows(self, db):
@@ -992,6 +1002,10 @@ class ReadOnlyExplorerSQLiteRepository:
                 raise AnalysisError('Unexpected analysis database rows')
 
     def _validate_graph_feature_rows(self, db):
+        for _track_id, _run_id, _payload in self._iter_validated_graph_feature_rows(db):
+            del _payload
+
+    def _iter_validated_graph_feature_rows(self, db):
         evidence_size_expression = _graph_feature_evidence_size_expression('g.evidence_json')
         rows = tuple(db.execute(f'''
             WITH latest_run AS (
@@ -1029,7 +1043,10 @@ class ReadOnlyExplorerSQLiteRepository:
         for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
                 db, tuple(fingerprints_by_identity), current_only=False):
             for track_id, run_id, evidence_json in payload_chunk:
-                loaded_identities.add((track_id, run_id))
+                identity = (track_id, run_id)
+                if identity in loaded_identities:
+                    raise AnalysisError('Unexpected analysis database rows')
+                loaded_identities.add(identity)
                 try:
                     payload = json.loads(evidence_json)
                 except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -1038,6 +1055,9 @@ class ReadOnlyExplorerSQLiteRepository:
                     validate_graph_feature_evidence_payload(track_id, run_id, fingerprints_by_identity[(track_id, run_id)], payload)
                 except (KeyError, ValueError) as error:
                     raise AnalysisError('Unexpected analysis database rows') from error
+                yield track_id, run_id, payload
+                # Do not keep the previous raw/decoded row while advancing the cursor.
+                del payload, evidence_json
         if loaded_identities != set(fingerprints_by_identity):
             raise AnalysisError('Unexpected analysis database rows')
 
