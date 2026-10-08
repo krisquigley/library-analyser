@@ -50,6 +50,15 @@ this slice. Platform identification is informational, not a supported-hardware
 certification. Essentia discovery cannot prove it imports successfully or has
 TensorFlow operators; FFmpeg version detection cannot prove any format decodes.
 
+## Public synthetic graph-read checks
+
+From a checkout, run `python3 -m tools.graph_read_benchmark --synthetic-smoke`
+for a JSON integrity report from a fake public indexed-v3 response. No private
+library, live server or audio is accessed. This is not latency/resource or browser
+acceptance evidence. See the [graph-read harness guide](docs/graph-read-benchmark.md)
+for the reusable measurement boundary, honest baseline work counters and focused
+test commands.
+
 ## Configuration and overrides
 
 Options may appear before or after `doctor`, or at any level of `models download` / `models verify`. Precedence is **CLI > TOML >
