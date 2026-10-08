@@ -1,3 +1,4 @@
+from dataclasses import replace
 from math import isfinite
 
 from music_explorer.application.dto.explorer import (
@@ -91,18 +92,29 @@ class BuildMoodAxisGraph:
 
 
 def _build_mood_axis_graph(raw_meta, records, repository, sparse_k, mood, warm_edges=None):
-    records = tuple(records)
-    available = _available_moods(records)
-    selected = _resolve_mood(mood, available)
-    positioned = []
-    unpositioned = []
-    for record in records:
-        detail = _map_track(record)
-        node, reasons = _axis_node(record, detail, selected)
-        if node is None:
-            unpositioned.append(UnpositionedTrack(record.track_id, record.display_label, tuple(reasons)))
-        else:
-            positioned.append(node)
+    if warm_edges is not None or int(raw_meta.get('schema_version', 0)) >= 8:
+        accumulator = _WarmMoodAxisProjection()
+        for record in records:
+            accumulator.add(record)
+            del record
+        available, selected, positioned, unpositioned = accumulator.finish(mood)
+        track_count = accumulator.track_count
+        # Warm edges are stored authority; no source records are needed below.
+        records = ()
+    else:
+        records = tuple(records)
+        available = _available_moods(records)
+        selected = _resolve_mood(mood, available)
+        positioned = []
+        unpositioned = []
+        for record in records:
+            detail = _map_track(record)
+            node, reasons = _axis_node(record, detail, selected)
+            if node is None:
+                unpositioned.append(UnpositionedTrack(record.track_id, record.display_label, tuple(reasons)))
+            else:
+                positioned.append(node)
+        track_count = len(records)
     positioned_ids = {node.track_id for node in positioned}
     if warm_edges is None:
         graph_status, edges = _warm_graph_edges(repository, raw_meta, positioned_ids, sparse_k, records)
@@ -116,7 +128,7 @@ def _build_mood_axis_graph(raw_meta, records, repository, sparse_k, mood, warm_e
         'application_id': int(raw_meta.get('application_id', 0)),
         'schema_version': int(raw_meta.get('schema_version', 0)),
         'read_policy': str(raw_meta.get('read_policy', 'coherent_in_memory_snapshot')),
-        'track_count': len(records),
+        'track_count': track_count,
         'coordinate_policy': 'fixed-valence-arousal-bpm-v1',
         'normalization_policy': 'native-energy-and-fixed-bpm-20-per-unit-v1',
         'energy_scale': 'Emomusic native valence/arousal regression coordinates retained when model provenance is compatible; no arbitrary clipping or DJ-energy interpretation',
@@ -137,6 +149,47 @@ def _build_mood_axis_graph(raw_meta, records, repository, sparse_k, mood, warm_e
         unpositioned=tuple(unpositioned),
         edges=edges,
     )
+
+
+class _WarmMoodAxisProjection:
+    """Consume warm evidence once, retaining only nodes and optional mood data."""
+
+    def __init__(self):
+        self.track_count = 0
+        self.available_labels = set()
+        self.pending_positioned = []
+        self.unpositioned = []
+
+    def add(self, record):
+        self.track_count += 1
+        self.available_labels.update(_available_moods((record,)))
+        detail = _map_track(record)
+        node, reasons = _axis_node(record, detail, '')
+        if node is None:
+            self.unpositioned.append(UnpositionedTrack(record.track_id, record.display_label, tuple(reasons)))
+            return
+        # Only eligible positioned scores can contribute to the optional strip.
+        # Global labels above still include finite out-of-range/unpositioned data.
+        stage = _stage(record, 'mood')
+        scores = {}
+        provenance = ()
+        if stage is not None and _has_provenance_model(stage.provenance, 'mtg_jamendo_moodtheme-discogs-effnet-1'):
+            scores = {label: score for label, score in (_summary_map(record, 'mood', []) or {}).items()
+                      if _score01(score)}
+            if scores:
+                provenance = stage.provenance
+        self.pending_positioned.append((node, scores, provenance))
+
+    def finish(self, requested_mood):
+        available = tuple(sorted(self.available_labels))
+        selected = _resolve_mood(requested_mood, available)
+        positioned = []
+        for node, scores, provenance in self.pending_positioned:
+            score = scores.get(selected) if selected else None
+            if score is not None:
+                node = replace(node, mood_score=AxisValue(selected, score, score, 'sigmoid-score-[0,1]', provenance))
+            positioned.append(node)
+        return available, selected, positioned, self.unpositioned
 
 
 class FilterMoodAxisGraph:
