@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from fractions import Fraction
 
 from music_explorer.interface_adapters.mood_axis_graph_http import INDEXED_DTO_VERSION
 
@@ -17,7 +18,9 @@ def nearest_rank(values, percentile):
     ordered = sorted(values)
     if not ordered or not 0 < percentile <= 100:
         raise ValueError('Require samples and a percentile in (0, 100]')
-    return ordered[math.ceil(percentile / 100 * len(ordered)) - 1]
+    # Preserve decimal percentile boundaries instead of rounding them in float arithmetic.
+    rank = math.ceil(Fraction(str(percentile)) * len(ordered) / 100)
+    return ordered[rank - 1]
 
 
 def summarize_work(*, raw_rows, validations):
@@ -58,10 +61,14 @@ def _v3_counts(payload):
         if any(not isinstance(value, str) for value in payload[key]):
             raise ValueError('Invalid string table')
     if len(payload['axis']) != 3 or any(
-        not isinstance(axis, dict) or any(not isinstance(axis.get(key), str) for key in ('key', 'label', 'scale'))
+        not isinstance(axis, dict) or any(
+            not isinstance(axis.get(key), str) or not axis[key] for key in ('key', 'label', 'scale')
+        )
         for axis in payload['axis']
     ):
         raise ValueError('Invalid axes')
+    if {axis['key'] for axis in payload['axis']} != {'x', 'y', 'z'}:
+        raise ValueError('Invalid axis keys')
     if any(not isinstance(item, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in item.items())
            for item in payload['provenance_table']):
         raise ValueError('Invalid provenance table')

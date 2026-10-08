@@ -47,7 +47,8 @@ characterization results, not the future `N + H` optimization or a speed claim.
 ## Focused checks
 
 ```sh
-python3 -m unittest -v tests.unit.tools.test_graph_read_benchmark tests.unit.tools.test_graph_read_benchmark_cli
+python3 -m unittest discover -s tests/unit -p 'test_graph_read_benchmark*.py' -v
+python3 -m unittest -v tests.unit.benchmark_tools.test_graph_read_benchmark tests.unit.benchmark_tools.test_graph_read_benchmark_cli
 python3 -m unittest discover -s tests/architecture -v
 python3 -m unittest -v \
   tests.integration.infrastructure.test_graph_feature_evidence_payload_streaming.GraphFeatureEvidencePayloadStreamingTests.test_payload_chunk_query_does_not_request_sql_ordering_in_analyzer_and_standalone_mirrors \
