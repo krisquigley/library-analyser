@@ -20,6 +20,25 @@ class InteractionReportRobustnessTests(unittest.TestCase):
             'p50_ms': 0, 'p95_ms': 0, 'max_ms': 0,
         })
 
+    def test_arbitrary_size_integer_durations_remain_finite(self):
+        huge = 10 ** 400
+        attempts = [{'profile': 'warm', 'outcome': 'ok', 'elapsed_ms': huge}]
+        report = measurement.summarize_interactions(attempts)
+        self.assertEqual(report['profiles']['warm'], {
+            'attempted': 1, 'succeeded': 1, 'failures': {},
+            'p50_ms': huge, 'p95_ms': huge, 'max_ms': huge,
+        })
+
+    def test_arbitrary_size_integer_phase_boundaries_remain_finite(self):
+        huge = 10 ** 400
+        report = measurement.validate_phase_intervals([
+            {'clock': 'browser', 'flow': 'detail', 'phase': 'request',
+             'start_ms': huge, 'end_ms': huge + 1},
+            {'clock': 'browser', 'flow': 'detail', 'phase': 'json',
+             'start_ms': huge + 1, 'end_ms': huge + 2},
+        ])
+        self.assertEqual(report, {'valid': True, 'errors': []})
+
     def test_empty_summary_has_no_invented_profile(self):
         self.assertEqual(measurement.summarize_interactions([]), {
             'attempted': 0, 'samples': [], 'profiles': {},
