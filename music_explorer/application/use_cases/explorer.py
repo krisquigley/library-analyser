@@ -48,6 +48,8 @@ class ListExplorerTrackSummaries:
         query = str(query or '').strip()
         if len(query) > 200:
             raise ValueError('Explorer summary query must be at most 200 characters')
+        if '\x00' in query:
+            raise ValueError('Explorer summary query must not contain NUL characters')
         order = str(order or 'title')
         if order not in self.VALID_ORDERS:
             raise ValueError('Explorer summary order must be title, artist, or id')

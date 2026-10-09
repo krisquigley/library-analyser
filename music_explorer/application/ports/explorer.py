@@ -13,6 +13,8 @@ class ExplorerRepository(Protocol):
 
         Matching is casefolded literal substring search; tokens may match either
         field independently, in any order. Blank queries do not filter results.
+        Visible title fallbacks are searchable; the synthetic `Unknown artist`
+        placeholder is not artist matching evidence.
         """
         ...
     def candidate_snapshot(self) -> tuple[dict[str, object], tuple[ExplorerStoredTrack, ...]]: ...
