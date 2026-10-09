@@ -60,12 +60,67 @@ assert(text().includes('DETAIL A'));
 """
 
 
+REFRESH_DURING_HISTORY_POST = r"""
+await paintInitial();
+const undo=settled(context.applyHistorySelection('/api/undo'));
+assert(loading(),'history intent immediately owns detail loading');
+const refresh=settled(context.refresh());
+await nextRefreshFrame();
+req('/api/state').ok(snapshot('OLD',7,[]));
+await flush();
+assert.deepEqual(ids(),['/api/tracks/OLD'],
+  'refresh during pending history POST must not fetch pre-history detail');
+assert(loading(),'pending history retains scoped loading through refresh');
+assert(!text().includes('DETAIL OLD'),'pending history cannot restore ghost old detail');
+assert((await refresh).ok);
+req('/api/undo').ok(snapshot('PRIOR',8,['ROOT']));
+await nextRefreshFrame();
+req('/api/state',1).ok(snapshot('PRIOR',8,['ROOT']));
+await flush();
+await finish('PRIOR');
+assert((await undo).ok);
+assert.equal(context.getStateForTesting().current_track_id,'PRIOR');
+assert(text().includes('DETAIL PRIOR'));
+assert(!loading());
+"""
+
+REFRESH_AFTER_FAILED_POST = r"""
+await paintInitial();
+const a=select('A');
+req('/api/current',1).fail('Current selection failed');
+await a;await flush();
+assert(errorVisible(),'failed POST exposes scoped error');
+assert.deepEqual(ids(),['/api/tracks/OLD'],'failed intent never authorizes A detail');
+const refresh=settled(context.refresh());
+await nextRefreshFrame();
+req('/api/state').ok(snapshot('OLD',8,[]));
+await flush();
+assert.equal(context.getStateForTesting().current_track_id,'OLD',
+  'explicit refresh after settled POST failure reconciles authoritative selection');
+assert.deepEqual(ids(),['/api/tracks/OLD','/api/tracks/OLD'],
+  'authoritative refresh can recover accepted detail after failed intent');
+await finish('OLD',1);
+assert((await refresh).ok);
+assert(text().includes('DETAIL OLD'));assert(!errorVisible());assert(!loading());
+const b=select('B');
+assert.equal(req('/api/current',2).body.selection_epoch,8,
+  'authoritative recovery refresh synchronizes the current epoch');
+await accept('B',2,8);await finish('B');assert((await b).ok);
+"""
+
+
 class SelectionDetailEpochTests(unittest.TestCase):
     def test_pre_reset_post_cannot_roll_back_next_selection_epoch(self):
         self.run_scenario(PRE_RESET_POST)
 
     def test_refresh_does_not_duplicate_pending_accepted_detail(self):
         self.run_scenario(REFRESH_DURING_ACCEPTED_DETAIL)
+
+    def test_refresh_during_history_post_preserves_history_intent(self):
+        self.run_scenario(REFRESH_DURING_HISTORY_POST)
+
+    def test_refresh_after_failed_post_recovers_authoritative_selection(self):
+        self.run_scenario(REFRESH_AFTER_FAILED_POST)
 
     def run_scenario(self, scenario):
         self.assertTrue(Path(NODE).is_file(), f'Node prerequisite unavailable: {NODE}')
