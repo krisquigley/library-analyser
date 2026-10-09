@@ -23,6 +23,9 @@ let lastRefreshError=null;
 let hasCompletedInitialRefresh=false;
 let trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query:'',order:'title'};
 let trackSummaryRequestSeq=0;
+let trackSummaryStatus='idle';
+let trackSummaryError=null;
+let trackSummaryPending=false;
 let graphLoadState={status:'idle',message:'Graph not loaded. Use the Load graph button when you want the 3D library graph.'};
 function sessionStorageNumber(key){
   try{
@@ -143,11 +146,6 @@ async function refresh(){
     const refreshedState=syncSelectionEpoch(await api('/api/state'));
     if(abortStaleRefresh(refreshToken,token)) return;
     state={...refreshedState,current_track_id:pendingSelectionIntent||refreshedState.current_track_id};
-    setLoadingPhase(refreshToken,'Loading first track page');
-    const list=await api('/api/tracks/summary?limit=100&order=title');
-    if(abortStaleRefresh(refreshToken,token)) return;
-    applyTrackSummaryPage(list,{append:false,query:''});
-    setLoadingPhase(refreshToken,'Rendering first track page',`${(list.tracks||[]).length} of ${list.metadata&&list.metadata.track_count!=null?list.metadata.track_count:'many'} tracks`);
     renderGraphLoadStatus();
     if(abortStaleRefresh(refreshToken,token)) return;
     await refreshSelectionDependent(token);
@@ -169,24 +167,55 @@ function applyTrackSummaryPage(page,options){
   trackSummaryPage={...page,tracks,query:(options&&options.query)||'',order:'title'};
   renderTracks(tracks);
 }
+function wireTrackSearch(){
+  const search=document.getElementById('track-search');
+  if(!search || search.dataset.summarySearchWired) return;
+  search.dataset.summarySearchWired='1';
+  let timer=null;
+  search.oninput=()=>{
+    clearTimeout(timer);
+    ++trackSummaryRequestSeq;
+    trackSummaryPending=false;
+    trackSummaryError=null;
+    const query=search.value.trim();
+    trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query,order:'title'};
+    trackSummaryStatus=query?'debouncing':'idle';
+    renderTracks([]);
+    if(query) timer=setTimeout(()=>loadTrackSummaryPage(query).catch(()=>{}),150);
+  };
+}
 async function loadTrackSummaryPage(query,options){
+  const normalizedQuery=String(query||'').trim();
+  if(!normalizedQuery || trackSummaryPending) return;
   const seq=++trackSummaryRequestSeq;
   const append=!!(options&&options.append);
   const cursor=options&&options.cursor;
-  const normalizedQuery=String(query||'');
-  const params=new URLSearchParams({limit:'100',order:'title'});
-  if(normalizedQuery) params.set('query',normalizedQuery);
+  trackSummaryPending=true;
+  trackSummaryStatus='loading';
+  trackSummaryError=null;
+  renderTracks(trackSummaryPage.tracks);
+  const params=new URLSearchParams({limit:'100',order:'title',query:normalizedQuery});
   if(cursor) params.set('cursor',cursor);
-  const page=await api('/api/tracks/summary?'+params.toString());
-  if(seq!==trackSummaryRequestSeq) return;
-  applyTrackSummaryPage(page,{append,query:normalizedQuery});
+  try{
+    const page=await api('/api/tracks/summary?'+params.toString());
+    if(seq!==trackSummaryRequestSeq) return;
+    trackSummaryPending=false;
+    trackSummaryStatus='ready';
+    applyTrackSummaryPage(page,{append,query:normalizedQuery});
+  }catch(error){
+    if(seq!==trackSummaryRequestSeq) return;
+    trackSummaryPending=false;
+    trackSummaryStatus='error';
+    trackSummaryError={message:String(error&&error.message||error),query:normalizedQuery,append,cursor};
+    renderTracks(trackSummaryPage.tracks);
+  }
 }
 function loadNextTrackSummaryPage(){
   const cursor=trackSummaryPage&&trackSummaryPage.next_cursor;
-  if(!cursor) return Promise.resolve();
+  if(!cursor || trackSummaryPending) return Promise.resolve();
   return loadTrackSummaryPage(trackSummaryPage.query||'',{append:true,cursor});
 }
-function renderTracks(tracks){const root=document.getElementById('tracks'); if(!root) return; const table=document.createElement('table'); table.className='tracks-table'; const caption=document.createElement('caption'); const total=trackSummaryPage&&trackSummaryPage.metadata?trackSummaryPage.metadata.track_count:null; text(caption,total==null?`${tracks.length} tracks`:`Showing ${tracks.length} of ${total}`); table.append(caption); const thead=document.createElement('thead'); const headRow=document.createElement('tr'); for(const label of ['Title','Artist']) headRow.append(text(document.createElement('th'),label)); thead.append(headRow); const tbody=document.createElement('tbody'); const empty=document.createElement('p'); empty.id='track-search-empty'; empty.className='muted'; empty.setAttribute('role','status'); text(empty,'No tracks match your search'); empty.hidden=tracks.length!==0; const rows=tracks.map(t=>{const row=document.createElement('tr'); row.dataset.trackId=t.handle; row.dataset.title=trackTitle(t); row.dataset.artist=trackArtist(t); row.className=t.handle===state.current_track_id?'current':''; const titleCell=document.createElement('td'); const button=document.createElement('button'); text(button,trackTitle(t)); button.onclick=()=>setCurrent(t.handle); if(row.className) button.setAttribute('aria-current','true'); titleCell.append(button); const artistCell=text(document.createElement('td'),trackArtist(t)); row.append(titleCell,artistCell); return row;}); tbody.replaceChildren(...rows); table.append(thead,tbody); const status=document.createElement('p'); status.className='muted'; status.setAttribute('role','status'); status.setAttribute('aria-live','polite'); text(status,total==null?`${tracks.length} tracks loaded`:`Showing ${tracks.length} of ${total}`); const children=[table,status]; if(trackSummaryPage&&trackSummaryPage.next_cursor){const nav=document.createElement('nav'); nav.setAttribute('aria-label','Track list pagination'); const more=document.createElement('button'); more.type='button'; text(more,'Load more tracks'); more.onclick=()=>loadNextTrackSummaryPage().catch(()=>{}); nav.append(more); children.push(nav);} children.push(empty); root.replaceChildren(...children); const search=document.getElementById('track-search'); if(search && !search.dataset.summarySearchWired){search.dataset.summarySearchWired='1'; let timer=null; search.oninput=()=>{clearTimeout(timer); const q=search.value; timer=setTimeout(()=>loadTrackSummaryPage(q).catch(()=>{}),150);};}}
+function renderTracks(tracks){const root=document.getElementById('tracks'); if(!root) return; const table=document.createElement('table'); table.className='tracks-table'; const caption=document.createElement('caption'); const total=trackSummaryPage&&trackSummaryPage.metadata?trackSummaryPage.metadata.track_count:null; text(caption,total==null?`${tracks.length} tracks`:`Showing ${tracks.length} of ${total}`); table.append(caption); const thead=document.createElement('thead'); const headRow=document.createElement('tr'); for(const label of ['Title','Artist']) headRow.append(text(document.createElement('th'),label)); thead.append(headRow); const tbody=document.createElement('tbody'); const empty=document.createElement('p'); empty.id='track-search-empty'; empty.className='muted'; empty.setAttribute('role','status'); text(empty,trackSummaryStatus==='idle'?'Search for tracks to begin':trackSummaryStatus==='ready'?'No tracks match your search':''); empty.hidden=tracks.length!==0 || !['idle','ready'].includes(trackSummaryStatus); const rows=tracks.map(t=>{const row=document.createElement('tr'); row.dataset.trackId=t.handle; row.dataset.title=trackTitle(t); row.dataset.artist=trackArtist(t); row.className=t.handle===state.current_track_id?'current':''; const titleCell=document.createElement('td'); const button=document.createElement('button'); text(button,trackTitle(t)); button.onclick=()=>setCurrent(t.handle); if(row.className) button.setAttribute('aria-current','true'); titleCell.append(button); const artistCell=text(document.createElement('td'),trackArtist(t)); row.append(titleCell,artistCell); return row;}); tbody.replaceChildren(...rows); table.append(thead,tbody); const status=document.createElement('p'); status.className='muted'; status.setAttribute('role','status'); status.setAttribute('aria-live','polite'); text(status,trackSummaryStatus==='loading'||trackSummaryStatus==='debouncing'?'Searching tracks…':trackSummaryStatus==='error'?`Search failed: ${trackSummaryError.message}`:total==null?`${tracks.length} tracks loaded`:`Showing ${tracks.length} of ${total}`); root.setAttribute('aria-busy',trackSummaryPending?'true':'false'); const children=[table,status]; if(trackSummaryPage&&trackSummaryPage.next_cursor){const nav=document.createElement('nav'); nav.setAttribute('aria-label','Track list pagination'); const more=document.createElement('button'); more.type='button'; more.disabled=trackSummaryPending; text(more,'Load more tracks'); more.onclick=()=>loadNextTrackSummaryPage().catch(()=>{}); nav.append(more); children.push(nav);} if(trackSummaryError){const retry=document.createElement('button'); retry.type='button'; text(retry,'Retry search'); const failed=trackSummaryError; retry.onclick=()=>loadTrackSummaryPage(failed.query,{append:failed.append,cursor:failed.cursor}).catch(()=>{}); children.push(retry);} children.push(empty); root.replaceChildren(...children); wireTrackSearch();}
 function filterTrackRows(query,tbody,empty){const needle=String(query||'').trim().toLowerCase(); let shown=0; for(const row of tbody.children){const haystack=`${row.dataset.title||''} ${row.dataset.artist||''}`.toLowerCase(); row.hidden=!!needle && !haystack.includes(needle); if(!row.hidden) shown++;} if(empty) empty.hidden=shown!==0;}
 function renderGraphLoadStatus(){const root=document.getElementById('graph-load-status')||document.getElementById('controls'); if(!root) return; let panel=document.getElementById('graph-load-status'); if(!panel){panel=document.createElement('section'); panel.id='graph-load-status'; panel.className='graph-load-status'; root.append(panel);} panel.replaceChildren(); panel.append(text(document.createElement('h3'),'Library graph')); const p=document.createElement('p'); text(p,graphLoadState.message||'Graph not loaded. Use the Load graph button when you want the 3D library graph.'); panel.append(p); if(graphLoadState.status==='idle'||graphLoadState.status==='error'||graphLoadState.status==='ready'){const button=document.createElement('button'); button.id='load-graph'; button.type='button'; text(button,graphLoadState.status==='error'?'Retry graph':graphLoadState.status==='ready'?'Reload graph':'Load graph'); button.onclick=()=>loadGraph().catch(()=>{}); panel.append(button);} if(graphLoadState.status==='ready') appendM3UDownloadControls(panel); else if(graphLoadState.status==='loading'||graphLoadState.status==='rendering'){const busy=document.createElement('p'); busy.setAttribute('role','status'); busy.setAttribute('aria-live','polite'); text(busy,graphLoadState.status==='loading'?'Loading graph…':'Rendering graph…'); panel.append(busy);}}
 async function loadGraph(){const seq=(graphLoadState.requestSeq||0)+1; graphLoadState={...graphLoadState,status:'loading',message:'Loading graph. The track list, search, history, and detail remain usable.',requestSeq:seq}; renderGraphLoadStatus(); try{const controlQuery=graphQueryFromControls(); const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v3'); if(seq!==graphLoadState.requestSeq) return; graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); graphLoadState={...graphLoadState,status:'rendering',message:`Rendering ${visibleGraph.nodes.length} positioned tracks`,requestSeq:seq}; renderGraphLoadStatus(); await nextFrame(); if(seq!==graphLoadState.requestSeq) return; renderMap(visibleGraph); const statusCopy=graphStatusMessage(graphModel.metadata.graph_status,visibleGraph.nodes.length); graphLoadState={...graphLoadState,status:statusCopy.status,message:statusCopy.message,requestSeq:seq}; renderGraphLoadStatus();}catch(error){if(seq!==graphLoadState.requestSeq) return; graphLoadState={...graphLoadState,status:'error',message:`Graph failed: ${error&&error.message?error.message:error}`,requestSeq:seq}; renderGraphLoadStatus(); throw error;}}
@@ -527,7 +556,7 @@ function clearGraphFilters(){selectedGraphControls={...selectedGraphControls,bpm
 function buildGraphControls(root){const moodFs=document.createElement('fieldset'); moodFs.id='mood-tracker-controls'; const moodLegend=document.createElement('legend'); text(moodLegend,'Selected mood strength'); moodFs.append(moodLegend); const mood=document.createElement('select'); mood.id='selected-mood'; mood.onchange=()=>{selectedGraphControls.mood=mood.value; if(graphLoadState.status==='ready') return loadGraph(); renderGraphLoadStatus();}; moodFs.append(text(document.createElement('label'),'Mood tracker score label '),mood); root.append(moodFs); const fs=document.createElement('fieldset'); fs.id='graph-controls'; const legend=document.createElement('legend'); text(legend,'Graph filters'); fs.append(legend); const min=document.createElement('input'); min.id='bpm-min'; min.type='number'; min.placeholder='min BPM'; min.setAttribute('aria-label','Minimum BPM'); const max=document.createElement('input'); max.id='bpm-max'; max.type='number'; max.placeholder='max BPM'; max.setAttribute('aria-label','Maximum BPM'); for(const input of [min,max]) input.onchange=()=>{selectedGraphControls.bpmMin=min.value===''?null:Number(min.value); selectedGraphControls.bpmMax=max.value===''?null:Number(max.value); applyCurrentGraphFilters();}; fs.append(min,max); const genres=document.createElement('select'); genres.id='genre-filter'; genres.multiple=true; genres.size=4; genres.onchange=()=>{selectedGraphControls.genres=Array.from(genres.selectedOptions).map(o=>o.value); applyCurrentGraphFilters();}; fs.append(text(document.createElement('label'),' Genres ANY '),genres); const clear=document.createElement('button'); clear.id='clear-graph-filters'; clear.type='button'; text(clear,'Clear graph filters'); clear.onclick=()=>{clearGraphFilters(); min.value=''; max.value=''; for(const option of genres.options||genres.children||[]) option.selected=false; applyCurrentGraphFilters();}; fs.append(clear); root.append(fs);}
 function syncGraphControlOptions(model){const mood=document.getElementById('selected-mood'); if(mood){const current=selectedGraphControls.mood||model.selectedMood||''; mood.replaceChildren(...(model.availableMoods.length?model.availableMoods:['']).map(m=>{const o=document.createElement('option'); o.value=m; text(o,m||'No supported moods'); o.selected=m===current; return o;})); selectedGraphControls.mood=current&&model.availableMoods.includes(current)?current:(model.selectedMood||'');} const genres=document.getElementById('genre-filter'); if(genres){const selected=new Set(selectedGraphControls.genres||[]); genres.replaceChildren(...model.genreOptions.map(g=>{const o=document.createElement('option'); o.value=g; text(o,g); o.selected=selected.has(g); return o;}));}}
 function wireCanvas(){/* 3d-force-graph owns orbit/pick controls. */}
-if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); renderGraphLoadStatus(); wireCanvas(); refresh().catch(()=>{});}
+if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); renderTracks([]); renderGraphLoadStatus(); wireCanvas(); refresh().catch(()=>{});}
 function setGraphModelForTesting(model){graphModel=model;}
 function setStateForTesting(next){state={...state,...next};}
 function setVisibleGraphForTesting(model){visibleGraph=model;}

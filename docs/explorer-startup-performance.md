@@ -4,11 +4,11 @@ This note defines the public-safe startup performance contract for the Track Jou
 
 ## User-visible goal
 
-For large libraries, the first usable explorer view is the track list and basic controls. The browser must be able to show that view from a compact summary page without waiting for graph construction or full per-track evidence parsing.
+For large libraries, the first usable explorer view is an empty search sidebar and basic controls. Startup, refresh, undo and reset do not fetch a list merely to fill the sidebar. A nonblank search requests a bounded compact summary page without waiting for graph construction or full per-track evidence parsing; blank or whitespace input clears results immediately. Loading, no matches and retryable search/page errors are scoped to the sidebar. Pagination is explicit and stale query/page responses cannot replace newer search intent.
 
 Product decision: the graph is manually requested. The first view shows a visible **Load graph** button; the browser must not request `/api/mood-axis-graph` on initial startup at any library size. Choosing a mood before the graph is loaded only stores that choice for the eventual manual load. Clicking the button starts graph loading with independent loading/error/retry state while the compact list, search, selection, history, and detail interactions remain usable. After the graph is ready, a user-initiated mood change reloads the graph for the selected mood while preserving the existing layout/camera when the returned graph geometry is unchanged.
 
-The existing full-library endpoints remain compatibility endpoints. New startup work should use a paginated summary endpoint for the initial list, then load graph data only after the user activates the graph button.
+The existing full-library endpoints and blank-query summary API remain compatibility endpoints. The browser uses the paginated summary endpoint only for nonblank searches, then loads graph data only after the user activates the graph button. Automatic graph loading is a separate issue #70 follow-up, not part of PR1.
 
 ## Public synthetic benchmark methodology
 
@@ -26,7 +26,7 @@ The benchmark then starts the local explorer server on loopback and records cold
 GET /api/tracks/summary?limit=100&order=title
 ```
 
-The browser smoke portion is opt-in with `RUN_BROWSER_SMOKE=1`. When Playwright/Chromium is available, it verifies that a generated track button and the search control become usable without any graph request, checks simple search/selection interactions before graph loading, then clicks **Load graph** and verifies independent graph loading/error/retry behavior where feasible.
+The browser smoke portion is opt-in with `RUN_BROWSER_SMOKE=1`. When Playwright/Chromium is available, it verifies that the search control becomes usable with no initial sidebar or graph request, then searches for generated tracks and checks selection interactions before graph loading, then clicks **Load graph** and verifies independent graph loading/error/retry behavior where feasible.
 
 ## Startup targets
 
@@ -34,9 +34,9 @@ The browser smoke portion is opt-in with `RUN_BROWSER_SMOKE=1`. When Playwright/
 | --- | --- |
 | Summary page size | Each 100-row JSON page is <= 150 KiB for 5k and 20k synthetic libraries. |
 | Summary API bounds | `limit` is bounded, query text is bounded, order is explicit, and the response carries `next_cursor` when another page exists. |
-| Startup data shape | Track-list startup JSON contains only handle, title, artist, display label, available-location count, metadata, limit, cursor, query, and order. |
-| Heavy reads | Initial list loading does not call full `candidate_snapshot`, does not read full track details, and does not parse stored stage `result` payloads. |
-| First usable browser view | With a browser available, track list/search controls render and remain interactive without requesting the graph; graph loading starts only after the user clicks **Load graph**, with visible loading/error/retry state. |
+| Search data shape | Nonblank-search summary JSON contains only handle, title, artist, display label, available-location count, metadata, limit, cursor, query, and order. |
+| Heavy reads | Startup issues no sidebar list request. Search summaries do not call full `candidate_snapshot`, read full track details, or parse stored stage `result` payloads. |
+| First usable browser view | With a browser available, the empty sidebar/search controls render and remain interactive without a sidebar list request or graph request; graph loading starts only after the user clicks **Load graph**, with visible loading/error/retry state. |
 
 ## Baseline aggregate observations
 
@@ -73,4 +73,4 @@ Use Podman for any containerized execution in this repository. Do not use Docker
 - Browser timing is intentionally opt-in because CI runners may not have Chromium or WebGL available.
 - The optional browser check can measure interaction latency before graph loading and, when feasible, while a user-triggered graph request is pending. It does not fully measure responsiveness during CPU-bound graph layout/rendering after a large graph response arrives.
 - The current graph path can take more than 45 seconds of CPU-bound work on large libraries. The manual button keeps that work outside initial startup, but graph speed remains a known limitation and needs separate future graph algorithm and rendering work.
-- Compatibility endpoints may remain slower or larger; the startup contract applies to the summary path used for initial rendering.
+- Compatibility endpoints may remain slower or larger; the bounded-response contract applies to the summary path used for nonblank search results.
