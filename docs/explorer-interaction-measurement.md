@@ -96,6 +96,16 @@ synthetic 5k/20k v6 summary fixtures; those are not a substitute for v10 evidenc
 coverage. Browser tests skipped without opt-in/dependencies are **not** browser
 acceptance evidence.
 
+## Architectural boundary
+
+These are outer measurement-tool observations, not domain or application
+business rules. The public tools module is a composition facade: pure report
+functions perform no I/O, fixture details are separated, and the existing
+nearest-rank helper is reused. No production inner layer imports tools. If future
+report policy becomes an application use case, move those pure rules inward and
+provide explicit ports rather than importing this tools facade into application
+or domain code.
+
 ## Explicitly deferred to PR4b and subsequent diagnostic delivery
 
 - Reproducible rich v10 5k/20k generator, active/excluded/unavailable populations,

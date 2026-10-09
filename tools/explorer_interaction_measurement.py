@@ -21,7 +21,8 @@ __all__ = [
 
 
 def _finite_number(value):
-    return type(value) in (int, float) and math.isfinite(value)
+    # Python integers are finite without converting them to bounded floats.
+    return type(value) is int or (type(value) is float and math.isfinite(value))
 
 
 def summarize_interactions(attempts):
