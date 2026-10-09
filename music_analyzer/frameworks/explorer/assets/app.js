@@ -19,6 +19,7 @@ let refreshRequestSeq=0;
 let selectionDetailRequestSeq=0;
 let selectionDetailFlight=null;
 let pendingSelectionIntent=null;
+let pendingSelectionOperation=null;
 let loadingRefreshToken=0;
 let lastRefreshError=null;
 let trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query:'',order:'title'};
@@ -58,18 +59,21 @@ function syncSelectionEpoch(snapshot){
   if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
   return snapshot;
 }
-function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null;}
+function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null;}
 async function applyHistorySelection(path){
   const token=++selectionRequestSeq;
   pendingSelectionIntent=null;
+  pendingSelectionOperation=token;
   renderDetailLoading();
   try{
     const posted=await api(path,{method:'POST'});
     if(token!==selectionRequestSeq) return;
     state=syncSelectionEpoch(posted);
+    pendingSelectionOperation=null;
     await refresh();
   }catch(error){
     if(token!==selectionRequestSeq) return;
+    pendingSelectionOperation=null;
     renderDetailError(error);
   }
 }
@@ -141,7 +145,7 @@ function renderDetailError(error,retry){
   }
 }
 async function refreshSelectionDependent(token){
-  if(token!==selectionRequestSeq || pendingSelectionIntent!==null) return;
+  if(token!==selectionRequestSeq || pendingSelectionOperation!==null || pendingSelectionIntent!==null) return;
   const selectedId=state.current_track_id;
   if(selectionDetailFlight && selectionDetailFlight.token===token && selectionDetailFlight.id===selectedId) return selectionDetailFlight.promise;
   const detailToken=++selectionDetailRequestSeq;
@@ -159,7 +163,7 @@ async function refreshSelectionDependent(token){
     }catch(error){
       if(!ownsDetail()) return;
       renderDetailError(error,()=>{
-        if(!ownsDetail() || pendingSelectionIntent!==null) return;
+        if(!ownsDetail() || pendingSelectionOperation!==null || pendingSelectionIntent!==null) return;
         return refreshSelectionDependent(token);
       });
     }finally{
@@ -172,6 +176,7 @@ async function setCurrent(id){
   const token=++selectionRequestSeq;
   const postToken=nextSelectionPostSeq();
   pendingSelectionIntent=id;
+  pendingSelectionOperation=token;
   state={...state,current_track_id:id};
   renderDetailLoading();
   updateSelectedTrackVisuals();
@@ -180,9 +185,12 @@ async function setCurrent(id){
     if(token!==selectionRequestSeq) return;
     state=syncSelectionEpoch(posted);
     pendingSelectionIntent=null;
+    pendingSelectionOperation=null;
     await refreshSelectionDependent(token);
   }catch(error){
     if(token!==selectionRequestSeq) return;
+    pendingSelectionOperation=null;
+    pendingSelectionIntent=null;
     // An unaccepted intent never authorizes a detail GET, including via retry.
     renderDetailError(error);
   }
@@ -191,7 +199,7 @@ function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGrap
 async function refresh(){
   const refreshToken=++refreshRequestSeq;
   const token=selectionRequestSeq;
-  const postPending=pendingSelectionIntent!==null;
+  const operationPending=pendingSelectionOperation!==null;
   try{
     setLoadingPhase(refreshToken,'Preparing library view');
     await nextFrame();
@@ -199,11 +207,11 @@ async function refresh(){
     setLoadingPhase(refreshToken,'Loading library state');
     const refreshedState=await api('/api/state');
     if(abortStaleRefresh(refreshToken,token)) return;
-    // A refresh begun during POST cannot reconcile its older state snapshot.
-    if(!postPending && pendingSelectionIntent===null) state=syncSelectionEpoch(refreshedState);
+    // A refresh begun during a selection/history POST cannot reconcile its older snapshot.
+    if(!operationPending && pendingSelectionOperation===null) state=syncSelectionEpoch(refreshedState);
     renderGraphLoadStatus();
     if(abortStaleRefresh(refreshToken,token)) return;
-    if(!postPending) await refreshSelectionDependent(token);
+    if(!operationPending) await refreshSelectionDependent(token);
     if(abortStaleRefresh(refreshToken,token)) return;
     if(graphLoadState.status==='ready') renderMap(visibleGraph);
     clearLoading(refreshToken);
