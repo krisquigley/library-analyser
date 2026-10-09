@@ -45,6 +45,14 @@ class ExplorerSummarySearchApplicationContractTests(unittest.TestCase):
                     ListExplorerTrackSummaries(repository).execute(**arguments)
                 self.assertEqual(repository.calls, [])
 
+    def test_nul_queries_are_rejected_before_repository_io(self):
+        for query in ('Northern \x00 Mira', '\x00', 'Northern\x00 Mira'):
+            with self.subTest(query=query):
+                repository = SummaryRepositorySpy()
+                with self.assertRaisesRegex(ValueError, 'must not contain NUL characters'):
+                    ListExplorerTrackSummaries(repository).execute(query=query)
+                self.assertEqual(repository.calls, [])
+
     def test_maximum_query_length_and_page_size_remain_accepted(self):
         repository = SummaryRepositorySpy()
         ListExplorerTrackSummaries(repository).execute(limit=100, query='x' * 200, order='id')

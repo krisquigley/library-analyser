@@ -67,6 +67,20 @@ class ExplorerSummarySearchContractTests(unittest.TestCase):
                 self.assert_handles(page, self.handles[:2])
                 self.assertIsNone(page['next_cursor'])
 
+    def test_nul_token_is_explicitly_rejected_instead_of_silently_matching(self):
+        for endpoint, parameter in (('/api/tracks/summary', 'query'),
+                                    ('/api/track-summaries', 'q')):
+            for query in ('Northern \x00 Mira', '\x00', 'Northern\x00 Mira'):
+                with self.subTest(endpoint=endpoint, query=query):
+                    with self.assertRaises(HTTPError) as raised:
+                        self.get_page(endpoint, **{parameter: query, 'order': 'id'})
+                    error = raised.exception
+                    self.addCleanup(error.close)
+                    self.assertEqual(error.code, 400)
+                    self.assertEqual(error.headers.get_content_type(), 'application/json')
+                    self.assertEqual(json.loads(error.read().decode('utf-8')),
+                                     {'error': 'Explorer summary query must not contain NUL characters'})
+
     def test_backslash_is_literal_not_a_like_escape(self):
         page = self.get_page(query=r'folder\mix', limit=2, order='id')
         self.assert_handles(page, [self.handles[5]])
