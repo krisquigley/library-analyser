@@ -3,18 +3,20 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Track Journey Explorer</title><link rel="stylesheet" href="/style.css"></head>
 <body>
 <div id="graph-viewport" aria-label="Library-wide 3D graph"><canvas id="map"></canvas></div>
-<section id="loading-surface" class="loading-surface refresh" aria-busy="false" aria-labelledby="loading-title">
-  <div class="loading-card">
-    <h2 id="loading-title">Loading library</h2>
-    <p id="loading-status" role="status" aria-live="polite">Preparing library view</p>
-    <p id="loading-error" role="alert" hidden></p>
-    <button id="loading-retry" type="button" style="pointer-events:auto" hidden>Retry loading library</button>
-  </div>
-</section>
 <main class="overlay">
   <div class="left-dock">
     <header class="brand"><h1>Track Journey Explorer</h1><p>Personal read-only localhost view</p></header>
-    <details id="tracks-panel" class="panel" open><summary>Tracks</summary><label for="track-search">Search tracks by title or artist</label><input id="track-search" type="search" autocomplete="off"><div id="tracks"></div></details>
+    <details id="tracks-panel" class="panel" open><summary>Tracks</summary><label for="track-search">Search tracks by title or artist</label><input id="track-search" type="search" autocomplete="off">
+      <section id="loading-surface" class="loading-surface refresh" aria-busy="false" aria-labelledby="loading-title">
+        <div class="loading-card">
+          <h2 id="loading-title">Loading library</h2>
+          <p id="loading-status" role="status" aria-live="polite">Preparing library view</p>
+          <p id="loading-error" role="alert" hidden></p>
+          <button id="loading-retry" type="button" style="pointer-events:auto" hidden>Retry loading library</button>
+        </div>
+      </section>
+      <div id="tracks"></div>
+    </details>
     <details id="candidate-panel" class="panel" open><summary>Candidates</summary><p class="muted">Anchor-relative candidates use the selected track. The 3D library graph loads automatically; search and track detail remain usable while it loads.</p><div id="controls"></div></details>
   </div>
   <div class="right-dock">
