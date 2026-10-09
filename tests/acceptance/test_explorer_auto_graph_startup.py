@@ -170,6 +170,22 @@ if(!graphRequests().length){const manual=context.document.getElementById('load-g
 await flush();assertStartupGraph();graphGate.resolve(response(graphDto));await flush();assertGraphRendered();
 """)
 
+    def test_ready_reload_control_requests_only_graph_and_preserves_m3u(self):
+        self.run_browser(r"""
+boot();await flush();assertStartupGraph();graphGate.resolve(response(graphDto));await flush();assertGraphRendered();
+const reload=context.document.getElementById('reload-graph');
+assert(reload&&reload.tagName==='BUTTON','ready graph preserves an explicit Reload graph control');
+assert.equal(reload.innerText.trim(),'Reload graph');
+const before=requests.length;reload.onclick();await flush();
+assert.deepEqual(requests.slice(before).map(r=>r.url.pathname),['/api/mood-axis-graph'],
+  'explicit ready reload requests graph only, not state, search, detail, or M3U');
+assert.equal(graphRequests().length,2,'one explicit reload adds exactly one graph request');
+assert.equal(graphRequests()[1].url.searchParams.get('contract'),'v3');
+assertGraphRendered();assertNoInitialList();
+assert(!walk(roots['graph-load-status']).some(n=>n.tagName==='BUTTON'&&/^load graph$/i.test(n.innerText.trim())),
+  'ready reload does not reintroduce manual startup Load graph');
+""")
+
 
 if __name__ == '__main__':
     unittest.main()

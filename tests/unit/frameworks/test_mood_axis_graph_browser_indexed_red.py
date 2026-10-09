@@ -86,7 +86,7 @@ app.loadGraph().then(() => {throw new Error('loadGraph should reject when the ex
   assert.match(requested[0], /^\/api\/mood-axis-graph\?/);
   assert(requested[0].includes('contract=v3'), 'browser must explicitly request indexed v3 graphs');
   assert(!requested[0].includes('contract=v2'), 'browser must not request compact v2 once v3 is required');
-  const retry = elements['load-graph'];
+  const retry = elements['retry-graph'];
   assert(retry && /Retry graph/.test(retry.textContent), 'error state must render an explicit retry control');
   assert.match(elements['graph-load-status'].children.map(child => child.textContent || '').join(' '), /Graph failed/);
 }).catch(error => {console.error(error && error.stack || error); process.exit(1);});

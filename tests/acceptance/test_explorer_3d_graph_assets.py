@@ -1819,8 +1819,8 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
                 load_graph_source = source[source.index('async function loadGraph()'):source.index('function renderInitialDetail')]
                 self.assertIn("const controlQuery=graphQueryFromControls()", load_graph_source)
                 self.assertIn("const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v3')", load_graph_source)
-                self.assertIn('load-graph', source)
-                self.assertIn('Load graph', source)
+                self.assertNotIn("button.id='load-graph'", source)
+                self.assertNotIn("'Load graph'", source)
                 self.assertIn('loadGraph', source[source.index('module.exports'):])
                 self.assertIn('getStateForTesting', source[source.index('module.exports'):])
 
@@ -2024,9 +2024,7 @@ global.fetch = async path => {
   app.setStateForTesting({current_track_id:'track-start'});
   app.renderGraphLoadStatus();
   assert(!requests.some(path => path.includes('m3u')), 'rendering graph controls must not auto-fetch a playlist');
-  const load = elements['graph-load-status'].querySelector('#load-graph');
-  assert(load, 'graph status exposes Load graph before explicit graph request');
-  const loading = load.onclick();
+  const loading = app.loadGraph();
   runFrames();
   await loading;
   assert(!requests.some(path => path.includes('m3u')), 'loading/rendering the graph must not auto-fetch a playlist');
