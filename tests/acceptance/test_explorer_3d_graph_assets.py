@@ -825,7 +825,9 @@ async function flushSummarySearch(){for(let i=0;i<8;i++) await Promise.resolve()
   assert(tracks.innerText.includes('No tracks match your search'));
   search.value = ''; search.oninput(); await flushSummarySearch();
   table = tracks.children[0]; tbody = table.children[2];
-  assert.strictEqual(tbody.children.length, 3);
+  assert.strictEqual(tbody.children.length, 0, 'clearing search returns to empty idle sidebar');
+  assert(tracks.innerText.includes('Search for tracks to begin'));
+  assert(!requested.some(path => !new URL(path, 'http://example.test').searchParams.get('query')), 'clear never fetches unfiltered data');
 })().catch(error=>{console.error(error); process.exit(1);});
 """
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
@@ -867,14 +869,14 @@ global.fetch = async path => {
 };
 (async()=>{
   app.setStateForTesting({current_track_id:'selected'});
-  await app.loadTrackSummaryPage('');
-  assert.deepStrictEqual(fetches, ['/api/tracks/summary?limit=100&order=title']);
+  await app.loadTrackSummaryPage('alpha');
+  assert.deepStrictEqual(fetches, ['/api/tracks/summary?limit=100&order=title&query=alpha']);
   assert(tracks.innerText.includes('Showing 1 of 102'));
   let loadMore = tracks.children.find(child => child.tagName === 'NAV').children[0];
   assert.strictEqual(loadMore.textContent, 'Load more tracks');
   await loadMore.onclick();
   assert(fetches.at(-1).includes('cursor=after-100'));
-  assert.strictEqual(fetches.at(-1), '/api/tracks/summary?limit=100&order=title&cursor=after-100');
+  assert.strictEqual(fetches.at(-1), '/api/tracks/summary?limit=100&order=title&query=alpha&cursor=after-100');
   const tbody = tracks.children[0].children[2];
   assert.deepStrictEqual(tbody.children.map(row => row.dataset.title), ['Title 00000','Title 00100','Title 00101']);
   assert.strictEqual(tbody.children[1].className, 'current');
@@ -914,11 +916,12 @@ global.fetch = async path => {
   return {ok:true, json:async()=>({tracks:[{handle:'first', title:'Alpha', artist:'Artist'}], metadata:{track_count:101}, next_cursor:'after-100'})};
 };
 (async()=>{
-  await app.loadTrackSummaryPage('');
+  await app.loadTrackSummaryPage('alpha');
   const loadMore = tracks.children.find(child => child.tagName === 'NAV').children[0];
   const staleNext = loadMore.onclick();
   await Promise.resolve();
-  await app.loadTrackSummaryPage('needle');
+  search.value = 'needle'; search.oninput();
+  await new Promise(resolve => setTimeout(resolve, 180));
   next.resolve({ok:true, json:async()=>({tracks:[{handle:'stale', title:'Stale Old Page', artist:'Wrong'}], metadata:{track_count:101}, next_cursor:null})});
   await staleNext;
   const tbody = tracks.children[0].children[2];
@@ -1293,6 +1296,7 @@ function element(tag){return {tag, id:'', textContent:'', className:'', dataset:
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
 context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 vm.runInContext("state={current_track_id:'server-current'}; selectionEpoch=1; graphModel={nodes:[{id:'client-click',moodScore:null},{id:'server-current',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
+context.renderTracks([{handle:'client-click', display_label:'Client Click'},{handle:'server-current', display_label:'Server Current'}]); // retained prior search results
 await context.setCurrent('client-click');
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-current', 'rejected POST restores authoritative server selection');
 await context.refresh();
@@ -1300,6 +1304,7 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-c
 assert.deepStrictEqual(elements.tracks.children[0].children[2].children.map(row => row.className), ['', 'current']);
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'detail follows authoritative server selection after refresh');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'refresh does not request removed candidate list');
+assert(!fetches.some(path => path.startsWith('/api/tracks/summary')), 'refresh preserves existing search rows');
 assert(fetches.includes('/api/current') && fetches.includes('/api/state'));
 })().catch(error => { console.error(error); process.exit(1); });
 """
@@ -1405,13 +1410,12 @@ async function waitForFetch(path){for(let i=0;i<20 && !fetches.includes(path);i+
 function deferred(){let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};}
 function response(payload){return {ok:true, json:async()=>payload};}
 function point(id){return {id, label:id.toUpperCase(), title:id, artist:'Artist', x:{raw:0, normalized:0.5, scale:'native', label:'valence'}, y:{raw:0, normalized:0.5, scale:'native', label:'arousal'}, z:{raw:120, normalized:0.5, scale:'raw', label:'BPM'}, mood_score:{label:'calm', raw:0.5, normalized:0.5}, genres:[]};}
-const refreshState = deferred(), refreshList = deferred();
+const refreshState = deferred();
 const detailA = deferred();
 const fetches = [];
 context.fetch = (path, options={}) => {
   fetches.push(String(path));
   if (path === '/api/state') return refreshState.promise.then(payload => response(payload));
-  if (path === '/api/tracks/summary?limit=100&order=title') return refreshList.promise.then(payload => response(payload));
   if (path === '/api/current') return Promise.resolve(response({current_track_id:'b'}));
   if (path === '/api/tracks/b') return Promise.resolve(response({handle:'b', display_label:'Bee', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}}));
   if (path === '/api/tracks/a') return detailA.promise.then(payload => response(payload));
@@ -1428,11 +1432,10 @@ assert.deepStrictEqual(fetches, [], 'full refresh waits for the initial paint fr
 runNextFrame();
 await waitForFetch('/api/state');
 refreshState.resolve({current_track_id:'a'});
-await waitForFetch('/api/tracks/summary?limit=100&order=title');
-assert(fetches.includes('/api/tracks/summary?limit=100&order=title'), 'stale refresh reached the list request');
+await waitForFetch('/api/tracks/a');
+assert(fetches.includes('/api/tracks/a'), 'stale refresh reached selected detail request');
 const latest = context.setCurrent('b');
 await latest;
-refreshList.resolve({tracks:[{handle:'a', display_label:'Aye'}]});
 detailA.resolve({handle:'a', display_label:'A stale', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
 await stale;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'stale refresh state must not overwrite newer selection state');
@@ -1440,7 +1443,7 @@ assert.deepStrictEqual(elements.tracks.children.map(row => row.dataset.trackId),
 assert.deepStrictEqual(rendered, [], 'stale refresh must not render stale graph data');
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'stale refresh detail must not overwrite latest selection detail');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'selection does not request removed candidate list');
-assert(fetches.includes('/api/tracks/summary?limit=100&order=title'));
+assert(!fetches.some(path => path.startsWith('/api/tracks/summary')), 'refresh never refills sidebar');
 })().catch(error => { console.error(error); process.exit(1); });
 """;
         subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
@@ -1531,6 +1534,7 @@ context.document = {createElement: element, createTextNode(value){return {textCo
 const rendered = [];
 context.renderMap = data => rendered.push(data.nodes.map(n => n.id));
 vm.runInContext('renderMap = globalThis.renderMap', context);
+context.renderTracks([{handle:'a', display_label:'Aye'},{handle:'b', display_label:'Bee'}]); // retained prior search results
 const click = context.setCurrent('b');
 await Promise.resolve();
 const staleRefresh = context.refresh();
@@ -1542,6 +1546,7 @@ await click;
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'POST response should remain latest selected track despite intervening refresh');
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'latest click detail must render after POST resolves');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'click does not request removed candidate list');
+assert(!fetches.some(path => path.startsWith('/api/tracks/summary')), 'refresh preserves existing search rows');
 assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
 })().catch(error => { console.error(error); process.exit(1); });
 """;
@@ -1802,12 +1807,12 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
 
 
 
-    def test_browser_startup_source_uses_compact_summary_before_graph(self):
+    def test_browser_startup_source_leaves_sidebar_empty_until_search(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 refresh_source = source[source.index('async function refresh()'):source.index('function trackTitle')]
-                self.assertIn("const list=await api('/api/tracks/summary?limit=100&order=title')", refresh_source)
+                self.assertNotIn("/api/tracks/summary", refresh_source)
                 self.assertNotIn("/api/tracks?limit=all", refresh_source)
                 self.assertNotIn("/api/mood-axis-graph", refresh_source, 'startup refresh must not request graph before user clicks Load graph')
                 self.assertIn('renderGraphLoadStatus()', refresh_source)
@@ -1820,7 +1825,7 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
                 self.assertIn('getStateForTesting', source[source.index('module.exports'):])
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for compact summary startup tests')
-    def test_initial_refresh_renders_summary_list_and_detail_before_graph_resolves(self):
+    def test_initial_refresh_leaves_search_empty_and_renders_selected_detail_without_graph(self):
         script = r"""
 const assert = require('assert');
 const app = require(process.argv[1]);
@@ -1854,15 +1859,15 @@ global.fetch = path => {
   return Promise.reject(new Error('unexpected fetch '+path));
 };
 (async () => {
+  app.renderTracks([]); // boot now initializes search before refresh
   const refresh = app.refresh();
   runNextFrame();
   await refresh;
-  assert(fetches.includes('/api/tracks/summary?limit=100&order=title'), 'initial list uses compact summary API');
+  assert(!fetches.some(path => path.startsWith('/api/tracks/summary')), 'initial sidebar stays empty until search');
   assert(!fetches.includes('/api/tracks?limit=all'), 'initial list must not use unbounded full track API');
   assert(!fetches.includes('/api/mood-axis-graph'), 'startup must not decide to trigger the graph for large libraries');
   const rows = elements.tracks.children[0].children[2].children;
-  assert.deepStrictEqual(rows.map(row => row.dataset.trackId), ['visible']);
-  assert.strictEqual(rows[0].className, '', 'off-page selection is preserved without pretending visible row is current');
+  assert.deepStrictEqual(rows.map(row => row.dataset.trackId), [], 'selected detail does not populate sidebar');
   assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'selected detail renders without graph data');
   assert.strictEqual(app.getStateForTesting().current_track_id, 'off-page');
   assert.deepStrictEqual(app.getStateForTesting().history, ['previous']);
@@ -1905,8 +1910,8 @@ global.fetch = async path => { calls.push(String(path)); return {ok:true, json: 
   assert.match(elements['loading-status'].textContent, /Preparing/);
   assert.deepStrictEqual(calls, [], 'loading status must be paintable before network fetches start');
   runNextFrame();
-  await waitFor(() => calls.length === 2, 'refresh should fetch state and compact summary only after the first frame');
-  assert.deepStrictEqual(calls, ['/api/state','/api/tracks/summary?limit=100&order=title']);
+  await waitFor(() => calls.length === 1, 'refresh should fetch only state after the first frame');
+  assert.deepStrictEqual(calls, ['/api/state']);
   assert(!calls.includes('/api/mood-axis-graph'), 'refresh must not load graph before explicit user click');
   await promise;
   assert(elements['library-loading'].classList.contains('done'));
@@ -1945,13 +1950,12 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
   pending[0].resolve(ok({current_track_id:'old'}));
   await first;
   assert(!elements['library-loading'].classList.contains('done'), 'stale refresh must not hide newer loading');
-  pending[1].resolve(ok({current_track_id:null})); await waitForPending(3);
-  pending[2].resolve(ok({tracks:[]})); await second;
+  pending[1].resolve(ok({current_track_id:null})); await second;
   assert(elements['library-loading'].classList.contains('done'), 'newest refresh may clear loading');
   const failing = app.refresh().catch(error => error);
   runNextFrame();
-  await waitForPending(4);
-  pending[3].reject(new Error('network down'));
+  await waitForPending(3);
+  pending[2].reject(new Error('network down'));
   const error = await failing;
   assert.match(error.message, /network down/);
   assert.strictEqual(elements['library-loading'].attributes['aria-busy'], 'false');

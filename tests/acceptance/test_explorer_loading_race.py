@@ -20,7 +20,9 @@ class ExplorerLoadingRaceRegressionTests(unittest.TestCase):
                     refresh_body,
                     'selection-stale refresh guards must clear the current loading surface before returning',
                 )
-                self.assertGreaterEqual(refresh_body.count('if(abortStaleRefresh(refreshToken,token)) return;'), 6)
+                # The removed sidebar fetch no longer needs its own stale boundary.
+                for boundary in ('await nextFrame();', "const refreshedState=syncSelectionEpoch(await api('/api/state'));", 'await refreshSelectionDependent(token);'):
+                    self.assertIn(boundary + '\n    if(abortStaleRefresh(refreshToken,token)) return;', refresh_body)
                 self.assertIn(
                     'function abortStaleRefresh(refreshToken,selectionToken){',
                     source,

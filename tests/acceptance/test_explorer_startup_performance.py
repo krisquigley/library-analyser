@@ -143,7 +143,8 @@ class ExplorerStartupPerformanceAcceptanceTests(unittest.TestCase):
                 page = browser.new_page()
                 try:
                     page.goto(base + '/')
-                    page.get_by_role('button', name='Track 00000').wait_for(timeout=1500)
+                    page.get_by_role('searchbox', name='Search tracks by title or artist').wait_for(timeout=1500)
+                    self.assertEqual(page.locator('#tracks tbody tr').count(), 0)
                     search = page.get_by_role('searchbox', name='Search tracks by title or artist')
                     self.assertEqual(search.count(), 1)
                     started = time.perf_counter()
