@@ -936,12 +936,12 @@ global.fetch = async path => {
             with self.subTest(app=app):
                 subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
-    def test_static_html_copy_matches_manual_graph_loading_in_both_mirrored_assets(self):
+    def test_static_html_does_not_instruct_manual_graph_loading_in_both_mirrored_assets(self):
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
                 html = (REPO_ROOT / package / 'frameworks/explorer/assets/index.html').read_text(encoding='utf-8')
                 self.assertNotIn('initial graph shows the whole library', html)
-                self.assertIn('Use Load graph to render the 3D library graph manually', html)
+                self.assertNotIn('Use Load graph', html, 'startup loads the graph without a manual step')
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for metadata DOM tests')
     def test_metadata_is_flat_deduplicated_and_escaped(self):
