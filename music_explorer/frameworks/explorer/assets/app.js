@@ -634,6 +634,31 @@ function animateCameraFocus(graph,position,target){
   const generation=cameraFocusGeneration;
   const fromPosition={...graph.cameraPosition()};
   const fromTarget={...graph.controls().target};
+  // Interpolate the camera-relative offset on an arc, never through lookAt.
+  // Transport up along that arc so passing a world-up pole cannot flip roll.
+  const axes=['x','y','z'];
+  const subtract=(a,b)=>Object.fromEntries(axes.map(axis=>[axis,a[axis]-b[axis]]));
+  const scale=(v,k)=>Object.fromEntries(axes.map(axis=>[axis,v[axis]*k]));
+  const dot=(a,b)=>axes.reduce((sum,axis)=>sum+a[axis]*b[axis],0);
+  const cross=(a,b)=>({x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x});
+  const magnitude=v=>Math.hypot(v.x,v.y,v.z);
+  const endOffset=subtract(position,target), endDistance=magnitude(endOffset);
+  const startOffset=subtract(fromPosition,fromTarget);
+  const startDistance=magnitude(startOffset)||endDistance;
+  const startDirection=scale(magnitude(startOffset)?startOffset:endOffset,1/startDistance);
+  const endDirection=scale(endOffset,1/endDistance);
+  const cosine=Math.max(-1,Math.min(1,dot(startDirection,endDirection)));
+  const angle=Math.acos(cosine);
+  let tangent=subtract(endDirection,scale(startDirection,cosine));
+  const camera=graph.camera(), fromUp=camera.up?{...camera.up}:null;
+  if(magnitude(tangent)<1e-8) {
+    // Antiparallel directions need a deterministic plane perpendicular to up.
+    tangent=cross(fromUp||{x:0,y:1,z:0},startDirection);
+    if(magnitude(tangent)<1e-8) tangent=cross({x:1,y:0,z:0},startDirection);
+    if(magnitude(tangent)<1e-8) tangent=cross({x:0,y:0,z:1},startDirection);
+  }
+  tangent=scale(tangent,1/magnitude(tangent));
+  const rotationAxis=cross(startDirection,tangent);
   const started=typeof performance!=='undefined'?performance.now():Date.now();
   const step=timestamp=>{
     if(generation!==cameraFocusGeneration || graph!==forceGraph) return;
@@ -641,7 +666,15 @@ function animateCameraFocus(graph,position,target){
     const now=Number.isFinite(timestamp)?timestamp:(typeof performance!=='undefined'?performance.now():Date.now());
     const progress=Math.min(1,Math.max(0,(now-started)/700));
     const interpolate=(from,to)=>Object.fromEntries(['x','y','z'].map(axis=>[axis,from[axis]+(to[axis]-from[axis])*progress]));
-    graph.cameraPosition(interpolate(fromPosition,position),interpolate(fromTarget,target),0);
+    const theta=angle*progress, c=Math.cos(theta), s=Math.sin(theta);
+    const distance=startDistance+(endDistance-startDistance)*progress;
+    const nextTarget=interpolate(fromTarget,target);
+    const nextPosition=Object.fromEntries(axes.map(axis=>[axis,nextTarget[axis]+distance*(startDirection[axis]*c+tangent[axis]*s)]));
+    if(fromUp && camera.up?.set) {
+      const turned=cross(rotationAxis,fromUp), along=dot(rotationAxis,fromUp)*(1-c);
+      camera.up.set(...axes.map(axis=>fromUp[axis]*c+turned[axis]*s+rotationAxis[axis]*along));
+    }
+    graph.cameraPosition(progress===1?position:nextPosition,nextTarget,0);
     if(progress<1) cameraFocusFrame=requestAnimationFrame(step);
   };
   cameraFocusFrame=requestAnimationFrame(step);

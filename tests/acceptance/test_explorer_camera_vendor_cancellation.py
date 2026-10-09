@@ -4,12 +4,13 @@ The bundle is evaluated with a test-only export at its closure boundary. Its
 camera method and tween implementation are neither rewritten nor mocked. No
 renderer, WebGL, database or wall-clock animation is involved.
 """
-import re
 import shutil
 import subprocess
 import unittest
 
-from tests.acceptance.test_explorer_selection_camera_integration import ASSETS, FIXTURE, ROOT
+from tests.acceptance.test_explorer_selection_camera_integration import (
+    ASSETS, FIXTURE, ROOT, FRAME_CLOCK_SEAM, replace_fixture_seam,
+)
 
 
 VENDOR = r'''
@@ -45,25 +46,19 @@ const vendorState={initialised:true,camera:vendorCamera,controls:vendorControls,
 
 
 def real_vendor_fixture():
-    fixture = FIXTURE.replace(
+    fixture = replace_fixture_seam(FIXTURE,
         "const camera = {fov:50,position:{x:500,y:400,z:300}};\nconst controls = {target:{x:0,y:0,z:0}};",
         "const camera=vendorCamera; camera.fov=50; const controls=vendorControls;")
-    fixture = fixture.replace(
+    fixture = replace_fixture_seam(fixture,
         "Object.assign(camera.position,position); Object.assign(controls.target,target);",
         "vendor.cameraPosition(vendorState,position,target,duration);")
-    fixture = re.sub(r'performance:\{now:\(\)=>fixtureClock\},', '', fixture)
-    fixture = fixture.replace(
-        "requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},ResizeObserver,", 
+    fixture = replace_fixture_seam(fixture,
+        FRAME_CLOCK_SEAM,
         "performance:{now:()=>now}, requestAnimationFrame:fn=>{const id=++frameId;\n"
         "    frames.push(time=>{if(!cancelledFrames.has(id)) fn(time);});return id;},\n"
         "  cancelAnimationFrame:id=>cancelledFrames.add(id),ResizeObserver,")
-    fixture = re.sub(
-        r'function tick\(\) \{[^\n]*\}',
-        "function tick() {const pending=frames.splice(0); for(const callback of pending) callback();}",
-        fixture,
-    )
-    fixture = fixture.replace(
-        "function tick() {const pending=frames.splice(0); for(const callback of pending) callback();}",
+    fixture = replace_fixture_seam(fixture,
+        "function tick() {fixtureClock+=700; const pending=frames.splice(0); for(const callback of pending) callback(fixtureClock);}",
         "function tick() {const pending=frames.splice(0); for(const callback of pending) if(callback) callback(now);}\n"
         "function advance(time) {now=time; vendor.setTime(time); tick(); vendorState.tweenGroup.update(time);}\n"
         "function pose() {return {position:{x:camera.position.x,y:camera.position.y,z:camera.position.z},\n"

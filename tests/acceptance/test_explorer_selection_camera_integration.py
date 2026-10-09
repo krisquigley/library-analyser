@@ -12,6 +12,17 @@ ROOT = Path(__file__).resolve().parents[2]
 ASSETS = tuple(ROOT / package / 'frameworks/explorer/assets/app.js'
                for package in ('music_explorer', 'music_analyzer'))
 
+# Explicit adapter boundary shared by immediate and elapsed-time camera fixtures.
+FRAME_CLOCK_SEAM = "requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},performance:{now:()=>fixtureClock},ResizeObserver,"
+
+
+def replace_fixture_seam(fixture, seam, replacement):
+    matches = fixture.count(seam)
+    if matches != 1:
+        raise ValueError(f'Camera fixture seam must occur exactly once; found {matches}: {seam}')
+    return fixture.replace(seam, replacement, 1)
+
+
 FIXTURE = r'''
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

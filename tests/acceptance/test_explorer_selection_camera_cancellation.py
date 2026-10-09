@@ -10,38 +10,41 @@ import subprocess
 import unittest
 
 from tests.acceptance.test_explorer_selection_camera_integration import (
-    ASSETS, FIXTURE, ROOT,
+    ASSETS, FIXTURE, ROOT, FRAME_CLOCK_SEAM, replace_fixture_seam,
 )
 
 
-TIMED_FIXTURE = FIXTURE.replace(
+TIMED_FIXTURE = replace_fixture_seam(FIXTURE,
     'const frames = [], calls = [], requests = [], details = [];',
     '''const frames = [], calls = [], requests = [], details = [];
-let clock=0;
 const transitions=[];
 const listeners=new Map();''',
-).replace(
+)
+TIMED_FIXTURE = replace_fixture_seam(TIMED_FIXTURE,
     'const controls = {target:{x:0,y:0,z:0}};',
     '''const controls = {target:{x:0,y:0,z:0},
   addEventListener(type,fn){if(!listeners.has(type)) listeners.set(type,[]); listeners.get(type).push(fn);},
   removeEventListener(type,fn){listeners.set(type,(listeners.get(type)||[]).filter(value=>value!==fn));},
   update(){},
   dispatchEvent(event){for(const fn of listeners.get(event.type)||[]) fn(event);}};''',
-).replace(
+)
+TIMED_FIXTURE = replace_fixture_seam(TIMED_FIXTURE,
     'Object.assign(camera.position,position); Object.assign(controls.target,target);',
-    '''if(duration>0) transitions.push({start:clock,duration,
+    '''if(duration>0) transitions.push({start:fixtureClock,duration,
       fromPosition:{...camera.position},fromTarget:{...controls.target},position:{...position},target:{...target}});
     else {Object.assign(camera.position,position); Object.assign(controls.target,target);}''',
-).replace(
-    "requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},ResizeObserver,",
-    "requestAnimationFrame:fn=>{frames.push(fn);return fn;},cancelAnimationFrame:fn=>{const index=frames.indexOf(fn);if(index>=0) frames.splice(index,1);},performance:{now:()=>clock},ResizeObserver,",
-).replace(
+)
+TIMED_FIXTURE = replace_fixture_seam(TIMED_FIXTURE,
+    FRAME_CLOCK_SEAM,
+    "requestAnimationFrame:fn=>{frames.push(fn);return fn;},cancelAnimationFrame:fn=>{const index=frames.indexOf(fn);if(index>=0) frames.splice(index,1);},performance:{now:()=>fixtureClock},ResizeObserver,",
+)
+TIMED_FIXTURE = replace_fixture_seam(TIMED_FIXTURE,
     'function tick() {fixtureClock+=700; const pending=frames.splice(0); for(const callback of pending) callback(fixtureClock);}',
-    '''function tick() {const pending=frames.splice(0); for(const callback of pending) callback(clock);}
+    '''function tick() {const pending=frames.splice(0); for(const callback of pending) callback(fixtureClock);}
 function advance(milliseconds) {
-  clock+=milliseconds;
+  fixtureClock+=milliseconds;
   for(const tween of [...transitions]) {
-    const progress=Math.min(1,(clock-tween.start)/tween.duration);
+    const progress=Math.min(1,(fixtureClock-tween.start)/tween.duration);
     for(const axis of ['x','y','z']) {
       camera.position[axis]=tween.fromPosition[axis]+(tween.position[axis]-tween.fromPosition[axis])*progress;
       controls.target[axis]=tween.fromTarget[axis]+(tween.target[axis]-tween.fromTarget[axis])*progress;
@@ -60,6 +63,20 @@ async function startA() {
 )
 
 
+class CameraFixtureSeamTests(unittest.TestCase):
+    def test_shared_clock_boundary_is_unique_and_adapted(self):
+        self.assertEqual(FIXTURE.count(FRAME_CLOCK_SEAM), 1)
+        self.assertNotIn(FRAME_CLOCK_SEAM, TIMED_FIXTURE)
+        self.assertEqual(TIMED_FIXTURE.count('performance:{now:()=>fixtureClock}'), 1)
+        self.assertEqual(TIMED_FIXTURE.count('cancelAnimationFrame:'), 1)
+
+    def test_missing_or_duplicate_seam_fails_loudly(self):
+        for fixture in ('absent boundary', 'seam seam'):
+            with self.subTest(fixture=fixture):
+                with self.assertRaisesRegex(ValueError, 'exactly once'):
+                    replace_fixture_seam(fixture, 'seam', 'replacement')
+
+
 class SelectionCameraCancellationTests(unittest.TestCase):
     def run_scenario(self, scenario):
         node = shutil.which('node')
@@ -71,6 +88,37 @@ class SelectionCameraCancellationTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('SCENARIO_COMPLETED', result.stdout)
+
+    def test_focus_after_clock_advance_takes_full_700ms(self):
+        self.run_scenario(r'''
+render(); advance(2000);
+const before=cameraSnapshot();
+await select('b'); tick();
+assert.deepEqual(cameraSnapshot(),before,'focus starts at current nonzero clock, not clock origin');
+advance(350);
+for(const axis of ['x','y','z'])
+  assert.ok(Math.abs(controls.target[axis]-(before.target[axis]+(b['f'+axis]-before.target[axis])*0.5))<1e-9,
+    'half elapsed duration means half target progress');
+advance(349);
+assert.notDeepEqual(cameraSnapshot().target,{x:b.fx,y:b.fy,z:b.fz},'not complete at 699ms');
+advance(1);
+assert.deepEqual(cameraSnapshot().target,{x:b.fx,y:b.fy,z:b.fz},'complete exactly at 700ms');
+assert.equal(transitions.length,0,'adapter owns RAF duration, never vendor timed tweens');
+''')
+
+    def test_clock_and_cancel_raf_seam_after_elapsed_time(self):
+        self.run_scenario(r'''
+await startA();
+assert.equal(run('performance.now()'),fixtureClock,'performance and RAF share one elapsed clock');
+assert.equal(typeof context.cancelAnimationFrame,'function','fixture exposes cancellation boundary');
+assert.ok(frames.length>0,'inflight focus has a pending RAF');
+const pendingFocus=frames[frames.length-1];
+const stopped=cameraSnapshot();
+await select('missing');
+assert.ok(!frames.includes(pendingFocus),'cancel removes pending focus RAF, not just generation-guards it');
+advance(1000);
+assert.deepEqual(cameraSnapshot(),stopped,'cancellation preserves both pose paths after deadline');
+''')
 
     def test_unpositioned_selection_cancels_inflight_a_camera_and_target(self):
         self.run_scenario(r'''
