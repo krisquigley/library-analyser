@@ -642,11 +642,18 @@ function animateCameraFocus(graph,position,target){
   const dot=(a,b)=>axes.reduce((sum,axis)=>sum+a[axis]*b[axis],0);
   const cross=(a,b)=>({x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x});
   const magnitude=v=>Math.hypot(v.x,v.y,v.z);
+  const direction=(v,distance)=>{
+    if(Number.isFinite(1/distance)) return scale(v,1/distance);
+    // Subnormal distances can overflow their reciprocal. Scale by division first.
+    const largest=Math.max(...axes.map(axis=>Math.abs(v[axis])));
+    const scaled=Object.fromEntries(axes.map(axis=>[axis,v[axis]/largest]));
+    return scale(scaled,1/magnitude(scaled));
+  };
   const endOffset=subtract(position,target), endDistance=magnitude(endOffset);
   const startOffset=subtract(fromPosition,fromTarget);
   const startDistance=magnitude(startOffset)||endDistance;
-  const startDirection=scale(magnitude(startOffset)?startOffset:endOffset,1/startDistance);
-  const endDirection=scale(endOffset,1/endDistance);
+  const startDirection=direction(magnitude(startOffset)?startOffset:endOffset,startDistance);
+  const endDirection=direction(endOffset,endDistance);
   const cosine=Math.max(-1,Math.min(1,dot(startDirection,endDirection)));
   const angle=Math.acos(cosine);
   let tangent=subtract(endDirection,scale(startDirection,cosine));

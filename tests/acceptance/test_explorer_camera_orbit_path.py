@@ -25,6 +25,41 @@ def trackball_fixture():
 
 
 class CameraOrbitPathTests(unittest.TestCase):
+    def test_finite_subnormal_camera_gap_keeps_rendered_pose_finite(self):
+        node = shutil.which('node')
+        self.assertIsNotNone(node, 'Node required; do not skip RED')
+        scenario = r'''
+render();
+// A finite boundary pose reached by extreme zoom, without an unbounded wheel loop.
+controls.target.set(0,0,0);
+camera.position.set(0,0,1.7e-309);
+camera.up.set(0,1,0);
+controls.update();
+assert.equal(camera.position.z,1.7e-309,'actual Trackball retains the finite tiny gap');
+assert.ok(!Number.isFinite(1/Math.hypot(camera.position.x,camera.position.y,camera.position.z)),
+  'fixture exercises reciprocal overflow');
+const assertFinite=()=>assert.ok([...camera.position.toArray(),...camera.up.toArray(),
+  ...camera.quaternion.toArray(),...controls.target.toArray()].every(Number.isFinite),
+  'finite camera position, up and quaternion throughout and after focus');
+assertFinite();
+await select('a');
+for(const time of [0,5,100,350,695,700,900,1200]) {advance(time); assertFinite();}
+assert.deepEqual(pose().target,{x:a.fx,y:a.fy,z:a.fz});
+assert.ok(Math.abs(camera.position.distanceTo(controls.target)-100)<1e-9,
+  'tiny start gap still reaches useful radial framing');
+assert.equal(vendorState.tweenGroup.getAll().length,0,'no private vendor tweens');
+'''
+        for asset in ASSETS:
+            with self.subTest(asset=str(asset.relative_to(ROOT))):
+                script = trackball_fixture() + scenario + (
+                    '\n})().then(()=>console.log("SCENARIO_COMPLETED"))'
+                    '.catch(error=>{console.error(error);process.exitCode=1;});')
+                # subprocess.run kills (SIGKILL) and reaps Node on TimeoutExpired.
+                result = subprocess.run([node, '-e', script, str(asset)], cwd=ROOT,
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('SCENARIO_COMPLETED', result.stdout)
+
     def test_focus_preserves_manual_orbit_without_adjacent_frame_flip(self):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node required; do not skip RED')
