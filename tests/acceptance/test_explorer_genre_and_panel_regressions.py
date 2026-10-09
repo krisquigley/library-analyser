@@ -78,17 +78,19 @@ assert(!model.genreOptions.includes('Other'), 'options should only include genre
 assert.deepStrictEqual(app.applyMoodGraphFilters(model,{genres:[label]}).nodes.map(n=>n.id),['a']);
 assert(!html.includes('id="candidates"'), 'remove numbered list below candidate controls');
 assert(html.includes('id="controls"') && html.includes('id="tracks-panel"'));
-const element = tag => ({tagName:tag,children:[],textContent:'',className:'',append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items}});
+const element = tag => ({tagName:tag,children:[],textContent:'',className:'',attributes:{},setAttribute(key,value){this.attributes[key]=String(value)},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items}});
 const detail = element('div');
 global.document = {getElementById:id=>id==='detail'?detail:null,createElement:element};
 app.setVisibleGraphForTesting({nodes:[{id:'a'}],links:[],unpositioned:[{track_id:'b'}]});
 app.renderInitialDetail({unpositioned:[{track_id:'b',display_label:'B',reasons:['missing supported mood coordinates']} ]});
 assert.strictEqual(JSON.stringify(detail), JSON.stringify({...detail, children:[]}), 'initial no-selection detail panel should be empty');
+assert.strictEqual(detail.attributes['aria-busy'], 'false', 'initial empty detail settles aria-busy');
 app.renderDetail({reasons:['genres: provisional, uncalibrated scores','energy: uncertainty'],metadata:{common:[['title','A']],tags:[]},fields:{}});
 assert(!JSON.stringify(detail).includes('provisional, uncalibrated'));
 assert(!JSON.stringify(detail).includes('energy: uncertainty'));
 assert(JSON.stringify(detail).includes('Current Track'));
 assert(JSON.stringify(detail).includes('Title: A'));
+assert.strictEqual(detail.attributes['aria-busy'], 'false', 'rendered detail settles aria-busy');
 '''
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
