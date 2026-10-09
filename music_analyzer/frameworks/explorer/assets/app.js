@@ -20,6 +20,7 @@ let selectionDetailRequestSeq=0;
 let selectionDetailFlight=null;
 let pendingSelectionIntent=null;
 let pendingSelectionOperation=null;
+let pendingCameraSelection=null;
 let loadingRefreshToken=0;
 let lastRefreshError=null;
 let trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query:'',order:'title'};
@@ -59,9 +60,10 @@ function syncSelectionEpoch(snapshot){
   if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
   return snapshot;
 }
-function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null;}
+function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null; pendingCameraSelection=null;}
 async function applyHistorySelection(path){
   const token=++selectionRequestSeq;
+  pendingCameraSelection=null;
   pendingSelectionIntent=null;
   pendingSelectionOperation=token;
   renderDetailLoading();
@@ -69,6 +71,7 @@ async function applyHistorySelection(path){
     const posted=await api(path,{method:'POST'});
     if(token!==selectionRequestSeq) return;
     state=syncSelectionEpoch(posted);
+    pendingCameraSelection=state.current_track_id;
     pendingSelectionOperation=null;
     await refresh();
   }catch(error){
@@ -120,7 +123,7 @@ async function api(path, options){const r=await fetch(path, options); if(!r.ok) 
 function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
 function updateSelectedTrackVisuals(){
   if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===state.current_track_id?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
-  if(forceGraph){forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,visibleGraph);}
+  if(forceGraph){forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,visibleGraph); focusPendingCameraSelection();}
   else if(visibleGraph.nodes.length) renderCanvasFallback(visibleGraph);
   renderMoodStrip(visibleGraph);
 }
@@ -175,6 +178,7 @@ async function refreshSelectionDependent(token){
 async function setCurrent(id){
   const token=++selectionRequestSeq;
   const postToken=nextSelectionPostSeq();
+  pendingCameraSelection=null;
   pendingSelectionIntent=id;
   pendingSelectionOperation=token;
   state={...state,current_track_id:id};
@@ -184,6 +188,7 @@ async function setCurrent(id){
     const posted=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})});
     if(token!==selectionRequestSeq) return;
     state=syncSelectionEpoch(posted);
+    pendingCameraSelection=state.current_track_id;
     pendingSelectionIntent=null;
     pendingSelectionOperation=null;
     await refreshSelectionDependent(token);
@@ -208,7 +213,10 @@ async function refresh(){
     const refreshedState=await api('/api/state');
     if(abortStaleRefresh(refreshToken,token)) return;
     // A refresh begun during a selection/history POST cannot reconcile its older snapshot.
-    if(!operationPending && pendingSelectionOperation===null) state=syncSelectionEpoch(refreshedState);
+    if(!operationPending && pendingSelectionOperation===null){
+      if(state.current_track_id!==refreshedState.current_track_id) pendingCameraSelection=refreshedState.current_track_id;
+      state=syncSelectionEpoch(refreshedState);
+    }
     renderGraphLoadStatus();
     if(abortStaleRefresh(refreshToken,token)) return;
     if(!operationPending) await refreshSelectionDependent(token);
@@ -599,6 +607,24 @@ function animateGraphAxes(){
   if(forceGraph){syncGraphAxes(forceGraph,pendingGraphAxisSpec,document.getElementById('graph3d'));placeGraphAxisLabels(forceGraph);syncSelectedNodeHalo(forceGraph,visibleGraph);}
   requestAnimationFrame(animateGraphAxes);
 }
+// Accepted selection gets one focus after initial framing, never a per-frame camera lock.
+function focusPendingCameraSelection(){
+  if(!forceGraph || framedGraphLayout===null || pendingCameraSelection===null) return;
+  const id=pendingCameraSelection;
+  pendingCameraSelection=null;
+  if(id!==state.current_track_id) return;
+  const node=visibleGraph.nodes.find(n=>n.id===id);
+  if(!node) return; // Keep active filters; hidden/unpositioned selections still show detail.
+  const target={x:node.fx,y:node.fy,z:node.fz};
+  if(![target.x,target.y,target.z].every(Number.isFinite)) return;
+  const length=Math.hypot(target.x,target.y,target.z);
+  if(!Number.isFinite(length) || length===0) return;
+  // Display-space radial offset keeps a useful distance independent of node magnitude.
+  const distance=100;
+  const position={x:target.x+distance*target.x/length,y:target.y+distance*target.y/length,z:target.z+distance*target.z/length};
+  if(![position.x,position.y,position.z].every(Number.isFinite)) return;
+  forceGraph.cameraPosition(position,target,700);
+}
 function renderMoodStrip(data){
   const canvas=document.getElementById('mood-strip'), picker=document.getElementById('mood-strip-picker'), readout=document.getElementById('mood-strip-value');
   if(!canvas||!picker||!readout) return;
@@ -618,7 +644,7 @@ function renderMoodStrip(data){
   picker.oninput=show; show();
   canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
 }
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;} focusPendingCameraSelection();} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
