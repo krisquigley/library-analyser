@@ -629,6 +629,7 @@ function observeCameraFocusControls(graph){
   if(controls?.addEventListener) controls.addEventListener('start',cancelCameraFocus);
 }
 function animateCameraFocus(graph,position,target){
+  observeCameraFocusControls(graph);
   cancelCameraFocus();
   const generation=cameraFocusGeneration;
   const fromPosition={...graph.cameraPosition()};
@@ -647,7 +648,6 @@ function animateCameraFocus(graph,position,target){
 }
 // Accepted selection gets one focus after initial framing, never a per-frame camera lock.
 function focusPendingCameraSelection(graphRendered=false){
-  if(forceGraph) observeCameraFocusControls(forceGraph);
   // Existing instances still show the old layout while a replacement loads.
   // Only renderMap may consume focus before the load state becomes ready.
   if(!graphRendered && graphLoadState.status!=='ready') return;
