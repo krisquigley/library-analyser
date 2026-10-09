@@ -13,8 +13,10 @@ repository checkout with Python 3.11+. The library has no command-line runner.
 
 - `summarize_interactions(attempts)` retains supplied attempts, including
   failures. Profiles (for example `process-cold` and `warm`) are summarized
-  separately. Only successful durations contribute to nearest-rank p50/p95/max;
-  all-failed profiles have null quantiles, not fabricated zeros. Process-cold is
+  separately. Only successful finite nonnegative numeric durations (excluding
+  booleans) contribute to nearest-rank p50/p95/max; invalid successful durations
+  count as `invalid_duration` failures without changing the raw samples. All-failed
+  profiles have null quantiles, not fabricated zeros. Process-cold is
   a caller-supplied label, not proof of disk-cold caches. Small sample counts are
   not statistically robust. Samples are supplied observations, not generated
   measurements, and are not automatically scrubbed of private data.
@@ -53,6 +55,24 @@ repository checkout with Python 3.11+. The library has no command-line runner.
   can yield inconsistent comparisons. The filesystem APIs live in the separate
   outward `tools.explorer_fixture_inspection` module and are reexported for the
   public seam; pure report functions perform no filesystem/SQLite operations.
+
+### JSON publication limitation
+
+The returned report is a Python observation structure, not a guaranteed
+strict-JSON-compatible publication format. Raw `samples` retain invalid durations
+such as NaN and positive or negative Infinity. For those observations,
+`json.dumps(report, allow_nan=False)` raises `ValueError`, even though the
+corresponding `profiles` duration aggregates are finite or null. Python's default
+JSON encoding instead emits nonstandard `NaN`, `Infinity`, or `-Infinity` tokens;
+that is not strict JSON interoperability. Other caller-supplied non-JSON values
+can raise `TypeError` during encoding. This is separate from private-data
+scrubbing and is not a numeric aggregation defect.
+
+A future full-report publisher needs a separate **loss-aware encoding contract**
+that explicitly represents non-JSON-compatible observations and preserves their
+meaning. This library does not define or implement that contract. Do not silently
+drop, replace, or normalize raw observations merely to make serialization pass.
+The end-to-end diagnostic harness remains deferred.
 
 ### Small report example (supplied observations only)
 

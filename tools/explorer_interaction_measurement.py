@@ -2,6 +2,8 @@
 
 Callers supply observations; no HTTP/browser/clock probes run here. Samples
 and profile labels are caller-owned and are not sanitized for publication.
+Retained raw samples are not guaranteed to be strict-JSON-compatible; publishing
+reports requires a separate loss-aware encoding contract.
 Filesystem/SQLite details live in the separate outward inspection adapter.
 """
 from collections import Counter
@@ -31,6 +33,13 @@ def summarize_interactions(attempts):
     Invalid successful durations count as invalid_duration failures, without
     altering the original observation. Quantiles use observed nearest ranks;
     profiles (including process-cold/warm) are never merged or inferred.
+
+    Raw samples retain NaN and +/-Infinity: json.dumps(report, allow_nan=False)
+    raises ValueError for these values even though profile duration aggregates
+    are finite or None. Default JSON encoding emits nonstandard numeric tokens.
+    Other caller-supplied non-JSON values can raise TypeError during encoding.
+    Full-report publication needs a separate loss-aware encoding contract; this
+    function neither supplies that contract nor scrubs or normalizes samples.
     """
     samples = deepcopy(list(attempts))
     groups = {}
