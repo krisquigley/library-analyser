@@ -300,13 +300,15 @@ class ReadOnlyExplorerSQLiteRepository:
             metadata = self._metadata(db)
             where = []
             params = []
-            q = (query or '').strip()
-            if q:
-                like = '%' + self._summary_fold(q).replace('%', '\\%').replace('_', '\\_') + '%'
+            tokens = (query or '').split()
+            if tokens:
                 visible_title = "_explorer_summary_fold(_explorer_summary_sort_key('title', common_json, tags_json, display_label, id))"
                 visible_artist = "_explorer_summary_fold(_explorer_summary_search_key('artist', common_json, tags_json, display_label, id))"
-                where.append(f"({visible_title} LIKE ? ESCAPE '\\' OR {visible_artist} LIKE ? ESCAPE '\\')")
-                params.extend([like, like])
+                for token in tokens:
+                    literal = self._summary_fold(token).replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+                    like = '%' + literal + '%'
+                    where.append(f"({visible_title} LIKE ? ESCAPE '\\' OR {visible_artist} LIKE ? ESCAPE '\\')")
+                    params.extend([like, like])
             count_where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
             count_params = tuple(params)
             cursor_key, cursor_id = self._decode_summary_cursor(cursor)
