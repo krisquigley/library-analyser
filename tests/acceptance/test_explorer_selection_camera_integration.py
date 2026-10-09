@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const frames = [], calls = [], requests = [], details = [];
+let fixtureClock=0;
 class Element {
   constructor(tag='div') { this.tagName=tag.toUpperCase(); this.children=[];
     this.style={}; this.dataset={}; this.clientWidth=800; this.clientHeight=600; }
@@ -58,7 +59,7 @@ const graph = new Proxy({}, {get(_target,key) {
   };
   if(key==='cameraPosition') return (position,target,duration)=>{
     if(!position) return {...camera.position};
-    calls.push({position:{...position},target:{...target},duration});
+    calls.push({position:{...position},target:{...target},duration,at:fixtureClock});
     Object.assign(camera.position,position); Object.assign(controls.target,target);
     return graph;
   };
@@ -67,13 +68,15 @@ const graph = new Proxy({}, {get(_target,key) {
 }});
 const resizeCallbacks=[];
 class ResizeObserver {constructor(callback){resizeCallbacks.push(callback);} observe(){} }
+let graphHook=null;
 let postHook=null, historyHook=null, authoritativeSnapshot={current_track_id:null,history:[],selection_epoch:0};
 let clickHandler=null;
 const context=vm.createContext({console,URLSearchParams,setTimeout,clearTimeout,
-  requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},ResizeObserver,
+  requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},performance:{now:()=>fixtureClock},ResizeObserver,
   ForceGraph3D:()=>()=>graph,
   fetch:async(path,options)=>{
     requests.push({path,options});
+    if(path.startsWith('/api/mood-axis-graph') && graphHook) return graphHook();
     if(path==='/api/current') {
       const id=JSON.parse(options.body).track_id;
       if(postHook) return postHook(id);
@@ -109,14 +112,14 @@ function render(data=model(),full=data) {
   context.fixtureModel=data; context.fixtureFullModel=full;
   run("graphLoadState={...graphLoadState,status:'rendering'}; setGraphModelForTesting(fixtureFullModel); setVisibleGraphForTesting(fixtureModel); renderMap(fixtureModel); graphLoadState={...graphLoadState,status:'ready'}");
 }
-function tick() {const pending=frames.splice(0); for(const callback of pending) callback();}
+function tick() {fixtureClock+=700; const pending=frames.splice(0); for(const callback of pending) callback(fixtureClock);}
 async function history(path) {
   const promise=run(`applyHistorySelection(${JSON.stringify(path)})`);
   // Flush the bounded microtask/nextFrame chain used by real refresh().
   for(let i=0;i<20;i++) {await Promise.resolve(); tick();}
   await promise;
 }
-function animated() {return calls.filter(c=>c.duration>0);}
+function animated() {return calls.filter(c=>liveData.nodes.some(n=>c.target.x===n.fx&&c.target.y===n.fy&&c.target.z===n.fz));}
 function assertHalo(id) {
   const expected=liveData.nodes.find(n=>n.id===id);
   const halo=scene.children.find(c=>c.userData?.role==='selected-node-halo');
@@ -128,14 +131,20 @@ function assertHalo(id) {
 function assertFocus(id) {
   assertHalo(id);
   const focus=animated();
-  assert.equal(focus.length,1,'one animated cameraPosition for the latest available selection');
+  assert.equal(focus.length,1,'one completed adapter focus for the latest available selection');
   const expected=liveData.nodes.find(n=>n.id===id);
   assert.deepEqual(focus[0].target,{x:expected.fx,y:expected.fy,z:expected.fz},
     'look-at uses display coordinates, not raw normalized coordinates');
   for(const point of [focus[0].position,focus[0].target])
     assert.ok(['x','y','z'].every(axis=>Number.isFinite(point[axis])),'camera coordinates finite');
-  assert.ok(Number.isFinite(focus[0].duration)&&focus[0].duration>0,'positive smooth duration');
+  assert.equal(focus[0].duration,0,'adapter must not create uncancellable vendor tweens');
   assert.notDeepEqual(focus[0].position,focus[0].target,'nonzero useful camera distance');
+  const length=Math.hypot(expected.fx,expected.fy,expected.fz);
+  for(const axis of ['x','y','z']) {
+    const coordinate=expected['f'+axis];
+    assert.ok(Math.abs(focus[0].position[axis]-(coordinate+100*coordinate/length))<1e-9,
+      'final camera position retains the 100-unit display-space radial offset');
+  }
 }
 (async()=>{
 '''
@@ -178,6 +187,42 @@ render(); tick(); tick();
 assert.equal(calls[0].duration,0,'initial whole-layout framing precedes animated focus');
 assertFocus('b');
 assert.equal(calls.length,2,'only framing and latest focus, never an A focus');
+''')
+
+    def test_replacement_reload_defers_latest_focus_until_new_graph_is_rendered(self):
+        self.run_scenario(r'''
+render(); const oldGraph=liveData; const before=replacements; calls.length=0;
+run("setGraphControlsForTesting({bpmMin:100,bpmMax:140,genres:['ambient']})");
+const filters=JSON.stringify(run('getGraphControlsForTesting()'));
+let resolveGraph;
+graphHook=()=>new Promise(resolve=>{resolveGraph=resolve;});
+const reload=run('loadGraph()');
+assert.equal(run('graphLoadState.status'),'loading');
+await select('a'); await select('b'); tick();
+assert.deepEqual(details,['a','b'],'detail stays usable during reload');
+assert.strictEqual(liveData,oldGraph,'old instance stays rendered while request pending');
+assert.equal(animated().length,0,'latest B focus must not be consumed on old graph during reload');
+resolveGraph({ok:true,json:async()=>({dto_version:'mood-axis-graph-indexed-v1',
+  selected_mood:'',available_moods:[],
+  axis:[{key:'x',label:'Valence',scale:'unit'},{key:'y',label:'Arousal',scale:'unit'},
+        {key:'z',label:'BPM',scale:'bpm'}],
+  nodes:[['a','A',0.1,0.1,0.2,0.2,120,0.4,null,0.6,[[0,0.8]],[]],
+         ['b','B',0.9,0.9,-0.3,-0.3,120,0.4,null,0.6,[[0,0.8]],[]]],
+  links:[],unpositioned:[],genre_labels:['ambient'],reason_text:[],
+  explanation_table:[],provenance_table:[],metadata:{graph_status:{state:'ready'}}})});
+for(let i=0;i<20;i++) await Promise.resolve();
+assert.equal(run('graphLoadState.status'),'rendering','replacement waits for a render frame');
+await select('a'); await select('b');
+assert.equal(animated().length,0,'latest focus also waits across DTO-to-render frame gap');
+assert.equal(replacements,before,'new DTO is not rendered yet');
+tick(); await reload; tick();
+assert.equal(replacements,before+1,'replacement topology rendered on same graph instance');
+assert.equal(calls[0].duration,0,'new layout framing precedes selected focus');
+assertFocus('b');
+assert.notDeepEqual(animated()[0].target,{x:b.fx,y:b.fy,z:b.fz},'focus uses replacement coordinates');
+assert.equal(JSON.stringify(run('getGraphControlsForTesting()')),filters,'reload focus preserves active filters');
+assert.equal(elements.detail['aria-busy'],'false');
+assert.equal(calls.length,2,'one new framing and one latest focus only');
 ''')
 
     def test_consumed_focus_preserves_manual_orbit_on_frames_mood_refresh_and_resize(self):

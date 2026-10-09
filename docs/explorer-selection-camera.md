@@ -13,7 +13,23 @@ renders, or resize. The focus uses a bounded 100-display-unit radial offset and
 700 ms duration; this is not a viewport/FOV-calibrated scale guarantee.
 Hidden, missing, unpositioned, origin, and nonfinite nodes do not trigger a camera
 jump; in particular, selection does not clear filters to expose a hidden node.
-Reset and authoritative selection reconciliation supersede pending intent.
+While an existing graph's replacement request or render is pending, retain only
+the latest accepted focus and reconcile it after the replacement graph is
+rendered. Do not consume it against the old layout. Once the new graph is
+rendered, discard a genuinely hidden/missing/unpositioned selection normally.
+
+Reset, history/new-selection intent, and changed authoritative selection
+reconciliation supersede active motion as well as pending intent. User orbit
+cancels active motion; an accepted focus deferred for a replacement graph still
+reconciles after that graph is rendered. The bundled
+ForceGraph camera API has no public tween-cancellation method: its timed
+`cameraPosition` creates private position and look-at tweens, and a zero-duration
+setter does **not** cancel those tweens. Consequently, focus animation belongs
+to the delivery adapter: a bounded requestAnimationFrame transition writes
+through `cameraPosition(position, target, 0)` and owns cancellation. It never
+starts vendor tweens, so no private vendor state or vendor modification is
+needed. Both camera position and orbit-controls target stop moving when the
+transition is cancelled; controls' `start` event yields ownership to user orbit.
 Selected-node halo behavior and graph-independent detail feedback are preserved.
 
 ## Reproducible boundary tests
@@ -24,16 +40,28 @@ Require Node on PATH (do not count a Node-dependent skip as acceptance), then ru
 command -v node
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
   tests.acceptance.test_explorer_selection_camera_geometry \
-  tests.acceptance.test_explorer_selection_camera_integration
+  tests.acceptance.test_explorer_selection_camera_integration \
+  tests.acceptance.test_explorer_selection_camera_cancellation \
+  tests.acceptance.test_explorer_camera_vendor_cancellation \
+  tests.acceptance.test_explorer_3d_graph_assets.Explorer3DGraphAssetTests.test_graph_camera_centers_bounds_fits_viewport_and_preserves_selection_view \
+  tests.architecture.test_import_boundaries
 ```
 
-These tests load both complete assets into isolated Node VMs, exercise real
-selection/render methods with fake DOM, camera, scene, frame and HTTP boundaries,
-and assert finite display-coordinate camera calls, positive animation duration,
-latest-intent ordering, halo and no-jump controls. They do not run a browser or
-render WebGL. The handed-off RED commit reproduced six missing-focus scenarios
-on both assets (12 assertion failures), without fixture errors; preservation
-controls already passed at RED.
+These tests load both complete assets into isolated Node VMs and exercise real
+selection/render methods with controlled DOM, scene, frame and HTTP boundaries.
+They assert finite display-coordinate geometry, intermediate motion and final
+focus, latest-intent ordering, halo and no-jump controls. Cancellation regressions
+advance a controlled clock past the old animation deadline, including unresolved
+selection/reset POSTs and manual orbit. The vendor-boundary tests evaluate the
+actual bundled THREE/TWEEN implementation and unchanged `cameraPosition` method
+via test-only closure exports; they also prove that an instantaneous vendor call
+alone cannot cancel existing vendor tweens. Those exports modify only the
+in-memory test source; packaged vendor files are unchanged. The harness fails
+explicitly if the pinned bundle's extraction boundary changes.
+
+Fresh remediation reproduced the existing-instance reload defect and stale
+camera/target motion before production fixes. These are deterministic API-boundary
+regressions, not a browser render or measured WebGL result.
 
 ## Evidence limitations
 
