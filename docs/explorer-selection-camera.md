@@ -5,18 +5,27 @@ application/domain policy, graph topology, persistence, filters, or detail-fetch
 ownership. Both packaged `app.js` copies remain mirrored.
 
 A selected positioned node is eligible only when it is visible in the current
-filtered graph and has finite, non-origin display coordinates. Initial graph
-framing precedes animated selection focus. If selection changes before the graph
+filtered graph and has finite display coordinates, including the origin. Initial
+graph framing precedes animated selection focus. If selection changes before the graph
 is available, only the latest authoritative selection may focus. A consumed
 focus must not steal manual orbit on subsequent animation frames, mood-only
 renders, or resize. The focus uses a bounded 100-display-unit radial offset and
 700 ms duration; this is not a viewport/FOV-calibrated scale guarantee.
-Hidden, missing, unpositioned, origin, and nonfinite nodes do not trigger a camera
-jump; in particular, selection does not clear filters to expose a hidden node.
+For an origin node, the undefined radial direction falls back to the current
+viewing direction (or a deterministic nonzero direction), preserving a finite,
+nondegenerate focus. Hidden, missing, unpositioned, and nonfinite nodes do not
+trigger a camera jump; selection does not clear filters to expose a hidden node.
 While an existing graph's replacement request or render is pending, retain only
 the latest accepted focus and reconcile it after the replacement graph is
 rendered. Do not consume it against the old layout. Once the new graph is
 rendered, discard a genuinely hidden/missing/unpositioned selection normally.
+
+Finite camera components do not guarantee a finite radius or safe bundled
+Trackball arithmetic. Astronomical starting offsets use scaled direction
+normalization and bounded finite recovery before interpolation, retaining a
+usable up vector. This exceptional recovery is not a promise of continuous
+motion across astronomical distances; ordinary poses retain the smooth
+camera-relative arc and the same radial endpoint.
 
 Reset, history/new-selection intent, and changed authoritative selection
 reconciliation supersede active motion as well as pending intent. User orbit
@@ -43,6 +52,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
   tests.acceptance.test_explorer_selection_camera_integration \
   tests.acceptance.test_explorer_selection_camera_cancellation \
   tests.acceptance.test_explorer_camera_vendor_cancellation \
+  tests.acceptance.test_explorer_camera_orbit_path \
   tests.acceptance.test_explorer_3d_graph_assets.Explorer3DGraphAssetTests.test_graph_camera_centers_bounds_fits_viewport_and_preserves_selection_view \
   tests.architecture.test_import_boundaries
 ```

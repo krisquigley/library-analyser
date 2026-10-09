@@ -322,12 +322,22 @@ render(); tick(); tick(); assertFocus('b');
 assert.equal(calls.length,2,'initial frame then authoritative focus, never rejected A');
 ''')
 
-    def test_origin_selection_keeps_detail_without_invalid_camera_jump(self):
+    def test_positioned_origin_selection_focuses_without_invalid_camera_jump(self):
         self.run_scenario(r'''
 render(model([a,node('origin',0,0,0)])); calls.length=0;
+Object.assign(camera.position,{x:400,y:-240,z:180});
+Object.assign(controls.target,{x:120,y:-80,z:30});
+const offset={x:280,y:-160,z:150}, length=Math.hypot(280,-160,150);
 await select('origin'); tick(); tick();
 assert.deepEqual(details,['origin']);
-assert.equal(calls.length,0,'origin has no direction for selection zoom: no invalid jump');
+const focus=animated(); assert.equal(focus.length,1,'positioned origin is eligible');
+assert.deepEqual(focus[0].target,{x:0,y:0,z:0});
+assert.ok(Object.values(focus[0].position).every(Number.isFinite));
+for(const axis of ['x','y','z'])
+  assert.ok(Math.abs(focus[0].position[axis]-100*offset[axis]/length)<1e-9,
+    'origin keeps the panned viewing direction with useful offset');
+assert.equal(focus[0].duration,0,'no uncancellable vendor tween');
+assertHalo('origin');
 assert.equal(elements.detail['aria-busy'],'false');
 ''')
 

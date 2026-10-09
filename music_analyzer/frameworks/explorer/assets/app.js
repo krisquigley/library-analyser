@@ -628,6 +628,26 @@ function observeCameraFocusControls(graph){
   cameraFocusControls=controls;
   if(controls?.addEventListener) controls.addEventListener('start',cancelCameraFocus);
 }
+// Normalize by the largest component before measuring: finite wheel poses can
+// have an overflowing radius, while subnormal gaps have overflowing reciprocals.
+function cameraUnitDirection(vector){
+  const axes=['x','y','z'];
+  if(!axes.every(axis=>Number.isFinite(vector[axis]))) return null;
+  const largest=Math.max(...axes.map(axis=>Math.abs(vector[axis])));
+  if(largest===0) return null;
+  const scaled=Object.fromEntries(axes.map(axis=>[axis,vector[axis]/largest]));
+  const length=Math.hypot(scaled.x,scaled.y,scaled.z);
+  return Object.fromEntries(axes.map(axis=>[axis,scaled[axis]/length]));
+}
+function cameraViewDirection(position,target){
+  const axes=['x','y','z'];
+  if(!axes.every(axis=>Number.isFinite(position[axis])&&Number.isFinite(target[axis]))) return null;
+  const offset=Object.fromEntries(axes.map(axis=>[axis,position[axis]-target[axis]]));
+  if(axes.every(axis=>Number.isFinite(offset[axis]))) return cameraUnitDirection(offset);
+  // Opposite finite coordinates can overflow subtraction too.
+  const largest=Math.max(...axes.flatMap(axis=>[Math.abs(position[axis]),Math.abs(target[axis])]));
+  return cameraUnitDirection(Object.fromEntries(axes.map(axis=>[axis,position[axis]/largest-target[axis]/largest])));
+}
 function animateCameraFocus(graph,position,target){
   observeCameraFocusControls(graph);
   cancelCameraFocus();
@@ -642,20 +662,18 @@ function animateCameraFocus(graph,position,target){
   const dot=(a,b)=>axes.reduce((sum,axis)=>sum+a[axis]*b[axis],0);
   const cross=(a,b)=>({x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x});
   const magnitude=v=>Math.hypot(v.x,v.y,v.z);
-  const direction=(v,distance)=>{
-    if(Number.isFinite(1/distance)) return scale(v,1/distance);
-    // Subnormal distances can overflow their reciprocal. Scale by division first.
-    const largest=Math.max(...axes.map(axis=>Math.abs(v[axis])));
-    const scaled=Object.fromEntries(axes.map(axis=>[axis,v[axis]/largest]));
-    return scale(scaled,1/magnitude(scaled));
-  };
   const endOffset=subtract(position,target), endDistance=magnitude(endOffset);
   const startOffset=subtract(fromPosition,fromTarget);
-  const startDistance=magnitude(startOffset)||endDistance;
-  const startDirection=direction(magnitude(startOffset)?startOffset:endOffset,startDistance);
-  const endDirection=direction(endOffset,endDistance);
+  const measuredStartDistance=magnitude(startOffset);
+  // THREE/Trackball squares offsets during lookAt. Recover only exceptional
+  // radii whose squared norm is unsafe; ordinary orbits keep their full radius.
+  const safeRadius=Math.sqrt(Number.MAX_VALUE)/4;
+  const recoverRadius=measuredStartDistance>safeRadius;
+  const startDistance=recoverRadius?100:(measuredStartDistance||endDistance);
+  const endDirection=cameraUnitDirection(endOffset);
+  const startDirection=cameraViewDirection(fromPosition,fromTarget)||endDirection;
   const cosine=Math.max(-1,Math.min(1,dot(startDirection,endDirection)));
-  const angle=Math.acos(cosine);
+  const angle=Math.acos(cosine>1-1e-15?1:cosine);
   let tangent=subtract(endDirection,scale(startDirection,cosine));
   const camera=graph.camera(), fromUp=camera.up?{...camera.up}:null;
   if(magnitude(tangent)<1e-8) {
@@ -667,6 +685,7 @@ function animateCameraFocus(graph,position,target){
   tangent=scale(tangent,1/magnitude(tangent));
   const rotationAxis=cross(startDirection,tangent);
   const started=typeof performance!=='undefined'?performance.now():Date.now();
+  let settleRecoveredWheel=recoverRadius;
   const step=timestamp=>{
     if(generation!==cameraFocusGeneration || graph!==forceGraph) return;
     cameraFocusFrame=null;
@@ -682,6 +701,17 @@ function animateCameraFocus(graph,position,target){
       camera.up.set(...axes.map(axis=>fromUp[axis]*c+turned[axis]*s+rotationAxis[axis]*along));
     }
     graph.cameraPosition(progress===1?position:nextPosition,nextTarget,0);
+    if(settleRecoveredWheel) {
+      settleRecoveredWheel=false;
+      // Public distance bounds settle the pending wheel damping at the recovered
+      // radius; otherwise Trackball keeps zooming after the focus timeline ends.
+      const controls=graph.controls();
+      if(typeof controls.update==='function') {
+        const {minDistance,maxDistance}=controls;
+        try {controls.minDistance=startDistance;controls.maxDistance=startDistance;controls.update();}
+        finally {controls.minDistance=minDistance;controls.maxDistance=maxDistance;}
+      }
+    }
     if(progress<1) cameraFocusFrame=requestAnimationFrame(step);
   };
   cameraFocusFrame=requestAnimationFrame(step);
@@ -700,10 +730,15 @@ function focusPendingCameraSelection(graphRendered=false){
   const target={x:node.fx,y:node.fy,z:node.fz};
   if(![target.x,target.y,target.z].every(Number.isFinite)) return;
   const length=Math.hypot(target.x,target.y,target.z);
-  if(!Number.isFinite(length) || length===0) return;
+  if(!Number.isFinite(length)) return;
   // Display-space radial offset keeps a useful distance independent of node magnitude.
   const distance=100;
-  const position={x:target.x+distance*target.x/length,y:target.y+distance*target.y/length,z:target.z+distance*target.z/length};
+  // A positioned origin has no radial direction. Preserve the current orbit
+  // direction (relative to the panned target), or use +Z for a coincident pose.
+  const view=length===0?(cameraViewDirection(forceGraph.cameraPosition(),forceGraph.controls().target)||{x:0,y:0,z:1}):null;
+  const position=length===0
+    ?{x:distance*view.x,y:distance*view.y,z:distance*view.z}
+    :{x:target.x+distance*target.x/length,y:target.y+distance*target.y/length,z:target.z+distance*target.z/length};
   if(![position.x,position.y,position.z].every(Number.isFinite)) return;
   animateCameraFocus(forceGraph,position,target);
 }
