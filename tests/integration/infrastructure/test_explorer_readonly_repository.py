@@ -783,7 +783,7 @@ class CompactGraphResourceTests(unittest.TestCase):
         fake_db = _FakeCompactDb()
 
         with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
-            repo._compact_graph_tracks(fake_db)
+            tuple(repo._compact_graph_tracks(fake_db))
 
         self.assertFalse(any(', s.result' in query for query in fake_db.queries))
 
@@ -794,7 +794,7 @@ class CompactGraphResourceTests(unittest.TestCase):
         explorer_readonly_module.sqlite3.sqlite_version_info = (3, 43, 0)
         try:
             with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
-                repo._compact_graph_tracks(fake_db)
+                tuple(repo._compact_graph_tracks(fake_db))
         finally:
             explorer_readonly_module.sqlite3.sqlite_version_info = original_version
 
@@ -811,7 +811,7 @@ class CompactGraphResourceTests(unittest.TestCase):
         explorer_readonly_module.sqlite3.sqlite_version_info = (3, 42, 0)
         try:
             with self.assertRaisesRegex(AnalysisError, 'Oversized stored stage'):
-                repo._compact_graph_tracks(fake_db)
+                tuple(repo._compact_graph_tracks(fake_db))
         finally:
             explorer_readonly_module.sqlite3.sqlite_version_info = original_version
 
