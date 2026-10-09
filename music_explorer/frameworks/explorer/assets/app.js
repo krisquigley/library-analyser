@@ -17,7 +17,9 @@ let selectionPostSeq=loadSelectionPostSeq();
 let selectionEpoch=0;
 let refreshRequestSeq=0;
 let selectionDetailRequestSeq=0;
+let selectionDetailFlight=null;
 let pendingSelectionIntent=null;
+let pendingSelectionOperation=null;
 let loadingRefreshToken=0;
 let lastRefreshError=null;
 let trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query:'',order:'title'};
@@ -57,8 +59,24 @@ function syncSelectionEpoch(snapshot){
   if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
   return snapshot;
 }
-function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null;}
-async function applyHistorySelection(path){const token=++selectionRequestSeq; pendingSelectionIntent=null; const posted=syncSelectionEpoch(await api(path,{method:'POST'})); if(token!==selectionRequestSeq) return; state=posted; await refresh();}
+function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null;}
+async function applyHistorySelection(path){
+  const token=++selectionRequestSeq;
+  pendingSelectionIntent=null;
+  pendingSelectionOperation=token;
+  renderDetailLoading();
+  try{
+    const posted=await api(path,{method:'POST'});
+    if(token!==selectionRequestSeq) return;
+    state=syncSelectionEpoch(posted);
+    pendingSelectionOperation=null;
+    await refresh();
+  }catch(error){
+    if(token!==selectionRequestSeq) return;
+    pendingSelectionOperation=null;
+    renderDetailError(error);
+  }
+}
 function text(el,value){el.textContent=value==null?'':String(value);return el;}
 function nextFrame(){return new Promise(resolve=>{if(typeof requestAnimationFrame==='function') requestAnimationFrame(()=>resolve()); else setTimeout(resolve,0);});}
 function loadingElements(){return {surface:typeof document!=='undefined'?(document.getElementById('library-loading')||document.getElementById('loading-surface')):null,status:typeof document!=='undefined'?document.getElementById('loading-status'):null,error:typeof document!=='undefined'?document.getElementById('loading-error'):null,retry:typeof document!=='undefined'?document.getElementById('loading-retry'):null};}
@@ -106,47 +124,94 @@ function updateSelectedTrackVisuals(){
   else if(visibleGraph.nodes.length) renderCanvasFallback(visibleGraph);
   renderMoodStrip(visibleGraph);
 }
-async function refreshSelectionDependent(token){
-  if(token!==selectionRequestSeq) return;
-  const detailToken=++selectionDetailRequestSeq;
-  const selectedId=state.current_track_id;
-  updateSelectedTrackVisuals();
-  if(selectedId){
-    const detail=await api('/api/tracks/'+encodeURIComponent(selectedId));
-    if(token!==selectionRequestSeq || detailToken!==selectionDetailRequestSeq || state.current_track_id!==selectedId) return;
-    renderDetail(detail); updateSelectedTrackVisuals();
-  } else {
-    if(token!==selectionRequestSeq || detailToken!==selectionDetailRequestSeq) return;
-    renderInitialDetail(graphModel);
+function renderDetailLoading(){
+  const root=typeof document!=='undefined'?document.getElementById('detail'):null;
+  if(!root) return;
+  const status=document.createElement('p');
+  status.setAttribute('role','status'); status.setAttribute('aria-live','polite');
+  text(status,'Loading current track detail…');
+  root.setAttribute('aria-busy','true'); root.replaceChildren(status);
+}
+function renderDetailError(error,retry){
+  const root=typeof document!=='undefined'?document.getElementById('detail'):null;
+  if(!root) return;
+  const status=document.createElement('p');
+  status.setAttribute('role','alert');
+  text(status,'Unable to load current track detail: '+(error&&error.message?error.message:String(error)));
+  root.setAttribute('aria-busy','false'); root.replaceChildren(status);
+  if(retry){
+    const button=document.createElement('button'); button.type='button';
+    text(button,'Retry detail'); button.onclick=retry; root.append(button);
   }
+}
+async function refreshSelectionDependent(token){
+  if(token!==selectionRequestSeq || pendingSelectionOperation!==null || pendingSelectionIntent!==null) return;
+  const selectedId=state.current_track_id;
+  if(selectionDetailFlight && selectionDetailFlight.token===token && selectionDetailFlight.id===selectedId) return selectionDetailFlight.promise;
+  const detailToken=++selectionDetailRequestSeq;
+  const ownsDetail=()=>token===selectionRequestSeq && detailToken===selectionDetailRequestSeq && state.current_track_id===selectedId;
+  updateSelectedTrackVisuals();
+  if(!selectedId){renderInitialDetail(graphModel); return;}
+  renderDetailLoading();
+  const flight={token,id:selectedId,promise:null};
+  selectionDetailFlight=flight;
+  flight.promise=(async()=>{
+    try{
+      const detail=await api('/api/tracks/'+encodeURIComponent(selectedId));
+      if(!ownsDetail()) return;
+      renderDetail(detail); updateSelectedTrackVisuals();
+    }catch(error){
+      if(!ownsDetail()) return;
+      renderDetailError(error,()=>{
+        if(!ownsDetail() || pendingSelectionOperation!==null || pendingSelectionIntent!==null) return;
+        return refreshSelectionDependent(token);
+      });
+    }finally{
+      if(selectionDetailFlight===flight) selectionDetailFlight=null;
+    }
+  })();
+  return flight.promise;
 }
 async function setCurrent(id){
   const token=++selectionRequestSeq;
   const postToken=nextSelectionPostSeq();
   pendingSelectionIntent=id;
+  pendingSelectionOperation=token;
   state={...state,current_track_id:id};
+  renderDetailLoading();
   updateSelectedTrackVisuals();
-  const posted=syncSelectionEpoch(await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})}));
-  if(token!==selectionRequestSeq) return;
-  state=posted;
-  pendingSelectionIntent=null;
-  await refreshSelectionDependent(token);
+  try{
+    const posted=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})});
+    if(token!==selectionRequestSeq) return;
+    state=syncSelectionEpoch(posted);
+    pendingSelectionIntent=null;
+    pendingSelectionOperation=null;
+    await refreshSelectionDependent(token);
+  }catch(error){
+    if(token!==selectionRequestSeq) return;
+    pendingSelectionOperation=null;
+    pendingSelectionIntent=null;
+    // An unaccepted intent never authorizes a detail GET, including via retry.
+    renderDetailError(error);
+  }
 }
 function graphQueryFromControls(){const p=new URLSearchParams(); if(selectedGraphControls.mood) p.set('mood',selectedGraphControls.mood); const q=p.toString(); return q?'?'+q:'';}
 async function refresh(){
   const refreshToken=++refreshRequestSeq;
   const token=selectionRequestSeq;
+  const operationPending=pendingSelectionOperation!==null;
   try{
     setLoadingPhase(refreshToken,'Preparing library view');
     await nextFrame();
     if(abortStaleRefresh(refreshToken,token)) return;
     setLoadingPhase(refreshToken,'Loading library state');
-    const refreshedState=syncSelectionEpoch(await api('/api/state'));
+    const refreshedState=await api('/api/state');
     if(abortStaleRefresh(refreshToken,token)) return;
-    state={...refreshedState,current_track_id:pendingSelectionIntent||refreshedState.current_track_id};
+    // A refresh begun during a selection/history POST cannot reconcile its older snapshot.
+    if(!operationPending && pendingSelectionOperation===null) state=syncSelectionEpoch(refreshedState);
     renderGraphLoadStatus();
     if(abortStaleRefresh(refreshToken,token)) return;
-    await refreshSelectionDependent(token);
+    if(!operationPending) await refreshSelectionDependent(token);
     if(abortStaleRefresh(refreshToken,token)) return;
     if(graphLoadState.status==='ready') renderMap(visibleGraph);
     clearLoading(refreshToken);
@@ -232,7 +297,7 @@ function appendM3UDownloadControls(panel){const fs=document.createElement('field
 async function downloadM3UPlaylist(){if(!state.current_track_id) throw new Error('Select a start track before downloading M3U'); const params=new URLSearchParams(); params.set('start',state.current_track_id); params.set('bpm_min',selectedGraphControls.m3uBpmMin||''); params.set('bpm_max',selectedGraphControls.m3uBpmMax||''); params.set('count',selectedGraphControls.m3uCount||'10'); const response=await fetch('/api/playlists/m3u?'+params.toString()); const body=response.text?await response.text():''; if(!response.ok) throw new Error(body||'M3U download failed'); const disposition=response.headers&&response.headers.get?response.headers.get('content-disposition')||'':''; const filename=((/filename="?([^";]+)"?/i.exec(disposition)||[])[1])||'library-graph-playlist.m3u'; const warning=response.headers&&response.headers.get?response.headers.get('X-Music-Explorer-Playlist-Warning'):''; const status=document.getElementById('m3u-download-status'); if(status){status.setAttribute('role','status'); status.setAttribute('aria-live','polite'); text(status,warning?`M3U downloaded. Warning: ${warning}`:'M3U downloaded.');} const blob=new Blob([body],{type:(response.headers&&response.headers.get?response.headers.get('content-type'):'')||'audio/x-mpegurl;charset=utf-8'}); const url=URL.createObjectURL(blob); const anchor=document.createElement('a'); anchor.href=url; anchor.download=filename; try{if(document.body&&document.body.append) document.body.append(anchor); anchor.click();}finally{if(anchor.remove) anchor.remove(); URL.revokeObjectURL(url);}}
 function graphStatusMessage(graphStatus,positionedCount){const build='Run music-analyzer graph build --database DB, then reload this read-only explorer.'; const status=graphStatus&&typeof graphStatus.state==='string'?graphStatus.state:'ready'; switch(status){case 'ready': return {status:'ready',message:`Graph ready: ${positionedCount} positioned tracks`}; case 'stale': return {status:'ready',message:`Graph stale: showing the last stored snapshot for ${positionedCount} positioned tracks. ${build}`}; case 'build_needed': return {status:'ready',message:`Graph needs a build: no current stored graph snapshot is available. ${build}`}; case 'failed': return {status:'ready',message:`Graph failed: the last stored graph build did not complete successfully. ${build}`}; case 'building': return {status:'ready',message:`Graph building: a stored graph snapshot is not ready yet. ${build}`}; default: return {status:'ready',message:`Graph status unavailable: showing ${positionedCount} positioned tracks from the stored snapshot. ${build}`};}}
 function applyCurrentGraphFilters(){if(graphLoadState.status!=='ready'){renderGraphLoadStatus(); return false;} visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); const statusCopy=graphStatusMessage(graphModel.metadata.graph_status,visibleGraph.nodes.length); graphLoadState={...graphLoadState,message:statusCopy.message}; renderMap(visibleGraph); renderGraphLoadStatus(); return true;}
-function renderInitialDetail(model){const root=document.getElementById('detail'); if(!root) return; root.replaceChildren();}
+function renderInitialDetail(model){const root=document.getElementById('detail'); if(!root) return; root.setAttribute('aria-busy','false'); root.replaceChildren();}
 function fieldDisplay(f){const a=f.automatic||{}; if(a.values&&a.values.length) return a.values; if(a.summary_values&&a.summary_values.length) return a.summary_values; return f.effective_source;}
 // Detail is a presentation of retained evidence, not a graph filter or analysis threshold.
 const detailScoreModels={genres:'genre_discogs400-discogs-effnet-1',mood:'mtg_jamendo_moodtheme-discogs-effnet-1',instruments:'mtg_jamendo_instrument-discogs-effnet-1'};
@@ -290,7 +355,7 @@ const metadataAliases={albumartist:'album_artist',aalbumartist:'album_artist',aa
 function canonicalMetadataKey(key){const normalized=String(key||'').trim().toLowerCase().replace(/[ -]+/g,'_'); return metadataAliases[normalized]||normalized;}
 function metadataValueText(value){return Array.isArray(value)?value.filter(v=>String(v).trim()).join('; '):String(value==null?'':value).trim();}
 function renderTrackMetadata(metadata){const section=document.createElement('section'); section.className='field track-metadata'; const common=metadata&&Array.isArray(metadata.common)?metadata.common:[]; const tags=metadata&&Array.isArray(metadata.tags)?metadata.tags:[];  const seen=new Set(); let rendered=0; const appendRow=(key,value)=>{const canonical=canonicalMetadataKey(key); const valueText=metadataValueText(value); if(!valueText||seen.has(canonical)) return; seen.add(canonical); rendered++; section.append(text(document.createElement('p'),`${metadataLabels[canonical]||key}: ${valueText}`));}; for(const [k,v] of common) appendRow(k,v); for(const [k,vals] of tags) appendRow(k,vals||[]); if(!rendered) section.append(text(document.createElement('p'),'No embedded textual metadata found'));  return section;}
-function renderDetail(d){const root=document.getElementById('detail'); const heading=document.createElement('h3'); text(heading,'Current Track'); const fields=document.createElement('div'); fields.append(renderTrackMetadata(d.metadata)); for(const [name,f] of Object.entries(d.fields||{})) fields.append(renderDetailField(name,f)); root.replaceChildren(heading,fields);}
+function renderDetail(d){const root=document.getElementById('detail'); root.setAttribute('aria-busy','false'); const heading=document.createElement('h3'); text(heading,'Current Track'); const fields=document.createElement('div'); fields.append(renderTrackMetadata(d.metadata)); for(const [name,f] of Object.entries(d.fields||{})) fields.append(renderDetailField(name,f)); root.replaceChildren(heading,fields);}
 function buildGraphModel(tracks, projection){return buildMoodGraphModel({positioned:tracks||[],edges:(projection&&projection.edges)||[],unpositioned:[],available_moods:[],selected_mood:'',metadata:{}});}
 function applyGraphFilters(model, filters){return applyMoodGraphFilters(model,filters);}
 function orbitCamera(c,dx,dy){c.yaw=(c.yaw||0)+dx*0.01; c.pitch=(c.pitch||0)+dy*0.01; return c;}

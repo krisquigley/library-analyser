@@ -1657,7 +1657,21 @@ assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
 
     def test_undo_and_reset_still_force_complete_ui_refresh(self):
         app = APP_JS.read_text()
-        self.assertIn("async function applyHistorySelection(path){const token=++selectionRequestSeq; pendingSelectionIntent=null; const posted=syncSelectionEpoch(await api(path,{method:'POST'})); if(token!==selectionRequestSeq) return; state=posted; await refresh();}", app)
+        history = app[app.index('async function applyHistorySelection(path){'):app.index('function text(el,value)')]
+        boundaries = (
+            'const token=++selectionRequestSeq;',
+            'pendingSelectionIntent=null;',
+            "const posted=await api(path,{method:'POST'});",
+            'if(token!==selectionRequestSeq) return;',
+            'state=syncSelectionEpoch(posted);',
+            'await refresh();',
+        )
+        previous = -1
+        for boundary in boundaries:
+            self.assertIn(boundary, history)
+            current = history.index(boundary)
+            self.assertGreater(current, previous, 'history must guard stale responses before epoch sync and refresh')
+            previous = current
         self.assertIn("selection_epoch:selectionEpoch", app)
         self.assertIn("selection_client_id:selectionClientId()", app)
         self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo');", app)
@@ -1686,13 +1700,14 @@ const fs = require('fs'), vm = require('vm');
 const context = {module:{exports:{}}, console};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-function element(tag){return {tag, textContent:'', className:'', children:[], append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes; this.textContent = '';}};}
+function element(tag){return {tag, textContent:'', className:'', children:[], attributes:{}, setAttribute(name,value){this.attributes[name]=String(value);}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes; this.textContent = '';}};}
 const detail = element('section');
 context.document = {createElement: element, getElementById(id){return id === 'detail' ? detail : null;}};
 vm.runInContext("visibleGraph = {nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', display_label:'Missing', reasons:['missing bpm']}]}", context);
 context.renderInitialDetail({nodes:[{id:'a'}], links:[{}], unpositioned:[{track_id:'u', display_label:'Missing', reasons:['missing bpm']}], colorRanges:{valence:[-1,1], arousal:[0,2]}, selectedMood:'calm'});
 const rendered = (function all(node){return [node.textContent,...(node.children||[]).flatMap(all)];})(detail).join(' ');
 assert.strictEqual(rendered.trim(), '', rendered);
+assert.strictEqual(detail.attributes['aria-busy'], 'false');
 assert(!rendered.includes('All-library valence / arousal / BPM graph'), rendered);
 assert(!rendered.includes('Showing'), rendered);
 assert(!rendered.includes('missing bpm'), rendered);
