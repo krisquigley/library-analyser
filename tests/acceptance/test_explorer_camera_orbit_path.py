@@ -24,6 +24,42 @@ def trackball_fixture():
     return fixture
 
 
+FINITE_WHEEL_PAN = r'''
+function wheelAndPanToRadius(radius) {
+  controls.target.set(0,0,0);
+  camera.position.set(500,500,500);
+  camera.up.set(0,1,0);
+  controls.update();
+  let count=0;
+  for(;count<10000;count++) {
+    controls._onMouseWheel({deltaMode:0,deltaY:120,preventDefault(){}});
+    controls.update();
+    assert.ok(camera.position.toArray().every(Number.isFinite),'actual wheel remains finite');
+    if(Math.hypot(...camera.position.toArray())>=radius) break;
+  }
+  assert.ok(count<10000,'bounded wheel reproduction reaches requested finite scale');
+  // Finish wheel damping before panning, using only the actual bundled update.
+  for(let i=0;i<200;i++) controls.update();
+  Object.assign(controls.screen,{left:0,top:0,width:800,height:600});
+  controls._onMouseDown({button:2,pageX:400,pageY:300});
+  controls._onMouseMove({pageX:500,pageY:350});
+  controls.update();
+  controls._onMouseUp();
+  for(let i=0;i<200;i++) controls.update();
+  // Public static mode flushes residual pan damping without replacing controls.
+  controls.staticMoving=true; controls.update(); controls.staticMoving=false;
+  assert.ok([...camera.position.toArray(),...controls.target.toArray(),
+    ...camera.up.toArray(),...camera.quaternion.toArray()].every(Number.isFinite),
+    'actual wheel and pan produce an entirely finite rendered start pose');
+  assert.ok(Math.hypot(...controls.target.toArray())>radius/100,
+    'actual right-button pan moves target to the huge finite scale');
+  assert.ok(Number.isFinite(camera.position.distanceTo(controls.target)),
+    'astronomical input stops before bundled squared-radius overflow');
+  console.log('ACTUAL_FINITE_WHEEL_PAN',count,pose());
+}
+'''
+
+
 class CameraOrbitPathTests(unittest.TestCase):
     def run_trackball_scenario(self, scenario):
         node = shutil.which('node')
@@ -37,6 +73,77 @@ class CameraOrbitPathTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('SCENARIO_COMPLETED', result.stdout)
+
+    def run_finite_wheel_pan_scenario(self, scenario):
+        # A hard timeout kills a hung vendor loop rather than leaving Node alive.
+        node = shutil.which('node')
+        self.assertIsNotNone(node, 'Node required; do not skip RED')
+        for asset in ASSETS:
+            with self.subTest(asset=str(asset.relative_to(ROOT))):
+                script = trackball_fixture() + FINITE_WHEEL_PAN + scenario + (
+                    '\n})().then(()=>console.log("SCENARIO_COMPLETED"))'
+                    '.catch(error=>{console.error(error);process.exitCode=1;});')
+                result = subprocess.run(
+                    ['timeout', '--signal=KILL', '20s', node, '-e', script, str(asset)],
+                    cwd=ROOT, capture_output=True, text=True, timeout=25)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('SCENARIO_COMPLETED', result.stdout)
+
+    def test_bundled_finite_wheel_pan_finishes_at_exact_node_target_at_700ms(self):
+        self.run_finite_wheel_pan_scenario(r'''
+render(); wheelAndPanToRadius(1e19);
+await select('a');
+for(const time of [0,5,100,350,695,700]) {
+  advance(time);
+  assert.ok([...camera.position.toArray(),...controls.target.toArray(),
+    ...camera.up.toArray(),...camera.quaternion.toArray()].every(Number.isFinite),
+    `finite wheel/pan rendered pose at ${time}`);
+  const offset=camera.position.clone().sub(controls.target);
+  assert.ok(Number.isFinite(offset.length())&&offset.length()>1e-6,
+    `nonzero camera offset at ${time}`);
+  assert.ok(Math.abs(camera.up.length()-1)<1e-10,`normalized up at ${time}`);
+  assert.ok(Math.abs(camera.quaternion.length()-1)<1e-10,
+    `nonzero normalized camera quaternion at ${time}`);
+}
+assert.deepEqual(pose().target,{x:a.fx,y:a.fy,z:a.fz},
+  '700ms endpoint assigns the exact node target, without large-start cancellation');
+assert.ok(Math.abs(camera.position.distanceTo(controls.target)-100)<1e-9,
+  'exact node framing retains camera offset100 at the endpoint');
+const completed=pose(); advance(900); advance(1200);
+assert.deepEqual(pose(),completed,'completed wheel/pan focus remains stable');
+''')
+
+    def test_bundled_astronomical_finite_wheel_pan_rebases_target_and_restores_bounds(self):
+        self.run_finite_wheel_pan_scenario(r'''
+render(); wheelAndPanToRadius(5e153);
+const originalUpLength=camera.up.length();
+controls.minDistance=0.25; controls.maxDistance=1e155;
+const originalBounds={min:controls.minDistance,max:controls.maxDistance};
+await select('a');
+for(const time of [0,5,100,350,695,700,900,1200]) {
+  advance(time);
+  assert.deepEqual({min:controls.minDistance,max:controls.maxDistance},originalBounds,
+    `temporary recovery bounds restored at ${time}`);
+  assert.ok(controls.target.toArray().every(value=>Math.abs(value)<1e6),
+    `exceptional target rebased to bounded location at ${time}`);
+  assert.ok([...camera.position.toArray(),...controls.target.toArray(),
+    ...camera.up.toArray(),...camera.quaternion.toArray()].every(Number.isFinite),
+    `astronomical wheel/pan recovery preserves finite rendered pose at ${time}`);
+  const offset=camera.position.clone().sub(controls.target);
+  assert.ok(Number.isFinite(offset.length())&&offset.length()>1e-6,
+    `bounded nonzero camera offset at ${time}`);
+  assert.ok(Math.abs(camera.up.length()-originalUpLength)<1e-10,
+    `normalized up preserved at ${time}`);
+  assert.ok(Math.abs(camera.quaternion.length()-1)<1e-10,
+    `nonzero normalized camera quaternion at ${time}`);
+  if(time===700) {
+    assert.deepEqual(pose().target,{x:a.fx,y:a.fy,z:a.fz},'exact target at deadline');
+    assert.ok(Math.abs(offset.length()-100)<1e-9,'offset100 at deadline');
+  }
+}
+const completed=pose(); advance(2000); assert.deepEqual(pose(),completed);
+assert.equal(vendorState.tweenGroup.getAll().length,0);
+''')
 
     def test_bundled_wheel_huge_finite_start_recovers_to_bounded_focus(self):
         self.run_trackball_scenario(r'''

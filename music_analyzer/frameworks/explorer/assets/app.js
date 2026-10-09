@@ -670,6 +670,9 @@ function animateCameraFocus(graph,position,target){
   const safeRadius=Math.sqrt(Number.MAX_VALUE)/4;
   const recoverRadius=measuredStartDistance>safeRadius;
   const startDistance=recoverRadius?100:(measuredStartDistance||endDistance);
+  // A 100-unit offset cannot be represented beside an astronomical pan target.
+  // Exceptional recovery also rebases translation; ordinary arcs stay intact.
+  const interpolationTarget=recoverRadius?{x:0,y:0,z:0}:fromTarget;
   const endDirection=cameraUnitDirection(endOffset);
   const startDirection=cameraViewDirection(fromPosition,fromTarget)||endDirection;
   const cosine=Math.max(-1,Math.min(1,dot(startDirection,endDirection)));
@@ -694,7 +697,8 @@ function animateCameraFocus(graph,position,target){
     const interpolate=(from,to)=>Object.fromEntries(['x','y','z'].map(axis=>[axis,from[axis]+(to[axis]-from[axis])*progress]));
     const theta=angle*progress, c=Math.cos(theta), s=Math.sin(theta);
     const distance=startDistance+(endDistance-startDistance)*progress;
-    const nextTarget=interpolate(fromTarget,target);
+    // Large finite starts can erase node coordinates at t=1 by cancellation.
+    const nextTarget=progress===1?target:interpolate(interpolationTarget,target);
     const nextPosition=Object.fromEntries(axes.map(axis=>[axis,nextTarget[axis]+distance*(startDirection[axis]*c+tangent[axis]*s)]));
     if(fromUp && camera.up?.set) {
       const turned=cross(rotationAxis,fromUp), along=dot(rotationAxis,fromUp)*(1-c);

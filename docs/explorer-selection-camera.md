@@ -23,9 +23,12 @@ rendered, discard a genuinely hidden/missing/unpositioned selection normally.
 Finite camera components do not guarantee a finite radius or safe bundled
 Trackball arithmetic. Astronomical starting offsets use scaled direction
 normalization and bounded finite recovery before interpolation, retaining a
-usable up vector. This exceptional recovery is not a promise of continuous
-motion across astronomical distances; ordinary poses retain the smooth
-camera-relative arc and the same radial endpoint.
+usable up vector. Recovery also rebases the starting orbit target to the origin:
+a 100-unit offset is not representable beside an astronomical panned target.
+This exceptional recovery is not a promise of continuous motion across
+astronomical distances; ordinary poses retain the smooth camera-relative arc
+and the same radial endpoint. At 700 ms both position and look-at target use
+the exact selected-node endpoint, avoiding large-start interpolation cancellation.
 
 Reset, history/new-selection intent, and changed authoritative selection
 reconciliation supersede active motion as well as pending intent. User orbit
