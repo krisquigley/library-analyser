@@ -392,6 +392,12 @@ function makeElement(tag){
   const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null,
     append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
     replaceChildren(...nodes){this.children=[]; this.append(...nodes);},
+    replaceChild(node,old){
+      const index=this.children.indexOf(old);
+      if(index<0) throw new Error('NotFoundError: child is not attached');
+      old.parentElement=null;node.parentElement=this;
+      this.children.splice(index,1,node);return old;
+    },
     setAttribute(name,value){this.attributes[name]=String(value);},
     removeAttribute(name){delete this.attributes[name];},
     getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};},

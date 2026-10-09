@@ -10,6 +10,160 @@ from tests.acceptance.test_explorer_auto_graph_independence import HARNESS, NODE
 
 
 class GraphFailureAnnouncementTests(unittest.TestCase):
+    def test_delayed_state_preserves_edited_m3u_controls_and_real_download_error(self):
+        self.assertTrue(NODE, 'Node is required; configure EXPLORER_TEST_NODE')
+        scenario = r"""
+(async()=>{
+  // Fake browser I/O only: detaching the active subtree loses browser focus.
+  const instrument=node=>{
+    node.focus=()=>{context.document.activeElement=node;};
+    const replaceChildren=node.replaceChildren;
+    node.replaceChildren=function(...children){
+      const active=context.document.activeElement;
+      if(active&&this.children.some(child=>walk(child).includes(active)))
+        context.document.activeElement=null;
+      return replaceChildren.call(this,...children);
+    };
+    return node;
+  };
+  Object.values(roots).forEach(instrument);
+  const createElement=context.document.createElement;
+  context.document.createElement=tag=>instrument(createElement(tag));
+  const fetch=context.fetch;
+  context.fetch=async(path,options)=>{
+    const url=new URL(String(path),'http://example.test');
+    if(url.pathname==='/api/playlists/m3u'){
+      requests.push({url,options});
+      return {ok:false,status:503,text:async()=>'playlist temporarily unavailable'};
+    }
+    return fetch(path,options);
+  };
+  await start();
+  await searchAndDetail();
+  // Selection precedes this refresh so its delayed response is not discarded
+  // as stale by the real selection request guard.
+  stateGate=deferred();
+  const refreshing=context.refresh();await flush();
+  graphGate.resolve(response(graphBody));await flush();
+  assert(/Graph ready: 1 positioned tracks/.test(graphStatus()));
+  assert.equal(requests.filter(r=>r.url.pathname==='/api/state').length,2,
+    'state refresh remains pending while the graph becomes ready');
+  const panel=roots['graph-load-status'];
+  const children=[...panel.children];
+  const m3u=context.document.getElementById('m3u-download-controls');
+  const count=context.document.getElementById('m3u-count');
+  const download=context.document.getElementById('download-m3u');
+  const status=context.document.getElementById('m3u-download-status');
+  assert(m3u&&count&&download&&status,'ready graph exposes real M3U controls');
+  assert.equal(count.value,'10');
+  count.value='25';count.onchange();
+  count.focus();
+  await download.onclick();await flush();
+  const m3uRequests=requests.filter(r=>r.url.pathname==='/api/playlists/m3u');
+  assert.equal(m3uRequests.length,1,'real download handler issues one playlist request');
+  assert.equal(m3uRequests[0].url.searchParams.get('start'),'result');
+  assert.equal(m3uRequests[0].url.searchParams.get('count'),'25',
+    'visible edit reaches the actual playlist HTTP request');
+  assert.equal(status.getAttribute('role'),'alert');
+  assert.equal(status.getAttribute('aria-live'),'assertive');
+  assert.match(status.innerText,/M3U download failed: playlist temporarily unavailable/);
+  const errorText=status.innerText;
+  const before=requests.length;
+  stateGate.resolve(response(stateBody));await refreshing;await flush();
+  const currentStatus=context.document.getElementById('m3u-download-status');
+  console.log('edited-M3U delayed-state observations',JSON.stringify({
+    sameControls:context.document.getElementById('m3u-download-controls')===m3u,
+    sameCount:context.document.getElementById('m3u-count')===count,
+    sameDownload:context.document.getElementById('download-m3u')===download,
+    sameAlert:currentStatus===status,errorText:currentStatus.innerText,
+    focusedCount:context.document.activeElement===count,
+    graphRequests:graphRequests().length,playlistRequests:m3uRequests.length}));
+  assert.deepEqual(requests.slice(before).map(r=>r.url.pathname),['/api/tracks/result'],
+    'state completion refreshes selected detail only, not graph or playlist');
+  assert.equal(graphRequests().length,1,'unchanged state must not reload ready graph');
+  assert.equal(context.document.getElementById('m3u-download-controls'),m3u,
+    'unchanged delayed state must preserve visibly edited M3U controls');
+  assert.equal(context.document.getElementById('m3u-count'),count);
+  assert.equal(count.value,'25');
+  assert.equal(context.document.getElementById('download-m3u'),download);
+  assert.equal(currentStatus,status,'unchanged delayed state must preserve M3U error alert identity');
+  assert.equal(currentStatus.innerText,errorText,'unchanged state must not erase real M3U error');
+  assert.equal(currentStatus.getAttribute('role'),'alert');
+  assert.equal(currentStatus.getAttribute('aria-live'),'assertive');
+  assert.equal(context.document.activeElement,count,'unchanged state must retain edited control focus');
+  assert.equal(panel.children.length,children.length);
+  children.forEach((child,index)=>assert.equal(panel.children[index],child));
+  assertInlineOnly();
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+        for package in ('music_analyzer', 'music_explorer'):
+            with self.subTest(package=package):
+                app = ROOT / package / 'frameworks/explorer/assets/app.js'
+                result = subprocess.run([NODE, '-e', HARNESS + scenario, str(app)],
+                                        cwd=ROOT, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_each_m3u_edit_preserves_no_selection_error_through_state_and_graph_filters(self):
+        self.assertTrue(NODE, 'Node is required; configure EXPLORER_TEST_NODE')
+        scenario = r"""
+(async()=>{
+  stateGate=deferred();
+  await start();
+  graphGate.resolve(response(graphBody));await flush();
+  assert(/Graph ready: 1 positioned tracks/.test(graphStatus()));
+  const field=context.document.getElementById(fieldId);
+  const controls=context.document.getElementById('m3u-download-controls');
+  const download=context.document.getElementById('download-m3u');
+  const status=context.document.getElementById('m3u-download-status');
+  const fields=['m3u-bpm-min','m3u-bpm-max','m3u-count'].map(id=>context.document.getElementById(id));
+  assert(field&&controls&&download&&status);
+  field.value=editedValue;field.onchange();
+  await download.onclick();await flush();
+  assert.equal(status.innerText,'M3U download failed: Select a start track before downloading M3U');
+  assert.equal(status.getAttribute('role'),'alert');
+  assert.equal(status.getAttribute('aria-live'),'assertive');
+  assert.equal(requests.filter(r=>r.url.pathname==='/api/playlists/m3u').length,0,
+    'real no-selected-track validation must not issue a playlist request');
+  const errorText=status.innerText;
+  const assertPreserved=phase=>{
+    const currentStatus=context.document.getElementById('m3u-download-status');
+    console.log('no-selection '+fieldId+' '+phase,JSON.stringify({
+      sameControls:context.document.getElementById('m3u-download-controls')===controls,
+      sameAlert:currentStatus===status,errorText:currentStatus.innerText}));
+    assert.equal(context.document.getElementById('m3u-download-controls'),controls,
+      phase+' must retain all M3U control nodes after visible '+fieldId+' edit');
+    fields.forEach(node=>assert.equal(context.document.getElementById(node.id),node));
+    assert.equal(context.document.getElementById('download-m3u'),download);
+    assert.equal(field.value,editedValue);
+    assert.equal(currentStatus,status,phase+' must retain no-selection alert identity');
+    assert.equal(currentStatus.innerText,errorText);
+    assert.equal(currentStatus.getAttribute('role'),'alert');
+    assert.equal(currentStatus.getAttribute('aria-live'),'assertive');
+  };
+  stateGate.resolve(response(stateBody));await flush();
+  assertPreserved('unchanged delayed state');
+  const bpmMin=context.document.getElementById('bpm-min');
+  bpmMin.value='121';bpmMin.onchange();await flush();
+  assert(/Graph ready: 0 positioned tracks/.test(graphStatus()),
+    'real graph filter removes the 120 BPM fixture');
+  assertPreserved('count-changing graph filter');
+  bpmMin.value='';bpmMin.onchange();await flush();
+  assert(/Graph ready: 1 positioned tracks/.test(graphStatus()));
+  assertPreserved('cleared graph filter');
+  assert.equal(graphRequests().length,1,'state and graph filters never refetch graph');
+  assertInlineOnly();
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+        for package in ('music_analyzer', 'music_explorer'):
+            for field_id, value in (('m3u-count', '25'), ('m3u-bpm-min', '95'),
+                                    ('m3u-bpm-max', '145')):
+                with self.subTest(package=package, field=field_id):
+                    app = ROOT / package / 'frameworks/explorer/assets/app.js'
+                    parameters = f'\nconst fieldId={field_id!r}, editedValue={value!r};\n'
+                    result = subprocess.run([NODE, '-e', HARNESS + parameters + scenario, str(app)],
+                                            cwd=ROOT, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_unchanged_state_refresh_preserves_ready_graph_and_m3u_controls(self):
         self.assertTrue(NODE, 'Node is required; configure EXPLORER_TEST_NODE')
         scenario = r"""

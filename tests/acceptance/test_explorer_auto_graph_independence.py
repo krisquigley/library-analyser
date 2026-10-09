@@ -28,6 +28,11 @@ function element(tag) {
     getContext(){return canvasContext;},
     append(...nodes){this.children.push(...nodes);},
     replaceChildren(...nodes){this.children=[...nodes]; this.textContent='';},
+    replaceChild(node,old){
+      const index=this.children.indexOf(old);
+      if(index<0) throw new Error('NotFoundError: child is not attached');
+      this.children.splice(index,1,node);return old;
+    },
     setAttribute(k,v){this.attributes[k]=String(v);},
     getAttribute(k){return this.attributes[k] ?? null;},
     removeAttribute(k){delete this.attributes[k];},
