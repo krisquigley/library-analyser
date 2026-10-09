@@ -392,6 +392,12 @@ function makeElement(tag){
   const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null,
     append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
     replaceChildren(...nodes){this.children=[]; this.append(...nodes);},
+    replaceChild(node,old){
+      const index=this.children.indexOf(old);
+      if(index<0) throw new Error('NotFoundError: child is not attached');
+      old.parentElement=null;node.parentElement=this;
+      this.children.splice(index,1,node);return old;
+    },
     setAttribute(name,value){this.attributes[name]=String(value);},
     removeAttribute(name){delete this.attributes[name];},
     getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};},
@@ -936,12 +942,12 @@ global.fetch = async path => {
             with self.subTest(app=app):
                 subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
 
-    def test_static_html_copy_matches_manual_graph_loading_in_both_mirrored_assets(self):
+    def test_static_html_does_not_instruct_manual_graph_loading_in_both_mirrored_assets(self):
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
                 html = (REPO_ROOT / package / 'frameworks/explorer/assets/index.html').read_text(encoding='utf-8')
                 self.assertNotIn('initial graph shows the whole library', html)
-                self.assertIn('Use Load graph to render the 3D library graph manually', html)
+                self.assertNotIn('Use Load graph', html, 'startup loads the graph without a manual step')
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for metadata DOM tests')
     def test_metadata_is_flat_deduplicated_and_escaped(self):
@@ -1819,8 +1825,8 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
                 load_graph_source = source[source.index('async function loadGraph()'):source.index('function renderInitialDetail')]
                 self.assertIn("const controlQuery=graphQueryFromControls()", load_graph_source)
                 self.assertIn("const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v3')", load_graph_source)
-                self.assertIn('load-graph', source)
-                self.assertIn('Load graph', source)
+                self.assertNotIn("button.id='load-graph'", source)
+                self.assertNotIn("'Load graph'", source)
                 self.assertIn('loadGraph', source[source.index('module.exports'):])
                 self.assertIn('getStateForTesting', source[source.index('module.exports'):])
 
@@ -2024,9 +2030,7 @@ global.fetch = async path => {
   app.setStateForTesting({current_track_id:'track-start'});
   app.renderGraphLoadStatus();
   assert(!requests.some(path => path.includes('m3u')), 'rendering graph controls must not auto-fetch a playlist');
-  const load = elements['graph-load-status'].querySelector('#load-graph');
-  assert(load, 'graph status exposes Load graph before explicit graph request');
-  const loading = load.onclick();
+  const loading = app.loadGraph();
   runFrames();
   await loading;
   assert(!requests.some(path => path.includes('m3u')), 'loading/rendering the graph must not auto-fetch a playlist');

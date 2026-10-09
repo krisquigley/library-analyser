@@ -6,9 +6,9 @@ This note defines the public-safe startup performance contract for the Track Jou
 
 For large libraries, the first usable explorer view is an empty search sidebar and basic controls. Startup, refresh, undo and reset do not fetch a list merely to fill the sidebar. A nonblank search requests a bounded compact summary page without waiting for graph construction or full per-track evidence parsing; blank or whitespace input clears results immediately. Loading, no matches and retryable search/page errors are scoped to the sidebar. Pagination is explicit and stale query/page responses cannot replace newer search intent.
 
-Product decision: the graph is manually requested. The first view shows a visible **Load graph** button; the browser must not request `/api/mood-axis-graph` on initial startup at any library size. Choosing a mood before the graph is loaded only stores that choice for the eventual manual load. Clicking the button starts graph loading with independent loading/error/retry state while the compact list, search, selection, history, and detail interactions remain usable. After the graph is ready, a user-initiated mood change reloads the graph for the selected mood while preserving the existing layout/camera when the returned graph geometry is unchanged.
+Product decision: the graph loads automatically. Startup starts one `/api/mood-axis-graph?contract=v3` request independently of state, search and selected-track detail requests; no manual **Load graph** action is required. Successful data renders automatically, with inline loading/rendering feedback and a scoped error/retry state. Slow or failed graph requests must not block search, selection, history or detail interactions; failed state or search requests must not prevent graph completion or leave a blocking startup overlay. Graph completion must not replace search results or current details. Refresh, undo and reset do not restart graph loading. After the graph is ready, a user-initiated mood change reloads the graph for the selected mood while preserving the existing layout/camera when the returned graph geometry is unchanged.
 
-The existing full-library endpoints and blank-query summary API remain compatibility endpoints. The browser uses the paginated summary endpoint only for nonblank searches, then loads graph data only after the user activates the graph button. Automatic graph loading is a separate issue #70 follow-up, not part of PR1.
+The existing full-library endpoints and blank-query summary API remain compatibility endpoints. The browser uses the paginated summary endpoint only for nonblank searches. Automatic graph startup extends the search-first lifecycle from issue #70 PR1 without changing graph response contracts, topology, active-track eligibility or evidence validation. Independent request lifecycles are not a guarantee of CPU responsiveness during large-response parsing or rendering.
 
 ## Public synthetic benchmark methodology
 
@@ -26,7 +26,7 @@ The benchmark then starts the local explorer server on loopback and records cold
 GET /api/tracks/summary?limit=100&order=title
 ```
 
-The browser smoke portion is opt-in with `RUN_BROWSER_SMOKE=1`. When Playwright/Chromium is available, it verifies that the search control becomes usable with no initial sidebar or graph request, then searches for generated tracks and checks selection interactions before graph loading, then clicks **Load graph** and verifies independent graph loading/error/retry behavior where feasible.
+The browser smoke portion is opt-in with `RUN_BROWSER_SMOKE=1`. When Playwright/Chromium is available, it verifies that the search control becomes usable with no initial sidebar request while an automatic graph request is pending, then searches for generated tracks and checks selection interactions without waiting for graph completion. Focused Node lifecycle tests cover automatic success, failure/retry and independence from deferred or failed requests; they do not replace real-browser responsiveness measurements.
 
 ## Startup targets
 
@@ -36,7 +36,7 @@ The browser smoke portion is opt-in with `RUN_BROWSER_SMOKE=1`. When Playwright/
 | Summary API bounds | `limit` is bounded, query text is bounded, order is explicit, and the response carries `next_cursor` when another page exists. |
 | Search data shape | Nonblank-search summary JSON contains only handle, title, artist, display label, available-location count, metadata, limit, cursor, query, and order. |
 | Heavy reads | Startup issues no sidebar list request. Search summaries do not call full `candidate_snapshot`, read full track details, or parse stored stage `result` payloads. |
-| First usable browser view | With a browser available, the empty sidebar/search controls render and remain interactive without a sidebar list request or graph request; graph loading starts only after the user clicks **Load graph**, with visible loading/error/retry state. |
+| First usable browser view | With a browser available, the empty sidebar/search controls render and remain interactive without a sidebar list request while the automatic v3 graph request is pending; graph loading/rendering/error/retry feedback is scoped inline. |
 
 ## Baseline aggregate observations
 
@@ -52,6 +52,14 @@ These aggregates are from the public synthetic harness, not from a user library.
 Only aggregate sizes and pass/fail targets belong in this document. Do not paste raw benchmark logs, private hostnames, local checkout paths, user music filenames, database paths, or results from a real personal library.
 
 ## How to run the synthetic checks
+
+Run the focused Node lifecycle checks with Node installed (a Node skip is not acceptance evidence):
+
+```bash
+command -v node >/dev/null && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
+  tests.acceptance.test_explorer_auto_graph_startup \
+  tests.acceptance.test_explorer_auto_graph_independence
+```
 
 Run the non-browser acceptance benchmark:
 
@@ -71,6 +79,6 @@ Use Podman for any containerized execution in this repository. Do not use Docker
 
 - Synthetic rows are designed to exercise startup payload size, pagination, and UI sequencing. They do not predict absolute timings for every production machine.
 - Browser timing is intentionally opt-in because CI runners may not have Chromium or WebGL available.
-- The optional browser check can measure interaction latency before graph loading and, when feasible, while a user-triggered graph request is pending. It does not fully measure responsiveness during CPU-bound graph layout/rendering after a large graph response arrives.
-- The current graph path can take more than 45 seconds of CPU-bound work on large libraries. The manual button keeps that work outside initial startup, but graph speed remains a known limitation and needs separate future graph algorithm and rendering work.
+- The optional browser check exercises interactions while the automatic graph request is pending. It does not fully measure responsiveness during CPU-bound parsing, model building or graph rendering after a large graph response arrives. Browser skips are not passing browser acceptance evidence.
+- Large-library graph work remains a known limitation. Automatic startup can overlap bandwidth, CPU and memory costs with other interactions; deferred-response Node tests do not measure those costs. This lifecycle change makes no graph-speed claim and does not resolve issue #44. A representative 41 MiB-class real-browser response scenario still requires separately reported measurements.
 - Compatibility endpoints may remain slower or larger; the bounded-response contract applies to the summary path used for nonblank search results.

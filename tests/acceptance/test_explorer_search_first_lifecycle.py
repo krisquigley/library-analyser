@@ -251,8 +251,10 @@ const before=requests.length;
 await row.children[0].children[0].onclick(); await flush();
 assert.deepEqual(requests.slice(before).map(r=>r.url.pathname),['/api/current','/api/tracks/hostile']);
 assert.equal(row.children[0].children[0].getAttribute('aria-current'),'true');
-assert(!requests.some(r=>r.url.pathname==='/api/mood-axis-graph'),'PR1 retains manual graph lifecycle');
-assert(walk(roots['graph-load-status']).some(n=>n.tagName==='BUTTON'&&n.innerText==='Load graph'));
+const graphRequests=requests.filter(r=>r.url.pathname==='/api/mood-axis-graph');
+assert.equal(graphRequests.length,1,'PR3 starts graph once independently of metadata selection');
+assert.equal(graphRequests[0].url.searchParams.get('contract'),'v3');
+assert(!walk(roots['graph-load-status']).some(n=>n.tagName==='BUTTON'&&n.innerText==='Load graph'));
 """)
 
 

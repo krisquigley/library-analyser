@@ -142,7 +142,7 @@ class ExplorerStartupPerformanceAcceptanceTests(unittest.TestCase):
                 browser = p.chromium.launch(channel='chromium')
                 page = browser.new_page()
                 try:
-                    page.goto(base + '/')
+                    page.goto(base + '/', wait_until='domcontentloaded')
                     page.get_by_role('searchbox', name='Search tracks by title or artist').wait_for(timeout=1500)
                     self.assertEqual(page.locator('#tracks tbody tr').count(), 0)
                     search = page.get_by_role('searchbox', name='Search tracks by title or artist')
@@ -151,9 +151,7 @@ class ExplorerStartupPerformanceAcceptanceTests(unittest.TestCase):
                     search.fill('Track 00099')
                     page.get_by_role('button', name='Track 00099').wait_for(timeout=1000)
                     self.assertLess(time.perf_counter() - started, 1.0)
-                    self.assertFalse(graph_started.wait(0.25), 'graph must not auto-load before the Load graph button is clicked')
-                    page.get_by_role('button', name='Load graph').click()
-                    self.assertTrue(graph_started.wait(5), 'graph did not load after explicit Load graph click')
+                    self.assertTrue(graph_started.wait(5), 'startup automatically requests graph without a manual click')
                 finally:
                     release_graph.set()
                     browser.close()
