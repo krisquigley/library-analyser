@@ -15,7 +15,12 @@ bounds take precedence: the endpoint radius is 100 only when those bounds permit
 it, otherwise it is clamped to the configured interval. Bounds-compatible
 ordinary starting poses retain a smooth in-range radius throughout the transition,
 without changing the configured bounds or relying on a later controls update to
-snap the endpoint into range. This is not a viewport/FOV-calibrated scale guarantee.
+snap the endpoint into range. If a zero or tiny custom radius makes the endpoint
+coincide with its look-at target in floating-point coordinates, focus is safely
+skipped before settling input; the adapter does not widen the custom bounds.
+Camera-focus startup exceptions also cancel that best-effort motion without
+suppressing the independent detail GET for an accepted selection.
+This is not a viewport/FOV-calibrated scale guarantee.
 For an origin node, the undefined radial direction falls back to the current
 viewing direction (or a deterministic nonzero direction), preserving a finite,
 nondegenerate focus. Hidden, missing, unpositioned, and nonfinite nodes do not
@@ -87,6 +92,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
   tests.acceptance.test_explorer_camera_unflushed_damping \
   tests.acceptance.test_explorer_camera_disabled_controls \
   tests.acceptance.test_explorer_camera_custom_bounds \
+  tests.acceptance.test_explorer_camera_unrepresentable_focus \
   tests.acceptance.test_explorer_3d_graph_assets.Explorer3DGraphAssetTests.test_graph_camera_centers_bounds_fits_viewport_and_preserves_selection_view \
   tests.architecture.test_import_boundaries
 ```

@@ -651,8 +651,8 @@ function cameraViewDirection(position,target){
 // Disabled bundled cameraPosition looks at the point but leaves its orbit
 // target stale. Keep the public target synchronized for update and re-enable.
 function setCameraFocusPose(graph,position,target){
-  const controls=graph.controls();
-  if(controls.target) Object.assign(controls.target,target);
+  const controls=graph.controls?.();
+  if(controls?.target) Object.assign(controls.target,target);
   graph.cameraPosition(position,target,0);
 }
 // Drain pending rotation/wheel/pan once through Trackball's public API. Zero
@@ -757,17 +757,26 @@ function focusPendingCameraSelection(graphRendered=false){
   if(![target.x,target.y,target.z].every(Number.isFinite)) return;
   const length=Math.hypot(target.x,target.y,target.z);
   if(!Number.isFinite(length)) return;
-  // Configured orbit bounds take precedence over the nominal display-space radius.
-  const controls=forceGraph.controls();
-  const distance=Math.max(controls.minDistance??0,Math.min(controls.maxDistance??Infinity,100));
-  // A positioned origin has no radial direction. Preserve the current orbit
-  // direction (relative to the panned target), or use +Z for a coincident pose.
-  const view=length===0?(cameraViewDirection(forceGraph.cameraPosition(),forceGraph.controls().target)||{x:0,y:0,z:1}):null;
-  const position=length===0
-    ?{x:distance*view.x,y:distance*view.y,z:distance*view.z}
-    :{x:target.x+distance*target.x/length,y:target.y+distance*target.y/length,z:target.z+distance*target.z/length};
-  if(![position.x,position.y,position.z].every(Number.isFinite)) return;
-  animateCameraFocus(forceGraph,position,target);
+  // Camera focus is best-effort; it must never block accepted track detail.
+  try {
+    // Configured orbit bounds take precedence over the nominal display-space radius.
+    const controls=forceGraph.controls();
+    const distance=Math.max(controls.minDistance??0,Math.min(controls.maxDistance??Infinity,100));
+    // A positioned origin has no radial direction. Preserve the current orbit
+    // direction (relative to the panned target), or use +Z for a coincident pose.
+    const view=length===0?(cameraViewDirection(forceGraph.cameraPosition(),forceGraph.controls().target)||{x:0,y:0,z:1}):null;
+    const position=length===0
+      ?{x:distance*view.x,y:distance*view.y,z:distance*view.z}
+      :{x:target.x+distance*target.x/length,y:target.y+distance*target.y/length,z:target.z+distance*target.z/length};
+    if(![position.x,position.y,position.z].every(Number.isFinite)) return;
+    // Zero/tiny custom radii can round the endpoint onto its look-at target.
+    // Skip that focus before settling input; never widen the configured bounds.
+    if(!cameraViewDirection(position,target)) return;
+    animateCameraFocus(forceGraph,position,target);
+  } catch(error) {
+    // A camera adapter failure does not revoke an accepted selection.
+    cancelCameraFocus();
+  }
 }
 function renderMoodStrip(data){
   const canvas=document.getElementById('mood-strip'), picker=document.getElementById('mood-strip-picker'), readout=document.getElementById('mood-strip-value');
@@ -788,7 +797,7 @@ function renderMoodStrip(data){
   picker.oninput=show; show();
   canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
 }
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ cancelCameraFocus(); forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;} focusPendingCameraSelection(true);} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true);} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
