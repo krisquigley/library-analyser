@@ -128,8 +128,11 @@ or domain code.
 
 ## Explicitly deferred to PR4b and subsequent diagnostic delivery
 
-- Reproducible rich v10 5k/20k generator, active/excluded/unavailable populations,
-  stage/history distributions, positioned graph data and DB-backed graph oracle.
+- The PR4b [public fixture API](explorer-public-fixture.md) now supplies the
+  reproducible rich v10 generator, explicit 5k/20k profiles,
+  active/excluded/unavailable populations, stage/history distributions,
+  positioned graph data and actual DB-backed graph oracle. Runtime measurement
+  and browser acceptance remain deferred; generator integrity is not latency.
 - Independently verified ~41 MiB-class browser-only graph fixture, separately
   labeled from actual database-backed output.
 - Actual HTTP transport and database phase attribution, bound SQL EXPLAIN plans,
