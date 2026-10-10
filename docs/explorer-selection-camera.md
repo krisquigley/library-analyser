@@ -16,11 +16,13 @@ it, otherwise it is clamped to the configured interval. Bounds-compatible
 ordinary starting poses retain a smooth in-range radius throughout the transition,
 without changing the configured bounds or relying on a later controls update to
 snap the endpoint into range. If a zero or tiny custom radius makes the endpoint
-coincide with its look-at target, or its actual squared offset underflows to zero
-(or is nonfinite), bundled THREE cannot safely normalize that direction. Focus is
+coincide with its look-at target, or its actual squared offset is below the
+minimum normal value `2^-1022` (or is nonfinite), bundled THREE cannot reliably
+normalize that direction. Positive subnormal squared norms can produce finite
+but inaccurate orientation, not just zero-norm failures. Focus is
 skipped before settling input; the adapter does not widen the custom bounds.
-This checks the vendor's unscaled squared norm, without an arbitrary minimum radius:
-a positive finite subnormal squared norm remains eligible.
+This checks the vendor's actual unscaled squared norm against its normal range,
+not node-coordinate magnitude or an arbitrary minimum focus radius.
 Camera-focus startup exceptions also cancel that best-effort motion without
 suppressing the independent detail GET for an accepted selection.
 This is not a viewport/FOV-calibrated scale guarantee.
@@ -130,8 +132,9 @@ ordinary-scale quaternion oracle and actual bundled THREE with disabled controls
 including `maxDistance=1e-200` and `Number.MIN_VALUE`. Disabled frame ticks skip
 controls updates just as the vendor does; unsafe endpoint focus must leave the
 rendered pose, custom bounds and independent detail GET intact. Numeric boundary
-cases distinguish a squared norm that underflows to zero from an eligible positive
-subnormal squared norm. These are deterministic API-boundary regressions, not a
+cases include a positive subnormal diagonal at `maxDistance=3e-162`, whose
+bundled THREE orientation differs from the ordinary-scale oracle, and an eligible
+diagonal just above the minimum normal squared norm. These are deterministic API-boundary regressions, not a
 browser render or measured WebGL result.
 
 ## CI command inventory

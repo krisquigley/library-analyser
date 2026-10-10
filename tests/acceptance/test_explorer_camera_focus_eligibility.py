@@ -11,6 +11,8 @@ class CameraFocusEligibilityTests(unittest.TestCase):
         for coordinate, minimum, maximum in (
             ('0', '0', '1e-200'),
             ('0', '0', 'Number.MIN_VALUE'),
+            ('0', '0', 'Math.sqrt(Number.MIN_VALUE)'),
+            ('0', '0', '2e-162'),
             ('1e-200', '0', '1e-200'),
             ('1e-161', '0', '1e-162'),
             ('0', '1e200', 'Infinity'),
@@ -46,32 +48,67 @@ for(const time of [0,16,350,700,1200,2000]) {
 }
 '''.replace('COORDINATE', coordinate).replace('MINIMUM', minimum).replace('MAXIMUM', maximum))
 
-    def test_smallest_positive_squared_axis_norm_is_not_arbitrarily_skipped(self):
-        for radius in ('Math.sqrt(Number.MIN_VALUE)', '2e-162'):
-            with self.subTest(radius=radius):
-                self.run_actual_vendor(r'''
+    def test_positive_subnormal_diagonal_skips_incorrect_vendor_orientation(self):
+        self.run_actual_vendor(r'''
 const origin=node('origin',0,0,0);
 render(model([origin,b]));
-const radius=RADIUS;
-assert.equal(radius*radius,Number.MIN_VALUE,'fixture has smallest positive squared norm');
+const radius=3e-162, component=radius/Math.sqrt(3);
+assert.ok(3*component*component>0&&3*component*component<2**-1022,
+  'fixture squared norm is positive subnormal');
+// Actual bundled THREE versus its ordinary-scale diagonal orientation oracle.
+const oracle=new vendor.THREE.PerspectiveCamera();
+oracle.position.set(400,400,400); oracle.lookAt(new vendor.THREE.Vector3());
+const tiny=new vendor.THREE.PerspectiveCamera();
+tiny.position.set(component,component,component); tiny.lookAt(new vendor.THREE.Vector3());
+const quaternionError=(left,right)=>Math.max(...left.toArray().map(
+  (value,index)=>Math.abs(value-right.toArray()[index])));
+assert.ok(quaternionError(tiny.quaternion,oracle.quaternion)>1e-3,
+  'actual bundled subnormal normalization disagrees with ordinary-scale oracle');
 Object.assign(controls,{enabled:false,minDistance:0,maxDistance:radius});
-controls.target.set(0,0,0); camera.position.set(0,0,400);
+controls.target.set(0,0,0); camera.position.set(400,400,400);
+camera.up.set(0,1,0); camera.lookAt(controls.target);
+const initial=renderedPose(), writesBefore=calls.length;
+await select('origin');
+assert.deepEqual(details,['origin'],'unsafe diagonal retains accepted detail GET');
+assert.equal(run('getStateForTesting().current_track_id'),'origin');
+assert.equal(calls.length,writesBefore,'skip before settlement for subnormal diagonal');
+for(const time of [0,16,350,700,1200,2000]) {
+  now=time; vendor.setTime(time); tick(); vendorState.tweenGroup.update(time);
+  assert.equal(calls.length,writesBefore,`no delayed unsafe writes at ${time}`);
+  assertRenderedStable(renderedPose(),initial,`unsafe diagonal keeps oracle pose at ${time}`);
+  assert.ok(quaternionError(camera.quaternion,oracle.quaternion)<1e-12,
+    `ordinary-scale diagonal orientation retained at ${time}`);
+  assert.equal(controls.minDistance,0,'custom minimum unchanged');
+  assert.equal(controls.maxDistance,radius,'custom maximum unchanged');
+}
+''')
+
+    def test_normal_squared_diagonal_near_boundary_remains_focusable(self):
+        self.run_actual_vendor(r'''
+const origin=node('origin',0,0,0);
+render(model([origin,b]));
+const radius=Math.sqrt(2**-1022)*(1+1e-8), component=radius/Math.sqrt(3);
+assert.ok(3*component*component>=2**-1022,'diagonal squared norm is normal near boundary');
+Object.assign(controls,{enabled:false,minDistance:0,maxDistance:radius});
+controls.target.set(0,0,0); camera.position.set(400,400,400);
 camera.up.set(0,1,0); camera.lookAt(controls.target);
 const expected=camera.quaternion.clone(), writesBefore=calls.length;
 await select('origin');
 now=700; vendor.setTime(now); tick(); vendorState.tweenGroup.update(now);
-assert.deepEqual(details,['origin'],'border focus preserves detail GET');
-assert.ok(calls.length>writesBefore,'positive squared norm remains focus eligible');
-assert.deepEqual(pose().position,{x:0,y:0,z:radius},'exact eligible axis endpoint');
-assert.ok([...camera.position.toArray(),...camera.quaternion.toArray()].every(Number.isFinite),
-  'positive norm border pose is finite');
-// Below sqrt(MIN_VALUE), rounded normalization need not give a unit quaternion.
-// Only the exact square-root case promises the ordinary-scale quaternion oracle.
-if(radius===Math.sqrt(Number.MIN_VALUE)) {
-  assert.ok(camera.quaternion.angleTo(expected)<1e-7,'actual vendor exact-border direction is correct');
+assert.deepEqual(details,['origin'],'normal border preserves detail GET');
+assert.ok(calls.length>writesBefore,'normal squared norm remains focus eligible');
+assert.deepEqual(pose().target,{x:0,y:0,z:0},'normal origin target');
+for(const value of camera.position.toArray()) {
+  assert.ok(Math.abs(value/component-1)<1e-12,'normal diagonal endpoint');
 }
-assert.equal(controls.maxDistance,radius,'border maximum unchanged');
-'''.replace('RADIUS', radius))
+assert.ok([...camera.position.toArray(),...camera.quaternion.toArray()].every(Number.isFinite),
+  'normal border pose is finite');
+assert.ok(Math.abs(camera.quaternion.length()-1)<1e-12,'normal border unit quaternion');
+assert.ok(Math.max(...camera.quaternion.toArray().map((value,index)=>
+  Math.abs(value-expected.toArray()[index])))<1e-12,'normal border matches ordinary-scale oracle');
+assert.equal(controls.minDistance,0,'normal border minimum unchanged');
+assert.equal(controls.maxDistance,radius,'normal border maximum unchanged');
+''')
 
     def test_subnormal_nonorigin_node_with_ordinary_radius_remains_focusable(self):
         self.run_actual_vendor(r'''
