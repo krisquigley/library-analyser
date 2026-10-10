@@ -108,4 +108,3 @@ class SQLiteCallbackStopIterationTests(unittest.TestCase):
         for stage in ('factory', 'entry', 'exit'):
             with self.subTest(stage=stage):
                 self.exercise_callback_failure(stage, failing_fetch=3)
-
