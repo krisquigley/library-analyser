@@ -7,6 +7,7 @@ EXPLAIN runs on the executing connection with its existing metadata UDFs.
 """
 from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
+from operator import index
 import sqlite3
 from threading import Lock
 from time import monotonic
@@ -84,8 +85,17 @@ class _ObservedCursor:
         return rows
 
     def fetchmany(self, *args, **kwargs):
-        size = args[0] if args else kwargs.get('size', self._cursor.arraysize)
-        rows = self._fetch('fetchmany', *args, **kwargs)
+        with self._observation.measure(
+                self._operation, 'selected_sql_fetch', 'fetchmany'):
+            if (len(args) == 1 and not kwargs) or (not args and set(kwargs) == {'size'}):
+                # SQLite accepts __index__, not merely int. Convert once so the
+                # same value drives the fetch and terminal certification.
+                size = index(args[0] if args else kwargs['size'])
+                rows = self._cursor.fetchmany(size)
+            else:
+                # Leave default sizing and invalid call signatures to SQLite.
+                size = self._cursor.arraysize
+                rows = self._cursor.fetchmany(*args, **kwargs)
         if not rows and size > 0:
             self._complete_iteration()
         return rows
@@ -158,17 +168,15 @@ class _SQLiteObservation:
                 span['_context_record'] = context_record
                 try:
                     yield span
-                except StopIteration:
-                    raise
                 except BaseException:
                     span['status'] = 'failed'
                     raise
                 finally:
                     if context_record is not None:
                         context_record['status'] = span['status']
-        except StopIteration:
-            raise
         except BaseException:
+            # Cursor exhaustion is caught inside __next__, before leaving this
+            # context. StopIteration here is a failed callback, not exhaustion.
             span['status'] = 'failed'
             # Context exit can fail after the inner status synchronization.
             if context_record is not None:
