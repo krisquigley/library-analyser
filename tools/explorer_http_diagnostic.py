@@ -15,9 +15,10 @@ import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from music_explorer.frameworks.explorer.server import create_server
+from tools.explorer_http_deadline import DeadlineHTTPHandler, RequestDeadline
 from tools.explorer_fixture_inspection import fingerprint_sqlite_files
 from tools.explorer_http_report import publish_http_report
 from tools.explorer_http_sqlite_observation import observe_sqlite
@@ -60,11 +61,12 @@ class _NoRedirects(HTTPRedirectHandler):
         return None
 
 
-def _read_entity(response, observation):
+def _read_entity(response, observation, deadline):
     # read1 returns available bytes rather than waiting to fill a large read,
     # retaining truthful partial-byte evidence if the next read times out.
     chunks = []
     while True:
+        deadline.remaining()
         try:
             chunk = response.read1(64 * 1024)
         except IncompleteRead as error:
@@ -80,6 +82,7 @@ def _read_entity(response, observation):
 
 def _request(base, path, method, timeout, requests, intervals, phase, body=None):
     start = time.monotonic()
+    deadline = RequestDeadline(start, timeout)
     observation = {'method': method, 'url': base + path, 'status': None,
                    'outcome': 'connection_error', 'response_bytes': 0}
     payload = None
@@ -88,22 +91,27 @@ def _request(base, path, method, timeout, requests, intervals, phase, body=None)
                       headers={'Content-Type': 'application/json'} if data is not None else {})
     try:
         try:
-            response = build_opener(_NoRedirects()).open(request, timeout=timeout)
+            response = build_opener(ProxyHandler({}), _NoRedirects(),
+                                    DeadlineHTTPHandler(deadline)).open(
+                                        request, timeout=deadline.remaining())
         except HTTPError as error:
             # Read success and error bodies in the same protected boundary.
             response = error
         with response:
             observation['status'] = response.status
-            entity = _read_entity(response, observation)
+            entity = _read_entity(response, observation, deadline)
+            deadline.remaining()
             if not 200 <= response.status < 300:
                 observation['outcome'] = 'http_error'
             else:
                 try:
                     payload = json.loads(entity)
+                    deadline.remaining()
                     observation['outcome'] = 'ok'
                 except (ValueError, UnicodeError):
                     observation['outcome'] = 'invalid_response'
     except (TimeoutError, socket.timeout):
+        payload = None
         observation['outcome'] = 'timeout'
     except URLError as error:
         observation['outcome'] = ('timeout' if isinstance(error.reason, TimeoutError)

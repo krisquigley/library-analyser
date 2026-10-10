@@ -18,7 +18,9 @@ PY
 Defaults are 12 tracks, seed 70, two history generations, one sample. Requests
 are state, nonblank bounded summary search, current selection, then selected
 track detail only after an accepted POST. Detail must be an object whose handle
-matches the selection. Redirects are not followed; 3xx responses are failed
+matches the selection. The built-in loopback HTTP transport explicitly disables
+proxy discovery: environment proxy settings cannot redirect these diagnostic
+requests through a proxy. Redirects are not followed; 3xx responses are failed
 observations, not hidden request hops. Body stalls and truncated responses retain
 known status, received partial-byte counts and elapsed time as failed attempts.
 Errors and timeouts remain samples; failed response bodies, exceptions,
@@ -27,7 +29,13 @@ published. Fixture construction and graph manifest construction are outside
 request timings; there is no graph HTTP request.
 
 `sample_count` is an exact integer 1–100. `timeout_seconds` is finite, positive,
-and at most 60 seconds per request. More than 12 tracks requires explicit
+and at most 60 seconds per request. This is one absolute monotonic deadline
+shared by connection establishment, request sending, response headers and body
+(including HTTP error bodies), not a socket inactivity allowance renewed by
+arriving bytes. A finite trickle still times out; known status, partial entity
+bytes and elapsed time remain failure evidence, excluded from successful p95.
+The built-in numeric loopback URL requires no remote DNS resolution.
+More than 12 tracks requires explicit
 `allow_large=True`; writer fixture bounds remain 12–20,000 tracks, unsigned
 32-bit seed, and 1–3 history generations. Fixture and server lifecycle cleanup
 runs on startup failure, HTTP rejection, timeout and ordinary completion.
@@ -70,7 +78,11 @@ restored on context exit, including failures.
 Default contracts do not build large fixtures:
 
 ```sh
+ulimit -c 0
 timeout --signal=KILL 180s env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
+ tests.unit.benchmark_tools.test_explorer_http_absolute_deadline \
+ tests.unit.benchmark_tools.test_explorer_http_deadline_budget \
+ tests.unit.benchmark_tools.test_explorer_http_diagnostic_proxy \
  tests.unit.benchmark_tools.test_explorer_http_diagnostic_report \
  tests.acceptance.test_explorer_http_diagnostic \
  tests.integration.infrastructure.test_explorer_http_diagnostic_provenance
