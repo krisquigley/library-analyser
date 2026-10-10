@@ -58,8 +58,9 @@ class _ObservedCursor:
 
     def _complete_iteration(self):
         for previous, context_record in self._iteration_spans:
-            previous['status'] = 'ok'
-            if context_record is not None:
+            if previous['status'] == 'partial':
+                previous['status'] = 'ok'
+            if context_record is not None and context_record['status'] == 'partial':
                 context_record['status'] = 'ok'
         self._iteration_spans.clear()
 
@@ -85,16 +86,22 @@ class _ObservedCursor:
         return self
 
     def __next__(self):
+        exhausted = False
         with self._observation.measure(
                 self._operation, 'selected_sql_fetch', 'iteration') as span:
             try:
                 row = next(self._cursor)
             except StopIteration:
-                self._complete_iteration()
-                raise
-            span['status'] = 'partial'
-            self._iteration_spans.append((span, span.get('_context_record')))
-            return row
+                exhausted = True
+            else:
+                span['status'] = 'partial'
+                self._iteration_spans.append((span, span.get('_context_record')))
+        # Exhaustion certifies earlier steps only after the observer context
+        # exits successfully, just like terminal fetchone/fetchmany/fetchall.
+        if exhausted:
+            self._complete_iteration()
+            raise StopIteration
+        return row
 
     def __getattr__(self, name):
         return getattr(self._cursor, name)
