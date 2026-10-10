@@ -83,7 +83,14 @@ paint or an isolated render-phase duration. RSS is explicitly unavailable unless
 with a declared process-tree scope; unavailable is null, not zero.
 
 Failed attempts and retry failures remain live observations; live reports retain
-individual samples and counts rather than computing percentile profiles. In the
+individual samples and counts rather than computing percentile profiles. A browser
+launch, page creation or WebGL preflight failure is retained as a classified
+lifecycle failure with null unobserved milestones, without exception text; earlier
+completed samples survive. Observed flow failures also survive a later lifecycle
+timeout, counted per failed request rather than again for its retry UI. Invalid
+render or focus produces a failure summary, and success requires exactly one
+consumed focus; latest-selection additionally requires the latest halo identity.
+A written report (or zero CLI exit) does not imply a successful browser sample. In the
 supplied-observation policy only, successful durations alone enter nearest-rank
 p50/p95/max; an all-failed profile has null percentiles. Small samples do not
 establish robust distributions. The separate

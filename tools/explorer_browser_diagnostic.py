@@ -118,11 +118,40 @@ def observe(page, url, release, scenario):
                   graph_retry_count=int(graph_error), search_error_visible=search_error,
                   search_retry_count=int(search_error))
     result.pop('consumed_count', None)
-    result['failures'] = ([{'flow': 'graph', 'outcome': 'http_error'}] if graph_error else
-                          [{'flow': 'search', 'outcome': 'http_error'}] if search_error else [])
-    if not all(result['render'].values()) or not all(v for k, v in result['focus'].items() if k != 'consumed_count'):
-        result['outcome'] = 'invalid_response'
+    result['failures'] = request_failures(result['requests'])
+    if not all(result['render'].values()):
+        record_invalid_response(result, 'graph')
+    if (not all(v for k, v in result['focus'].items() if k != 'consumed_count')
+            or not result['selection']['accepted']
+            or result['focus']['consumed_count'] != 1
+            or (scenario == 'latest-selection'
+                and not result['selection']['latest_accepted'])):
+        record_invalid_response(result, 'selection')
     return result
+
+
+def request_failures(requests):
+    """Count observed failed requests, not duplicate UI summaries of a retry."""
+    flows = {'/api/mood-axis-graph': 'graph', '/api/tracks/summary': 'search',
+             '/api/current': 'selection', '/api/tracks/<id>': 'selection'}
+    failures = []
+    for request in requests:
+        flow = flows.get(request.get('route'))
+        outcome = request.get('outcome')
+        # The probe initializes pending requests as connection_error with no
+        # elapsed time. Those are not observed failures yet.
+        if flow and (outcome == 'http_error' or
+                     (outcome in ('connection_error', 'timeout')
+                      and request.get('elapsed_ms') is not None)):
+            failures.append({'flow': flow, 'outcome': outcome})
+    return failures
+
+
+def record_invalid_response(sample, flow):
+    sample['outcome'] = 'invalid_response'
+    failure = {'flow': flow, 'outcome': 'invalid_response'}
+    if failure not in sample['failures']:
+        sample['failures'].append(failure)
 
 
 MILESTONES = ('navigation', 'graph_request', 'graph_headers', 'graph_body',
@@ -170,12 +199,13 @@ def observe_attempt(page, url, release, scenario):
                 'responsiveness': partial.get('responsiveness', {
                     'frame_gaps_ms': [], 'long_tasks_ms': [], 'input_latency_ms': [],
                     'frame_count': 0, 'long_tasks_status': 'unavailable'}),
-                'failures': [{'flow': 'lifecycle', 'outcome': outcome}]}
+                'failures': request_failures(partial.get('requests', [])) +
+                            [{'flow': 'lifecycle', 'outcome': outcome}]}
 
 
 def validate_graph_response(sample, manifest):
     """Successful browser consumption must match the independently generated identity."""
-    if sample['outcome'] != 'ok':
+    if sample['outcome'] != 'ok' and 'graph_response' not in sample:
         return
     expected = {'content_encoding': manifest['content_encoding'],
                 'content_length': manifest['encoded']['body_bytes'],
@@ -183,8 +213,19 @@ def validate_graph_response(sample, manifest):
                 'consumed_sha256': manifest['decoded']['sha256'],
                 'json_counts': manifest['counts']}
     if sample.get('graph_response') != expected:
-        sample['outcome'] = 'invalid_response'
-        sample['failures'].append({'flow': 'graph', 'outcome': 'invalid_response'})
+        record_invalid_response(sample, 'graph')
+
+
+def failed_setup_attempt(error):
+    """Publish only a classified outcome for setup, before any page observation."""
+    outcome = 'timeout' if type(error).__name__ == 'TimeoutError' else 'invalid_response'
+    return {'profile': 'process-cold', 'clock': 'browser-performance',
+            'ui_source': 'packaged-explorer-assets', 'browser_evidence': 'real-playwright-chromium',
+            'outcome': outcome, 'elapsed_ms': None, 'milestones_ms': dict.fromkeys(MILESTONES),
+            'requests': [], 'responsiveness': {
+                'frame_gaps_ms': [], 'long_tasks_ms': [], 'input_latency_ms': [],
+                'frame_count': 0, 'long_tasks_status': 'unavailable'},
+            'failures': [{'flow': 'lifecycle', 'outcome': outcome}]}
 
 
 def collect(args, viewport):
@@ -204,17 +245,23 @@ def collect(args, viewport):
         with sync_playwright() as driver:
             for _ in range(args.samples):
                 with public_routes(fixture, args.scenario) as (url, release):
-                    browser = driver.chromium.launch(channel='chromium', timeout=15000, env=env)
+                    browser = None
                     try:
-                        version = browser.version
-                        page = browser.new_page(viewport=viewport)
-                        if not page.evaluate("!!document.createElement('canvas').getContext('webgl2')"):
-                            raise RuntimeError('Chromium WebGL preflight failed')
+                        try:
+                            browser = driver.chromium.launch(channel='chromium', timeout=15000, env=env)
+                            version = browser.version
+                            page = browser.new_page(viewport=viewport)
+                            if not page.evaluate("!!document.createElement('canvas').getContext('webgl2')"):
+                                raise RuntimeError('Chromium WebGL preflight failed')
+                        except Exception as error:
+                            samples.append(failed_setup_attempt(error))
+                            continue
                         sample = observe_attempt(page, url, release, args.scenario)
                         validate_graph_response(sample, fixture['manifest'])
                         samples.append(sample)
                     finally:
-                        browser.close()
+                        if browser is not None:
+                            browser.close()
     counts = Counter(f"{f['flow']}:{f['outcome']}" for s in samples for f in s['failures'])
     return {'scope': 'public-synthetic-browser-only', 'browser_evidence': 'real-playwright-chromium',
             'latency_budget_result': 'not_asserted', 'scenario': args.scenario,
