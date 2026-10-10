@@ -89,14 +89,13 @@ def _published_contention_status(status, records):
 
 
 def _task_number(value):
-    """Task timings must be representable for the float-based span comparison."""
+    """Keep supplied overlap operands within safe IEEE754 magnitude, unchanged.
+
+    Check integers directly: converting first can overflow or round an unsafe
+    mixed int/float endpoint into a plausible but untruthful zero-length span.
+    """
     value = _nonnegative(value)
-    if value is None:
-        return None
-    try:
-        return value if math.isfinite(value) else None
-    except OverflowError:
-        return None
+    return value if value is not None and value <= 2**53 - 1 else None
 
 
 def _task_observations(source, milestones):
