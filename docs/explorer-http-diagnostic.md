@@ -20,7 +20,9 @@ are state, nonblank bounded summary search, current selection, then selected
 track detail only after an accepted POST. Detail must be an object whose handle
 matches the selection. The built-in loopback HTTP transport explicitly disables
 proxy discovery: environment proxy settings cannot redirect these diagnostic
-requests through a proxy. Redirects are not followed; 3xx responses are failed
+requests through a proxy. Its explicit HTTP-only handler set does not initialize
+an unused HTTPS context or trust store inside the request deadline; other URL
+schemes are unsupported. Redirects are not followed; 3xx responses are failed
 observations, not hidden request hops. Body stalls and truncated responses retain
 known status, received partial-byte counts and elapsed time as failed attempts.
 Errors and timeouts remain samples; failed response bodies, exceptions,
@@ -82,9 +84,11 @@ ulimit -c 0
 timeout --signal=KILL 180s env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
  tests.unit.benchmark_tools.test_explorer_http_absolute_deadline \
  tests.unit.benchmark_tools.test_explorer_http_deadline_budget \
+ tests.unit.benchmark_tools.test_explorer_http_only_transport \
  tests.unit.benchmark_tools.test_explorer_http_diagnostic_proxy \
  tests.unit.benchmark_tools.test_explorer_http_diagnostic_report \
  tests.acceptance.test_explorer_http_diagnostic \
+ tests.acceptance.test_explorer_http_trickle_cleanup \
  tests.integration.infrastructure.test_explorer_http_diagnostic_provenance
 ```
 

@@ -15,7 +15,9 @@ import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.request import (HTTPDefaultErrorHandler, HTTPErrorProcessor,
+                            HTTPRedirectHandler, OpenerDirector, ProxyHandler,
+                            Request, UnknownHandler)
 
 from music_explorer.frameworks.explorer.server import create_server
 from tools.explorer_http_deadline import DeadlineHTTPHandler, RequestDeadline
@@ -91,9 +93,15 @@ def _request(base, path, method, timeout, requests, intervals, phase, body=None)
                       headers={'Content-Type': 'application/json'} if data is not None else {})
     try:
         try:
-            response = build_opener(ProxyHandler({}), _NoRedirects(),
-                                    DeadlineHTTPHandler(deadline)).open(
-                                        request, timeout=deadline.remaining())
+            # Only HTTP is used by the owned numeric loopback server. Avoid
+            # build_opener's unrelated HTTPS context/trust-store initialization
+            # inside this deadline; keep proxy, redirect and error policy explicit.
+            opener = OpenerDirector()
+            for handler in (ProxyHandler({}), UnknownHandler(), _NoRedirects(),
+                            DeadlineHTTPHandler(deadline), HTTPDefaultErrorHandler(),
+                            HTTPErrorProcessor()):
+                opener.add_handler(handler)
+            response = opener.open(request, timeout=deadline.remaining())
         except HTTPError as error:
             # Read success and error bodies in the same protected boundary.
             response = error
