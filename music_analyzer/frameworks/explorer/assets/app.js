@@ -648,21 +648,22 @@ function cameraViewDirection(position,target){
   const largest=Math.max(...axes.flatMap(axis=>[Math.abs(position[axis]),Math.abs(target[axis])]));
   return cameraUnitDirection(Object.fromEntries(axes.map(axis=>[axis,position[axis]/largest-target[axis]/largest])));
 }
-// Drain pending wheel/pan once through Trackball's public API. Zero speeds
-// consume its input endpoints without applying motion; a canonical pose keeps
-// the update safe even when the original finite radius would overflow.
+// Drain pending rotation/wheel/pan once through Trackball's public API. Zero
+// speeds consume input endpoints; full dynamic damping clears residual rotation.
+// A canonical pose keeps the update safe even when the original radius overflows.
 function settleCameraFocusInput(graph){
   const controls=graph.controls(), camera=graph.camera();
   if(typeof controls.update!=='function') return;
   const position={...graph.cameraPosition()}, target={...controls.target};
   const up=camera.up?{...camera.up}:null;
   const orientation=camera.quaternion?.clone?camera.quaternion.clone():null;
-  const settings={staticMoving:controls.staticMoving,zoomSpeed:controls.zoomSpeed,
+  const settings={staticMoving:controls.staticMoving,dynamicDampingFactor:controls.dynamicDampingFactor,
+    rotateSpeed:controls.rotateSpeed,zoomSpeed:controls.zoomSpeed,
     panSpeed:controls.panSpeed,noZoom:controls.noZoom,noPan:controls.noPan,
     noRotate:controls.noRotate,minDistance:controls.minDistance,maxDistance:controls.maxDistance};
   try {
-    Object.assign(controls,{staticMoving:true,zoomSpeed:0,panSpeed:0,
-      noZoom:false,noPan:false,noRotate:true,minDistance:0,maxDistance:Infinity});
+    Object.assign(controls,{staticMoving:false,dynamicDampingFactor:1,rotateSpeed:0,zoomSpeed:0,panSpeed:0,
+      noZoom:false,noPan:false,noRotate:false,minDistance:0,maxDistance:Infinity});
     if(camera.up?.set) camera.up.set(0,1,0);
     graph.cameraPosition({x:0,y:0,z:100},{x:0,y:0,z:0},0);
     controls.update();

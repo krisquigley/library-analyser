@@ -44,13 +44,16 @@ needed. Both camera position and orbit-controls target stop moving when the
 transition is cancelled; controls' `start` event yields ownership to user orbit.
 Selected-node halo behavior and graph-independent detail feedback are preserved.
 
-Mouseup can leave wheel and pan damping pending in the bundled Trackball controls;
-`enabled = false` does not prevent their public `update()` from applying it.
+Mouseup can leave rotation, wheel and pan damping pending in the bundled Trackball
+controls; `enabled = false` does not prevent their public `update()` from applying
+it, and disabling rotation during settlement leaves its inertia untouched.
 When focus takes ownership, the adapter drains those pending inputs with one
-bounded public update: temporarily use static motion, zero zoom/pan speeds and
-an overflow-safe finite pose, then restore the starting pose and all changed
-public settings. This preserves ordinary starting position, target, up vector,
-orientation, radius and configured distance bounds without accessing private control state,
+bounded public update: temporarily enable all three inputs, use zero rotate/zoom/pan
+speeds and full dynamic damping (`staticMoving = false`, `dynamicDampingFactor = 1`)
+on an overflow-safe finite pose, then restore the starting pose and all changed
+public settings, including rotation speed, damping and distance bounds. This preserves
+ordinary starting position, target, up vector, orientation, radius and configured
+distance bounds without accessing private control state,
 modifying the vendor bundle or iterating until damping converges. Later manual
 orbit still owns cancellation and uses the original controls settings.
 
@@ -84,8 +87,13 @@ in-memory test source; packaged vendor files are unchanged. The harness fails
 explicitly if the pinned bundle's extraction boundary changes.
 
 Fresh remediation reproduced the existing-instance reload defect and stale
-camera/target motion before production fixes. These are deterministic API-boundary
-regressions, not a browser render or measured WebGL result.
+camera/target motion before production fixes. The rotation regression also performs
+an actual bundled left drag and mouseup immediately before selection, then advances
+16 ms control updates through 1200 ms (including the exact 700 ms endpoint). It
+checks stable position, target, up and quaternion after completion, supersession,
+restored public settings and a fresh dynamic manual orbit after focus. Existing
+unflushed wheel/pan regressions remain in place. These are deterministic
+API-boundary regressions, not a browser render or measured WebGL result.
 
 ## Evidence limitations
 
