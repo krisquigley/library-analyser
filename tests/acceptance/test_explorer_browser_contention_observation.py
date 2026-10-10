@@ -87,7 +87,10 @@ class ControlledPage:
             'render': {'canvas_visible': True, 'nonempty_pixels': True,
                        'positioned_nodes_visible': True},
             'focus': {'selected_node_in_view': True, 'halo_visible': True,
-                      'finite_camera': True, 'consumed_count': 1},
+                      'finite_camera': True, 'consumed_count': 1,
+                      'projection': {'status': 'observed',
+                                     'mesh': {'diameter_px': 10, 'diameter_viewport_fraction': .1},
+                                     'halo': {'diameter_px': 20, 'diameter_viewport_fraction': .2}}},
             'selection': {'accepted': True, 'latest_accepted': True},
             'input_observations': [{
                 'receipt_clock': 'browser-performance', 'received_ms': 170,

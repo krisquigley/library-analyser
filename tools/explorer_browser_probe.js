@@ -71,14 +71,73 @@
       return response;
     }catch(error){record.elapsed_ms=now()-start;throw error;}
   };
+  // Install only at the outward decoration seam, after packaged functions exist.
+  // No poses, bounds, durations, controls, or runtime cancellation rules change.
+  d.installFocusObservation=function(){
+    if(d.focus?.motion)return;
+    d.focus={...(d.focus||{}),motion:{starts:[],cancellations:[]}};
+    if(typeof cancelCameraFocus!=='function'||typeof cameraFocusFrame==='undefined')return;
+    let reason=null, pendingUnclassified=null;
+    const observedControls=new WeakSet();
+    const withReason=(label,call)=>{const previous=reason;reason=label;try{return call();}finally{reason=previous;}};
+    const cancel=cancelCameraFocus;
+    cancelCameraFocus=function(){
+      const active=cameraFocusFrame!=null, at=now();
+      if(!active){
+        // An idle cancellation cannot attribute an earlier plain cancellation.
+        // Also undo a tentative label if our start observer ran first.
+        if(pendingUnclassified?.reason==='user-orbit')pendingUnclassified.reason='unclassified';
+        pendingUnclassified=null;
+      }
+      const value=cancel.apply(this,arguments);
+      if(active&&cameraFocusFrame==null){
+        const label=arguments[0]?.type==='start'?'user-orbit':(reason||'unclassified');
+        const record={reason:label,at_ms:at,clock:'browser-performance'};
+        d.focus.motion.cancellations.push(record);
+        pendingUnclassified=label==='unclassified'?record:null;
+        // Only the current synchronous dispatch can supply a discarded cause;
+        // a later event with the same quantized clock must not reuse it.
+        if(pendingUnclassified)Promise.resolve().then(()=>{
+          if(pendingUnclassified===record)pendingUnclassified=null;
+        });
+      }
+      return value;
+    };
+    function watchControls(){
+      const controls=typeof forceGraph!=='undefined'&&forceGraph?.controls?.();
+      if(!controls?.addEventListener||observedControls.has(controls))return;
+      observedControls.add(controls);
+      controls.addEventListener('start',()=>{
+        // An adapter may discard the event argument before invoking cancellation.
+        // Correlate only an actual cancellation in this synchronous event tick;
+        // never label an idle start, completion, or arbitrary cancellation orbit.
+        if(pendingUnclassified&&pendingUnclassified.at_ms===now()&&cameraFocusFrame==null){
+          pendingUnclassified.reason='user-orbit';
+        }
+      });
+    }
+    const select=setCurrent;
+    setCurrent=function(){pendingUnclassified=null;return withReason('new-selection',()=>select.apply(this,arguments));};
+    const focus=animateCameraFocus;
+    animateCameraFocus=function(){
+      pendingUnclassified=null;watchControls();
+      const start={at_ms:now(),clock:'browser-performance',active_after:null};
+      d.focus.motion.starts.push(start);
+      const value=withReason('new-focus',()=>focus.apply(this,arguments));
+      start.active_after=cameraFocusFrame!=null;
+      watchControls();return value;
+    };
+    watchControls();
+  };
   function phase(){
     const m=d.milestones_ms;
+    if(typeof cameraFocusFrame!=='undefined'&&cameraFocusFrame!=null)return 'focus';
     for(const name of ['body','json','verification','model','scene'])if(m['graph_'+name+'_start']!=null&&m['graph_'+name+'_end']==null)return name;
     if(m.graph_native_json_start!=null&&m.graph_native_json_end==null)return 'native-json';
     return m.graph_scene_end!=null?'after-scene':'pending';
   }
   function receipt(event){
-    const t=now(),record={action:event.type==='input'?'input':'selection',
+    const t=now(),record={action:event.type==='input'?'input':event.type==='pointerdown'?'orbit':'selection',
       receipt_clock:'browser-performance',received_ms:t,frame_ms:null,
       is_trusted:event.isTrusted===true,phase_at_receipt:phase()};
     if(d.contention_action)d.input_observations.push(record);
@@ -88,5 +147,9 @@
     });
   }
   document.addEventListener('input',receipt,true);
+  document.addEventListener('pointerdown',event=>{
+    const canvas=typeof forceGraph!=='undefined'&&forceGraph?.renderer?.()?.domElement;
+    if(d.contention_action&&canvas&&event.target===canvas)receipt(event);
+  },true);
   document.addEventListener('click',event=>{if(d.contention_action)receipt(event);},true);
 })();
