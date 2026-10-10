@@ -56,14 +56,30 @@ class _ObservedCursor:
         with self._observation.measure(self._operation, 'selected_sql_fetch', method):
             return getattr(self._cursor, method)(*args)
 
+    def _complete_iteration(self):
+        for previous, context_record in self._iteration_spans:
+            previous['status'] = 'ok'
+            if context_record is not None:
+                context_record['status'] = 'ok'
+        self._iteration_spans.clear()
+
     def fetchone(self):
-        return self._fetch('fetchone')
+        row = self._fetch('fetchone')
+        if row is None:
+            self._complete_iteration()
+        return row
 
     def fetchall(self):
-        return self._fetch('fetchall')
+        rows = self._fetch('fetchall')
+        self._complete_iteration()
+        return rows
 
     def fetchmany(self, *args):
-        return self._fetch('fetchmany', *args)
+        size = args[0] if args else self._cursor.arraysize
+        rows = self._fetch('fetchmany', *args)
+        if not rows and size > 0:
+            self._complete_iteration()
+        return rows
 
     def __iter__(self):
         return self
@@ -74,10 +90,7 @@ class _ObservedCursor:
             try:
                 row = next(self._cursor)
             except StopIteration:
-                for previous, context_record in self._iteration_spans:
-                    previous['status'] = 'ok'
-                    if context_record is not None:
-                        context_record['status'] = 'ok'
+                self._complete_iteration()
                 raise
             span['status'] = 'partial'
             self._iteration_spans.append((span, span.get('_context_record')))

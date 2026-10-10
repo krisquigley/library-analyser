@@ -83,6 +83,29 @@ class SQLiteCursorObservationTests(unittest.TestCase):
         self.assertEqual(len(eqp), 1)
         self.assertEqual(eqp[0]['status'], 'ok')
 
+    def test_mixed_fetch_with_remaining_rows_only_fetchall_certifies_exhaustion(self):
+        for method, args, expected in (('fetchone', (), 'partial'),
+                                       ('fetchmany', (1,), 'partial'),
+                                       ('fetchall', (), 'ok')):
+            with self.subTest(method=method):
+                records = []
+
+                @contextmanager
+                def context(phase):
+                    record = {'phase': phase, 'status': 'ok'}
+                    records.append(record)
+                    yield record
+
+                observation = _SQLiteObservation(span_context=context)
+                cursor = _ObservedConnection(self.db, observation).execute(SQL, ('id',))
+                next(cursor)
+                self.assertTrue(getattr(cursor, method)(*args))
+                iteration = [span for span in observation._spans
+                             if span.get('fetch_method') == 'iteration'][0]
+                self.assertEqual(iteration['status'], expected)
+                self.assertEqual(records[2]['status'], expected)
+                cursor.close()
+
     def test_eqp_failure_keeps_completed_execute_and_failed_observer_cost(self):
         class FailingPlanConnection:
             def execute(proxy, sql, parameters=()):
