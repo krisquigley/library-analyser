@@ -24,6 +24,8 @@ from tools.explorer_http_deadline import DeadlineHTTPHandler, RequestDeadline
 from tools.explorer_fixture_inspection import fingerprint_sqlite_files
 from tools.explorer_http_report import publish_http_report
 from tools.explorer_http_sqlite_observation import observe_sqlite
+from tools.explorer_http_server_observation import ServerObservation
+from contextlib import nullcontext
 from tools.explorer_synthetic_fixture import public_synthetic_fixture, _validate_options
 
 __all__ = ['publish_http_report', 'run_public_http_diagnostic']
@@ -86,11 +88,13 @@ def _request(base, path, method, timeout, requests, intervals, phase, body=None)
     start = time.monotonic()
     deadline = RequestDeadline(start, timeout)
     observation = {'method': method, 'url': base + path, 'status': None,
-                   'outcome': 'connection_error', 'response_bytes': 0}
+                   'outcome': 'connection_error', 'response_bytes': 0,
+                   'request_id': 'diagnostic-' + str(len(requests) + 1)}
     payload = None
     data = None if body is None else json.dumps(body, allow_nan=False).encode('utf-8')
     request = Request(base + path, data=data, method=method,
-                      headers={'Content-Type': 'application/json'} if data is not None else {})
+                      headers={'X-Diagnostic-Request-ID': observation['request_id'],
+                               **({'Content-Type': 'application/json'} if data is not None else {})})
     try:
         try:
             # Only HTTP is used by the owned numeric loopback server. Avoid
@@ -177,7 +181,8 @@ def _sample(base, timeout, requests, intervals, token):
 def run_public_http_diagnostic(*, track_count=12, seed=70, history_count=2,
                                allow_large=False, sample_count=1,
                                timeout_seconds=5.0, server_factory=create_server,
-                               fixture_factory=public_synthetic_fixture):
+                               fixture_factory=public_synthetic_fixture,
+                               observer_mode='observer_on'):
     """Run bounded selection/detail samples; retain failures and clean ownership.
 
     Injected factories are TRUSTED collaborators, not sandboxed inputs. They
@@ -188,6 +193,8 @@ def run_public_http_diagnostic(*, track_count=12, seed=70, history_count=2,
     The fixture owner is quiescent throughout before/after byte fingerprints.
     """
     _validate_request_options(sample_count, timeout_seconds)
+    if observer_mode not in ('observer_on', 'observer_off'):
+        raise ValueError('Require observer_mode observer_on or observer_off')
     # Reuse the outward writer's bounds even when the fixture seam is injected.
     # This tool-to-tool private helper avoids divergent expensive-profile policy.
     _validate_options(track_count, seed, history_count, allow_large)
@@ -196,11 +203,21 @@ def run_public_http_diagnostic(*, track_count=12, seed=70, history_count=2,
                          allow_large=allow_large) as fixture:
         database = fixture['db_path']
         before = fingerprint_sqlite_files(database)
-        with observe_sqlite() as observation:
-            with _running_server(server_factory, database) as base:
-                for token in range(1, sample_count + 1):
-                    attempts.append(_sample(base, timeout_seconds, requests, intervals, token))
-            sqlite_report = observation.report(database)
+        server_observation = ServerObservation()
+        enabled = observer_mode == 'observer_on'
+        def observed_factory(*args, **kwargs):
+            server = server_factory(*args, **kwargs)
+            return server_observation.instrument_server(server) if enabled else server
+        with (server_observation.installed() if enabled else nullcontext()):
+            with (observe_sqlite(span_context=server_observation.span) if enabled
+                  else nullcontext(None)) as observation:
+                with _running_server(observed_factory, database) as base:
+                    for token in range(1, sample_count + 1):
+                        attempts.append(_sample(base, timeout_seconds, requests, intervals, token))
+                sqlite_report = (observation.report(database) if enabled else
+                                 {'observer_mode': 'observer_off', 'spans': [],
+                                  'status': 'unavailable'})
+        server_observation.attach(requests, observer_mode)
         after = fingerprint_sqlite_files(database)
         report = publish_http_report(attempts=attempts, intervals=intervals, requests=requests)
         report.update({
@@ -208,7 +225,9 @@ def run_public_http_diagnostic(*, track_count=12, seed=70, history_count=2,
             'readonly': {'before': before, 'after': after, 'unchanged': before == after,
                          'context': 'caller-owned-quiescent'},
             'phases': {name: {'status': 'unavailable',
-                             'reason': 'Uninstrumented server phase; HTTP duration is not phase evidence'}
+                             'reason': ('No legacy aggregate: see request-local server_observation spans; '
+                                        'nested timings are not additive' if enabled else
+                                        'Observer off; server phase is unavailable')}
                        for name in ('validation', 'membership', 'selected_sql',
                                     'stage_parse', 'mapping', 'serialization')},
         })

@@ -55,13 +55,61 @@ disk-cold. Successful durations use nearest-rank p50/p95/max; failures never
 enter successful percentiles. An empty/all-failed profile has null percentiles.
 Intervals are validated using the original clock/flow identities before labels
 are sanitized, retaining invalid-order errors. HTTP durations measure the
-client request/response, not isolated server phases. These are **observer-on HTTP
-wall times**: the SQL observer synchronously runs EXPLAIN and records operations
-**inside the timed requests**. They are not an uninstrumented baseline; neither
-observer overhead nor individual server phases can be inferred from them.
-Validation, membership, selected SQL, stage parse, mapping and serialization are
-explicitly unavailable
-unless independently instrumented; SQL EXPLAIN is not timing attribution.
+client request/response, not isolated server phases. The warm attempt denominator
+includes state, summary, accepted selection POST and detail GET; it is not a
+browser click-to-visible-detail interval.
+
+`server_observation` publishes request-local monotonic spans collected by
+process-local outward wrappers, not changes to packaged behavior. Historical
+evidence subphases retain bounded size preflight, actual chunk execute/cursor
+fetch, JSON decode and original payload validation separately. Fetch spans cover
+cursor work, not processing performed by the iterator's caller; these are
+observations of the existing fail-closed checks, not copied or relaxed policies.
+Validation and its schema/rows/graph/historical-evidence children, membership, selected read,
+stage preflight/decode, mapping, DTO serialization, UTF8 encoding and socket
+write remain separate phases. DTO serialization records adapter conversion and
+JSON encoding as separate spans with the same phase label; neither is hidden
+inside mapping or UTF8 encoding. The inclusive request root wraps the actual
+handler GET/POST call. Selected SQL execution and actual cursor draining
+are distinct; EXPLAIN itself is not execution/fetch attribution. The SQL
+operation allowlist covers `summary_count`, `summary_page`, `selected_track`,
+`selected_locations`, `selected_latest_run`, `selected_stage_sizes`,
+`selected_stage_payload`, `selected_overrides`, `selected_metadata` and
+`selected_audio`, including actual bindings and same-connection query plans.
+It does not claim per-SQL attribution for every validation query; historical
+validation is observed through the separately named subphases. Socket-write
+completion is **not client receipt or browser presentation**. Completed and failed
+spans survive failed attempts. Missing phases are unavailable with null duration,
+not zero; an observed zero-duration span is still a measurement. Nonfinite,
+reversed or wrong-clock durations are flagged and published as null.
+
+Correlation identities are replaced with opaque public IDs only after grouping
+by original request/thread/span identity. Parent-exclusive time subtracts the
+union of same-request, same-thread child intervals, never overlapping child sums.
+Invalid or incomplete children make exclusive time unavailable. Cyclic parent
+links are flagged `invalid_hierarchy` with unavailable exclusive time. Partial
+cursor-drain records retain observed elapsed work and `partial` status; a
+finite interval alone does not certify a fully consumed cursor. Both raw SQLite
+records and correlated server iteration spans preserve `partial` until the
+consumer requests exhaustion; only then are their iteration statuses completed.
+A successful `fetchone` or `fetchmany` call does not by itself assert that the
+caller exhausted the cursor. No nested or
+parallel spans are summed as a sequential wall-clock total. A repeated phase has
+its individual spans and sample count, but no single additive phase duration.
+HTTP client intervals and server spans are different scopes; do not subtract
+unrelated clocks or join them into a fabricated end-to-end waterfall.
+
+Observer-on HTTP wall times include synchronous SQL EXPLAIN, wrapper timing and
+recording overhead **inside timed requests**. `observer_explain` separately
+measures actual same-connection EXPLAIN execute and fetchall, excluded from
+selected SQL execute/fetch spans but included in enclosing request scopes. It
+measures one observer cost, not total instrumentation overhead: wrapper, timer
+and publication costs are not collectively isolated. The profiler does not
+estimate or subtract this perturbation; paired on/off wall-time differences
+remain confounded by cache state and run order. Observer-off runs publish no server measurements;
+paired on/off observations require matching source, fixture and declared sample
+counts and retain all failures. Neither a tiny contract pass nor these observer
+labels establish responsiveness, a latency budget or a selected index benefit.
 
 SQLite provenance records actual bound SQL and same-connection EXPLAIN rows,
 including repository metadata UDFs, SQLite version and existing index DDL.
