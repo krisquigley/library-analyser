@@ -52,9 +52,17 @@ class _ObservedCursor:
         self._operation = operation
         self._iteration_spans = []
 
-    def _fetch(self, method, *args):
+    @property
+    def arraysize(self):
+        return self._cursor.arraysize
+
+    @arraysize.setter
+    def arraysize(self, size):
+        self._cursor.arraysize = size
+
+    def _fetch(self, method, *args, **kwargs):
         with self._observation.measure(self._operation, 'selected_sql_fetch', method):
-            return getattr(self._cursor, method)(*args)
+            return getattr(self._cursor, method)(*args, **kwargs)
 
     def _complete_iteration(self):
         for previous, context_record in self._iteration_spans:
@@ -75,9 +83,9 @@ class _ObservedCursor:
         self._complete_iteration()
         return rows
 
-    def fetchmany(self, *args):
-        size = args[0] if args else self._cursor.arraysize
-        rows = self._fetch('fetchmany', *args)
+    def fetchmany(self, *args, **kwargs):
+        size = args[0] if args else kwargs.get('size', self._cursor.arraysize)
+        rows = self._fetch('fetchmany', *args, **kwargs)
         if not rows and size > 0:
             self._complete_iteration()
         return rows
