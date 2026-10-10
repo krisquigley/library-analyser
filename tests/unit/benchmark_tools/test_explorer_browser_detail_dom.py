@@ -2,11 +2,57 @@
 import json
 import subprocess
 import unittest
-from tools.explorer_db_detail_browser import DETAIL_RENDERED, PROBE
+from tools.explorer_db_detail_browser import DETAIL_RENDERED, PROBE, WRAP_DETAIL
 from tests.unit.benchmark_tools.test_explorer_browser_native_json_observation import node_executable
 
 
 class DetailDOMPolicy(unittest.TestCase):
+    def test_frame_evidence_rejects_replaced_detached_and_moved_nodes(self):
+        script = r'''
+const vm=require('vm'), wrap=WRAP;
+const make=(tagName,textContent='')=>({tagName,textContent,isConnected:true,
+ checkVisibility:()=>true,getBoundingClientRect:()=>({width:10,height:10,left:1,right:11,top:1,bottom:11}),
+ matches:()=>true});
+const fields=()=>{const node=make('DIV','private genuine');node.children=[make('SECTION')];return node;};
+const root=()=>{const node=make('DIV');node.children=[make('H3','Current Track'),fields()];
+ node.children[1].parentElement=node;node.getAttribute=()=> 'false';node.querySelector=()=>null;return node;};
+const results=[];
+for(const fault of ['pristine','replaced-fields','replaced-root','detached-root','moved-fields']){
+ let live=root(), rendered, compared;const queue=[],s={sequence:1,intended_handle:'private-intended'};
+ global.document={getElementById:()=>live,querySelectorAll:()=>[{dataset:{trackId:s.intended_handle}}]};
+ global.innerWidth=640;global.innerHeight=480;
+ global.requestAnimationFrame=callback=>queue.push(callback);
+ global.window={__dbBridge:{selections:[s]},__dbDetailContentMatches:(sequence,node)=>{compared=node;return true;}};
+ global.renderDetailLoading=()=>{};
+ global.renderDetail=()=>{
+  rendered=fields();rendered.parentElement=live;live.children[1]=rendered;
+  requestAnimationFrame(()=>{
+   if(fault==='replaced-fields'){rendered.isConnected=false;live.children[1]=fields();live.children[1].parentElement=live;}
+   if(fault==='replaced-root'){live.isConnected=false;rendered.isConnected=false;live=root();}
+   if(fault==='detached-root'){live.isConnected=false;rendered.isConnected=false;}
+   if(fault==='moved-fields'){rendered.parentElement=root();}
+  });
+ };
+ vm.runInThisContext('('+wrap+')()');renderDetail();while(queue.length)queue.shift()();
+ results.push({fault,presented:s.detail_presented,ready:s.detail_dom_ready_ms!=null,
+  frame:s.detail_next_frame_ms!=null,comparedLive:compared===live.children[1],identity:s.dom_identity_matches});
+}
+console.log(JSON.stringify(results));
+'''.replace('WRAP', json.dumps(WRAP_DETAIL))
+        result = subprocess.run([node_executable(), '-e', script], capture_output=True,
+                                text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('private', result.stdout)
+        observations = json.loads(result.stdout)
+        for observation in observations:
+            with self.subTest(fault=observation['fault']):
+                valid = observation['fault'] == 'pristine'
+                self.assertIs(observation['presented'], valid)
+                self.assertIs(observation['ready'], valid)
+                self.assertIs(observation['frame'], valid)
+                self.assertIs(observation['comparedLive'], True)
+                self.assertIsNone(observation['identity'])
+
     def test_expected_content_is_private_snapshot_of_consumed_response(self):
         script = r'''
 const vm=require('vm');

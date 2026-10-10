@@ -13,8 +13,8 @@ SELECTION_TIMES = ('receipt_ms', 'loading_dom_ms', 'loading_frame_ms',
                    'detail_dom_ready_ms', 'detail_next_frame_ms')
 # Inspect actual structure in-page. DOM text/node references stay transient;
 # request/DTO identity is a separate observation, never a DOM identity claim.
-DETAIL_RENDERED = """(intended, before, previous, previousText, previousHandle) => {
-  const root=document.getElementById('detail');
+DETAIL_RENDERED = """(intended, before, previous, previousText, previousHandle,
+  root=document.getElementById('detail'), fields=root?.children[1]) => {
   const rows=document.querySelectorAll('#tracks tbody tr.current');
   const visible=el=>{
     if(!el||!el.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}))return false;
@@ -23,7 +23,7 @@ DETAIL_RENDERED = """(intended, before, previous, previousText, previousHandle) 
   };
   if(!visible(root)||root.getAttribute('aria-busy')!=='false'||rows.length!==1||
      !intended||rows[0].dataset.trackId!==intended)return false;
-  const heading=root.children[0], fields=root.children[1];
+  const heading=root.children[0];
   if(root.children.length!==2||heading?.tagName!=='H3'||heading.textContent!=='Current Track'||
      fields?.tagName!=='DIV'||!visible(heading)||!visible(fields)||fields===before||fields===previous)return false;
   const metadata=fields.children[0];
@@ -41,15 +41,22 @@ WRAP_DETAIL = """() => {
   if(s&&s.loading_dom_ms==null){s.loading_dom_ms=performance.now();requestAnimationFrame(()=>{
    s.loading_frame_ms=performance.now();s.loading_frame_was_busy=document.getElementById('detail').getAttribute('aria-busy')==='true';});}return result;};
  renderDetail=function(){const root=document.getElementById('detail'), before=root.children[1],
-  result=detail.apply(this,arguments), s=d.selections.at(-1), ready=performance.now(), fields=root.children[1];
+  result=detail.apply(this,arguments), s=d.selections.at(-1), ready=performance.now(), renderedFields=root.children[1];
   if(s){requestAnimationFrame(()=>{
+   // Earlier frame callbacks may replace or move the genuine rendered nodes.
+   // All evidence and history concern this SAME live frame-time subtree;
+   // captured nodes are continuity guards, never content evidence.
+   const frameRoot=document.getElementById('detail'), fields=frameRoot?.children[1];
+   const stayedLive=frameRoot===root&&frameRoot?.isConnected===true&&
+    fields===renderedFields&&fields?.isConnected===true&&fields.parentElement===frameRoot;
    const contentMatches=window.__dbDetailContentMatches(s.sequence,fields);
-   const structurePresented=presented(s.intended_handle,before,previous,previousText,previousHandle);
+   const structurePresented=stayedLive&&presented(s.intended_handle,before,previous,previousText,previousHandle,frameRoot,fields);
    s.detail_presented=contentMatches&&structurePresented;
    s.dom_identity_matches=null;
-   s.detail_dom_ready_ms=s.detail_presented?ready:null;s.detail_next_frame_ms=performance.now();
-   // Keep structural history even after a content mismatch, so a later clone
-   // cannot evade the existing conservative equal-content exclusion.
+   s.detail_dom_ready_ms=s.detail_presented?ready:null;
+   s.detail_next_frame_ms=s.detail_presented?performance.now():null;
+   // Keep live structural history even after a content mismatch, so a later
+   // clone cannot evade the conservative equal-content exclusion.
    if(structurePresented){previous=fields;previousText=fields.textContent;previousHandle=s.intended_handle;}
   });}return result;};
 }"""
@@ -146,7 +153,7 @@ def _select(page, index):
     page.locator('#tracks tbody tr').nth(index).click()
     page.wait_for_function("sequence => pendingSelectionOperation===null && "
                            "document.getElementById('detail').getAttribute('aria-busy')==='false' && "
-                           "(window.__dbBridge.selections.find(s=>s.sequence===sequence)?.detail_next_frame_ms!=null || "
+                           "(window.__dbBridge.selections.find(s=>s.sequence===sequence)?.detail_presented!=null || "
                            "window.__dbBridge.requests.some(r=>r.sequence===sequence && r.method==='POST' && r.status>=400))",
                            arg=sequence)
 
