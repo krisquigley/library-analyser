@@ -16,8 +16,11 @@ it, otherwise it is clamped to the configured interval. Bounds-compatible
 ordinary starting poses retain a smooth in-range radius throughout the transition,
 without changing the configured bounds or relying on a later controls update to
 snap the endpoint into range. If a zero or tiny custom radius makes the endpoint
-coincide with its look-at target in floating-point coordinates, focus is safely
+coincide with its look-at target, or its actual squared offset underflows to zero
+(or is nonfinite), bundled THREE cannot safely normalize that direction. Focus is
 skipped before settling input; the adapter does not widen the custom bounds.
+This checks the vendor's unscaled squared norm, without an arbitrary minimum radius:
+a positive finite subnormal squared norm remains eligible.
 Camera-focus startup exceptions also cancel that best-effort motion without
 suppressing the independent detail GET for an accepted selection.
 This is not a viewport/FOV-calibrated scale guarantee.
@@ -93,6 +96,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
   tests.acceptance.test_explorer_camera_disabled_controls \
   tests.acceptance.test_explorer_camera_custom_bounds \
   tests.acceptance.test_explorer_camera_unrepresentable_focus \
+  tests.acceptance.test_explorer_camera_tiny_origin \
+  tests.acceptance.test_explorer_camera_focus_eligibility \
   tests.acceptance.test_explorer_3d_graph_assets.Explorer3DGraphAssetTests.test_graph_camera_centers_bounds_fits_viewport_and_preserves_selection_view \
   tests.architecture.test_import_boundaries
 ```
@@ -120,8 +125,14 @@ controls, check settlement/restoration and intermediate target writes, then
 re-enable controls and verify stable position, up and quaternion. Custom-bound
 regressions cover a minimum above 100 and a maximum below 100, checking in-range
 motion, the bounds-compatible endpoint and stable later control updates. Existing
-unflushed wheel/pan regressions remain in place. These are deterministic
-API-boundary regressions, not a browser render or measured WebGL result.
+unflushed wheel/pan regressions remain in place. Tiny-origin regressions use an
+ordinary-scale quaternion oracle and actual bundled THREE with disabled controls,
+including `maxDistance=1e-200` and `Number.MIN_VALUE`. Disabled frame ticks skip
+controls updates just as the vendor does; unsafe endpoint focus must leave the
+rendered pose, custom bounds and independent detail GET intact. Numeric boundary
+cases distinguish a squared norm that underflows to zero from an eligible positive
+subnormal squared norm. These are deterministic API-boundary regressions, not a
+browser render or measured WebGL result.
 
 ## CI command inventory
 

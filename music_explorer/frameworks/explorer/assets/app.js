@@ -769,9 +769,12 @@ function focusPendingCameraSelection(graphRendered=false){
       ?{x:distance*view.x,y:distance*view.y,z:distance*view.z}
       :{x:target.x+distance*target.x/length,y:target.y+distance*target.y/length,z:target.z+distance*target.z/length};
     if(![position.x,position.y,position.z].every(Number.isFinite)) return;
-    // Zero/tiny custom radii can round the endpoint onto its look-at target.
-    // Skip that focus before settling input; never widen the configured bounds.
-    if(!cameraViewDirection(position,target)) return;
+    // Bundled THREE normalizes the actual offset with an unscaled squared norm.
+    // A nonzero offset can still underflow that norm (or overflow it). Skip
+    // before settling input; never widen custom bounds to make focus eligible.
+    const dx=position.x-target.x, dy=position.y-target.y, dz=position.z-target.z;
+    const squaredOffset=dx*dx+dy*dy+dz*dz;
+    if(!(squaredOffset>0) || !Number.isFinite(squaredOffset)) return;
     animateCameraFocus(forceGraph,position,target);
   } catch(error) {
     // A camera adapter failure does not revoke an accepted selection.
