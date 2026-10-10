@@ -135,6 +135,7 @@ class _SQLiteObservation:
                 'start_ms': monotonic() * 1000, 'status': 'ok'}
         if fetch_method is not None:
             span['fetch_method'] = fetch_method
+        context_record = None
         try:
             context = (self._span_context(phase) if self._span_context is not None
                        else nullcontext())
@@ -154,6 +155,9 @@ class _SQLiteObservation:
             raise
         except BaseException:
             span['status'] = 'failed'
+            # Context exit can fail after the inner status synchronization.
+            if context_record is not None:
+                context_record['status'] = 'failed'
             raise
         finally:
             span.pop('_context_record', None)

@@ -1,4 +1,5 @@
 """Mixed cursor consumption completes raw and request-correlated outward spans."""
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 import unittest
@@ -50,6 +51,60 @@ class SQLiteTerminalCompletionTests(unittest.TestCase):
             self.assertNotIn(payload, repr(report))
             self.assertEqual(context['stack'], [])
         del server.local.context
+
+    def exercise_callback_failure(self, method, args, *, entry_failure=False):
+        original = ReadOnlyExplorerSQLiteRepository._connection
+        records = []
+        fetch_count = 0
+        private_error = 'private callback error must not be published'
+
+        @contextmanager
+        def callback(phase):
+            nonlocal fetch_count
+            if phase == 'selected_sql_fetch':
+                fetch_count += 1
+            failing = phase == 'selected_sql_fetch' and fetch_count == 2
+            if failing and entry_failure:
+                raise RuntimeError(private_error)
+            record = {'phase': phase, 'status': 'ok'}
+            records.append(record)
+            yield record
+            if failing:
+                raise RuntimeError(private_error)
+
+        with public_synthetic_fixture() as fixture:
+            path = Path(fixture['db_path'])
+            before = fingerprint_sqlite_files(path)
+            repository = ReadOnlyExplorerSQLiteRepository(str(path))
+            with observe_sqlite(span_context=callback) as observation:
+                with repository._connection() as db:
+                    handle = db.execute('SELECT track_id FROM locations WHERE available=1 '
+                                        'ORDER BY track_id LIMIT 1').fetchone()[0]
+                    cursor = db.execute(SQL, (handle,))
+                    payload = next(cursor)[0]
+                    with self.assertRaisesRegex(RuntimeError, private_error):
+                        getattr(cursor, method)(*args)
+                    raw = [span for span in observation._spans
+                           if span['phase'] == 'selected_sql_fetch']
+                    correlated = [record for record in records
+                                  if record['phase'] == 'selected_sql_fetch']
+                    self.assertEqual([span['status'] for span in raw], ['partial', 'failed'])
+                    self.assertEqual([record['status'] for record in correlated],
+                                     ['partial'] if entry_failure else ['partial', 'failed'])
+            self.assertIs(ReadOnlyExplorerSQLiteRepository._connection, original)
+            report = observation.report(path)
+            self.assertEqual(before, fingerprint_sqlite_files(path))
+            self.assertNotIn(payload, repr(report))
+            self.assertNotIn(private_error, repr(report))
+            self.assertNotIn(private_error, repr(records))
+
+    def test_callback_exit_failure_marks_raw_and_correlated_terminal_fetch_failed(self):
+        for method, args in (('fetchall', ()), ('fetchone', ()), ('fetchmany', (1,))):
+            with self.subTest(method=method):
+                self.exercise_callback_failure(method, args)
+
+    def test_callback_entry_failure_does_not_invent_correlated_record(self):
+        self.exercise_callback_failure('fetchall', (), entry_failure=True)
 
     def test_successful_terminal_fetch_completes_previous_iteration(self):
         def fetchall(cursor):
