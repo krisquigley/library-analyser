@@ -18,6 +18,12 @@ python3 -m tools.explorer_browser_diagnostic --real-browser \
 python3 -m tools.explorer_browser_diagnostic --real-browser \
   --graph-profile stress-41mib --allow-large --scenario pending-then-ready \
   --samples 1 --viewport 1280x720 --output /owned/evidence/large.json
+python3 -m tools.explorer_browser_diagnostic --real-browser \
+  --graph-profile small --scenario during-consumption --observer-mode verified \
+  --samples 1 --viewport 1280x720 --output /owned/evidence/contention-verified.json
+python3 -m tools.explorer_browser_diagnostic --real-browser \
+  --graph-profile small --scenario during-consumption --observer-mode native-json \
+  --samples 1 --viewport 1280x720 --output /owned/evidence/contention-native.json
 ```
 
 The small fixture has 12 nodes and 11 chain links. The explicit large profile
@@ -65,22 +71,55 @@ Do not retain screenshots, HAR, response bodies or crash dumps as evidence.
 
 Live evidence identifies real-playwright-chromium, viewport, browser/Python/
 platform versions, fixture hashes/counts and sample count. Fresh browsers are
-`process-cold`, **not disk-cold**. The diagnostic measures browser-performance
-milestones for navigation, graph request/headers/body/JSON/model/usable render,
-search input/rows, selection feedback/detail and focus start/end; the clock
-origin is navigation and comparisons stay within the same browser sample.
-Per-request `elapsed_ms` ends at fetch headers, not body completion; graph body
-and JSON completion have separate milestones. Browser-consumed UTF-8 byte/hash
-and JSON-count checks happen after parse and before model handoff; encoding and
-digest work add observer overhead. Their duration is not separately attributed.
-Frame gaps, frame count, long-task observations and input-to-frame observations
-are observer-on browser data, not uninstrumented production timings.
-Canvas/nonempty-pixel, positioned-node, finite-camera, selected-node-in-view and
-halo observations support render/focus acceptance; they are not subjective
-visual quality certification. The usable-render timestamp confirms a GPU frame
-after focus, not the earliest graph presentation; do not interpret it as first
-paint or an isolated render-phase duration. RSS is explicitly unavailable unless measured
-with a declared process-tree scope; unavailable is null, not zero.
+`process-cold`, **not disk-cold**. The diagnostic measures browser-performance milestones; the clock origin is
+navigation and comparisons stay within the same browser sample. Request elapsed
+ends at fetch headers, not body completion. The `verified` observer consumes one
+body via text, separates body/decode, JSON parse, UTF-8 encoding/hash verification,
+buildMoodGraphModel and scene submission start/end timestamps. The model span
+covers that function only, not all downstream filter preparation or loading-state
+work before nextFrame/renderMap. Gaps remain unattributed; subtracting isolated
+spans cannot establish full CPU/GPU attribution. Verification adds
+observer overhead; model duration excludes that verification, but neither is an
+uninstrumented production timing. The scene interval wraps synchronous renderMap
+work inclusively (signatures, copies, layout, mood strip and graphData submission);
+it is not isolated graphData or GPU timing. No cloned or second body is consumed.
+
+The observer-light `native-json` mode uses native response.json and records its
+inclusive start/end. Separate body/decode and parse timings are unavailable;
+consumed identity unavailable means bytes/hash are null. Fixture manifest identity
+is not substituted for the consumed response identity. Native decoded node/link
+counts remain available. Compare modes only with matched source/environment and
+retain each mode label; do not call their difference a product improvement.
+
+`graph_first_presentation` is a next-frame presentation proxy after scene
+submission, not proof of physical display, earliest useful pixels, first paint,
+pixel verification, or GPU time. The separate
+`graph_post_focus_readback` records forced render/readPixels verification after
+focus. Legacy usable-render denotes this later check, not earliest presentation.
+Finite camera, selected center in viewport and halo observations do not certify
+useful projected scale, visual quality or smoothness. Long tasks carry start/end
+and duration. A task may intersect several phases: overlap is not causation and
+must not be summed as exclusive phase costs. GPU time remains explicitly null;
+SwiftShader is software rendering, not physical-GPU evidence. RSS is unavailable
+unless measured with a declared process-tree scope; unavailable is null, not zero.
+
+The during-consumption contention scenario releases held headers and an initial
+gzip byte, waits for active body/native-json consumption, and attempts trusted
+input while the remaining body is deliberately paced. It then reobserves active
+consumption and records selection intent before releasing the remainder and
+issuing the trusted superseding selection. Paced network waiting is not itself
+CPU contention; only actual browser receipt timestamps and phase spans can show
+where receipt overlapped or was queued behind parse/model/scene work. Host dispatch uses host monotonic
+clock; browser event receipt and next frame use browser-performance clock. Do
+not subtract these different clocks. An attempted dispatch is not receipt or
+success, and a queued event may be handled after synchronous work completes.
+The report retains attempts and null missing receipt/frame data on timeout;
+synchronous page.evaluate callbacks cannot manufacture concurrent input.
+`contention_status` is `observed-trusted-input` only when both host actions have
+trusted receipt and valid ordered frame observations. Missing observations remain
+`unavailable`; malformed chronology is `invalid_response`. A sample's lifecycle
+`outcome=ok` can coexist with unavailable contention telemetry: lifecycle success
+is not successful contention observation or evidence of responsiveness.
 
 Failed attempts and retry failures remain live observations; live reports retain
 individual samples and counts rather than computing percentile profiles. A browser
@@ -88,8 +127,11 @@ launch, page creation or WebGL preflight failure is retained as a classified
 lifecycle failure with null unobserved milestones, without exception text; earlier
 completed samples survive. Observed flow failures also survive a later lifecycle
 timeout, counted per failed request rather than again for its retry UI. Invalid
-render or focus produces a failure summary, and success requires exactly one
-consumed focus; latest-selection additionally requires the latest halo identity.
+render or focus produces a failure summary. Existing held-pending scenarios require
+exactly one consumed focus; latest-selection additionally requires the latest halo
+identity. During-consumption with an observed trusted supersession requires at
+least one observed focus start and the latest accepted final halo. An initial focus can begin before queued supersession
+cancels/replaces it, so more than one start is not itself failure; retain the count.
 A written report (or zero CLI exit) does not imply a successful browser sample. In the
 supplied-observation policy only, successful durations alone enter nearest-rank
 p50/p95/max; an all-failed profile has null percentiles. Small samples do not
@@ -122,3 +164,15 @@ Run the real commands through the same bounded supervisor, not unbounded shells.
 Default tests execute tiny CLI/report contracts without browser acceptance.
 The large unit oracle additionally needs RUN_EXPLORER_BROWSER_GRAPH_LARGE=1.
 Run architecture checks locally; full CI owns full-suite verification.
+
+## Observation-only acceptance and public evidence
+
+This PR supplies instrumentation, not a responsiveness optimization. Issue #70
+remains open. Bounded single-sample correctness observations do not complete the
+inherited proposed 5/20 process-cold/warm comparison campaign or establish p95
+guarantees. Numerical performance targets and representative dataset acceptance
+require owner agreement. Public evidence must retain failures, observer mode,
+source revision, exact sample counts, fixture provenance, renderer and unavailable
+metrics. Publish allowlisted numeric fields and fixed labels only, never private
+identifiers, paths, arbitrary errors, payloads, screenshots or response bodies.
+Server phases, SQLite attribution and private-library speed remain unmeasured.

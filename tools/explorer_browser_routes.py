@@ -41,6 +41,8 @@ class BoundedLoopbackServer(ThreadingHTTPServer):
 @contextmanager
 def public_routes(fixture, scenario):
     release = threading.Event()
+    if scenario == 'during-consumption':
+        release.body_release = threading.Event()
     counters = {'graph': 0, 'search': 0}
     selected = {'current_track_id': None, 'history': [], 'selection_epoch': 0}
     track = {'handle': 'public-00000', 'title': 'Public synthetic 70 node 00000',
@@ -54,14 +56,22 @@ def public_routes(fixture, scenario):
         def log_message(self, *args):
             pass
 
-        def send(self, body, status=200, content_type='application/json', gzip=False):
+        def send(self, body, status=200, content_type='application/json', gzip=False, paced=False):
             self.send_response(status)
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', str(len(body)))
             if gzip:
                 self.send_header('Content-Encoding', 'gzip')
             self.end_headers()
-            self.wfile.write(body)
+            if paced:
+                # One actual gzip byte ensures response.text/json is in flight;
+                # the host releases the remainder before superseding selection.
+                self.wfile.write(body[:1]); self.wfile.flush()
+                if not release.body_release.wait(10):
+                    return
+                self.wfile.write(body[1:])
+            else:
+                self.wfile.write(body)
 
         def json(self, value, status=200):
             self.send(json.dumps(value).encode(), status)
@@ -75,7 +85,7 @@ def public_routes(fixture, scenario):
                 # Deliberately hold *headers* too: pending detail is independently observable.
                 if not release.wait(60):
                     return self.json({'error': 'Public synthetic timeout'}, 504)
-                return self.send(fixture['encoded_body'], gzip=True)
+                return self.send(fixture['encoded_body'], gzip=True, paced=scenario == 'during-consumption')
             if path == '/api/state':
                 return self.json(selected)
             if path == '/api/tracks/summary':
@@ -83,7 +93,7 @@ def public_routes(fixture, scenario):
                 if scenario == 'search-failure' and counters['search'] == 1:
                     return self.json({'error': 'Public synthetic search failure'}, 503)
                 tracks = [track]
-                if scenario == 'latest-selection':
+                if scenario in ('latest-selection', 'during-consumption'):
                     tracks.append(dict(track, handle='public-00001', title='Public synthetic 70 node 00001'))
                 return self.json({'tracks': tracks, 'metadata': {}, 'next_cursor': None})
             if path in ('/api/tracks/public-00000', '/api/tracks/public-00001'):
@@ -107,7 +117,7 @@ def public_routes(fixture, scenario):
                     raise ValueError('Invalid input')
             except (ValueError, OSError):
                 return self.json({'error': 'Invalid input'}, 400)
-            allowed = ('public-00000', 'public-00001') if scenario == 'latest-selection' else ('public-00000',)
+            allowed = ('public-00000', 'public-00001') if scenario in ('latest-selection', 'during-consumption') else ('public-00000',)
             if value.get('track_id') not in allowed:
                 return self.json({'error': 'Invalid input'}, 400)
             selected['current_track_id'] = value['track_id']
@@ -120,6 +130,8 @@ def public_routes(fixture, scenario):
         yield f'http://127.0.0.1:{server.server_port}/', release
     finally:
         release.set()
+        if hasattr(release, 'body_release'):
+            release.body_release.set()
         server.shutdown()
         server.server_close()
         thread.join()

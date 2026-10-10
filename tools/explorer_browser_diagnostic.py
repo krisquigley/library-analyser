@@ -2,10 +2,12 @@
 import argparse
 from collections import Counter
 import json
+import math
 from pathlib import Path
 import platform
 import re
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 def publish_browser_report(*args, **kwargs):
@@ -15,7 +17,7 @@ def publish_browser_report(*args, **kwargs):
 
 from tools.explorer_browser_routes import public_routes
 
-SCENARIOS = ('pending-then-ready', 'graph-failure-retry', 'search-failure', 'latest-selection')
+SCENARIOS = ('pending-then-ready', 'graph-failure-retry', 'search-failure', 'latest-selection', 'during-consumption')
 PROBE = Path(__file__).with_name('explorer_browser_probe.js')
 
 
@@ -25,6 +27,7 @@ def parser():
     result.add_argument('--graph-profile', choices=('small', 'stress-41mib'), default='small')
     result.add_argument('--allow-large', action='store_true')
     result.add_argument('--scenario', choices=SCENARIOS, default=SCENARIOS[0])
+    result.add_argument('--observer-mode', choices=('verified', 'native-json'), default='verified')
     result.add_argument('--samples', type=int, default=1)
     result.add_argument('--viewport', default='1280x720')
     result.add_argument('--output', type=Path, required=True)
@@ -44,16 +47,29 @@ def require_memory_bound():
     raise RuntimeError('require external cgroup memory.max <=4GiB and memory.oom.group=1')
 
 
-def observe(page, url, release, scenario):
-    page.set_default_timeout(55000)
-    page.add_init_script(PROBE.read_text())
+def observe(page, url, release, scenario, observer_mode='verified', input_attempts=None):
+    input_attempts = input_attempts if input_attempts is not None else []
+    # Safety timeout, not a responsiveness target. Leave time for partial retention
+    # inside the external 45s hard-wall supervisor.
+    page.set_default_timeout(10000)
+    page.add_init_script('window.__diagnosticObserverMode=' + json.dumps(observer_mode) + ';\n' + PROBE.read_text())
     page.goto(url, wait_until='domcontentloaded')
     page.wait_for_function("typeof buildMoodGraphModel==='function' && document.getElementById('track-search')")
     # Decorate existing entrypoints only after packaged startup has begun; the
     # held graph route makes model/render/focus instrumentation race-free.
     page.evaluate("""() => {
       const d=window.__diagnostic, m=d.milestones_ms, stamp=k=>m[k]=performance.now();
-      const model=buildMoodGraphModel;buildMoodGraphModel=function(){const value=model.apply(this,arguments);stamp('graph_model');return value;};
+      const model=buildMoodGraphModel;buildMoodGraphModel=function(){
+        const first=m.graph_model_start==null;if(first)stamp('graph_model_start');
+        const value=model.apply(this,arguments);
+        if(first){stamp('graph_model_end');m.graph_model=m.graph_model_end;}return value;
+      };
+      const scene=renderMap;renderMap=function(){
+        const first=m.graph_scene_start==null;if(first)stamp('graph_scene_start');
+        const value=scene.apply(this,arguments);
+        if(first){stamp('graph_scene_end');requestAnimationFrame(()=>{if(m.graph_first_presentation==null)stamp('graph_first_presentation');});}
+        return value;
+      };
       const detail=renderDetail;renderDetail=function(){const value=detail.apply(this,arguments);stamp('detail_painted');return value;};
       const loading=renderDetailLoading;renderDetailLoading=function(){const value=loading.apply(this,arguments);if(m.selection_intent!=null)stamp('selection_feedback');return value;};
       const select=setCurrent;setCurrent=function(){stamp('selection_intent');return select.apply(this,arguments);};
@@ -83,8 +99,29 @@ def observe(page, url, release, scenario):
         page.wait_for_function("document.getElementById('detail').getAttribute('aria-busy')==='false' && state.current_track_id==='public-00001' && pendingSelectionOperation===null")
     # Hold until an actual presentation frame, not just a DOM mutation.
     page.evaluate("() => new Promise(resolve=>requestAnimationFrame(()=>{window.__diagnostic.milestones_ms.detail_painted=performance.now();resolve();}))")
+    if scenario == 'during-consumption':
+        # Arm before any body/CPU work; no synchronous page evaluate is used
+        # between active-consumption observation and a trusted host dispatch.
+        page.evaluate("window.__diagnostic.contention_action='armed'")
     release.set()
-    page.wait_for_function("graphLoadState.status==='ready' && forceGraph && selectedNodeHalo && cameraFocusFrame===null && window.__diagnostic.milestones_ms.focus_start!=null")
+    if scenario == 'during-consumption':
+        phase = 'native-json' if observer_mode == 'native-json' else 'body'
+        prefix = 'graph_native_json' if observer_mode == 'native-json' else 'graph_body'
+        active = f"window.__diagnostic.milestones_ms.{prefix}_start!=null && window.__diagnostic.milestones_ms.{prefix}_end==null"
+        page.wait_for_function(active)
+        attempt = new_input_attempt('input', phase)
+        input_attempts.append(attempt)
+        page.locator('#track-search').fill('Public synthetic')
+        # A paced actual body is still incomplete here; reobserve rather than
+        # inventing that the first body's phase also applies to selection.
+        page.wait_for_function(active)
+        attempt = new_input_attempt('selection', phase)
+        input_attempts.append(attempt)
+        if hasattr(release, 'body_release'):
+            release.body_release.set()
+        page.locator('#tracks tbody tr').nth(1).click()
+        page.wait_for_function("document.getElementById('detail').getAttribute('aria-busy')==='false' && state.current_track_id==='public-00001' && pendingSelectionOperation===null")
+    page.wait_for_function("graphLoadState.status==='ready'  && forceGraph && selectedNodeHalo && cameraFocusFrame===null && window.__diagnostic.milestones_ms.focus_start!=null")
     page.evaluate("window.__diagnostic.milestones_ms.focus_end=performance.now()")
     # Read real WebGL pixels in-memory in a render callback; no screenshots,
     # HAR, response bodies, or private IDs are publication artifacts.
@@ -97,7 +134,8 @@ def observe(page, url, release, scenario):
       const node=renderedGraphData.nodes.find(n=>n.id===state.current_track_id), point=forceGraph.graph2ScreenCoords(node.x,node.y,node.z), box=canvas.getBoundingClientRect();
       const mesh=findSceneObject(forceGraph.scene(),obj=>graphObjectTrackId(obj)===state.current_track_id && obj.geometry && obj.name!=='selected-node-halo');
       const camera=forceGraph.camera(), halo=selectedNodeHalo.mesh;
-      d.milestones_ms.graph_usable_render=performance.now();
+      d.milestones_ms.graph_post_focus_readback=performance.now();
+      d.milestones_ms.graph_usable_render=d.milestones_ms.graph_post_focus_readback;
       const debug=gl.getExtension('WEBGL_debug_renderer_info');
       const implementation=debug?String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)).toLowerCase():'';
       const context={api_version:String(gl.getParameter(gl.VERSION)),
@@ -123,8 +161,11 @@ def observe(page, url, release, scenario):
         record_invalid_response(result, 'graph')
     if (not all(v for k, v in result['focus'].items() if k != 'consumed_count')
             or not result['selection']['accepted']
-            or result['focus']['consumed_count'] != 1
-            or (scenario == 'latest-selection'
+            or (result['focus']['consumed_count'] < 1 if scenario == 'during-consumption' and
+                any(receipt.get('is_trusted') is True and receipt.get('action') in (None, 'selection')
+                    for receipt in result.get('input_observations', []))
+                else result['focus']['consumed_count'] != 1)
+            or (scenario in ('latest-selection', 'during-consumption')
                 and not result['selection']['latest_accepted'])):
         record_invalid_response(result, 'selection')
     return result
@@ -157,12 +198,69 @@ def record_invalid_response(sample, flow):
 MILESTONES = ('navigation', 'graph_request', 'graph_headers', 'graph_body',
               'graph_json', 'graph_model', 'graph_usable_render', 'search_usable',
               'search_input', 'search_rows', 'selection_intent', 'selection_feedback',
-              'detail_painted', 'focus_start', 'focus_end')
+              'detail_painted', 'focus_start', 'focus_end',
+              'graph_body_start', 'graph_body_end', 'graph_json_start', 'graph_json_end',
+              'graph_verification_start', 'graph_verification_end',
+              'graph_native_json_start', 'graph_native_json_end',
+              'graph_model_start', 'graph_model_end', 'graph_scene_start', 'graph_scene_end',
+              'graph_first_presentation', 'graph_post_focus_readback')
 
 
-def observe_attempt(page, url, release, scenario):
+def new_input_attempt(action, phase):
+    """Host intent cannot be subtracted from a browser performance clock."""
+    return {'action': action, 'attempt_clock': 'host-monotonic',
+            'attempt_ms': time.monotonic() * 1000, 'phase_at_attempt': phase,
+            'receipt_clock': 'browser-performance', 'received_ms': None,
+            'frame_ms': None, 'is_trusted': None, 'phase_at_receipt': None,
+            'outcome': 'unavailable'}
+
+
+def merge_input_observations(attempts, receipts, outcome):
+    """Match known action labels, retaining host intent even if page recovery fails."""
+    result = [dict(attempt) for attempt in attempts]
+    used = set()
+    for index, attempt in enumerate(result):
+        matching = next((i for i, receipt in enumerate(receipts)
+                         if i not in used and receipt.get('action') == attempt['action']), None)
+        # Compatibility with supplied legacy receipt observations lacking action.
+        # They refer to the final host action; never invent an earlier receipt.
+        if matching is None and index == len(result) - 1:
+            matching = next((i for i, receipt in enumerate(receipts)
+                             if i not in used and 'action' not in receipt), None)
+        if matching is not None:
+            used.add(matching)
+            receipt = receipts[matching]
+            for key in ('receipt_clock', 'received_ms', 'frame_ms', 'is_trusted', 'phase_at_receipt'):
+                if key in receipt:
+                    attempt[key] = receipt[key]
+        received, frame = attempt['received_ms'], attempt['frame_ms']
+        valid_pair = (all(isinstance(value, (int, float)) and not isinstance(value, bool)
+                          and math.isfinite(value) and value >= 0 for value in (received, frame))
+                      and frame >= received)
+        if not valid_pair:
+            attempt['frame_ms'] = None
+            if not (isinstance(received, (int, float)) and not isinstance(received, bool)
+                    and math.isfinite(received) and received >= 0):
+                attempt['received_ms'] = None
+                attempt['is_trusted'] = None
+        attempt['outcome'] = (outcome if outcome != 'ok' else
+                              'unavailable' if matching is None else
+                              'ok' if attempt['is_trusted'] is True and valid_pair else 'invalid_response')
+    return result
+
+
+def contention_status(records):
+    if len(records) == 2 and all(record['outcome'] == 'ok' for record in records):
+        return 'observed-trusted-input'
+    if any(record['outcome'] == 'invalid_response' for record in records):
+        return 'invalid_response'
+    return 'unavailable'
+
+
+def observe_attempt(page, url, release, scenario, observer_mode='verified'):
     """Retain one failed lifecycle without publishing exception text or invented times."""
     assets = []
+    input_attempts = []
 
     def finished(request):
         if urlsplit(request.url).path.startswith('/api/'):
@@ -182,7 +280,12 @@ def observe_attempt(page, url, release, scenario):
     page.on('requestfinished', finished)
     page.on('requestfailed', failed)
     try:
-        result = observe(page, url, release, scenario)
+        result = observe(page, url, release, scenario, observer_mode, input_attempts)
+        result['observer_mode'] = observer_mode
+        if input_attempts:
+            result['input_observations'] = merge_input_observations(input_attempts, result.get('input_observations', []), 'ok')
+        if scenario == 'during-consumption':
+            result['contention_status'] = contention_status(result.get('input_observations', []))
         result['requests'].extend(assets)
         return result
     except Exception as error:
@@ -192,7 +295,7 @@ def observe_attempt(page, url, release, scenario):
         except Exception:
             partial = {}
         milestones = {key: partial.get('milestones_ms', {}).get(key) for key in MILESTONES}
-        return {'profile': 'process-cold', 'clock': 'browser-performance',
+        result = {'profile': 'process-cold', 'clock': 'browser-performance',
                 'ui_source': 'packaged-explorer-assets', 'browser_evidence': 'real-playwright-chromium',
                 'outcome': outcome, 'elapsed_ms': None, 'milestones_ms': milestones,
                 'requests': partial.get('requests', []) + assets,
@@ -201,6 +304,14 @@ def observe_attempt(page, url, release, scenario):
                     'frame_count': 0, 'long_tasks_status': 'unavailable'}),
                 'failures': request_failures(partial.get('requests', [])) +
                             [{'flow': 'lifecycle', 'outcome': outcome}]}
+        result['observer_mode'] = observer_mode
+        if 'graph_response' in partial:
+            result['graph_response'] = partial['graph_response']
+        if input_attempts:
+            result['input_observations'] = merge_input_observations(input_attempts, partial.get('input_observations', []), outcome)
+        if scenario == 'during-consumption':
+            result['contention_status'] = 'unavailable'
+        return result
 
 
 def validate_graph_response(sample, manifest):
@@ -212,7 +323,14 @@ def validate_graph_response(sample, manifest):
                 'consumed_bytes': manifest['decoded']['body_bytes'],
                 'consumed_sha256': manifest['decoded']['sha256'],
                 'json_counts': manifest['counts']}
-    if sample.get('graph_response') != expected:
+    observed = sample.get('graph_response', {})
+    native = sample.get('observer_mode') == 'native-json'
+    if native:
+        expected.update(consumed_bytes=None, consumed_sha256=None,
+                        consumed_identity_status='unavailable-native-json')
+    elif 'consumed_identity_status' in observed:
+        expected['consumed_identity_status'] = 'verified'
+    if observed != expected:
         record_invalid_response(sample, 'graph')
 
 
@@ -256,7 +374,7 @@ def collect(args, viewport):
                         except Exception as error:
                             samples.append(failed_setup_attempt(error))
                             continue
-                        sample = observe_attempt(page, url, release, args.scenario)
+                        sample = observe_attempt(page, url, release, args.scenario, getattr(args, 'observer_mode', 'verified'))
                         validate_graph_response(sample, fixture['manifest'])
                         samples.append(sample)
                     finally:
@@ -265,6 +383,7 @@ def collect(args, viewport):
     counts = Counter(f"{f['flow']}:{f['outcome']}" for s in samples for f in s['failures'])
     return {'scope': 'public-synthetic-browser-only', 'browser_evidence': 'real-playwright-chromium',
             'latency_budget_result': 'not_asserted', 'scenario': args.scenario,
+            'observer_mode': getattr(args, 'observer_mode', 'verified'),
             'graph_fixture': fixture['manifest'], 'samples': samples,
             'attempted': len(samples), 'succeeded': sum(s['outcome'] == 'ok' for s in samples),
             'failure_counts': dict(counts), 'environment': {
@@ -275,8 +394,8 @@ def collect(args, viewport):
                 'rss': {'status': 'unavailable', 'peak_bytes': None}},
             'limitations': ['Public synthetic routes, not SQLite speed or catalogue realism.',
                             'Process-cold browser, not disk-cold; diagnostic instrumentation adds overhead.',
-                            'Consumed-body UTF-8 encoding and SHA256 hashing add bounded observer overhead.',
-                            'Usable render is a verified post-focus GPU frame, not earliest presentation.',
+                            'Verified mode UTF-8/hash adds overhead; native-json uses native response.json and leaves separate parse/consumed identity unavailable.',
+                            'First presentation is a next-frame proxy, not physical display or GPU completion; readback is separate.',
                             'No absolute latency budget; RSS unavailable.']}
 
 
