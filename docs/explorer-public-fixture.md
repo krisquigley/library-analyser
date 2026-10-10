@@ -38,7 +38,12 @@ Use external process, time, memory and scratch-disk bounds for expensive work.
 
 Each context owns a fresh temporary root. The root, main database and any
 sidecars are removed on normal exit or consumer exception; consumer exceptions
-propagate. The path is invalid after exit. Fixtures are quiescent when yielded;
+propagate. Mutable `TMPDIR` aliases do not redirect cleanup: the parent is
+canonicalized before root creation. Direct same-UID consumer tampering by
+renaming or replacing the canonical owned root itself is unsupported: cleanup
+uses name-bound `TemporaryDirectory`, so it may leave the renamed original
+behind or remove a replacement at the original name. Without such tampering,
+the path is invalid after exit. Fixtures are quiescent when yielded;
 reader/inspection and ordinary current-schema writer reopen checks preserve the
 main/WAL fingerprint. Sequential file hashes are not an atomic live-WAL snapshot;
 SHM coordination state is not a committed-data fingerprint.
