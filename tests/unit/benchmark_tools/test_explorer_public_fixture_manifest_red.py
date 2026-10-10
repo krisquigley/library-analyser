@@ -16,7 +16,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from music_analyzer.application.dto.analysis import AnalysisError
+from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 from music_explorer.interface_adapters.mood_axis_graph_http import to_indexed_mood_axis_graph_http
@@ -149,6 +152,77 @@ class PublicFixtureManifestRedTests(unittest.TestCase):
                 with self.assertRaises(sqlite3.OperationalError):
                     db.execute('DELETE FROM tracks')
             self.assertEqual(before, fingerprint_sqlite_files(path))
+
+    def test_fixture_accepts_symlinked_temporary_directory_ancestry(self):
+        with tempfile.TemporaryDirectory(prefix='synthetic-temp-ancestry-') as scratch:
+            real = Path(scratch).resolve() / 'real-temp'
+            real.mkdir()
+            alias = Path(scratch) / 'linked-temp'
+            alias.symlink_to(real, target_is_directory=True)
+            with patch.object(tempfile, 'tempdir', str(alias)):
+                with public_fixture(self) as fixture:
+                    path = Path(fixture['db_path'])
+                    self.assertEqual(path, path.resolve())
+                    self.assertEqual(path.parent.parent, real)
+                    self.assertEqual(fixture['manifest']['counts']['tracks'], 12)
+                    self.assertEqual(inspect_fixture(path)['integrity_check'], 'ok')
+                self.assertFalse(path.parent.exists())
+            self.assertEqual(list(real.iterdir()), [])
+
+    def test_external_symlink_to_synthetic_private_database_is_not_a_public_fixture(self):
+        # Every path and byte here is test-owned; no actual private data is accessed.
+        with tempfile.TemporaryDirectory(prefix='synthetic-private-target-') as scratch:
+            private = Path(scratch).resolve() / 'synthetic-private.sqlite'
+            with closing(sqlite3.connect(private)) as db, db:
+                db.execute('CREATE TABLE sentinel(value TEXT)')
+                db.execute("INSERT INTO sentinel VALUES('synthetic-only')")
+            before = fingerprint_sqlite_files(private)
+            alias = private.parent / 'apparently-public.sqlite'
+            alias.symlink_to(private)
+            parent_alias = private.parent / 'apparently-public-directory'
+            parent_alias.symlink_to(private.parent, target_is_directory=True)
+            for supplied_path in (alias, parent_alias / private.name):
+                with self.subTest(supplied_path=supplied_path):
+                    with self.assertRaisesRegex(AnalysisError, 'symlink database path'):
+                        SQLiteAnalysisRepository(str(supplied_path))
+            with patch('tools.explorer_synthetic_fixture.tempfile.TemporaryDirectory') as temporary:
+                for keyword in ('path', 'db_path', 'catalogue_path'):
+                    with self.subTest(keyword=keyword), self.assertRaises(TypeError):
+                        with public_fixture(self, **{keyword: alias}):
+                            self.fail('external database paths must not be accepted')
+                temporary.assert_not_called()
+            self.assertEqual(before, fingerprint_sqlite_files(private))
+            self.assertTrue(alias.is_symlink())
+            self.assertTrue(parent_alias.is_symlink())
+
+    def test_symlinked_temp_root_cleans_sidecars_after_construction_failure(self):
+        class ConstructionFailure(Exception):
+            pass
+
+        failed_paths = []
+
+        def fail_population(path, *options):
+            failed_paths.append(path)
+            for suffix in ('-wal', '-shm', '-journal'):
+                Path(str(path) + suffix).write_bytes(b'synthetic-only')
+            raise ConstructionFailure('synthetic construction failure')
+
+        with tempfile.TemporaryDirectory(prefix='synthetic-temp-failure-') as scratch:
+            real = Path(scratch).resolve() / 'real-temp'
+            real.mkdir()
+            alias = Path(scratch) / 'linked-temp'
+            alias.symlink_to(real, target_is_directory=True)
+            with patch.object(tempfile, 'tempdir', str(alias)), patch(
+                    'tools.explorer_synthetic_fixture._populate', side_effect=fail_population):
+                with self.assertRaisesRegex(ConstructionFailure, 'synthetic construction failure'):
+                    with public_fixture(self):
+                        self.fail('construction failure must propagate before yielding')
+            self.assertEqual(len(failed_paths), 1)
+            path = failed_paths[0]
+            self.assertFalse(path.parent.exists())
+            for suffix in ('', '-wal', '-shm', '-journal'):
+                self.assertFalse(Path(str(path) + suffix).exists())
+            self.assertEqual(list(real.iterdir()), [])
 
     def test_context_cleans_owned_directory_and_sqlite_sidecars_on_success(self):
         with public_fixture(self) as fixture:
