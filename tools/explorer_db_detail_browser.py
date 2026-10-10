@@ -43,10 +43,14 @@ WRAP_DETAIL = """() => {
  renderDetail=function(){const root=document.getElementById('detail'), before=root.children[1],
   result=detail.apply(this,arguments), s=d.selections.at(-1), ready=performance.now(), fields=root.children[1];
   if(s){requestAnimationFrame(()=>{
-   s.detail_presented=presented(s.intended_handle,before,previous,previousText,previousHandle);
+   const contentMatches=window.__dbDetailContentMatches(s.sequence,fields);
+   const structurePresented=presented(s.intended_handle,before,previous,previousText,previousHandle);
+   s.detail_presented=contentMatches&&structurePresented;
    s.dom_identity_matches=null;
    s.detail_dom_ready_ms=s.detail_presented?ready:null;s.detail_next_frame_ms=performance.now();
-   if(s.detail_presented){previous=fields;previousText=fields.textContent;previousHandle=s.intended_handle;}
+   // Keep structural history even after a content mismatch, so a later clone
+   // cannot evade the existing conservative equal-content exclusion.
+   if(structurePresented){previous=fields;previousText=fields.textContent;previousHandle=s.intended_handle;}
   });}return result;};
 }"""
 

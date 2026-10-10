@@ -212,10 +212,23 @@ packaged DOM has no uniquely rendered handle, so `dom_identity_matches` is null
 (unavailable), not copied from a DTO. `detail_presented` is a separate sanitized
 boolean: a presentation frame must contain the fresh visible Current Track heading
 and metadata/field structure for the intended current row, with loading/error
-content removed. No-op renderers and previous-track node reuse or cloned stale
-presentation fail this check even if `aria-busy=false` and requests succeeded.
-Pristine structural presentation can succeed without asserting DOM identity;
+content removed. It must also match the expected metadata and analysis-field
+presentation from the matching successful fetched detail. The observer builds a
+detached expected fields subtree before handing the decoded DTO to application
+code, using the packaged metadata/field presentation helpers. At the frame it
+compares the actual fields subtree with `isEqualNode`, including text, field order,
+and gauge attributes/styles. Expected nodes stay in a private page closure and
+are consumed by a boolean-only comparator; neither the DTO nor expected DOM is
+exported or copied into a DOM identity claim. Missing expected content fails closed.
+A genuine renderer invoked with a fabricated title and empty fields previously
+passed structural checks despite matching POST/GET identity; it now fails.
+No-op renderers and previous-track node reuse or cloned stale presentation also
+fail even if `aria-busy=false` and requests succeeded. Structural history remains
+available after a mismatch, preserving the conservative repeated-content guard.
+Pristine matching presentation can succeed without asserting DOM identity;
 this is next-frame evidence, not physical paint or an independent detail hash.
+The comparison verifies consistency with consumed detail, not independent
+correctness of the shared presentation helpers or unique track identity.
 Freshness checking is conservative: identical visible presentations for different
 tracks cannot distinguish a genuine render from a stale clone, so they are
 rejected rather than counted as success. This may falsely reject a genuine

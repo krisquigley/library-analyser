@@ -1,7 +1,14 @@
 // Outward observer only. Handles and graph bodies are transient, never published.
 (() => {
   const d=window.__dbBridge={requests:[],selections:[]}, original=window.fetch;
-  const now=()=>performance.now();
+  const now=()=>performance.now(), expectedBySelection=new Map();
+  // Only the comparator's boolean leaves this closure. Never put the fetched
+  // detail or detached expected DOM on the exported observation object.
+  window.__dbDetailContentMatches=(sequence,fields)=>{
+    const expected=expectedBySelection.get(sequence);
+    expectedBySelection.delete(sequence);
+    return !!expected&&!!fields&&fields.isEqualNode(expected);
+  };
   window.fetch=async function(input,options={}) {
     const path=new URL(String(input),location.href).pathname;
     const route=path.startsWith('/api/tracks/')&&path!='/api/tracks/summary'?'/api/tracks/<id>':path;
@@ -23,7 +30,17 @@
         const text=await response.text();r.body_ms=now();
         const value=JSON.parse(text);r.parse_ms=now();
         if(route==='/api/current')r.response_handle=value.current_track_id;
-        if(route==='/api/tracks/<id>')r.response_handle=value.handle;
+        if(route==='/api/tracks/<id>') {
+          r.response_handle=value.handle;
+          if(response.ok&&selected&&r.request_handle===selected.intended_handle&&value.handle===selected.intended_handle) {
+            // Snapshot presentation BEFORE returning the DTO to application
+            // code, which may replace or mutate its renderer argument.
+            const fields=document.createElement('div');
+            fields.append(renderTrackMetadata(value.metadata));
+            for(const [name,field] of Object.entries(value.fields||{}))fields.append(renderDetailField(name,field));
+            expectedBySelection.set(r.sequence,fields);
+          }
+        }
         if(route==='/api/mood-axis-graph'&&response.ok) {
           const bytes=new TextEncoder().encode(text);d.graph_bytes=bytes.length;
           d.graph_counts={nodes:value.nodes.length,links:value.links.length,unpositioned:value.unpositioned.length};
