@@ -198,7 +198,11 @@ def public_synthetic_fixture(track_count=12, seed=70, history_count=2, allow_lar
     logical public content, not raw SQLite pages, live WAL or measured latency.
     """
     _validate_options(track_count, seed, history_count, allow_large)
-    with tempfile.TemporaryDirectory(prefix='explorer-public-synthetic-') as directory:
+    # Bind ownership before creation: a caller's temp-parent alias may be
+    # unlinked or retargeted while the fixture is alive. Cleanup must retain
+    # the same canonical parent used to create the owned root.
+    temp_parent = Path(tempfile.gettempdir()).resolve()
+    with tempfile.TemporaryDirectory(prefix='explorer-public-synthetic-', dir=temp_parent) as directory:
         path = (Path(directory) / 'catalogue.sqlite').resolve()
         writer = SQLiteAnalysisRepository(str(path))
         eligible, positioned = _populate(path, track_count, seed, history_count)
