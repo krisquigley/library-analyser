@@ -138,6 +138,34 @@ class BrowserPhaseReport(unittest.TestCase):
         self.assertIsNone(published['graph_response']['consumed_bytes'])
         self.assertIsNone(published['graph_response']['consumed_sha256'])
 
+    def test_empty_long_tasks_preserve_observed_and_unavailable_status(self):
+        published = []
+        for status in ('observed', 'unavailable'):
+            with self.subTest(status=status):
+                sample = {'responsiveness': {'long_tasks': [], 'long_tasks_status': status}}
+                response = publish_browser_report(attempts=[sample])['samples'][0]['responsiveness']
+                published.append(response)
+                self.assertEqual(response.get('long_tasks_status'), status)
+                self.assertEqual(response['long_tasks'], [])
+        self.assertEqual({key: value for key, value in published[0].items()
+                          if key != 'long_tasks_status'},
+                         {key: value for key, value in published[1].items()
+                          if key != 'long_tasks_status'})
+
+    def test_absent_or_invalid_long_tasks_status_defaults_to_unavailable(self):
+        sources = [{'long_tasks': []}]
+        for status in (None, '', 'unknown', 'Observed', '/private/raw-status',
+                       True, 1, [], {}, float('nan')):
+            sources.append({'long_tasks': [], 'long_tasks_status': status})
+        sources.extend((None, [], '/private/raw-responsiveness'))
+        for source in sources:
+            with self.subTest(source=source):
+                sample = {'responsiveness': source}
+                response = publish_browser_report(attempts=[sample])['samples'][0]['responsiveness']
+                self.assertEqual(response.get('long_tasks_status'), 'unavailable')
+                self.assertEqual(response['long_tasks'], [])
+                self.assertNotIn('/private', json.dumps(response, allow_nan=False))
+
     def test_cross_phase_task_overlap_is_ambiguous_not_gpu_attribution(self):
         sample = {'outcome': 'timeout', 'milestones_ms': {
             'graph_model_start': 25, 'graph_model_end': 36,

@@ -110,7 +110,10 @@ def _task_observations(source, milestones):
                      and math.isclose(task_end - task_start, duration, rel_tol=1e-9, abs_tol=1e-6))
             overlap[phase] = max(0, min(end, task_end) - max(start, task_start)) if valid else None
         overlaps.append(overlap)
-    return {'long_tasks': published_tasks, 'phase_task_overlap_ms': overlaps,
+    status = source.get('long_tasks_status')
+    status = status if isinstance(status, str) and status in ('observed', 'unavailable') else 'unavailable'
+    return {'long_tasks': published_tasks, 'long_tasks_status': status,
+            'phase_task_overlap_ms': overlaps,
             'attribution': 'overlap-not-causation', 'gpu_time_ms': None}
 
 

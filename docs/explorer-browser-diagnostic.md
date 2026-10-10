@@ -147,7 +147,11 @@ Invalid or missing observations downgrade the claim and cannot retain per-record
 `ok`; explicit unavailable/failure outcomes are never upgraded. Host intent is not
 compared with browser receipt time. This validation still does not establish
 actual browser acceptance or causal contention. Missing milestones stay
-null; reversed intervals remain flagged after sanitization.
+null; reversed intervals remain flagged after sanitization. Supplied responsiveness
+retains `long_tasks_status` only as `observed` or `unavailable`; absent or invalid
+status defaults to `unavailable`. An empty `long_tasks` list with `observed` means
+an observed zero-task interval, not unavailable collection. This availability label
+does not establish browser acceptance or change overlap-not-causation attribution.
 
 This is not a latency budget, SQLite query-speed measurement, real-library
 responsiveness guarantee, isolated server-phase timing, or issue #70 completion
