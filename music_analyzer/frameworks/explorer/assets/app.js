@@ -20,6 +20,10 @@ let selectionDetailRequestSeq=0;
 let selectionDetailFlight=null;
 let pendingSelectionIntent=null;
 let pendingSelectionOperation=null;
+let pendingCameraSelection=null;
+let cameraFocusGeneration=0;
+let cameraFocusFrame=null;
+let cameraFocusControls=null;
 let loadingRefreshToken=0;
 let lastRefreshError=null;
 let trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query:'',order:'title'};
@@ -59,16 +63,20 @@ function syncSelectionEpoch(snapshot){
   if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
   return snapshot;
 }
-function invalidateSelectionIntent(){selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null;}
+function invalidateSelectionIntent(){cancelCameraFocus(); selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null; pendingCameraSelection=null;}
 async function applyHistorySelection(path){
+  cancelCameraFocus();
   const token=++selectionRequestSeq;
+  pendingCameraSelection=null;
   pendingSelectionIntent=null;
   pendingSelectionOperation=token;
   renderDetailLoading();
   try{
     const posted=await api(path,{method:'POST'});
     if(token!==selectionRequestSeq) return;
+    cancelCameraFocus();
     state=syncSelectionEpoch(posted);
+    pendingCameraSelection=state.current_track_id;
     pendingSelectionOperation=null;
     await refresh();
   }catch(error){
@@ -120,7 +128,7 @@ async function api(path, options){const r=await fetch(path, options); if(!r.ok) 
 function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
 function updateSelectedTrackVisuals(){
   if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===state.current_track_id?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
-  if(forceGraph){forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,visibleGraph);}
+  if(forceGraph){forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,visibleGraph); focusPendingCameraSelection();}
   else if(visibleGraph.nodes.length) renderCanvasFallback(visibleGraph);
   renderMoodStrip(visibleGraph);
 }
@@ -173,8 +181,10 @@ async function refreshSelectionDependent(token){
   return flight.promise;
 }
 async function setCurrent(id){
+  cancelCameraFocus();
   const token=++selectionRequestSeq;
   const postToken=nextSelectionPostSeq();
+  pendingCameraSelection=null;
   pendingSelectionIntent=id;
   pendingSelectionOperation=token;
   state={...state,current_track_id:id};
@@ -183,7 +193,9 @@ async function setCurrent(id){
   try{
     const posted=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})});
     if(token!==selectionRequestSeq) return;
+    cancelCameraFocus();
     state=syncSelectionEpoch(posted);
+    pendingCameraSelection=state.current_track_id;
     pendingSelectionIntent=null;
     pendingSelectionOperation=null;
     await refreshSelectionDependent(token);
@@ -208,7 +220,10 @@ async function refresh(){
     const refreshedState=await api('/api/state');
     if(abortStaleRefresh(refreshToken,token)) return;
     // A refresh begun during a selection/history POST cannot reconcile its older snapshot.
-    if(!operationPending && pendingSelectionOperation===null) state=syncSelectionEpoch(refreshedState);
+    if(!operationPending && pendingSelectionOperation===null){
+      if(state.current_track_id!==refreshedState.current_track_id){cancelCameraFocus(); pendingCameraSelection=refreshedState.current_track_id;}
+      state=syncSelectionEpoch(refreshedState);
+    }
     renderGraphLoadStatus();
     if(abortStaleRefresh(refreshToken,token)) return;
     if(!operationPending) await refreshSelectionDependent(token);
@@ -599,6 +614,175 @@ function animateGraphAxes(){
   if(forceGraph){syncGraphAxes(forceGraph,pendingGraphAxisSpec,document.getElementById('graph3d'));placeGraphAxisLabels(forceGraph);syncSelectedNodeHalo(forceGraph,visibleGraph);}
   requestAnimationFrame(animateGraphAxes);
 }
+// Own the timeline: bundled cameraPosition's timed tweens have no public cancellation.
+function cancelCameraFocus(){
+  cameraFocusGeneration++;
+  if(cameraFocusFrame!==null && typeof cancelAnimationFrame==='function') cancelAnimationFrame(cameraFocusFrame);
+  cameraFocusFrame=null;
+}
+function observeCameraFocusControls(graph){
+  const controls=graph.controls();
+  if(controls===cameraFocusControls) return;
+  cancelCameraFocus();
+  if(cameraFocusControls?.removeEventListener) cameraFocusControls.removeEventListener('start',cancelCameraFocus);
+  cameraFocusControls=controls;
+  if(controls?.addEventListener) controls.addEventListener('start',cancelCameraFocus);
+}
+// Normalize by the largest component before measuring: finite wheel poses can
+// have an overflowing radius, while subnormal gaps have overflowing reciprocals.
+function cameraUnitDirection(vector){
+  const axes=['x','y','z'];
+  if(!axes.every(axis=>Number.isFinite(vector[axis]))) return null;
+  const largest=Math.max(...axes.map(axis=>Math.abs(vector[axis])));
+  if(largest===0) return null;
+  const scaled=Object.fromEntries(axes.map(axis=>[axis,vector[axis]/largest]));
+  const length=Math.hypot(scaled.x,scaled.y,scaled.z);
+  return Object.fromEntries(axes.map(axis=>[axis,scaled[axis]/length]));
+}
+function cameraViewDirection(position,target){
+  const axes=['x','y','z'];
+  if(!axes.every(axis=>Number.isFinite(position[axis])&&Number.isFinite(target[axis]))) return null;
+  const offset=Object.fromEntries(axes.map(axis=>[axis,position[axis]-target[axis]]));
+  if(axes.every(axis=>Number.isFinite(offset[axis]))) return cameraUnitDirection(offset);
+  // Opposite finite coordinates can overflow subtraction too.
+  const largest=Math.max(...axes.flatMap(axis=>[Math.abs(position[axis]),Math.abs(target[axis])]));
+  return cameraUnitDirection(Object.fromEntries(axes.map(axis=>[axis,position[axis]/largest-target[axis]/largest])));
+}
+// Disabled bundled cameraPosition looks at the point but leaves its orbit
+// target stale. Keep the public target synchronized for update and re-enable.
+function setCameraFocusPose(graph,position,target){
+  const controls=graph.controls?.();
+  if(controls?.target) Object.assign(controls.target,target);
+  graph.cameraPosition(position,target,0);
+}
+// Drain pending rotation/wheel/pan once through Trackball's public API. Zero
+// speeds consume input endpoints; full dynamic damping clears residual rotation.
+// A canonical pose keeps the update safe even when the original radius overflows.
+function settleCameraFocusInput(graph){
+  const controls=graph.controls(), camera=graph.camera();
+  if(typeof controls.update!=='function') return;
+  const position={...graph.cameraPosition()}, target={...controls.target};
+  const up=camera.up?{...camera.up}:null;
+  const orientation=camera.quaternion?.clone?camera.quaternion.clone():null;
+  const settings={staticMoving:controls.staticMoving,dynamicDampingFactor:controls.dynamicDampingFactor,
+    rotateSpeed:controls.rotateSpeed,zoomSpeed:controls.zoomSpeed,
+    panSpeed:controls.panSpeed,noZoom:controls.noZoom,noPan:controls.noPan,
+    noRotate:controls.noRotate,minDistance:controls.minDistance,maxDistance:controls.maxDistance};
+  try {
+    Object.assign(controls,{staticMoving:false,dynamicDampingFactor:1,rotateSpeed:0,zoomSpeed:0,panSpeed:0,
+      noZoom:false,noPan:false,noRotate:false,minDistance:0,maxDistance:Infinity});
+    if(camera.up?.set) camera.up.set(0,1,0);
+    setCameraFocusPose(graph,{x:0,y:0,z:100},{x:0,y:0,z:0});
+    controls.update();
+  } finally {
+    Object.assign(controls,settings);
+    if(up && camera.up?.set) camera.up.set(up.x,up.y,up.z);
+    setCameraFocusPose(graph,position,target);
+    if(orientation) camera.quaternion.copy(orientation);
+  }
+}
+function animateCameraFocus(graph,position,target){
+  observeCameraFocusControls(graph);
+  cancelCameraFocus();
+  const generation=cameraFocusGeneration;
+  settleCameraFocusInput(graph);
+  const fromPosition={...graph.cameraPosition()};
+  const fromTarget={...graph.controls().target};
+  // Interpolate the camera-relative offset on an arc, never through lookAt.
+  // Transport up along that arc so passing a world-up pole cannot flip roll.
+  const axes=['x','y','z'];
+  const subtract=(a,b)=>Object.fromEntries(axes.map(axis=>[axis,a[axis]-b[axis]]));
+  const scale=(v,k)=>Object.fromEntries(axes.map(axis=>[axis,v[axis]*k]));
+  const dot=(a,b)=>axes.reduce((sum,axis)=>sum+a[axis]*b[axis],0);
+  const cross=(a,b)=>({x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x});
+  const magnitude=v=>Math.hypot(v.x,v.y,v.z);
+  const endOffset=subtract(position,target), endDistance=magnitude(endOffset);
+  const startOffset=subtract(fromPosition,fromTarget);
+  const measuredStartDistance=magnitude(startOffset);
+  // THREE/Trackball squares offsets during lookAt. Recover only exceptional
+  // radii whose squared norm is unsafe; ordinary orbits keep their full radius.
+  const safeRadius=Math.sqrt(Number.MAX_VALUE)/4;
+  const recoverRadius=measuredStartDistance>safeRadius;
+  const startDistance=recoverRadius?endDistance:(measuredStartDistance||endDistance);
+  // A small focus offset cannot be represented beside an astronomical pan target.
+  // Exceptional recovery also rebases translation; ordinary arcs stay intact.
+  const interpolationTarget=recoverRadius?{x:0,y:0,z:0}:fromTarget;
+  const endDirection=cameraUnitDirection(endOffset);
+  const startDirection=cameraViewDirection(fromPosition,fromTarget)||endDirection;
+  const cosine=Math.max(-1,Math.min(1,dot(startDirection,endDirection)));
+  const angle=Math.acos(cosine>1-1e-15?1:cosine);
+  let tangent=subtract(endDirection,scale(startDirection,cosine));
+  const camera=graph.camera(), fromUp=camera.up?{...camera.up}:null;
+  if(magnitude(tangent)<1e-8) {
+    // Antiparallel directions need a deterministic plane perpendicular to up.
+    tangent=cross(fromUp||{x:0,y:1,z:0},startDirection);
+    if(magnitude(tangent)<1e-8) tangent=cross({x:1,y:0,z:0},startDirection);
+    if(magnitude(tangent)<1e-8) tangent=cross({x:0,y:0,z:1},startDirection);
+  }
+  tangent=scale(tangent,1/magnitude(tangent));
+  const rotationAxis=cross(startDirection,tangent);
+  const started=typeof performance!=='undefined'?performance.now():Date.now();
+  const step=timestamp=>{
+    if(generation!==cameraFocusGeneration || graph!==forceGraph) return;
+    cameraFocusFrame=null;
+    const now=Number.isFinite(timestamp)?timestamp:(typeof performance!=='undefined'?performance.now():Date.now());
+    const progress=Math.min(1,Math.max(0,(now-started)/700));
+    const interpolate=(from,to)=>Object.fromEntries(['x','y','z'].map(axis=>[axis,from[axis]+(to[axis]-from[axis])*progress]));
+    const theta=angle*progress, c=Math.cos(theta), s=Math.sin(theta);
+    const distance=startDistance+(endDistance-startDistance)*progress;
+    // Large finite starts can erase node coordinates at t=1 by cancellation.
+    const nextTarget=progress===1?target:interpolate(interpolationTarget,target);
+    const nextPosition=Object.fromEntries(axes.map(axis=>[axis,nextTarget[axis]+distance*(startDirection[axis]*c+tangent[axis]*s)]));
+    if(fromUp && camera.up?.set) {
+      const turned=cross(rotationAxis,fromUp), along=dot(rotationAxis,fromUp)*(1-c);
+      camera.up.set(...axes.map(axis=>fromUp[axis]*c+turned[axis]*s+rotationAxis[axis]*along));
+    }
+    setCameraFocusPose(graph,progress===1?position:nextPosition,nextTarget);
+    if(progress<1) cameraFocusFrame=requestAnimationFrame(step);
+  };
+  cameraFocusFrame=requestAnimationFrame(step);
+}
+// Accepted selection gets one focus after initial framing, never a per-frame camera lock.
+function focusPendingCameraSelection(graphRendered=false){
+  // Existing instances still show the old layout while a replacement loads.
+  // Only renderMap may consume focus before the load state becomes ready.
+  if(!graphRendered && graphLoadState.status!=='ready') return;
+  if(!forceGraph || framedGraphLayout===null || pendingCameraSelection===null) return;
+  const id=pendingCameraSelection;
+  pendingCameraSelection=null;
+  if(id!==state.current_track_id) return;
+  const node=visibleGraph.nodes.find(n=>n.id===id);
+  if(!node) return; // Keep active filters; hidden/unpositioned selections still show detail.
+  const target={x:node.fx,y:node.fy,z:node.fz};
+  if(![target.x,target.y,target.z].every(Number.isFinite)) return;
+  const length=Math.hypot(target.x,target.y,target.z);
+  if(!Number.isFinite(length)) return;
+  // Camera focus is best-effort; it must never block accepted track detail.
+  try {
+    // Configured orbit bounds take precedence over the nominal display-space radius.
+    const controls=forceGraph.controls();
+    const distance=Math.max(controls.minDistance??0,Math.min(controls.maxDistance??Infinity,100));
+    // A positioned origin has no radial direction. Preserve the current orbit
+    // direction (relative to the panned target), or use +Z for a coincident pose.
+    const direction=length===0
+      ?(cameraViewDirection(forceGraph.cameraPosition(),controls.target)||{x:0,y:0,z:1})
+      :cameraUnitDirection(target);
+    // Normalize before radius scaling: distance*target can underflow for a
+    // tiny non-origin node even when the final camera offset is renderable.
+    const position={x:target.x+distance*direction.x,y:target.y+distance*direction.y,z:target.z+distance*direction.z};
+    if(![position.x,position.y,position.z].every(Number.isFinite)) return;
+    // Require a normal-range unscaled squared norm for reliable orientation.
+    // A nonzero offset can still underflow that norm (or overflow it). Skip
+    // before settling input; never widen custom bounds to make focus eligible.
+    const dx=position.x-target.x, dy=position.y-target.y, dz=position.z-target.z;
+    const squaredOffset=dx*dx+dy*dy+dz*dz;
+    if(!(squaredOffset>=2**-1022) || !Number.isFinite(squaredOffset)) return;
+    animateCameraFocus(forceGraph,position,target);
+  } catch(error) {
+    // A camera adapter failure does not revoke an accepted selection.
+    cancelCameraFocus();
+  }
+}
 function renderMoodStrip(data){
   const canvas=document.getElementById('mood-strip'), picker=document.getElementById('mood-strip-picker'), readout=document.getElementById('mood-strip-value');
   if(!canvas||!picker||!readout) return;
@@ -618,7 +802,7 @@ function renderMoodStrip(data){
   picker.oninput=show; show();
   canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
 }
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* cameraPosition lookAt also sets the bundled orbit controls target. */ forceGraph.cameraPosition(frame.position,frame.target,0); framedGraphLayout=layout;}} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(n=>setCurrent(n.id)); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true);} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
