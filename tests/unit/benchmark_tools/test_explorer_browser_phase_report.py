@@ -166,6 +166,75 @@ class BrowserPhaseReport(unittest.TestCase):
                 self.assertEqual(response['long_tasks'], [])
                 self.assertNotIn('/private', json.dumps(response, allow_nan=False))
 
+    def test_huge_task_timing_retains_failed_attempt_with_unavailable_overlap(self):
+        sample = {'outcome': 'timeout', 'elapsed_ms': 12, 'milestones_ms': {
+            'graph_model_start': 0, 'graph_model_end': 1},
+            'responsiveness': {'long_tasks_status': 'observed', 'long_tasks': [
+                {'start_ms': 0, 'end_ms': 10**309, 'duration_ms': 10**309}]}}
+        report = publish_browser_report(attempts=[sample])
+        self.assertEqual(len(report['samples']), 1)
+        published = report['samples'][0]
+        self.assertEqual(published['outcome'], 'timeout')
+        self.assertEqual(published['elapsed_ms'], 12)
+        observed = published['responsiveness']
+        self.assertEqual(observed['long_tasks_status'], 'observed')
+        self.assertEqual(observed['long_tasks'], [
+            {'start_ms': 0, 'end_ms': None, 'duration_ms': None}])
+        self.assertTrue(all(value is None for value in
+                            observed['phase_task_overlap_ms'][0].values()))
+        json.dumps(report, allow_nan=False)
+
+    def test_unrepresentable_phase_cannot_abort_valid_float_task_report(self):
+        sample = {'outcome': 'timeout', 'milestones_ms': {
+            'graph_model_start': 10**309, 'graph_model_end': 10**309},
+            'responsiveness': {'long_tasks_status': 'observed', 'long_tasks': [
+                {'start_ms': 0.0, 'end_ms': 1.0, 'duration_ms': 1.0}]}}
+        published = publish_browser_report(attempts=[sample])['samples'][0]
+        self.assertEqual(published['outcome'], 'timeout')
+        self.assertEqual(published['responsiveness']['long_tasks_status'], 'observed')
+        self.assertIsNone(published['responsiveness']['phase_task_overlap_ms'][0]['model'])
+        json.dumps(published, allow_nan=False)
+
+    def test_invalid_numeric_tasks_preserve_status_identity_and_valid_controls(self):
+        valid = {'start_ms': 0, 'end_ms': 2, 'duration_ms': 2}
+        for status in ('observed', 'unavailable'):
+            for mode in ('verified', 'native-json'):
+                for field in valid:
+                    for invalid in (-1, float('nan'), float('inf'), -float('inf'),
+                                    10**309, -(10**309)):
+                        with self.subTest(status=status, mode=mode, field=field,
+                                          invalid=invalid):
+                            sample = {'outcome': 'timeout', 'elapsed_ms': 12,
+                                'observer_mode': mode,
+                                'graph_response': {'consumed_identity_status': 'verified',
+                                    'consumed_sha256': 'a' * 64, 'consumed_bytes': 12},
+                                'contention_status': 'observed-trusted-input',
+                                'input_observations': [self.trusted_record(action)
+                                    for action in ('input', 'selection')],
+                                'milestones_ms': {'graph_model_start': 0,
+                                                  'graph_model_end': 1},
+                                'responsiveness': {'long_tasks_status': status,
+                                    'long_tasks': [dict(valid, **{field: invalid},
+                                                        name='/private/task-id'), valid]}}
+                            report = publish_browser_report(attempts=[sample])
+                            published = report['samples'][0]
+                            observed = published['responsiveness']
+                            self.assertEqual(published['outcome'], 'timeout')
+                            self.assertEqual(observed['long_tasks_status'], status)
+                            self.assertIsNone(observed['long_tasks'][0][field])
+                            self.assertTrue(all(value is None for value in
+                                observed['phase_task_overlap_ms'][0].values()))
+                            self.assertEqual(observed['long_tasks'][1], valid)
+                            self.assertEqual(observed['phase_task_overlap_ms'][1]['model'], 1)
+                            self.assertEqual(published['contention_status'],
+                                             'observed-trusted-input')
+                            identity = published['graph_response']
+                            self.assertEqual(identity['consumed_identity_status'],
+                                'verified' if mode == 'verified' else 'unavailable-native-json')
+                            self.assertEqual(identity['consumed_sha256'],
+                                             'a' * 64 if mode == 'verified' else None)
+                            self.assertNotIn('/private', json.dumps(report, allow_nan=False))
+
     def test_cross_phase_task_overlap_is_ambiguous_not_gpu_attribution(self):
         sample = {'outcome': 'timeout', 'milestones_ms': {
             'graph_model_start': 25, 'graph_model_end': 36,

@@ -88,6 +88,17 @@ def _published_contention_status(status, records):
             else 'unavailable')
 
 
+def _task_number(value):
+    """Task timings must be representable for the float-based span comparison."""
+    value = _nonnegative(value)
+    if value is None:
+        return None
+    try:
+        return value if math.isfinite(value) else None
+    except OverflowError:
+        return None
+
+
 def _task_observations(source, milestones):
     """Publish numeric task spans; overlap is not exclusive CPU/GPU attribution."""
     source = source if isinstance(source, dict) else {}
@@ -96,13 +107,13 @@ def _task_observations(source, milestones):
     published_tasks, overlaps = [], []
     for task in tasks:
         task = task if isinstance(task, dict) else {}
-        published = {key: _nonnegative(task.get(key))
+        published = {key: _task_number(task.get(key))
                      for key in ('start_ms', 'end_ms', 'duration_ms')}
         published_tasks.append(published)
         overlap = {}
         for phase in ('body', 'native_json', 'json', 'verification', 'model', 'scene'):
-            start = milestones.get('graph_' + phase + '_start')
-            end = milestones.get('graph_' + phase + '_end')
+            start = _task_number(milestones.get('graph_' + phase + '_start'))
+            end = _task_number(milestones.get('graph_' + phase + '_end'))
             task_start, task_end = published['start_ms'], published['end_ms']
             duration = published['duration_ms']
             valid = (all(value is not None for value in (start, end, task_start, task_end, duration))
