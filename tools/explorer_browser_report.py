@@ -3,6 +3,7 @@ import math
 import re
 
 from tools.explorer_http_report import publish_http_report, _finite_number, _label
+from tools.explorer_detail_bridge_report import publish_detail_bridge
 from tools.explorer_interaction_measurement import validate_phase_intervals
 
 _MILESTONES = ('navigation', 'graph_request', 'graph_headers', 'graph_body',
@@ -135,8 +136,72 @@ def publish_browser_report(*, attempts, intervals=(), requests=(), environment=N
     """
     attempts = list(attempts)
     intervals = list(intervals)
-    report = publish_http_report(attempts=attempts, requests=requests)
-    for sample, original in zip(report['samples'], attempts):
+    validated_attempts, bridges = [], []
+    for original in attempts:
+        attempt = dict(original)
+        bridge = None
+        if 'detail_bridge' in original:
+            bridge, valid = publish_detail_bridge(original['detail_bridge'])
+            if attempt.get('outcome') == 'ok':
+                if not valid:
+                    attempt['outcome'] = 'invalid_response'
+                else:
+                    selected = bridge['selections'][-1]
+                    elapsed = attempt.get('elapsed_ms')
+                    observed_elapsed = selected['detail_next_frame_ms'] - selected['receipt_ms']
+                    if not _finite_number(elapsed) or not math.isclose(
+                            elapsed, observed_elapsed, rel_tol=1e-9, abs_tol=1e-6):
+                        attempt['outcome'] = 'invalid_duration'
+        validated_attempts.append(attempt)
+        bridges.append(bridge)
+    report = publish_http_report(attempts=validated_attempts, requests=requests)
+    for sample, original, bridge in zip(report['samples'], attempts, bridges):
+        if bridge is not None:
+            sample['detail_bridge'] = bridge
+        if 'requests' in original:
+            allowed_routes = ('/api/state', '/api/tracks/summary', '/api/current',
+                              '/api/tracks/<id>', '/api/mood-axis-graph')
+            observed_requests = original['requests'] if isinstance(original['requests'], list) else []
+            safe_requests = []
+            for request in observed_requests:
+                request = request if isinstance(request, dict) else {}
+                route = request.get('route')
+                route = route if isinstance(route, str) and route in allowed_routes else ''
+                safe_requests.append({
+                    'method': _label(request.get('method'), ('GET', 'POST')),
+                    'url': '/api/tracks/redacted' if route == '/api/tracks/<id>' else route,
+                    **{key: request.get(key) for key in ('status', 'elapsed_ms', 'response_bytes', 'outcome')},
+                })
+            request_report = publish_http_report(attempts=[], requests=safe_requests)
+            sample['requests'] = request_report['requests']
+            sample['request_inventory'] = request_report['request_inventory']
+            for record in sample['requests'] + sample['request_inventory']['requests']:
+                if record['route'] == '/api/tracks/:handle':
+                    record['route'] = '/api/tracks/<id>'
+        if 'webgl_context' in original:
+            context = original['webgl_context']
+            context = context if isinstance(context, dict) else {}
+            labels = {'api_version': ('webgl1', 'webgl2'), 'vendor': ('WebKit', 'unclassified'),
+                      'renderer': ('WebKit WebGL', 'unclassified'),
+                      'implementation': ('software-swiftshader', 'software-other', 'unclassified')}
+            sample['webgl_context'] = {key: _label(context.get(key), allowed)
+                                       for key, allowed in labels.items()}
+        for key in ('fault_injection', 'graph_fault_injected'):
+            if key in original:
+                flag = original[key]
+                sample[key] = flag if type(flag) is bool else None
+        newly_rejected = original.get('outcome') == 'ok' and sample['outcome'] != 'ok'
+        if 'failures' in original or newly_rejected:
+            failures = original.get('failures')
+            failures = failures if isinstance(failures, list) else []
+            sample['failures'] = [{
+                'flow': _label(failure.get('flow'), ('lifecycle', 'graph', 'search', 'selection', 'detail')),
+                'outcome': _label(failure.get('outcome'), ('timeout', 'http_error', 'invalid_response', 'invalid_duration', 'connection_error')),
+            } for failure in failures if isinstance(failure, dict)]
+            if newly_rejected:
+                rejected = {'flow': 'lifecycle', 'outcome': sample['outcome']}
+                if rejected not in sample['failures']:
+                    sample['failures'].append(rejected)
         if 'milestones_ms' in original:
             source = original['milestones_ms']
             source = source if isinstance(source, dict) else {}
