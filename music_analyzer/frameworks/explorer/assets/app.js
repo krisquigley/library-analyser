@@ -648,6 +648,13 @@ function cameraViewDirection(position,target){
   const largest=Math.max(...axes.flatMap(axis=>[Math.abs(position[axis]),Math.abs(target[axis])]));
   return cameraUnitDirection(Object.fromEntries(axes.map(axis=>[axis,position[axis]/largest-target[axis]/largest])));
 }
+// Disabled bundled cameraPosition looks at the point but leaves its orbit
+// target stale. Keep the public target synchronized for update and re-enable.
+function setCameraFocusPose(graph,position,target){
+  const controls=graph.controls();
+  if(controls.target) Object.assign(controls.target,target);
+  graph.cameraPosition(position,target,0);
+}
 // Drain pending rotation/wheel/pan once through Trackball's public API. Zero
 // speeds consume input endpoints; full dynamic damping clears residual rotation.
 // A canonical pose keeps the update safe even when the original radius overflows.
@@ -665,12 +672,12 @@ function settleCameraFocusInput(graph){
     Object.assign(controls,{staticMoving:false,dynamicDampingFactor:1,rotateSpeed:0,zoomSpeed:0,panSpeed:0,
       noZoom:false,noPan:false,noRotate:false,minDistance:0,maxDistance:Infinity});
     if(camera.up?.set) camera.up.set(0,1,0);
-    graph.cameraPosition({x:0,y:0,z:100},{x:0,y:0,z:0},0);
+    setCameraFocusPose(graph,{x:0,y:0,z:100},{x:0,y:0,z:0});
     controls.update();
   } finally {
     Object.assign(controls,settings);
     if(up && camera.up?.set) camera.up.set(up.x,up.y,up.z);
-    graph.cameraPosition(position,target,0);
+    setCameraFocusPose(graph,position,target);
     if(orientation) camera.quaternion.copy(orientation);
   }
 }
@@ -696,8 +703,8 @@ function animateCameraFocus(graph,position,target){
   // radii whose squared norm is unsafe; ordinary orbits keep their full radius.
   const safeRadius=Math.sqrt(Number.MAX_VALUE)/4;
   const recoverRadius=measuredStartDistance>safeRadius;
-  const startDistance=recoverRadius?100:(measuredStartDistance||endDistance);
-  // A 100-unit offset cannot be represented beside an astronomical pan target.
+  const startDistance=recoverRadius?endDistance:(measuredStartDistance||endDistance);
+  // A small focus offset cannot be represented beside an astronomical pan target.
   // Exceptional recovery also rebases translation; ordinary arcs stay intact.
   const interpolationTarget=recoverRadius?{x:0,y:0,z:0}:fromTarget;
   const endDirection=cameraUnitDirection(endOffset);
@@ -730,7 +737,7 @@ function animateCameraFocus(graph,position,target){
       const turned=cross(rotationAxis,fromUp), along=dot(rotationAxis,fromUp)*(1-c);
       camera.up.set(...axes.map(axis=>fromUp[axis]*c+turned[axis]*s+rotationAxis[axis]*along));
     }
-    graph.cameraPosition(progress===1?position:nextPosition,nextTarget,0);
+    setCameraFocusPose(graph,progress===1?position:nextPosition,nextTarget);
     if(progress<1) cameraFocusFrame=requestAnimationFrame(step);
   };
   cameraFocusFrame=requestAnimationFrame(step);
@@ -750,8 +757,9 @@ function focusPendingCameraSelection(graphRendered=false){
   if(![target.x,target.y,target.z].every(Number.isFinite)) return;
   const length=Math.hypot(target.x,target.y,target.z);
   if(!Number.isFinite(length)) return;
-  // Display-space radial offset keeps a useful distance independent of node magnitude.
-  const distance=100;
+  // Configured orbit bounds take precedence over the nominal display-space radius.
+  const controls=forceGraph.controls();
+  const distance=Math.max(controls.minDistance??0,Math.min(controls.maxDistance??Infinity,100));
   // A positioned origin has no radial direction. Preserve the current orbit
   // direction (relative to the panned target), or use +Z for a coincident pose.
   const view=length===0?(cameraViewDirection(forceGraph.cameraPosition(),forceGraph.controls().target)||{x:0,y:0,z:1}):null;
