@@ -83,6 +83,7 @@ def observe(page, url, release, scenario, observer_mode='verified', input_attemp
       const select=setCurrent;setCurrent=function(){stamp('selection_intent');return select.apply(this,arguments);};
       const focus=animateCameraFocus;animateCameraFocus=function(){stamp('focus_start');d.consumed_count++;return focus.apply(this,arguments);};
       stamp('search_usable');
+      if(d.installFocusObservation)d.installFocusObservation();
     }""")
     page.wait_for_function("state.selection_epoch!=null")
     initial = page.evaluate("window.__diagnostic.requests.filter(r=>r.route==='/api/tracks/summary').length")
@@ -139,9 +140,79 @@ def observe(page, url, release, scenario, observer_mode='verified', input_attemp
       const gl=renderer.getContext(), pixels=new Uint8Array(canvas.width*canvas.height*4);
       gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
       let changed=false;for(let i=4;i<pixels.length;i+=4){if(pixels[i]!==pixels[0]||pixels[i+1]!==pixels[1]||pixels[i+2]!==pixels[2]){changed=true;break;}}
-      const node=renderedGraphData.nodes.find(n=>n.id===state.current_track_id), point=forceGraph.graph2ScreenCoords(node.x,node.y,node.z), box=canvas.getBoundingClientRect();
+      const node=renderedGraphData.nodes.find(n=>n.id===state.current_track_id), point=node?forceGraph.graph2ScreenCoords(node.x,node.y,node.z):{x:NaN,y:NaN}, box=canvas.getBoundingClientRect();
       const mesh=findSceneObject(forceGraph.scene(),obj=>graphObjectTrackId(obj)===state.current_track_id && obj.geometry && obj.name!=='selected-node-halo');
-      const camera=forceGraph.camera(), halo=selectedNodeHalo.mesh;
+      const camera=forceGraph.camera(), halo=selectedNodeHalo?.mesh;
+      const sceneRoot=forceGraph.scene();
+      const finite=value=>typeof value==='number'&&Number.isFinite(value);
+      const emptyBound=()=>({status:'unavailable',diameter_px:null,diameter_viewport_fraction:null,
+        clipping:{viewport:null,near:null,far:null,behind_camera:null}});
+      function mounted(object){let current=object;while(current){if(current===sceneRoot)return true;current=current.parent;}return false;}
+      function visible(object){let current=object;while(current){if(current.visible===false)return false;if(current===sceneRoot)return true;current=current.parent;}return false;}
+      const cameraValid=[box.width,box.height,camera.aspect,camera.fov,camera.near,camera.far].every(finite)
+        &&box.width>0&&box.height>0&&camera.aspect>0&&camera.fov>0&&camera.fov<180&&camera.near>0&&camera.far>camera.near;
+      function vertices(object){
+        if(!cameraValid||!object||!mounted(object))return null;
+        const position=object.geometry?.attributes?.position;
+        if(!position||!Number.isInteger(position.count)||position.count<=0)return null;
+        const points=[];
+        try{for(let i=0;i<position.count;i++){
+          const point=camera.position.clone().fromBufferAttribute(position,i).applyMatrix4(object.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
+          const depth=-point.z;
+          if(![point.x,point.y,point.z].every(finite))return null;
+          if(depth===0){points.push({x:null,y:null,z:null,depth});continue;}
+          point.applyMatrix4(camera.projectionMatrix);
+          if(![point.x,point.y,point.z].every(finite))return null;
+          points.push({x:point.x,y:point.y,z:point.z,depth});
+        }}catch(error){return null;}return points;
+      }
+      function bound(object){
+        const points=vertices(object);if(!points)return emptyBound();
+        let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+        const clipping={viewport:false,near:false,far:false,behind_camera:false};
+        for(const point of points){
+          if(point.depth===0){clipping.near=true;clipping.behind_camera=true;continue;}
+          minX=Math.min(minX,point.x);maxX=Math.max(maxX,point.x);minY=Math.min(minY,point.y);maxY=Math.max(maxY,point.y);
+          clipping.viewport ||= Math.abs(point.x)>1||Math.abs(point.y)>1;
+          clipping.near ||= point.depth<camera.near;clipping.far ||= point.depth>camera.far;clipping.behind_camera ||= point.depth<=0;
+        }
+        const diameter=Math.max((maxX-minX)*box.width/2,(maxY-minY)*box.height/2);
+        if(!finite(diameter))return emptyBound();
+        const singular=points.some(point=>point.depth===0);
+        return {status:'observed',diameter_px:singular?null:diameter,diameter_viewport_fraction:singular?null:diameter/Math.min(box.width,box.height),clipping};
+      }
+      const identity=!!node&&!!mesh&&graphObjectTrackId(mesh)===state.current_track_id&&!!halo
+        &&selectedNodeHalo?.trackId===state.current_track_id&&graphObjectTrackId(halo)===state.current_track_id;
+      let meshBound=bound(mesh),haloBound=bound(halo);
+      if(!identity){meshBound=emptyBound();haloBound=emptyBound();}
+      let controls=null;try{controls=forceGraph.controls();}catch(error){}
+      // Existing runtime nominal radius, observed only; no bounds are changed.
+      const nominalRadius=100;
+      const minDistance=controls&&finite(controls.minDistance)&&controls.minDistance>=0?controls.minDistance:null;
+      const maxDistance=controls&&finite(controls.maxDistance)&&controls.maxDistance>=0?controls.maxDistance:null;
+      const projection={status:identity&&visible(mesh)&&visible(halo)&&cameraValid&&meshBound.status==='observed'&&haloBound.status==='observed'?'observed':'unavailable',
+        measurement:'projected-vertex-bound',mesh:meshBound,halo:haloBound,
+        viewport:{width_px:finite(box.width)?box.width:null,height_px:finite(box.height)?box.height:null,aspect:box.width>0&&box.height>0?box.width/box.height:null},
+        camera:{aspect:finite(camera.aspect)?camera.aspect:null,fov_degrees:finite(camera.fov)?camera.fov:null,near:finite(camera.near)?camera.near:null,far:finite(camera.far)?camera.far:null},
+        controls:{status:controls?'observed':'unavailable',min_distance:minDistance,max_distance:maxDistance,
+          min_distance_status:minDistance!==null?'observed':'unavailable',
+          max_distance_status:controls?.maxDistance===Infinity?'unbounded':maxDistance!==null?'observed':'unavailable',
+          enabled:typeof controls?.enabled==='boolean'?controls.enabled:null,
+          restrictive:!controls?null:(minDistance!==null&&minDistance>nominalRadius)||(maxDistance!==null&&maxDistance<nominalRadius)?true:
+            minDistance!==null&&(maxDistance!==null||controls.maxDistance===Infinity)?false:null},
+        support_status:'unassessed',usefulness_status:'unassessed'};
+      const neighbors=new Map();
+      function visit(object){const id=graphObjectTrackId(object);if(id&&id!==state.current_track_id&&object.geometry&&object.name!=='selected-node-halo'&&!neighbors.has(id))neighbors.set(id,object);for(const child of object.children||[])visit(child);}
+      visit(sceneRoot);
+      let inFrustum=0,unavailable=0;
+      for(const object of neighbors.values()){
+        const points=vertices(object);if(!points){unavailable++;continue;}
+        if(!visible(object))continue;
+        // A vertex-bound separating-plane test observes frustum context, never occlusion.
+        if(![p=>p.x < -1,p=>p.x > 1,p=>p.y < -1,p=>p.y > 1,p=>p.depth<camera.near,p=>p.depth>camera.far].some(outside=>points.every(outside)))inFrustum++;
+      }
+      const focusContext={status:cameraValid&&unavailable===0?'observed':'unavailable',measurement:'frustum-not-occlusion',
+        neighbors_observed:neighbors.size,neighbors_in_frustum:cameraValid&&unavailable===0?inFrustum:null};
       d.milestones_ms.graph_post_focus_readback=performance.now();
       d.milestones_ms.graph_usable_render=d.milestones_ms.graph_post_focus_readback;
       const debug=gl.getExtension('WEBGL_debug_renderer_info');
@@ -151,11 +222,11 @@ def observe(page, url, release, scenario, observer_mode='verified', input_attemp
         renderer:gl.getParameter(gl.RENDERER)==='WebKit WebGL'?'WebKit WebGL':'unclassified',
         implementation:implementation.includes('swiftshader')?'software-swiftshader':
           (implementation.includes('llvmpipe')||implementation.includes('softpipe'))?'software-other':'unclassified'};
-      resolve({...d, webgl:!!gl, webgl_context:context, render:{canvas_visible:box.width>0&&box.height>0,nonempty_pixels:changed,positioned_nodes_visible:!!mesh&&mesh.visible!==false},
-        focus:{selected_node_in_view:point.x>=0&&point.y>=0&&point.x<=box.width&&point.y<=box.height,
-          halo_visible:!!halo.parent&&halo.visible!==false,finite_camera:['x','y','z'].every(k=>Number.isFinite(camera.position[k])),consumed_count:d.consumed_count},
+      resolve({...d, webgl:!!gl, webgl_context:context, render:{canvas_visible:box.width>0&&box.height>0,nonempty_pixels:changed,positioned_nodes_visible:!!mesh&&visible(mesh)},
+        focus:{...(d.focus||{}),projection,context:focusContext,selected_node_in_view:point.x>=0&&point.y>=0&&point.x<=box.width&&point.y<=box.height,
+          halo_visible:!!halo&&visible(halo),finite_camera:['x','y','z'].every(k=>Number.isFinite(camera.position[k])),consumed_count:d.consumed_count},
         selection:{accepted:state.current_track_id!=null&&pendingSelectionOperation===null,
-          latest_accepted:state.current_track_id==='public-00001'&&selectedNodeHalo.trackId===state.current_track_id}});
+          latest_accepted:state.current_track_id==='public-00001'&&selectedNodeHalo?.trackId===state.current_track_id}});
     }))""")
     result.update(profile='process-cold', clock='browser-performance',
                   ui_source='packaged-explorer-assets', browser_evidence='real-playwright-chromium',
@@ -167,7 +238,8 @@ def observe(page, url, release, scenario, observer_mode='verified', input_attemp
     result['failures'] = request_failures(result['requests'])
     if not all(result['render'].values()):
         record_invalid_response(result, 'graph')
-    if (not all(v for k, v in result['focus'].items() if k != 'consumed_count')
+    if (not all(result['focus'].get(k) is True for k in ('selected_node_in_view', 'halo_visible', 'finite_camera'))
+            or not valid_focus_projection(result['focus'].get('projection'))
             or not result['selection']['accepted']
             or (result['focus']['consumed_count'] < 1 if scenario == 'during-consumption' and
                 any(receipt.get('is_trusted') is True and receipt.get('action') in (None, 'selection')
@@ -177,6 +249,21 @@ def observe(page, url, release, scenario, observer_mode='verified', input_attemp
                 and not result['selection']['latest_accepted'])):
         record_invalid_response(result, 'selection')
     return result
+
+
+def valid_focus_projection(projection):
+    """Clipping telemetry is not successful measurement of a singular bound."""
+    if not isinstance(projection, dict) or projection.get('status') != 'observed':
+        return False
+    for name in ('mesh', 'halo'):
+        bound = projection.get(name)
+        if not isinstance(bound, dict):
+            return False
+        for field in ('diameter_px', 'diameter_viewport_fraction'):
+            value = bound.get(field)
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                return False
+    return True
 
 
 def request_failures(requests):
@@ -319,6 +406,8 @@ def observe_attempt(page, url, release, scenario, observer_mode='verified'):
         result['observer_mode'] = observer_mode
         if 'graph_response' in partial:
             result['graph_response'] = partial['graph_response']
+        if 'focus' in partial:
+            result['focus'] = partial['focus']
         if input_attempts:
             result['input_observations'] = merge_input_observations(input_attempts, partial.get('input_observations', []), outcome)
         if scenario == 'during-consumption':

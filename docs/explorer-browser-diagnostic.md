@@ -159,6 +159,72 @@ This is not a latency budget, SQLite query-speed measurement, real-library
 responsiveness guarantee, isolated server-phase timing, or issue #70 completion
 claim. No universal speed or memory-cap claim follows from one public fixture.
 
+## Projected focus and context observations (PR D)
+
+The outward focus readback observes the actual selected mesh and attached halo
+geometry using the actual perspective camera, world transforms and CSS viewport.
+`projection.measurement=projected-vertex-bound` measures the maximum x/y
+transformed-vertex span in CSS pixels; `diameter_viewport_fraction` divides that
+span by the smaller CSS viewport dimension. This is not exact raster silhouette,
+fragment coverage, or a screenshot measurement. The mesh and halo are separate
+observations. Geometry near/far, viewport and behind-camera clipping are separate
+flags: a selected center inside the viewport does not imply unclipped geometry.
+Unavailable or nonfinite observations are null, not zero or an invented success.
+Wrong selected mesh/halo identity or unavailable projection cannot establish the
+existing focus-success gate. With a camera-plane singularity, observed clipping
+can coexist with null diameter/fraction dimensions and an observed projection
+status; that status is not a finite bound or focus success. The success gate
+rejects null dimensions. No private selected identifier is published.
+
+Viewport width/height/aspect and camera FOV/aspect/near/far describe the observed
+case, not a supported range. Actual controls min/max distance, enabled state and
+restrictive-bound observations are retained without widening custom controls.
+`min_distance_status` distinguishes observed from unavailable; `max_distance_status`
+additionally allows `unbounded`. An actual infinite maximum is labeled unbounded
+with a null numeric value, not confused with unavailable controls.
+`support_status` and `usefulness_status` remain `unassessed`: owner agreement is
+still needed on supported viewport/FOV ranges, selected-node/halo prominence,
+surrounding context and treatment of restrictive bounds. No pixel/fraction band,
+usefulness threshold, camera calibration or change to nominal 100 display units
+and 700ms motion is authorized by these observations.
+
+`context.measurement=frustum-not-occlusion` counts mounted neighbor mesh
+observations and those intersecting the camera frustum, respecting visibility.
+It is not the graph-model node count, occlusion testing, visible pixel coverage
+or proof of useful surrounding context. Offscreen/hidden neighbors and missing
+mounted geometry must not become a subjective context pass. An unprojectable
+mounted neighbor makes context unavailable and its in-frustum total null while
+retaining the mounted observation count, rather than treating it as outside.
+
+Input received during an active motion is labeled `phase_at_receipt=focus`.
+Actual canvas pointerdown receipts use `action=orbit` with the same literal trust,
+receipt and ordered-frame fields. An orbit record alone cannot satisfy the
+separate two-action input/selection contention gate.
+`focus.motion.starts` retains observed focus-call timestamps on the
+browser-performance clock and literal `active_after` state. A call or active
+frame after a call is not completion, progress quality or smoothness evidence.
+Partial `focus.motion.cancellations` retain fixed `user-orbit`, `new-selection`,
+`new-focus` or `unclassified` reasons and browser-performance timestamps.
+`unclassified` retains uncertainty rather than inventing a user-action cause. Cancellation is not completion,
+intermediate smoothness, latency acceptance, or proof that a pending host input
+was received. Host intent and browser receipt/frame clocks remain distinct.
+Supplied reports retain timeout/failure outcomes, allowlist focus labels/numbers,
+drop arbitrary nested fields and null invalid values; they remain
+supplied-observations-not-browser-acceptance. Controlled Node geometry/event
+contracts are not Chromium/WebGL evidence. A bounded tiny real-browser sample,
+if separately retained with exact source revision and renderer, still does not
+certify hardware acceleration, subjective useful focus, representative catalogue
+behavior or issue #70 completion.
+
+The opt-in trusted-motion evidence case labels
+`projection_scope=initial-completed-readback` and
+`scenario=trusted-motion-after-initial-readback`. Its projection belongs to the
+initial completed process-cold diagnostic readback. Subsequent selection, input,
+orbit and latest-selection chronology uses the warmed same-page session; it is
+not a new process-cold projection sample or simultaneous projection measurement.
+Retained partial motion and host attempts on failure must not be presented as a
+completed trusted-motion case.
+
 ## Focused checks
 
 ```sh
@@ -172,6 +238,28 @@ RUN_EXPLORER_BROWSER_DIAGNOSTIC=1 RUN_EXPLORER_BROWSER_DIAGNOSTIC_LARGE=1 \
  PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
  tests.acceptance.test_explorer_browser_diagnostic
 ```
+
+Default PR D focus contracts (controlled Node/geometry and report tests, not
+real-browser acceptance):
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
+ tests.unit.benchmark_tools.test_explorer_focus_projection_observation \
+ tests.unit.benchmark_tools.test_explorer_focus_projection_edge_cases \
+ tests.unit.benchmark_tools.test_explorer_focus_motion_observation \
+ tests.unit.benchmark_tools.test_explorer_focus_report \
+ tests.acceptance.test_explorer_browser_focus_usefulness
+```
+
+The separate `tests.acceptance.test_explorer_browser_focus_real` methods require
+`RUN_EXPLORER_FOCUS_BROWSER=1`, `EXPLORER_BROWSER_SUPERVISED=1` and
+`EXPLORER_FOCUS_EVIDENCE_DIR` set to an owned external evidence directory.
+Pass these environment settings to the external supervisor described in Execution
+safety, with one test method per 45-second hard wall deadline. Do not invoke the
+real module in a plain unbounded shell or substitute a shell timeout. The
+supervised environment acknowledgement is not cap enforcement: callers must
+independently enforce and record cgroup, scratch, file and descendant-cleanup
+bounds. Default opt-in skips remain unverified browser acceptance, not success.
 
 Run the real commands through the same bounded supervisor, not unbounded shells.
 Default tests execute tiny CLI/report contracts without browser acceptance.

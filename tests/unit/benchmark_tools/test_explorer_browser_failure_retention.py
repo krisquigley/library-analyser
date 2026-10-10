@@ -40,13 +40,33 @@ class FailedAttemptRetention(unittest.TestCase):
         self.assertIsNone(sample['elapsed_ms'])
 
 
+class PartialFocusRetention(unittest.TestCase):
+    def test_timeout_retains_partial_motion_without_inventing_completion(self):
+        class TimeoutError(Exception): pass
+        motion = {'starts': [{'clock': 'browser-performance', 'at_ms': 10}],
+                  'cancellations': [{'clock': 'browser-performance', 'at_ms': 20,
+                                     'reason': 'user-orbit'}]}
+        partial = {'milestones_ms': {'focus_start': 10}, 'requests': [],
+                   'focus': {'motion': motion}}
+        with patch.object(tool, 'observe', side_effect=TimeoutError('private')), \
+                patch.object(Page, 'evaluate', return_value=partial):
+            sample = tool.observe_attempt(Page(), 'http://owned.invalid', None, 'pending-then-ready')
+        self.assertEqual(sample['outcome'], 'timeout')
+        self.assertEqual(sample.get('focus'), partial['focus'])
+        self.assertIsNone(sample['milestones_ms']['focus_end'])
+        self.assertIsNone(sample['elapsed_ms'])
+
+
 class LivePage(Page):
     def __init__(self, *, render=True, focus=True, latest=True, consumed=1, retry=False):
         self.result = {'milestones_ms': {'graph_usable_render': 20}, 'requests': [],
                        'render': {'canvas_visible': render, 'nonempty_pixels': True,
                                   'positioned_nodes_visible': True},
                        'focus': {'selected_node_in_view': focus, 'halo_visible': True,
-                                 'finite_camera': True, 'consumed_count': consumed},
+                                 'finite_camera': True, 'consumed_count': consumed,
+                                 'projection': {'status': 'observed',
+                                                'mesh': {'diameter_px': 10, 'diameter_viewport_fraction': .1},
+                                                'halo': {'diameter_px': 20, 'diameter_viewport_fraction': .2}}},
                        'selection': {'accepted': True, 'latest_accepted': latest}}
         if retry:
             self.result['requests'] = [

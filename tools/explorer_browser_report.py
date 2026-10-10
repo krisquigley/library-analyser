@@ -30,12 +30,12 @@ def _nonnegative(value):
 
 
 _INPUT_LABELS = {
-    'action': frozenset(('input', 'selection')),
+    'action': frozenset(('input', 'selection', 'orbit')),
     'attempt_clock': frozenset(('host-monotonic',)),
     'receipt_clock': frozenset(('browser-performance',)),
     'phase_at_attempt': frozenset(('body', 'native-json', 'unavailable')),
     'phase_at_receipt': frozenset(('body', 'json', 'verification', 'model', 'scene',
-                                 'native-json', 'after-scene', 'pending')),
+                                 'native-json', 'after-scene', 'pending', 'focus')),
     'outcome': frozenset(('ok', 'timeout', 'invalid_response', 'unavailable')),
 }
 
@@ -70,7 +70,7 @@ def _input_observations(source):
 
 def _trusted_receipt(record):
     """Validate only sanitized browser-clock observations, not host-clock intent."""
-    return (record['action'] in ('input', 'selection')
+    return (record['action'] in ('input', 'selection', 'orbit')
             and record['receipt_clock'] == 'browser-performance'
             and record['is_trusted'] is True
             and record['received_ms'] is not None
@@ -126,6 +126,82 @@ def _task_observations(source, milestones):
     return {'long_tasks': published_tasks, 'long_tasks_status': status,
             'phase_task_overlap_ms': overlaps,
             'attribution': 'overlap-not-causation', 'gpu_time_ms': None}
+
+
+def _mapping(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _boolean(value):
+    return value if type(value) is bool else None
+
+
+def _count(value):
+    return value if type(value) is int and 0 <= value <= 2**53 - 1 else None
+
+
+def _focus_observation(value):
+    """Allowlist supplied geometry and chronology; never assess useful scale."""
+    source = _mapping(value)
+    projection = _mapping(source.get('projection'))
+    published = {
+        'status': ('observed' if projection.get('status') == 'observed' else 'unavailable'),
+        'measurement': _label(projection.get('measurement'), ('projected-vertex-bound',)),
+        'support_status': 'unassessed', 'usefulness_status': 'unassessed',
+    }
+    for name, fields in (('viewport', ('width_px', 'height_px', 'aspect')),
+                         ('camera', ('fov_degrees', 'aspect', 'near', 'far'))):
+        record = _mapping(projection.get(name))
+        published[name] = {key: _nonnegative(record.get(key)) for key in fields}
+    controls = _mapping(projection.get('controls'))
+    published['controls'] = {
+        'status': 'observed' if controls.get('status') == 'observed' else 'unavailable',
+        **{key: _nonnegative(controls.get(key)) for key in ('min_distance', 'max_distance')},
+        **{key: _boolean(controls.get(key)) for key in ('enabled', 'restrictive')},
+        'min_distance_status': _label(controls.get('min_distance_status'),
+                                      ('observed', 'unavailable')),
+        'max_distance_status': _label(controls.get('max_distance_status'),
+                                      ('observed', 'unbounded', 'unavailable')),
+    }
+    for name in ('mesh', 'halo'):
+        record = _mapping(projection.get(name))
+        clipping = _mapping(record.get('clipping'))
+        published[name] = {
+            'status': 'observed' if record.get('status') == 'observed' else 'unavailable',
+            **{key: _nonnegative(record.get(key)) for key in
+               ('diameter_px', 'diameter_viewport_fraction')},
+            'clipping': {key: _boolean(clipping.get(key)) for key in
+                         ('viewport', 'near', 'far', 'behind_camera')},
+        }
+    context = _mapping(source.get('context'))
+    motion = _mapping(source.get('motion'))
+    events = motion.get('cancellations')
+    events = events if isinstance(events, list) else []
+    starts = motion.get('starts')
+    starts = starts if isinstance(starts, list) else []
+    result = {
+        **{key: _boolean(source.get(key)) for key in
+           ('selected_node_in_view', 'halo_visible', 'finite_camera') if key in source},
+        'projection': published,
+        'context': {
+            'status': 'observed' if context.get('status') == 'observed' else 'unavailable',
+            'measurement': _label(context.get('measurement'), ('frustum-not-occlusion',)),
+            **{key: _count(context.get(key)) for key in
+               ('neighbors_observed', 'neighbors_in_frustum')},
+        },
+        'motion': {'starts': [{
+            'at_ms': _nonnegative(start.get('at_ms')),
+            'clock': _label(start.get('clock'), ('browser-performance',)),
+            'active_after': _boolean(start.get('active_after')),
+        } for start in starts if isinstance(start, dict)], 'cancellations': [{
+            'reason': _label(event.get('reason'), ('user-orbit', 'new-selection', 'new-focus', 'unclassified')),
+            'at_ms': _nonnegative(event.get('at_ms')),
+            'clock': _label(event.get('clock'), ('browser-performance',)),
+        } for event in events if isinstance(event, dict)]},
+    }
+    if 'consumed_count' in source:
+        result['consumed_count'] = _count(source.get('consumed_count'))
+    return result
 
 
 def publish_browser_report(*, attempts, intervals=(), requests=(), environment=None):
@@ -232,6 +308,8 @@ def publish_browser_report(*, attempts, intervals=(), requests=(), environment=N
             status = _label(original['contention_status'], frozenset((
                 'observed-trusted-input', 'unavailable', 'invalid_response')))
             sample['contention_status'] = _published_contention_status(status, records)
+        if 'focus' in original:
+            sample['focus'] = _focus_observation(original['focus'])
         if 'responsiveness' in original:
             sample['responsiveness'] = _task_observations(
                 original['responsiveness'], sample.get('milestones_ms', {}))
