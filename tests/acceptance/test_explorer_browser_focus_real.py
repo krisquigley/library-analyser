@@ -68,7 +68,9 @@ class TinyRealFocusObservation(unittest.TestCase):
         from playwright.sync_api import sync_playwright
         fixture = public_browser_graph_fixture(profile='small', allow_large=False)
         attempts, receipt_starts = [], []
-        with public_routes(fixture, 'pending-then-ready') as (url, release), sync_playwright() as driver:
+        # Two public eligible choices are required by the later trusted motion
+        # actions; initial readback still observes only the first selection.
+        with public_routes(fixture, 'latest-selection') as (url, release), sync_playwright() as driver:
             try:
                 browser = driver.chromium.launch(channel='chromium', timeout=15000)
             except Exception as error:
