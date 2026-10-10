@@ -99,6 +99,54 @@ class WriterBrowserCompositionTests(unittest.TestCase):
                 self.assertEqual(report['succeeded'], int(expected_outcome == 'ok'))
                 self.assertEqual(sample['failures'], failures)
 
+    def test_second_server_setup_failure_preserves_first_success_and_records_attempt(self):
+        from music_explorer.frameworks.explorer.server import create_server
+        from tests.acceptance.test_explorer_db_detail_browser_diagnostic import (
+            bridge_observation, writer_args)
+        args = writer_args()
+        args.samples = 2
+        successful = failed_setup_attempt(TimeoutError())
+        successful.update(outcome='ok', elapsed_ms=12, failures=[],
+                          detail_bridge=bridge_observation(), requests=[
+                              {'route': '/api/mood-axis-graph', 'method': 'GET',
+                               'status': 200, 'outcome': 'ok', 'elapsed_ms': 1}])
+        driver = Mock()
+        browser = driver.chromium.launch.return_value
+        browser.version = 'mock'
+        browser.new_page.return_value.evaluate.return_value = True
+        manager = Mock(__enter__=Mock(return_value=driver), __exit__=Mock(return_value=False))
+        calls = []
+
+        def factory(*factory_args, **factory_kwargs):
+            calls.append(True)
+            if len(calls) == 2:
+                raise OSError('secret bind/resource failure')
+            return create_server(*factory_args, **factory_kwargs)
+
+        with patch.dict(sys.modules, {'playwright.sync_api': SimpleNamespace(
+                sync_playwright=Mock(return_value=manager))}), \
+             patch('tools.explorer_browser_diagnostic.require_memory_bound'), \
+             patch('music_explorer.frameworks.explorer.server.create_server', side_effect=factory), \
+             patch('tools.explorer_browser_diagnostic.observe_attempt', return_value=successful):
+            report = collect(args, {'width': 1280, 'height': 720})
+        self.assertEqual(report['attempted'], 2)
+        self.assertEqual(report['succeeded'], 1)
+        first, second = report['samples']
+        self.assertEqual(first['outcome'], 'ok')
+        self.assertEqual(first['failures'], [])
+        self.assertEqual(first['detail_bridge']['cleanup'], {
+            'browser_closed': True, 'server_closed': True, 'scratch_removed': True})
+        self.assertEqual(second['outcome'], 'invalid_response')
+        self.assertEqual(second['failures'], [{'flow': 'lifecycle', 'outcome': 'invalid_response'}])
+        self.assertEqual(second['detail_bridge']['cleanup'], {
+            'browser_closed': True, 'server_closed': False, 'scratch_removed': True})
+        self.assertTrue(all(s['detail_bridge']['database_unchanged'] for s in report['samples']))
+        self.assertEqual(len(first['requests']), 1)
+        self.assertEqual(second['requests'], [])
+        self.assertEqual(report['failure_counts'], {'lifecycle:invalid_response': 1})
+        browser.close.assert_called_once()
+        self.assertNotIn('secret bind/resource failure', str(report))
+
     def test_warm_profile_primes_same_page_before_observation(self):
         args = SimpleNamespace(fixture_source='writer-v10', track_count=12, seed=70,
                                history_count=2, allow_large=False, graph_profile='small',

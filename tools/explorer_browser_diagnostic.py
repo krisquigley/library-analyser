@@ -447,9 +447,8 @@ def collect_writer(args, viewport, sync_playwright):
     if type(wait_timeout_ms) is not int or not 10000 <= wait_timeout_ms <= 120000:
         raise ValueError('Require writer wait timeout 10000..120000 ms')
     warmup_completed = 0
-    samples, browser_cleanup = [], []
+    samples, sample_cleanup = [], []
     version = None
-    server_closed = False
     server_observation = BoundedWriterServerObservation()
     def observed_factory(*factory_args, **factory_kwargs):
         return server_observation.instrument_server(create_server(*factory_args, **factory_kwargs))
@@ -463,15 +462,17 @@ def collect_writer(args, viewport, sync_playwright):
             config.mkdir(); cache.mkdir()
             env = dict(os.environ, XDG_CONFIG_HOME=str(config), XDG_CACHE_HOME=str(cache))
             with server_observation.installed(), sync_playwright() as driver:
-                try:
-                    for _ in range(args.samples):
+                for _ in range(args.samples):
+                    sample = None
+                    closed = True  # No browser handle is owned before setup.
+                    server_closed = False
+                    try:
                         # Browser pages are fresh, but accepted selections live in the
                         # server session. Own a fresh server for each complete sample,
                         # including that sample's optional same-page warmup.
                         with _running_server(observed_factory, fixture['db_path']) as url:
                             browser = None
                             closed = False
-                            sample = None
                             try:
                                 browser = driver.chromium.launch(channel='chromium', timeout=15000, env=env)
                                 version = browser.version
@@ -502,23 +503,19 @@ def collect_writer(args, viewport, sync_playwright):
                                 else:
                                     # No browser was returned, so there is no owned handle to close.
                                     closed = True
-                            sample['profile'] = sample_profile
-                            samples.append(sample)
-                            browser_cleanup.append(closed)
-                    server_closed = True
-                except Exception as error:
-                    # Retain completed attempts when server setup/shutdown fails.
-                    if not samples:
-                        sample = failed_setup_attempt(error)
-                        sample['profile'] = sample_profile
-                        samples.append(sample)
-                        browser_cleanup.append(True)
-                    else:
-                        for sample in samples:
+                        server_closed = True
+                    except Exception as error:
+                        # Setup/shutdown belongs only to this server's attempt.
+                        if sample is None:
+                            sample = failed_setup_attempt(error)
+                        else:
                             record_invalid_response(sample, 'lifecycle')
+                    sample['profile'] = sample_profile
+                    samples.append(sample)
+                    sample_cleanup.append((closed, server_closed))
         scratch_removed = not Path(scratch).exists()
         unchanged = before == fingerprint_sqlite_files(fixture['db_path'])
-        for sample, closed in zip(samples, browser_cleanup):
+        for sample, (closed, server_closed) in zip(samples, sample_cleanup):
             bridge = sample.setdefault('detail_bridge', {})
             bridge.update(fixture=manifest, server='packaged-explorer-loopback',
                           database_unchanged=unchanged,
