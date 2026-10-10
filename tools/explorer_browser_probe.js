@@ -83,12 +83,23 @@
     const cancel=cancelCameraFocus;
     cancelCameraFocus=function(){
       const active=cameraFocusFrame!=null, at=now();
+      if(!active){
+        // An idle cancellation cannot attribute an earlier plain cancellation.
+        // Also undo a tentative label if our start observer ran first.
+        if(pendingUnclassified?.reason==='user-orbit')pendingUnclassified.reason='unclassified';
+        pendingUnclassified=null;
+      }
       const value=cancel.apply(this,arguments);
       if(active&&cameraFocusFrame==null){
         const label=arguments[0]?.type==='start'?'user-orbit':(reason||'unclassified');
         const record={reason:label,at_ms:at,clock:'browser-performance'};
         d.focus.motion.cancellations.push(record);
         pendingUnclassified=label==='unclassified'?record:null;
+        // Only the current synchronous dispatch can supply a discarded cause;
+        // a later event with the same quantized clock must not reuse it.
+        if(pendingUnclassified)Promise.resolve().then(()=>{
+          if(pendingUnclassified===record)pendingUnclassified=null;
+        });
       }
       return value;
     };
@@ -101,7 +112,7 @@
         // Correlate only an actual cancellation in this synchronous event tick;
         // never label an idle start, completion, or arbitrary cancellation orbit.
         if(pendingUnclassified&&pendingUnclassified.at_ms===now()&&cameraFocusFrame==null){
-          pendingUnclassified.reason='user-orbit';pendingUnclassified=null;
+          pendingUnclassified.reason='user-orbit';
         }
       });
     }

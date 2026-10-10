@@ -7,8 +7,11 @@ from tests.acceptance.test_explorer_browser_focus_usefulness import _node
 from tests.unit.benchmark_tools.test_explorer_browser_phase_attribution import _observer_scripts
 
 
-def motion_case(actions):
+def motion_case(actions, preexisting_discarding_adapter=False):
     probe, decoration = _observer_scripts()
+    if preexisting_discarding_adapter:
+        decoration = decoration.replace('const d=window.__diagnostic',
+            "forceGraph.controls().addEventListener('start',()=>cancelCameraFocus());const d=window.__diagnostic", 1)
     source = r'''
 const vm=require('node:vm');let tick=0, listeners={},frames=[];
 const controls={addEventListener(type,cb){(listeners[type]??=[]).push(cb);}};
@@ -22,7 +25,7 @@ animateCameraFocus(){c.cancelCameraFocus();c.cameraFocusFrame=1;}};
 c.window=c;vm.createContext(c);vm.runInContext(PROBE,c);vm.runInContext('('+DECORATION+')()',c);
 c.__diagnostic.milestones_ms.graph_scene_end=1;c.__diagnostic.contention_action='armed';
 ACTIONS
-console.log(JSON.stringify(c.__diagnostic));
+Promise.resolve().then(()=>console.log(JSON.stringify(c.__diagnostic)));
 '''.replace('PROBE', json.dumps(probe)).replace('DECORATION', json.dumps(decoration)).replace('ACTIONS', actions)
     result = subprocess.run([_node(), '-e', source], capture_output=True, text=True, timeout=10)
     if result.returncode:
@@ -31,6 +34,24 @@ console.log(JSON.stringify(c.__diagnostic));
 
 
 class FocusMotionObservationTests(unittest.TestCase):
+    def test_idle_start_never_relabels_prior_plain_cancellation_in_either_listener_order(self):
+        for earlier in (True, False):
+            with self.subTest(preexisting_adapter=earlier):
+                actions = 'tick=10;c.animateCameraFocus();tick=20;c.cancelCameraFocus();' + \
+                          "for(const cb of listeners.start)cb({type:'start'});"
+                if not earlier:
+                    actions = "controls.addEventListener('start',c.cancelCameraFocus);" + actions
+                observed = motion_case(actions, preexisting_discarding_adapter=earlier)
+                self.assertEqual(observed['focus']['motion']['cancellations'], [
+                    {'reason': 'unclassified', 'at_ms': 20, 'clock': 'browser-performance'}])
+
+    def test_later_idle_event_after_microtask_same_clock_keeps_prior_cause_unknown(self):
+        observed = motion_case("controls.addEventListener('start',c.cancelCameraFocus);"
+                               'tick=10;c.animateCameraFocus();tick=20;c.cancelCameraFocus();'
+                               "Promise.resolve().then(()=>{for(const cb of listeners.start)cb({type:'start'});});")
+        self.assertEqual(observed['focus']['motion']['cancellations'], [
+            {'reason': 'unclassified', 'at_ms': 20, 'clock': 'browser-performance'}])
+
     def test_starts_retain_chronology_without_invented_completion(self):
         observed = motion_case('tick=10;c.animateCameraFocus();tick=20;c.setCurrent();'
                                'tick=30;c.animateCameraFocus();')
