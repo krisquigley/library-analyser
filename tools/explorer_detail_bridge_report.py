@@ -107,6 +107,11 @@ def publish_detail_bridge(source):
         }
         if 'is_trusted' in raw:
             selected['is_trusted'] = _boolean(raw['is_trusted'])
+        # Presentation evidence and visible DOM identity are distinct from
+        # request/DTO correlation. Missing fields retain supplied-mock compatibility.
+        for key in ('detail_presented', 'dom_identity_matches'):
+            if key in raw:
+                selected[key] = _boolean(raw[key])
         published['selections'].append(selected)
 
     def ordered(values):
@@ -118,6 +123,7 @@ def publish_detail_bridge(source):
         if not post or not detail:
             return False
         return (('is_trusted' not in selected or selected['is_trusted'] is True)
+                and ('detail_presented' not in selected or selected['detail_presented'] is True)
                 and selected['clock'] == 'browser-performance'
                 and post['accepted'] is True and post['identity_matches'] is True
                 and detail['identity_matches'] is True

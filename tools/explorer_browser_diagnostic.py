@@ -524,9 +524,10 @@ def collect_writer(args, viewport, sync_playwright):
             bridge.setdefault('server_phases', {'status': 'unavailable', 'clock': None, 'spans': None})
             if not unchanged:
                 record_invalid_response(sample, 'lifecycle')
-    counts = Counter(f"{f['flow']}:{f['outcome']}" for sample in samples for f in sample['failures'])
     # Raw observations are always passed through the public allowlist boundary.
     report = publish_browser_report(attempts=samples)
+    counts = Counter(f"{f['flow']}:{f['outcome']}"
+                     for sample in report['samples'] for f in sample.get('failures', []))
     server_requests = [dict(method=request['method'],
                             url='http://127.0.0.1' + request['route'],
                             observer_mode='observer_on', server_spans=request['spans'])

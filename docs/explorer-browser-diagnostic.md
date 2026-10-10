@@ -206,11 +206,24 @@ increase it. Use tiny fixtures first and retain external containment records.
 Each `detail_bridge` sample publishes only fixed metadata, bounded numeric
 observations, booleans and locally relabeled request identities. The observer
 correlates the trusted selected-row intent with POST body/acceptance, matching
-GET URI/response and rendered detail DTO internally. Handles, raw JSON, unknown
-strings, filesystem paths and exception text are not published. Consumed graph
-bytes/SHA describe the actual received entity, separate from the writer manifest;
-semantic graph validation uses the fixture oracle. Detail identity is correlated
-handle/DTO/DOM evidence, not an independent detail entity hash.
+GET URI/response separately from actual rendered detail DOM. `detail.identity_matches`
+is request/response DTO correlation only; it never claims DOM identity. The
+packaged DOM has no uniquely rendered handle, so `dom_identity_matches` is null
+(unavailable), not copied from a DTO. `detail_presented` is a separate sanitized
+boolean: a presentation frame must contain the fresh visible Current Track heading
+and metadata/field structure for the intended current row, with loading/error
+content removed. No-op renderers and previous-track node reuse or cloned stale
+presentation fail this check even if `aria-busy=false` and requests succeeded.
+Pristine structural presentation can succeed without asserting DOM identity;
+this is next-frame evidence, not physical paint or an independent detail hash.
+Freshness checking is conservative: identical visible presentations for different
+tracks cannot distinguish a genuine render from a stale clone, so they are
+rejected rather than counted as success. This may falsely reject a genuine
+identical presentation; it is not a latency or speed claim.
+Handles, transient DOM text/node references, raw JSON, unknown strings, filesystem
+paths and exception text are not published. Consumed graph bytes/SHA describe the
+actual received entity, separate from the writer manifest; semantic graph
+validation uses the fixture oracle.
 
 Browser receipt, loading DOM mutation, loading next-frame observation, POST
 request/headers/body/parse, GET request/headers/body/parse, detail DOM-ready and

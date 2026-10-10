@@ -14,7 +14,7 @@ class WriterObserverTests(unittest.TestCase):
              'request_handle': 'transient', 'response_handle': 'transient', 'status': 200,
              'request_ms': 6, 'headers_ms': 7, 'body_ms': 8, 'parse_ms': 9, 'sequence': 1}],
             'selections': [{'sequence': 1, 'intended_handle': 'transient', 'is_trusted': True,
-                            'receipt_ms': 1, 'dom_handle': 'transient',
+                            'receipt_ms': 1, 'detail_presented': True,
                             'detail_dom_ready_ms': 10, 'detail_next_frame_ms': 11}]}
 
     def test_correlates_real_post_get_and_dom_without_retaining_handles(self):
@@ -23,19 +23,31 @@ class WriterObserverTests(unittest.TestCase):
         selected = bridge['selections'][0]
         self.assertTrue(selected['post']['accepted'])
         self.assertTrue(selected['detail']['identity_matches'])
+        self.assertTrue(selected['detail_presented'])
+        self.assertIsNone(selected['dom_identity_matches'])
         self.assertEqual(bridge['unrelated_detail_requests'], 0)
         self.assertNotIn('transient', str(bridge))
+
+    def test_dto_handle_is_request_identity_but_never_dom_identity(self):
+        raw = self.raw()
+        raw['selections'][0]['detail_presented'] = False
+        raw['selections'][0]['dom_handle'] = 'transient'
+        bridge = observer.bridge_observation(raw, {'manifest': {}})
+        self.assertTrue(bridge['selections'][0]['detail']['identity_matches'])
+        self.assertIsNone(bridge['selections'][0]['dom_identity_matches'])
+        self.assertFalse(bridge['selections'][0]['detail_presented'])
 
     def test_rejection_or_untrusted_input_is_not_an_accepted_selection(self):
         for fault in ('rejected', 'untrusted', 'dom-mismatch'):
             raw = self.raw()
             if fault == 'rejected': raw['requests'][0]['status'] = 409
             if fault == 'untrusted': raw['selections'][0]['is_trusted'] = False
-            if fault == 'dom-mismatch': raw['selections'][0]['dom_handle'] = 'other'
+            if fault == 'dom-mismatch': raw['selections'][0]['detail_presented'] = False
             bridge = observer.bridge_observation(raw, {'manifest': {}})
             self.assertEqual(len(bridge['selections']), 1)
             selected = bridge['selections'][0]
-            self.assertFalse(selected['post']['accepted'] and selected['detail']['identity_matches'])
+            self.assertFalse(selected['post']['accepted'] and selected['detail']['identity_matches']
+                             and selected['detail_presented'])
 
     def test_timeout_keeps_request_receipt_without_inventing_completion(self):
         raw = self.raw()

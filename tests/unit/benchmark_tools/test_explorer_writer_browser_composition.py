@@ -51,6 +51,54 @@ class WriterBrowserCompositionTests(unittest.TestCase):
         self.assertEqual(report['server_observation']['sampling']['status'], 'complete')
         browser.close.assert_called_once()
 
+    def test_validated_rejection_inventories_failure_and_retains_network_failures_once(self):
+        args = SimpleNamespace(fixture_source='writer-v10', track_count=12, seed=70,
+                               history_count=2, allow_large=False, graph_profile='small',
+                               scenario='pending-then-ready', samples=1, observer_mode='verified')
+        network = {'flow': 'graph', 'outcome': 'http_error'}
+        rejected = {'flow': 'lifecycle', 'outcome': 'invalid_response'}
+        timeout = {'flow': 'lifecycle', 'outcome': 'timeout'}
+        from tests.acceptance.test_explorer_db_detail_browser_diagnostic import bridge_observation
+        invalid_duration = {'flow': 'lifecycle', 'outcome': 'invalid_duration'}
+        for initial, elapsed, outcome, failures, expected_outcome, expected in (
+                (0, 12, 'ok', [], 'ok', []),
+                (1, 12, 'ok', [], 'invalid_response', [rejected]),
+                (1, 12, 'ok', [network, network], 'invalid_response', [network, network, rejected]),
+                (1, 12, 'ok', [network, rejected], 'invalid_response', [network, rejected]),
+                (0, 12, 'timeout', [network, timeout], 'timeout', [network, timeout]),
+                (0, 13, 'ok', [network], 'invalid_duration', [network, invalid_duration]),
+                (0, 13, 'ok', [invalid_duration], 'invalid_duration', [invalid_duration])):
+            with self.subTest(initial=initial, elapsed=elapsed, outcome=outcome, failures=failures):
+                bridge = bridge_observation()
+                bridge['initial_summary_requests'] = initial
+                sample = failed_setup_attempt(TimeoutError())
+                sample.update(outcome=outcome, elapsed_ms=elapsed, failures=failures,
+                              detail_bridge=bridge)
+                driver = Mock()
+                browser = driver.chromium.launch.return_value
+                browser.version = 'mock'
+                browser.new_page.return_value.evaluate.return_value = True
+                manager = Mock(__enter__=Mock(return_value=driver),
+                               __exit__=Mock(return_value=False))
+                with patch.dict(sys.modules, {'playwright.sync_api': SimpleNamespace(
+                        sync_playwright=Mock(return_value=manager))}), \
+                     patch('tools.explorer_browser_diagnostic.require_memory_bound'), \
+                     patch('tools.explorer_browser_diagnostic.observe_attempt', return_value=sample):
+                    report = collect(args, {'width': 1280, 'height': 720})
+                published = report['samples'][0]
+                self.assertEqual(published['outcome'], expected_outcome)
+                self.assertEqual(published['detail_bridge']['initial_summary_requests'], initial)
+                self.assertEqual(published['failures'], expected)
+                expected_counts = {}
+                for failure in expected:
+                    key = f"{failure['flow']}:{failure['outcome']}"
+                    expected_counts[key] = expected_counts.get(key, 0) + 1
+                self.assertEqual(report['failure_counts'], expected_counts)
+                self.assertEqual(report['profiles']['process-cold']['failures'],
+                                 {} if expected_outcome == 'ok' else {expected_outcome: 1})
+                self.assertEqual(report['succeeded'], int(expected_outcome == 'ok'))
+                self.assertEqual(sample['failures'], failures)
+
     def test_warm_profile_primes_same_page_before_observation(self):
         args = SimpleNamespace(fixture_source='writer-v10', track_count=12, seed=70,
                                history_count=2, allow_large=False, graph_profile='small',

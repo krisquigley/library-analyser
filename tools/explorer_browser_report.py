@@ -190,12 +190,18 @@ def publish_browser_report(*, attempts, intervals=(), requests=(), environment=N
             if key in original:
                 flag = original[key]
                 sample[key] = flag if type(flag) is bool else None
-        if 'failures' in original:
-            failures = original['failures'] if isinstance(original['failures'], list) else []
+        newly_rejected = original.get('outcome') == 'ok' and sample['outcome'] != 'ok'
+        if 'failures' in original or newly_rejected:
+            failures = original.get('failures')
+            failures = failures if isinstance(failures, list) else []
             sample['failures'] = [{
                 'flow': _label(failure.get('flow'), ('lifecycle', 'graph', 'search', 'selection', 'detail')),
-                'outcome': _label(failure.get('outcome'), ('timeout', 'http_error', 'invalid_response', 'connection_error')),
+                'outcome': _label(failure.get('outcome'), ('timeout', 'http_error', 'invalid_response', 'invalid_duration', 'connection_error')),
             } for failure in failures if isinstance(failure, dict)]
+            if newly_rejected:
+                rejected = {'flow': 'lifecycle', 'outcome': sample['outcome']}
+                if rejected not in sample['failures']:
+                    sample['failures'].append(rejected)
         if 'milestones_ms' in original:
             source = original['milestones_ms']
             source = source if isinstance(source, dict) else {}

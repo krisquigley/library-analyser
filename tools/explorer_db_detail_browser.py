@@ -11,14 +11,43 @@ PROBE = Path(__file__).with_name('explorer_db_detail_probe.js')
 PHASES = ('request_id', 'request_ms', 'headers_ms', 'body_ms', 'parse_ms', 'status')
 SELECTION_TIMES = ('receipt_ms', 'loading_dom_ms', 'loading_frame_ms',
                    'detail_dom_ready_ms', 'detail_next_frame_ms')
+# Inspect actual structure in-page. DOM text/node references stay transient;
+# request/DTO identity is a separate observation, never a DOM identity claim.
+DETAIL_RENDERED = """(intended, before, previous, previousText, previousHandle) => {
+  const root=document.getElementById('detail');
+  const rows=document.querySelectorAll('#tracks tbody tr.current');
+  const visible=el=>{
+    if(!el||!el.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}))return false;
+    const box=el.getBoundingClientRect();
+    return box.width>0&&box.height>0&&box.right>0&&box.bottom>0&&box.left<innerWidth&&box.top<innerHeight;
+  };
+  if(!visible(root)||root.getAttribute('aria-busy')!=='false'||rows.length!==1||
+     !intended||rows[0].dataset.trackId!==intended)return false;
+  const heading=root.children[0], fields=root.children[1];
+  if(root.children.length!==2||heading?.tagName!=='H3'||heading.textContent!=='Current Track'||
+     fields?.tagName!=='DIV'||!visible(heading)||!visible(fields)||fields===before||fields===previous)return false;
+  const metadata=fields.children[0];
+  if(!metadata?.matches('section.field.track-metadata')||!visible(metadata)||
+     !Array.from(fields.children).every(el=>el.matches('section.field'))||root.querySelector('[role="alert"]'))return false;
+  // A new node containing the previous track's identical presentation is stale,
+  // not evidence of a new selection. This comparison remains entirely in-page.
+  return !(previousHandle&&previousHandle!==intended&&fields.textContent===previousText);
+}"""
 WRAP_DETAIL = """() => {
- const d=window.__dbBridge, loading=renderDetailLoading, detail=renderDetail;
+ const presented=(""" + DETAIL_RENDERED + """), d=window.__dbBridge,
+  loading=renderDetailLoading, detail=renderDetail;
+ let previous=null, previousText=null, previousHandle=null;
  renderDetailLoading=function(){const result=loading.apply(this,arguments), s=d.selections.at(-1);
   if(s&&s.loading_dom_ms==null){s.loading_dom_ms=performance.now();requestAnimationFrame(()=>{
    s.loading_frame_ms=performance.now();s.loading_frame_was_busy=document.getElementById('detail').getAttribute('aria-busy')==='true';});}return result;};
- renderDetail=function(value){const result=detail.apply(this,arguments), s=d.selections.at(-1);
-  if(s){s.dom_handle=value.handle;s.detail_dom_ready_ms=performance.now();
-   requestAnimationFrame(()=>s.detail_next_frame_ms=performance.now());}return result;};
+ renderDetail=function(){const root=document.getElementById('detail'), before=root.children[1],
+  result=detail.apply(this,arguments), s=d.selections.at(-1), ready=performance.now(), fields=root.children[1];
+  if(s){requestAnimationFrame(()=>{
+   s.detail_presented=presented(s.intended_handle,before,previous,previousText,previousHandle);
+   s.dom_identity_matches=null;
+   s.detail_dom_ready_ms=s.detail_presented?ready:null;s.detail_next_frame_ms=performance.now();
+   if(s.detail_presented){previous=fields;previousText=fields.textContent;previousHandle=s.intended_handle;}
+  });}return result;};
 }"""
 
 
@@ -33,7 +62,9 @@ def bridge_observation(raw, fixture):
         selected = {'sequence': sequence, 'clock': 'browser-performance',
                     'is_trusted': observed.get('is_trusted'),
                     **{key: observed.get(key) for key in SELECTION_TIMES},
-                    'loading_frame_was_busy': observed.get('loading_frame_was_busy')}
+                    'loading_frame_was_busy': observed.get('loading_frame_was_busy'),
+                    'detail_presented': observed.get('detail_presented'),
+                    'dom_identity_matches': None}
         for phase, route in (('post', '/api/current'), ('detail', '/api/tracks/<id>')):
             matches = [(index, record) for index, record in enumerate(requests)
                        if record.get('sequence') == sequence and record.get('route') == route
@@ -56,8 +87,8 @@ def bridge_observation(raw, fixture):
                     safe['accepted'] = (record.get('status') == 200 and identity
                                         and observed.get('is_trusted') is True)
             else:
-                safe['identity_matches'] = (identity and observed.get('dom_handle') == intended
-                                            if response is not None else None)
+                # This is request/response identity only, never DOM identity.
+                safe['identity_matches'] = identity if response is not None else None
                 if record.get('request_handle') == intended:
                     related.add(index)
             selected[phase] = safe
@@ -190,6 +221,10 @@ def observe_writer_attempt(page, url, scenario, observer_mode, fixture, wait_tim
     if bridge.get('graph_matches_fixture') is False:
         outcome = 'invalid_response'
     selected = bridge['selections'][-1] if bridge['selections'] else {}
+    if outcome == 'ok' and (not selected.get('detail') or
+                            selected['detail'].get('identity_matches') is not True
+                            or selected.get('detail_presented') is not True):
+        outcome = 'invalid_response'
     elapsed = (selected['detail_next_frame_ms'] - selected['receipt_ms']
                if outcome == 'ok' and selected.get('detail_next_frame_ms') is not None else None)
     failures = [{'flow': 'lifecycle', 'outcome': outcome}] if outcome != 'ok' else []
