@@ -4,7 +4,9 @@ This developer-only outward tool runs real Playwright Chromium against packaged
 Explorer assets on an owned ephemeral loopback server. It accepts no private
 catalogue, database path, remote URL, audio, or arbitrary server target. It does
 not change packaged runtime behavior. Synthetic state/search/detail identifiers
-match positioned graph nodes; graph bytes do not come from SQLite.
+match positioned graph nodes; the default browser-only mode's graph bytes do not
+come from SQLite. The separate writer-v10 mode described below owns a public
+writer-created SQLite fixture and uses the actual packaged Explorer server.
 
 ## Explicit invocations
 
@@ -186,4 +188,127 @@ require owner agreement. Public evidence must retain failures, observer mode,
 source revision, exact sample counts, fixture provenance, renderer and unavailable
 metrics. Publish allowlisted numeric fields and fixed labels only, never private
 identifiers, paths, arbitrary errors, payloads, screenshots or response bodies.
-Server phases, SQLite attribution and private-library speed remain unmeasured.
+In browser-only mode, server phases and SQLite attribution remain unmeasured.
+Private-library speed remains unmeasured in every mode.
+
+## Writer-v10 packaged-server detail bridge (issue #70, PR C)
+
+The opt-in writer mode composes `public_synthetic_fixture`, the real
+`create_server` loopback adapter, packaged assets and Chromium/WebGL. Its report
+scope is `public-synthetic-sqlite-browser`, distinct from browser-only inflated
+41 MiB stress. The fixture's owned writer manifest is database provenance; it
+must not be replaced with browser-only provenance. Main/WAL fingerprints bracket
+reader activity. No private database, audio or remote-target options are added.
+Generated fixture scratch and browser scratch have separate resource envelopes;
+do not borrow the browser scratch cap for larger database profiles or silently
+increase it. Use tiny fixtures first and retain external containment records.
+
+Each `detail_bridge` sample publishes only fixed metadata, bounded numeric
+observations, booleans and locally relabeled request identities. The observer
+correlates the trusted selected-row intent with POST body/acceptance, matching
+GET URI/response and rendered detail DTO internally. Handles, raw JSON, unknown
+strings, filesystem paths and exception text are not published. Consumed graph
+bytes/SHA describe the actual received entity, separate from the writer manifest;
+semantic graph validation uses the fixture oracle. Detail identity is correlated
+handle/DTO/DOM evidence, not an independent detail entity hash.
+
+Browser receipt, loading DOM mutation, loading next-frame observation, POST
+request/headers/body/parse, GET request/headers/body/parse, detail DOM-ready and
+detail next-frame proxy remain distinct browser-performance observations. Only
+same-clock operands may define selection elapsed. Loading-frame busy may be
+false: this is not proof of feedback before POST acceptance, contention
+responsiveness or physical paint. Text/parse/hash observation adds overhead;
+software WebGL is not evidence of physical GPU speed.
+
+Supplied publication contracts are policy tests, not executed browser scenarios.
+Publication retains every failure and partial observation, nulls malformed fields
+and rejects inconsistent claimed success before successful-duration aggregates.
+Acceptance requires POST acceptance before matching GET, coherent phase order,
+latest sequence, no initial summary/unrelated detail/unapproved graph refetch,
+unchanged database and owned cleanup. One explicitly observed graph retry is
+accepted only with two requests, `graph_retry_count=1` and ordered
+`graph_attempt_outcomes=["http_error", "ok"]`; arbitrary extra requests remain
+invalid and initial failure evidence is retained. Browser/server/scratch cleanup flags describe owned
+contexts; they do not replace external tracked-descendant/subreaper cleanup
+proof. Server phases in the bridge remain explicitly unavailable. The existing
+server microprofiler supplies separately sanitized top-level `server_observation`
+request-local spans on the server-process monotonic clock. Browser-to-server
+request correlation is explicitly unavailable; no matching is fabricated from
+order or cross-clock subtraction. These spans belong to their own clock/scope
+and must not be subtracted from browser operands.
+
+The tiny real gate is `RealWriterPackagedBrowserBridge` in
+`tests.acceptance.test_explorer_db_detail_browser_diagnostic`, enabled with
+`RUN_EXPLORER_DB_DETAIL_BROWSER_DIAGNOSTIC=1` under the external supervisor and
+`EXPLORER_BROWSER_SUPERVISED=1`. A skip, unavailable Chromium/WebGL or containment
+failure is not acceptance. One successful after-graph-ready selection does not
+establish real fault/race/contention evidence, representative 5k/20k latency,
+responsive loading, useful/smooth focus or completion of issue #70. No speed
+threshold or optimization is selected by this bridge. Keep #70 open.
+
+Owned writer samples additionally retain a route-allowlisted graph/search/POST/
+detail request inventory, status and fetch-to-headers elapsed, sanitized partial
+failure labels and a boolean browser-route fault-injection label. Unknown routes
+and caller-supplied URLs are not published. Renderer context uses only fixed
+`webgl1`/`webgl2`, WebKit/unclassified vendor/renderer and software-SwiftShader/
+software-other/unclassified implementation classes; raw unmasked device strings
+are not retained. If supplied, `graph_matches_fixture` must be true for success.
+Writer metadata bounds are checked (12–20,000 tracks, unsigned32-bit seed,
+1–3 history rows); the full owned manifest remains the collection boundary's
+provenance rather than arbitrary supplied fields.
+
+Writer-only `--sample-profile warm` performs an explicit startup-graph-ready
+warmup using the same browser/page before the observed navigation. The report
+labels warmup completion and leaves disk-cache state `not_established`; this is
+not disk-warm or a 5-process/20-warm comparative campaign. Separately observed
+server requests include warmup and are labeled accordingly. Generated 5k/20k
+single-sample runs require separate parent-approved fixture/resource envelopes;
+they do not imply representative latency distributions or issue acceptance.
+
+Writer server telemetry is bounded: repeated evidence preflight/fetch/decode/
+payload leaf spans are capped at 16 per phase/request. This limits observation
+retention only, not reader execution or trust validation. Omitted-span and
+failure counters are explicit; sampled report/phase status is not a full
+microprofile. Inclusive parent timing may remain observed, but all exclusive
+phase durations are unavailable/null when spans were omitted—do not infer full
+exclusive attribution. A report-size resource failure before this cap is retained
+as failed external evidence, not relabeled a successful pre-cap run; RAM, swap,
+per-file and scratch limits are not increased. `graph_fault_injected` separately
+labels whether the graph fault callback actually ran; choosing a scenario alone
+does not certify an injected fault.
+
+Writer-only failure probes remain separate from browser-only lifecycle scenarios:
+`--scenario rejected-post` injects one browser-route HTTP409 response to current
+POST; the attempt is `invalid_response`, with no accepted detail success.
+`--scenario detail-timeout` aborts one actual detail GET at the browser route,
+then the bounded observer wait expires; the attempt is `timeout`, retaining the
+accepted POST and partial GET request observations. This is an injected browser
+network failure and observer timeout, **not an observed packaged-server timeout**.
+The supervised tiny runs executed these probes as expected failed attempts, not
+speed evidence. The route callback invocation must be observed; choosing a
+scenario alone never proves fault injection. Neither probe is counted as a
+successful detail-latency sample.
+
+Writer `--wait-timeout-ms` defaults to 10,000 and is explicitly bounded to
+10,000–120,000 milliseconds. It is a browser operation/warmup safety wait,
+reported as `safety_wait_timeout_ms`, not a performance target or permission to
+increase RAM/scratch/file limits. A larger explicit wait may be necessary for
+bounded generated profiles; the independent external hard-wall deadline remains
+mandatory and authoritative. Retain expired waits as failed attempts with their
+partial evidence, never as skipped acceptance.
+
+The approved generated-profile campaign uses separate owned, isolated tmpfs
+mounts: 1 GiB aggregate fixture scratch with a 512 MiB per-database-file ceiling,
+and 128 MiB aggregate browser scratch with 32 MiB per file. No overlay fallback
+or automatic cap increase is permitted. The external supervisor sets inherited
+RLIMIT_FSIZE to 512 MiB during fixture construction and resets it to 32 MiB
+before browser launch; observed samples remain read-only and do not write the
+database. The CLI does not manage mounts. The supervisor kills/reaps tracked
+children, verifies zero survivors, and removes owned scratch roots after
+namespace/mount teardown. Any other profile/envelope needs separate approval.
+Installed-wheel campaign namespaces verify packaged runtime files against the
+exact base; this provenance is distinct from source-checkout contract tests.
+Expired 10-second waits (including partially observed accepted POST bodies) are
+retained as failed/partial evidence. An explicit 60-second safety wait within an
+independent 900-second hard wall changes neither resource caps nor latency
+acceptance budgets, and must not relabel a prior timed-out run as successful.

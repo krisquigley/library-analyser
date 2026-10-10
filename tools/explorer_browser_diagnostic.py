@@ -18,6 +18,8 @@ def publish_browser_report(*args, **kwargs):
 from tools.explorer_browser_routes import public_routes
 
 SCENARIOS = ('pending-then-ready', 'graph-failure-retry', 'search-failure', 'latest-selection', 'during-consumption')
+WRITER_SCENARIOS = ('pending-then-ready', 'graph-failure-retry', 'search-failure',
+                    'latest-selection', 'rejected-post', 'detail-timeout')
 PROBE = Path(__file__).with_name('explorer_browser_probe.js')
 
 
@@ -25,10 +27,16 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument('--real-browser', action='store_true')
     result.add_argument('--graph-profile', choices=('small', 'stress-41mib'), default='small')
+    result.add_argument('--fixture-source', choices=('browser-only', 'writer-v10'), default='browser-only')
+    result.add_argument('--track-count', type=int, default=12)
+    result.add_argument('--seed', type=int, default=70)
+    result.add_argument('--history-count', type=int, default=2)
     result.add_argument('--allow-large', action='store_true')
-    result.add_argument('--scenario', choices=SCENARIOS, default=SCENARIOS[0])
+    result.add_argument('--scenario', choices=tuple(dict.fromkeys(SCENARIOS + WRITER_SCENARIOS)), default=SCENARIOS[0])
     result.add_argument('--observer-mode', choices=('verified', 'native-json'), default='verified')
     result.add_argument('--samples', type=int, default=1)
+    result.add_argument('--sample-profile', choices=('process-cold', 'warm'), default='process-cold')
+    result.add_argument('--wait-timeout-ms', type=int, default=10000)
     result.add_argument('--viewport', default='1280x720')
     result.add_argument('--output', type=Path, required=True)
     return result
@@ -259,6 +267,10 @@ def contention_status(records):
 
 def observe_attempt(page, url, release, scenario, observer_mode='verified'):
     """Retain one failed lifecycle without publishing exception text or invented times."""
+    if hasattr(release, 'writer_fixture'):
+        from tools.explorer_db_detail_browser import observe_writer_attempt
+        return observe_writer_attempt(page, url, scenario, observer_mode, release.writer_fixture,
+                                      wait_timeout_ms=getattr(release, 'writer_wait_timeout_ms', 10000))
     assets = []
     input_attempts = []
 
@@ -350,6 +362,10 @@ def collect(args, viewport):
     from tools.explorer_browser_graph_fixture import public_browser_graph_fixture
     from playwright.sync_api import sync_playwright
     require_memory_bound()
+    if getattr(args, 'fixture_source', 'browser-only') == 'writer-v10':
+        return collect_writer(args, viewport, sync_playwright)
+    if args.scenario not in SCENARIOS:
+        raise ValueError('Writer-only fault scenario requires writer-v10 source')
     fixture = public_browser_graph_fixture(profile=args.graph_profile, allow_large=args.allow_large)
     samples = []
     version = None
@@ -397,6 +413,163 @@ def collect(args, viewport):
                             'Verified mode UTF-8/hash adds overhead; native-json uses native response.json and leaves separate parse/consumed identity unavailable.',
                             'First presentation is a next-frame proxy, not physical display or GPU completion; readback is separate.',
                             'No absolute latency budget; RSS unavailable.']}
+
+
+def collect_writer(args, viewport, sync_playwright):
+    """Outward composition of an owned writer fixture and unchanged packaged server.
+
+    No private paths are accepted. Fingerprints are compared only while the
+    disposable fixture remains owned and quiescent, after server shutdown.
+    Cleanup flags describe context completion, not external process supervision.
+    """
+    import os
+    from types import SimpleNamespace
+    from music_explorer.frameworks.explorer.server import create_server
+    from tools.explorer_synthetic_fixture import public_synthetic_fixture, _validate_options
+    from tools.explorer_fixture_inspection import fingerprint_sqlite_files
+    from tools.explorer_http_diagnostic import _running_server
+    from tools.explorer_writer_server_observation import BoundedWriterServerObservation
+    from tools.explorer_http_report import publish_http_report
+
+    _validate_options(args.track_count, args.seed, args.history_count, args.allow_large)
+    if args.scenario not in WRITER_SCENARIOS:
+        raise ValueError('Unsupported writer scenario')
+    if args.graph_profile != 'small':
+        raise ValueError('Writer source cannot use browser-only inflated graph profile')
+    if getattr(args, 'observer_mode', 'verified') != 'verified':
+        raise ValueError('Writer bridge requires verified observation')
+    if type(args.samples) is not int or not 1 <= args.samples <= 100:
+        raise ValueError('Require 1..100 samples')
+    sample_profile = getattr(args, 'sample_profile', 'process-cold')
+    if sample_profile not in ('process-cold', 'warm'):
+        raise ValueError('Require process-cold or warm sample profile')
+    wait_timeout_ms = getattr(args, 'wait_timeout_ms', 10000)
+    if type(wait_timeout_ms) is not int or not 10000 <= wait_timeout_ms <= 120000:
+        raise ValueError('Require writer wait timeout 10000..120000 ms')
+    warmup_completed = 0
+    samples, browser_cleanup = [], []
+    version = None
+    server_closed = False
+    server_observation = BoundedWriterServerObservation()
+    def observed_factory(*factory_args, **factory_kwargs):
+        return server_observation.instrument_server(create_server(*factory_args, **factory_kwargs))
+    with public_synthetic_fixture(track_count=args.track_count, seed=args.seed,
+                                  history_count=args.history_count,
+                                  allow_large=args.allow_large) as fixture:
+        manifest = fixture['manifest']
+        before = fingerprint_sqlite_files(fixture['db_path'])
+        with tempfile.TemporaryDirectory(prefix='public-browser-') as scratch:
+            config, cache = Path(scratch) / 'config', Path(scratch) / 'cache'
+            config.mkdir(); cache.mkdir()
+            env = dict(os.environ, XDG_CONFIG_HOME=str(config), XDG_CACHE_HOME=str(cache))
+            with server_observation.installed(), sync_playwright() as driver:
+                try:
+                    with _running_server(observed_factory, fixture['db_path']) as url:
+                        for _ in range(args.samples):
+                            browser = None
+                            closed = False
+                            sample = None
+                            try:
+                                browser = driver.chromium.launch(channel='chromium', timeout=15000, env=env)
+                                version = browser.version
+                                page = browser.new_page(viewport=viewport)
+                                if not page.evaluate("!!document.createElement('canvas').getContext('webgl2')"):
+                                    raise RuntimeError('Chromium WebGL preflight failed')
+                                if sample_profile == 'warm':
+                                    # Prime this same browser/page with actual packaged startup;
+                                    # no observer is injected and no timing sample is recorded.
+                                    page.set_default_timeout(wait_timeout_ms)
+                                    page.goto(url, wait_until='domcontentloaded')
+                                    page.wait_for_function("typeof graphLoadState!=='undefined' && graphLoadState.status==='ready'")
+                                    warmup_completed += 1
+                                release = SimpleNamespace(writer_fixture=fixture,
+                                                          writer_wait_timeout_ms=wait_timeout_ms)
+                                sample = observe_attempt(page, url, release, args.scenario, 'verified')
+                            except Exception as error:
+                                sample = failed_setup_attempt(error)
+                            finally:
+                                if browser is not None:
+                                    try:
+                                        browser.close()
+                                        closed = True
+                                    except Exception:
+                                        if sample is None:
+                                            sample = failed_setup_attempt(RuntimeError())
+                                        record_invalid_response(sample, 'lifecycle')
+                                else:
+                                    # No browser was returned, so there is no owned handle to close.
+                                    closed = True
+                            sample['profile'] = sample_profile
+                            samples.append(sample)
+                            browser_cleanup.append(closed)
+                    server_closed = True
+                except Exception as error:
+                    # Retain completed attempts when server setup/shutdown fails.
+                    if not samples:
+                        sample = failed_setup_attempt(error)
+                        sample['profile'] = sample_profile
+                        samples.append(sample)
+                        browser_cleanup.append(True)
+                    else:
+                        for sample in samples:
+                            record_invalid_response(sample, 'lifecycle')
+        scratch_removed = not Path(scratch).exists()
+        unchanged = before == fingerprint_sqlite_files(fixture['db_path'])
+        for sample, closed in zip(samples, browser_cleanup):
+            bridge = sample.setdefault('detail_bridge', {})
+            bridge.update(fixture=manifest, server='packaged-explorer-loopback',
+                          database_unchanged=unchanged,
+                          cleanup={'browser_closed': closed, 'server_closed': server_closed,
+                                   'scratch_removed': scratch_removed})
+            bridge.setdefault('server_phases', {'status': 'unavailable', 'clock': None, 'spans': None})
+            if not unchanged:
+                record_invalid_response(sample, 'lifecycle')
+    counts = Counter(f"{f['flow']}:{f['outcome']}" for sample in samples for f in sample['failures'])
+    # Raw observations are always passed through the public allowlist boundary.
+    report = publish_browser_report(attempts=samples)
+    server_requests = [dict(method=request['method'],
+                            url='http://127.0.0.1' + request['route'],
+                            observer_mode='observer_on', server_spans=request['spans'])
+                       for request in server_observation.requests]
+    report['server_observation'] = publish_http_report(
+        attempts=[], requests=server_requests)['server_observation']
+    sampling = server_observation.sampling_report()
+    report['server_observation']['sampling'] = sampling
+    if sampling['status'] == 'sampled':
+        # Omitted children cannot be subtracted as if all intervals were retained.
+        for span in report['server_observation']['spans']:
+            span['exclusive_ms'] = None
+        for phase, phase_counts in sampling['phases'].items():
+            if phase_counts['omitted']:
+                report['server_observation']['phases'][phase]['status'] = 'sampled'
+        report['server_observation']['status'] = 'sampled'
+    else:
+        spans = report['server_observation']['spans']
+        report['server_observation']['status'] = (
+            'unavailable' if not spans else
+            'partial' if any(span['status'] != 'ok' for span in spans) else 'observed')
+    report['server_observation']['browser_request_correlation'] = 'unavailable'
+    report['server_observation']['includes_warmup_requests'] = sample_profile == 'warm'
+    report['warmup'] = {'profile': sample_profile, 'completed': warmup_completed,
+                        'scope': 'same-browser-page-packaged-startup' if sample_profile == 'warm' else 'none',
+                        'disk_cache_state': 'not_established'}
+    report.update(scope='public-synthetic-sqlite-browser', fixture=manifest,
+                  browser_evidence='real-playwright-chromium', latency_budget_result='not_asserted',
+                  scenario=args.scenario, observer_mode='verified', attempted=len(samples),
+                  safety_wait_timeout_ms=wait_timeout_ms,
+                  succeeded=sum(sample['outcome'] == 'ok' for sample in report['samples']),
+                  failure_counts=dict(counts), environment={
+                      'browser': {'engine': 'chromium', 'driver': 'playwright', 'version': version},
+                      'viewport': viewport, 'python_version': platform.python_version(),
+                      'platform': platform.system(), 'architecture': platform.machine(),
+                      'logical_cpu_count': os.cpu_count(),
+                      'rss': {'status': 'unavailable', 'peak_bytes': None}},
+                  limitations=['Public writer-v10 fixture; no private-library or latency-budget claim.',
+                               'Merged server observer phases are request-local; browser correlation is unavailable and clocks are not combined.',
+                               'Verified text/parse/hash observation adds overhead.',
+                               'DOM-ready and next-frame are not physical paint or GPU completion.',
+                               'Cleanup flags do not replace external descendant supervision.'])
+    return report
 
 
 def main():
