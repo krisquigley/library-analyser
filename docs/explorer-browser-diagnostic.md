@@ -188,13 +188,31 @@ surrounding context and treatment of restrictive bounds. No pixel/fraction band,
 usefulness threshold, camera calibration or change to nominal 100 display units
 and 700ms motion is authorized by these observations.
 
-`context.measurement=frustum-not-occlusion` counts mounted neighbor mesh
-observations and those intersecting the camera frustum, respecting visibility.
-It is not the graph-model node count, occlusion testing, visible pixel coverage
-or proof of useful surrounding context. Offscreen/hidden neighbors and missing
-mounted geometry must not become a subjective context pass. An unprojectable
-mounted neighbor makes context unavailable and its in-frustum total null while
-retaining the mounted observation count, rather than treating it as outside.
+`context.measurement=frustum-not-occlusion` retains the historical
+`neighbors_in_frustum` counter, but its explicit classification is
+`potentially-in-frustum`, with method `conservative-six-plane-vertex-bound`.
+It counts mounted neighbor meshes that survive six independent homogeneous
+clip-plane rejection tests, respecting ancestor visibility. It does **not**
+establish exact intersection with the combined camera frustum. A mesh can pass
+each plane separately while remaining outside a combined corner: this is a
+corner false positive, not a defective runtime camera.
+
+For example, a radius-2 sphere centered at (17.5, 13.7, 0), viewed from
+(0, 0, 20) with FOV 60 degrees, aspect 4/3, near 1 and far 100, has closest
+combined right/top-frustum distance approximately 2.1925 (> radius 2), yet the
+diagnostic six-plane vertex-bound test using bundled THREE geometry counts 1.
+This regression is classified only as potentially-in-frustum, not actual
+intersection. The prior wholly off-right sphere crossing the camera plane is
+still rejected (count 0); visible and partial-edge controls still survive. No
+expensive exact-intersection algorithm or runtime/vendor/camera change is introduced.
+
+Neither the counter nor classification is the graph-model node count, occlusion
+testing, visible pixel coverage or proof of useful surrounding context. Hidden
+neighbors and missing mounted geometry must not become a subjective context
+pass. An unprojectable mounted neighbor makes context unavailable and its
+potential count null while retaining the mounted observation count, rather than
+treating it as outside. Legacy supplied observations receive the same explicit
+conservative labels; their lifecycle outcome and raw counter are unchanged.
 
 Input received during an active motion is labeled `phase_at_receipt=focus`.
 Actual canvas pointerdown receipts use `action=orbit` with the same literal trust,
@@ -246,6 +264,7 @@ real-browser acceptance):
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
  tests.unit.benchmark_tools.test_explorer_focus_projection_observation \
  tests.unit.benchmark_tools.test_explorer_focus_projection_edge_cases \
+ tests.unit.benchmark_tools.test_explorer_focus_context_classification \
  tests.unit.benchmark_tools.test_explorer_focus_motion_observation \
  tests.unit.benchmark_tools.test_explorer_focus_report \
  tests.acceptance.test_explorer_browser_focus_usefulness

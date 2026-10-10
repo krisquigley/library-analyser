@@ -215,10 +215,12 @@ def observe(page, url, release, scenario, observer_mode='verified', input_attemp
       for(const object of neighbors.values()){
         const points=vertices(object);if(!points){unavailable++;continue;}
         if(!visible(object))continue;
-        // A vertex-bound separating-plane test observes frustum context, never occlusion.
+        // Conservative per-plane rejection: survivors may be corner false positives,
+        // not exact frustum intersections, pixel visibility or occlusion evidence.
         if(![p=>p.clipX < -p.clipW,p=>p.clipX > p.clipW,p=>p.clipY < -p.clipW,p=>p.clipY > p.clipW,p=>p.depth<camera.near,p=>p.depth>camera.far].some(outside=>points.every(outside)))inFrustum++;
       }
       const focusContext={status:cameraValid&&unavailable===0?'observed':'unavailable',measurement:'frustum-not-occlusion',
+        classification:'potentially-in-frustum',method:'conservative-six-plane-vertex-bound',
         neighbors_observed:neighbors.size,neighbors_in_frustum:cameraValid&&unavailable===0?inFrustum:null};
       d.milestones_ms.graph_post_focus_readback=performance.now();
       d.milestones_ms.graph_usable_render=d.milestones_ms.graph_post_focus_readback;

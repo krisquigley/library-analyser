@@ -186,6 +186,11 @@ def _focus_observation(value):
         'context': {
             'status': 'observed' if context.get('status') == 'observed' else 'unavailable',
             'measurement': _label(context.get('measurement'), ('frustum-not-occlusion',)),
+            # Label legacy observations too: plane-test survivors, not intersections.
+            'classification': ('potentially-in-frustum'
+                               if context.get('measurement') == 'frustum-not-occlusion' else None),
+            'method': ('conservative-six-plane-vertex-bound'
+                       if context.get('measurement') == 'frustum-not-occlusion' else None),
             **{key: _count(context.get(key)) for key in
                ('neighbors_observed', 'neighbors_in_frustum')},
         },
