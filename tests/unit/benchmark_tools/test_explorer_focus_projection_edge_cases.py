@@ -7,6 +7,40 @@ from tests.unit.benchmark_tools.test_explorer_focus_projection_observation impor
 
 
 class FocusProjectionEdges(unittest.TestCase):
+    def test_wholly_off_right_sphere_crossing_camera_plane_is_not_in_frustum(self):
+        # Real THREE radius-2 sphere: the camera plane crosses it, but the
+        # entire sphere remains outside the right homogeneous side plane.
+        focus = _run_readback("""
+addNode('public-00001',10,0,19.5);
+parent.scale.setScalar(1);mesh.position.set(10,0,19.5);
+""")['sample']['focus']
+        self.assertEqual(focus['context']['measurement'], 'frustum-not-occlusion')
+        self.assertEqual(focus['context']['status'], 'observed')
+        self.assertEqual(focus['context']['neighbors_observed'], 1)
+        self.assertEqual(focus['context']['neighbors_in_frustum'], 0)
+        self.assertEqual(focus['projection']['mesh']['clipping'], {
+            'viewport': True, 'near': True, 'far': False, 'behind_camera': True,
+        })
+
+    def test_homogeneous_side_planes_reject_wholly_outside_but_keep_partial_edges(self):
+        cases = (
+            ((10, 0, 19.5), 0), ((-10, 0, 19.5), 0),
+            ((0, 10, 19.5), 0), ((0, -10, 19.5), 0),
+            ((10, 0, 20), 0),  # includes vertices at w=0
+            ((15, 0, 0), 1), ((-15, 0, 0), 1),
+            ((0, 11, 0), 1), ((0, -11, 0), 1),
+            ((0, 0, 19.5), 1),  # visible portion across near/camera planes
+            ((0, 0, 18), 1), ((0, 0, -79), 1),
+            ((0, 0, -83), 0), ((0, 0, 23), 0),
+        )
+        for (x, y, z), expected in cases:
+            with self.subTest(position=(x, y, z)):
+                focus = _run_readback(f"addNode('public-00001',{x},{y},{z});")['sample']['focus']
+                self.assertEqual(focus['context']['status'], 'observed')
+                self.assertEqual(focus['context']['neighbors_in_frustum'], expected)
+        focus = _run_readback("addNode('public-00001',0,0,19.5).scale.setScalar(0.1);")['sample']['focus']
+        self.assertEqual(focus['context']['neighbors_in_frustum'], 0)
+
     def test_hidden_parent_excludes_neighbor_context(self):
         result = _run_readback("""
 const hidden=new vendor.THREE.Scene();scene.add(hidden);hidden.visible=false;

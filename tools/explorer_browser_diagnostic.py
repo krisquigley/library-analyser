@@ -160,10 +160,17 @@ def observe(page, url, release, scenario, observer_mode='verified', input_attemp
           const point=camera.position.clone().fromBufferAttribute(position,i).applyMatrix4(object.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
           const depth=-point.z;
           if(![point.x,point.y,point.z].every(finite))return null;
-          if(depth===0){points.push({x:null,y:null,z:null,depth});continue;}
+          // Retain homogeneous side-plane coordinates before perspective divide:
+          // dividing by negative w reverses inequalities; w=0 has no NDC bound.
+          const e=camera.projectionMatrix.elements;
+          const clipX=e[0]*point.x+e[4]*point.y+e[8]*point.z+e[12];
+          const clipY=e[1]*point.x+e[5]*point.y+e[9]*point.z+e[13];
+          const clipW=e[3]*point.x+e[7]*point.y+e[11]*point.z+e[15];
+          if(![clipX,clipY,clipW].every(finite))return null;
+          if(depth===0){points.push({x:null,y:null,z:null,depth,clipX,clipY,clipW});continue;}
           point.applyMatrix4(camera.projectionMatrix);
           if(![point.x,point.y,point.z].every(finite))return null;
-          points.push({x:point.x,y:point.y,z:point.z,depth});
+          points.push({x:point.x,y:point.y,z:point.z,depth,clipX,clipY,clipW});
         }}catch(error){return null;}return points;
       }
       function bound(object){
@@ -209,7 +216,7 @@ def observe(page, url, release, scenario, observer_mode='verified', input_attemp
         const points=vertices(object);if(!points){unavailable++;continue;}
         if(!visible(object))continue;
         // A vertex-bound separating-plane test observes frustum context, never occlusion.
-        if(![p=>p.x < -1,p=>p.x > 1,p=>p.y < -1,p=>p.y > 1,p=>p.depth<camera.near,p=>p.depth>camera.far].some(outside=>points.every(outside)))inFrustum++;
+        if(![p=>p.clipX < -p.clipW,p=>p.clipX > p.clipW,p=>p.clipY < -p.clipW,p=>p.clipY > p.clipW,p=>p.depth<camera.near,p=>p.depth>camera.far].some(outside=>points.every(outside)))inFrustum++;
       }
       const focusContext={status:cameraValid&&unavailable===0?'observed':'unavailable',measurement:'frustum-not-occlusion',
         neighbors_observed:neighbors.size,neighbors_in_frustum:cameraValid&&unavailable===0?inFrustum:null};
