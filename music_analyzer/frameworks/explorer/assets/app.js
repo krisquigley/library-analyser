@@ -764,10 +764,12 @@ function focusPendingCameraSelection(graphRendered=false){
     const distance=Math.max(controls.minDistance??0,Math.min(controls.maxDistance??Infinity,100));
     // A positioned origin has no radial direction. Preserve the current orbit
     // direction (relative to the panned target), or use +Z for a coincident pose.
-    const view=length===0?(cameraViewDirection(forceGraph.cameraPosition(),forceGraph.controls().target)||{x:0,y:0,z:1}):null;
-    const position=length===0
-      ?{x:distance*view.x,y:distance*view.y,z:distance*view.z}
-      :{x:target.x+distance*target.x/length,y:target.y+distance*target.y/length,z:target.z+distance*target.z/length};
+    const direction=length===0
+      ?(cameraViewDirection(forceGraph.cameraPosition(),controls.target)||{x:0,y:0,z:1})
+      :cameraUnitDirection(target);
+    // Normalize before radius scaling: distance*target can underflow for a
+    // tiny non-origin node even when the final camera offset is renderable.
+    const position={x:target.x+distance*direction.x,y:target.y+distance*direction.y,z:target.z+distance*direction.z};
     if(![position.x,position.y,position.z].every(Number.isFinite)) return;
     // Require a normal-range unscaled squared norm for reliable orientation.
     // A nonzero offset can still underflow that norm (or overflow it). Skip
