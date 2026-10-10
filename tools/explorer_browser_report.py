@@ -60,8 +60,32 @@ def _input_observations(source):
             published['frame_ms'] = None
             if published['outcome'] == 'ok':
                 published['outcome'] = 'invalid_response'
+        if published['outcome'] == 'ok' and not _trusted_receipt(published):
+            published['outcome'] = ('unavailable' if published['frame_ms'] is None
+                                    else 'invalid_response')
         records.append(published)
     return records
+
+
+def _trusted_receipt(record):
+    """Validate only sanitized browser-clock observations, not host-clock intent."""
+    return (record['action'] in ('input', 'selection')
+            and record['receipt_clock'] == 'browser-performance'
+            and record['is_trusted'] is True
+            and record['received_ms'] is not None
+            and record['frame_ms'] is not None
+            and record['frame_ms'] >= record['received_ms'])
+
+
+def _published_contention_status(status, records):
+    """Supplied success requires distinct trusted actions; never upgrade a failure."""
+    if status != 'observed-trusted-input':
+        return status
+    if (len(records) == 2 and {record['action'] for record in records} == {'input', 'selection'}
+            and all(record['outcome'] == 'ok' and _trusted_receipt(record) for record in records)):
+        return status
+    return ('invalid_response' if any(record['outcome'] == 'invalid_response' for record in records)
+            else 'unavailable')
 
 
 def _task_observations(source, milestones):
@@ -123,11 +147,13 @@ def publish_browser_report(*, attempts, intervals=(), requests=(), environment=N
                 'consumed_bytes': size if verified else None,
                 'consumed_sha256': digest if verified else None,
             }
-        if 'contention_status' in original:
-            sample['contention_status'] = _label(original['contention_status'], frozenset((
-                'observed-trusted-input', 'unavailable', 'invalid_response')))
+        records = _input_observations(original.get('input_observations'))
         if 'input_observations' in original:
-            sample['input_observations'] = _input_observations(original['input_observations'])
+            sample['input_observations'] = records
+        if 'contention_status' in original:
+            status = _label(original['contention_status'], frozenset((
+                'observed-trusted-input', 'unavailable', 'invalid_response')))
+            sample['contention_status'] = _published_contention_status(status, records)
         if 'responsiveness' in original:
             sample['responsiveness'] = _task_observations(
                 original['responsiveness'], sample.get('milestones_ms', {}))

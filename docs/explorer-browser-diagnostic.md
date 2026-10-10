@@ -139,7 +139,14 @@ establish robust distributions. The separate
 `publish_browser_report` supplied-observation API always labels its output
 `supplied-observations-not-browser-acceptance`; it cannot manufacture real-browser
 evidence. It allowlists labels/numeric fields and drops arbitrary environment,
-payloads, targets, query strings, handles and paths. Missing milestones stay
+payloads, targets, query strings, handles and paths. Supplied `observed-trusted-input`
+is retained only for exactly two sanitized observations with distinct `input` and
+`selection` actions, `outcome=ok`, literal trusted receipts on the browser-performance
+clock, and finite nonnegative receipt/frame times with frame at or after receipt.
+Invalid or missing observations downgrade the claim and cannot retain per-record
+`ok`; explicit unavailable/failure outcomes are never upgraded. Host intent is not
+compared with browser receipt time. This validation still does not establish
+actual browser acceptance or causal contention. Missing milestones stay
 null; reversed intervals remain flagged after sanitization.
 
 This is not a latency budget, SQLite query-speed measurement, real-library

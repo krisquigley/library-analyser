@@ -16,6 +16,59 @@ class BrowserPhaseReport(unittest.TestCase):
         published = publish_browser_report(attempts=[sample])['samples'][0]
         self.assertEqual(published.get('contention_status'), 'unknown')
 
+    @staticmethod
+    def trusted_record(action):
+        return {'action': action, 'receipt_clock': 'browser-performance',
+                'received_ms': 30, 'frame_ms': 40, 'is_trusted': True, 'outcome': 'ok'}
+
+    def test_supplied_success_requires_distinct_sanitized_trusted_action_pairs(self):
+        valid = [self.trusted_record(action) for action in ('input', 'selection')]
+        cases = [[], valid[:1], [valid[0], valid[0]], None, '/private/raw',
+                 [None, valid[1]]]
+        for field, value in (('action', '/private/action'), ('is_trusted', False),
+                             ('is_trusted', 'true'), ('frame_ms', None),
+                             ('frame_ms', float('inf')), ('frame_ms', True),
+                             ('frame_ms', 20), ('received_ms', None),
+                             ('received_ms', float('nan')), ('received_ms', -1),
+                             ('receipt_clock', '/private/clock'), ('outcome', 'timeout')):
+            cases.append([dict(valid[0], **{field: value}), valid[1]])
+        for records in cases:
+            with self.subTest(records=records):
+                sample = {'contention_status': 'observed-trusted-input',
+                          'input_observations': records}
+                published = publish_browser_report(attempts=[sample])['samples'][0]
+                self.assertIn(published['contention_status'], ('unavailable', 'invalid_response'))
+                self.assertNotIn('/private', json.dumps(published, allow_nan=False))
+        published = publish_browser_report(attempts=[{
+            'contention_status': 'observed-trusted-input'}])['samples'][0]
+        self.assertEqual(published['contention_status'], 'unavailable')
+
+    def test_sanitized_records_cannot_retain_ok_without_trusted_ordered_pair(self):
+        for field, value in (('action', '/private/action'), ('is_trusted', False),
+                             ('is_trusted', None), ('frame_ms', None),
+                             ('frame_ms', float('inf')), ('frame_ms', True),
+                             ('receipt_clock', '/private/clock')):
+            with self.subTest(field=field, value=value):
+                record = dict(self.trusted_record('input'), **{field: value})
+                published = publish_browser_report(attempts=[{
+                    'input_observations': [record]}])['samples'][0]['input_observations'][0]
+                self.assertIn(published['outcome'], ('unavailable', 'invalid_response'))
+
+    def test_valid_pairs_preserve_success_but_never_upgrade_explicit_failure(self):
+        records = [self.trusted_record(action) for action in ('selection', 'input')]
+        for status in ('observed-trusted-input', 'unavailable', 'invalid_response'):
+            published = publish_browser_report(attempts=[{
+                'contention_status': status, 'input_observations': records}])['samples'][0]
+            self.assertEqual(published['contention_status'], status)
+            self.assertEqual([r['outcome'] for r in published['input_observations']], ['ok', 'ok'])
+        for outcome in ('timeout', 'unavailable', 'invalid_response'):
+            failed = [dict(records[0], outcome=outcome), records[1]]
+            published = publish_browser_report(attempts=[{
+                'contention_status': 'observed-trusted-input',
+                'input_observations': failed}])['samples'][0]
+            self.assertNotEqual(published['contention_status'], 'observed-trusted-input')
+            self.assertEqual(published['input_observations'][0]['outcome'], outcome)
+
     def test_invalid_frame_chronology_retains_attempt_and_receipt_not_success(self):
         sample = {'input_observations': [{'attempt_ms': 900, 'received_ms': 30,
                                          'frame_ms': 20, 'is_trusted': True, 'outcome': 'ok'}]}
