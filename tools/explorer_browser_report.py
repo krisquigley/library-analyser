@@ -33,7 +33,7 @@ _INPUT_LABELS = {
     'action': frozenset(('input', 'selection', 'orbit')),
     'attempt_clock': frozenset(('host-monotonic',)),
     'receipt_clock': frozenset(('browser-performance',)),
-    'phase_at_attempt': frozenset(('body', 'native-json', 'unavailable')),
+    'phase_at_attempt': frozenset(('body', 'native-json', 'unavailable', 'focus')),
     'phase_at_receipt': frozenset(('body', 'json', 'verification', 'model', 'scene',
                                  'native-json', 'after-scene', 'pending', 'focus')),
     'outcome': frozenset(('ok', 'timeout', 'invalid_response', 'unavailable')),

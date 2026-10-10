@@ -104,7 +104,7 @@ class TinyRealFocusObservation(unittest.TestCase):
                 receipt_starts.append(page.evaluate('window.__diagnostic.input_observations.length'))
                 attempts.append(diagnostic.new_input_attempt('selection', 'focus'))
                 page.locator('#tracks tbody tr').nth(1).click()
-                page.wait_for_function("state.current_track_id==='public-00001' && selectedNodeHalo.trackId===state.current_track_id && cameraFocusFrame===null")
+                page.wait_for_function("state.current_track_id==='public-00001' && pendingSelectionOperation===null && document.getElementById('detail').getAttribute('aria-busy')==='false' && selectedNodeHalo.trackId===state.current_track_id && window.__diagnostic.consumed_count>=4 && window.__diagnostic.focus.motion.starts.length>=4 && window.__diagnostic.focus.motion.starts.at(-1).active_after===true && cameraFocusFrame===null")
                 page.evaluate('() => new Promise(resolve=>requestAnimationFrame(resolve))')
                 observed = page.evaluate('window.__diagnostic')
                 sample['focus']['motion'] = observed['focus']['motion']
@@ -131,6 +131,7 @@ class TinyRealFocusObservation(unittest.TestCase):
                 self.assertEqual([record['action'] for record in receipts], ['input', 'orbit', 'selection'])
                 for record in receipts:
                     self.assertIs(record['is_trusted'], True)
+                    self.assertEqual(record['phase_at_attempt'], 'focus')
                     self.assertEqual(record['phase_at_receipt'], 'focus')
                     self.assertEqual(record['outcome'], 'ok')
                 reasons = [event['reason'] for event in report['samples'][0]['focus']['motion']['cancellations']]

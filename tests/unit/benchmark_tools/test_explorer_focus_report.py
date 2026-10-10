@@ -78,6 +78,24 @@ class FocusReportTests(unittest.TestCase):
         self.assertIsNone(projection['controls']['enabled'])
         self.assertIsNone(focus['context']['neighbors_observed'])
 
+    def test_focus_host_attempt_phase_survives_on_separate_host_clock(self):
+        sample = publish_browser_report(attempts=[{
+            'profile': 'process-cold', 'outcome': 'timeout', 'elapsed_ms': None,
+            'input_observations': [{
+                'action': 'input', 'phase_at_attempt': 'focus',
+                'attempt_clock': 'host-monotonic', 'attempt_ms': 5000,
+                'phase_at_receipt': 'focus', 'receipt_clock': 'browser-performance',
+                'received_ms': 20, 'frame_ms': 21, 'is_trusted': True, 'outcome': 'ok',
+            }],
+        }])['samples'][0]
+        record = sample['input_observations'][0]
+        self.assertEqual(record['phase_at_attempt'], 'focus')
+        self.assertEqual(record['attempt_clock'], 'host-monotonic')
+        self.assertEqual(record['receipt_clock'], 'browser-performance')
+        self.assertEqual(record['phase_at_receipt'], 'focus')
+        self.assertEqual(record['outcome'], 'ok')
+        self.assertEqual(sample['outcome'], 'timeout')
+
     def test_motion_start_calls_preserve_partial_chronology_not_completion(self):
         sample = self.sample({'motion': {'starts': [
             {'at_ms': 10, 'clock': 'browser-performance', 'active_after': True,
