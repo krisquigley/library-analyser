@@ -3,9 +3,9 @@
 Default six tests are tiny mocked-composition/supplied-observation contracts,
 NOT browser evidence.
 They use the existing publication seam; no proposed module/import is required.
-The opt-in test constructs the real owned writer-v10 catalogue, serves actual
-packaged assets with create_server and drives Chromium/WebGL. It is correctness
-only, not speed evidence. Run that test under an external hard-wall, subreaper,
+The opt-in tests construct the real owned writer-v10 catalogue, serve actual
+packaged assets with create_server and drive Chromium/WebGL. This is correctness
+only, not speed evidence. Run those tests under an external hard-wall, subreaper,
 tracked-descendant SIGKILL supervisor with core=0, 32MiB file/128MiB aggregate
 browser scratch limits and <=4GiB/zero-swap/groupOOM cgroup. No large profile.
 
@@ -210,6 +210,70 @@ class RealWriterPackagedBrowserBridge(unittest.TestCase):
                          'real diagnostic ignored writer-v10 input and ran synthetic routes')
         self.assertEqual(server.call_count, 1)
         self.assertEqual(report['scope'], 'public-synthetic-sqlite-browser')
+
+    def test_two_samples_have_isolated_server_selection_state(self):
+        require_memory_bound()
+        self.assertEqual(os.environ.get('EXPLORER_BROWSER_SUPERVISED'), '1')
+        installed_root = os.environ.get('EXPLORER_INSTALLED_WHEEL_ROOT')
+        self.assertIsNotNone(installed_root, 'BLOCKED: installed-wheel verification required')
+        import music_explorer.frameworks.explorer.server as packaged_server
+        self.assertTrue(Path(packaged_server.__file__).is_relative_to(Path(installed_root)))
+        for profile in ('process-cold', 'warm'):
+            with self.subTest(profile=profile):
+                args = writer_args()
+                args.samples = 2
+                args.sample_profile = profile
+                with patch('music_explorer.frameworks.explorer.server.create_server',
+                           wraps=create_server) as server:
+                    report = collect(args, {'width': 1280, 'height': 720})
+                # Retain sanitized evidence even when the success assertion is RED.
+                print('TWO_SAMPLE_REPORT ' + json.dumps({key: report[key] for key in
+                      ('attempted', 'succeeded', 'samples', 'failure_counts', 'warmup')}), flush=True)
+                self.assertEqual([sample['outcome'] for sample in report['samples']], ['ok', 'ok'])
+                self.assertEqual((report['attempted'], report['succeeded']), (2, 2))
+                self.assertEqual(server.call_count, 2)
+                self.assertEqual(report['failure_counts'], {})
+                self.assertEqual(report['warmup']['completed'], 2 if profile == 'warm' else 0)
+                for sample in report['samples']:
+                    bridge = sample['detail_bridge']
+                    self.assertEqual((bridge['initial_summary_requests'],
+                                      bridge['unrelated_detail_requests'], bridge['graph_requests']),
+                                     (0, 0, 1))
+                    self.assertEqual(len(bridge['selections']), 1)
+                    selected = bridge['selections'][0]
+                    self.assertTrue(selected['post']['accepted'])
+                    self.assertTrue(selected['post']['identity_matches'])
+                    self.assertTrue(selected['detail']['identity_matches'])
+                    self.assertTrue(bridge['database_unchanged'])
+                    self.assertTrue(all(bridge['cleanup'].values()))
+                    self.assertCountEqual(
+                        [(r['method'], r['route']) for r in sample['requests']],
+                        [('GET', '/api/mood-axis-graph'), ('GET', '/api/state'),
+                         ('GET', '/api/tracks/summary'), ('POST', '/api/current'),
+                         ('GET', '/api/tracks/<id>')])
+                    self.assertTrue(all(r['status'] == 200 for r in sample['requests']))
+
+    def test_selection_time_unrelated_detail_still_rejects_success(self):
+        require_memory_bound()
+        self.assertEqual(os.environ.get('EXPLORER_BROWSER_SUPERVISED'), '1')
+        from tools.explorer_browser_diagnostic import observe_attempt
+
+        def inject_unrelated_detail(page, *args, **kwargs):
+            page.add_init_script("""document.addEventListener('click', event => {
+                if (event.target.closest('#tracks tbody tr')) queueMicrotask(() => {
+                    fetch('/api/tracks/' + encodeURIComponent(trackSummaryPage.tracks[1].handle));
+                });
+            }, true);""")
+            return observe_attempt(page, *args, **kwargs)
+
+        with patch('tools.explorer_browser_diagnostic.observe_attempt',
+                   side_effect=inject_unrelated_detail):
+            report = collect(writer_args(), {'width': 1280, 'height': 720})
+        self.assertEqual(report['succeeded'], 0)
+        self.assertEqual(report['samples'][0]['outcome'], 'invalid_response')
+        self.assertGreater(report['samples'][0]['detail_bridge']['unrelated_detail_requests'], 0)
+        self.assertTrue(report['samples'][0]['detail_bridge']['database_unchanged'])
+        self.assertTrue(all(report['samples'][0]['detail_bridge']['cleanup'].values()))
 
     def test_tiny_writer_server_chromium_selected_detail_publication(self):
         # External containment is mandatory, and absence is BLOCKED not RED.

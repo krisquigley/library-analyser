@@ -464,8 +464,11 @@ def collect_writer(args, viewport, sync_playwright):
             env = dict(os.environ, XDG_CONFIG_HOME=str(config), XDG_CACHE_HOME=str(cache))
             with server_observation.installed(), sync_playwright() as driver:
                 try:
-                    with _running_server(observed_factory, fixture['db_path']) as url:
-                        for _ in range(args.samples):
+                    for _ in range(args.samples):
+                        # Browser pages are fresh, but accepted selections live in the
+                        # server session. Own a fresh server for each complete sample,
+                        # including that sample's optional same-page warmup.
+                        with _running_server(observed_factory, fixture['db_path']) as url:
                             browser = None
                             closed = False
                             sample = None
