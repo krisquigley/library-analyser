@@ -44,6 +44,16 @@ needed. Both camera position and orbit-controls target stop moving when the
 transition is cancelled; controls' `start` event yields ownership to user orbit.
 Selected-node halo behavior and graph-independent detail feedback are preserved.
 
+Mouseup can leave wheel and pan damping pending in the bundled Trackball controls;
+`enabled = false` does not prevent their public `update()` from applying it.
+When focus takes ownership, the adapter drains those pending inputs with one
+bounded public update: temporarily use static motion, zero zoom/pan speeds and
+an overflow-safe finite pose, then restore the starting pose and all changed
+public settings. This preserves ordinary starting position, target, up vector,
+orientation, radius and configured distance bounds without accessing private control state,
+modifying the vendor bundle or iterating until damping converges. Later manual
+orbit still owns cancellation and uses the original controls settings.
+
 ## Reproducible boundary tests
 
 Require Node on PATH (do not count a Node-dependent skip as acceptance), then run:
@@ -56,6 +66,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
   tests.acceptance.test_explorer_selection_camera_cancellation \
   tests.acceptance.test_explorer_camera_vendor_cancellation \
   tests.acceptance.test_explorer_camera_orbit_path \
+  tests.acceptance.test_explorer_camera_unflushed_damping \
   tests.acceptance.test_explorer_3d_graph_assets.Explorer3DGraphAssetTests.test_graph_camera_centers_bounds_fits_viewport_and_preserves_selection_view \
   tests.architecture.test_import_boundaries
 ```
