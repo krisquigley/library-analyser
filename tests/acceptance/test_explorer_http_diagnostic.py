@@ -7,6 +7,7 @@ browser/render/latency-budget evidence.
 import importlib
 import importlib.util
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import math
 import threading
 import unittest
@@ -28,7 +29,9 @@ class PublicHTTPDiagnosticTests(unittest.TestCase):
                         'PR4c missing run_public_http_diagnostic entrypoint')
         return tool
 
-    def factory(self, *, reject_current=False, stall_state=False):
+    def factory(self, *, reject_current=False, stall_state=False,
+                body_status=None, stall_body=False, detail_override=False,
+                detail_payload=None, redirect=None):
         """Observe public server I/O; alter only HTTP responses for failure cases."""
         calls = []
         servers = []
@@ -47,6 +50,29 @@ class PublicHTTPDiagnosticTests(unittest.TestCase):
             class ObservedHandler(original_handler):
                 def do_GET(handler):
                     calls.append(('GET', handler.path))
+                    if urlsplit(handler.path).path == '/api/state' and redirect:
+                        handler.send_response(302)
+                        handler.send_header('Location', redirect)
+                        handler.send_header('Content-Length', '0')
+                        handler.end_headers()
+                        return
+                    if urlsplit(handler.path).path == '/api/state' and body_status:
+                        handler.send_response(body_status)
+                        handler.send_header('Content-Length', '100')
+                        handler.end_headers()
+                        handler.wfile.write(b'{}')
+                        handler.wfile.flush()
+                        if stall_body:
+                            try:
+                                release.wait(5)
+                            finally:
+                                stalled_handler_finished.set()
+                        handler.close_connection = True
+                        return
+                    if (detail_override and handler.path.startswith('/api/tracks/')
+                            and not handler.path.startswith('/api/tracks/summary')):
+                        handler._json(detail_payload)
+                        return
                     if stall_state and urlsplit(handler.path).path == '/api/state':
                         # The client timeout must release the harness. The test
                         # event bounds handler lifetime without sleeping/timing CI.
@@ -79,7 +105,7 @@ class PublicHTTPDiagnosticTests(unittest.TestCase):
             def close():
                 release.set()
                 original_close()
-                if stall_state:
+                if stall_state or stall_body:
                     self.assertTrue(stalled_handler_finished.wait(2),
                                     'timed-out HTTP handler leaked')
                 closed.set()
@@ -168,6 +194,78 @@ class PublicHTTPDiagnosticTests(unittest.TestCase):
         self.assertEqual(timed_out['outcome'], 'timeout')
         self.assertEqual(report['samples'][0]['outcome'], 'timeout')
         self.assert_cleaned(servers)
+
+    def test_body_failures_retain_status_partial_bytes_elapsed_and_cleanup(self):
+        for status in (200, 400):
+            for stalled in (False, True):
+                with self.subTest(status=status, stalled=stalled):
+                    factory, calls, servers = self.factory(
+                        body_status=status, stall_body=stalled)
+                    report = self.run_tiny(self.tool(), factory, timeout_seconds=0.05)
+                    self.assertEqual(calls, [('GET', '/api/state')])
+                    observed = report['requests'][0]
+                    outcome = 'timeout' if stalled else 'connection_error'
+                    self.assertEqual(observed['status'], status)
+                    self.assertEqual(observed['response_bytes'], 2)
+                    self.assertEqual(observed['outcome'], outcome)
+                    self.assertEqual(report['samples'][0]['outcome'], outcome)
+                    self.assertTrue(math.isfinite(observed['elapsed_ms']))
+                    self.assertGreater(observed['elapsed_ms'], 0)
+                    self.assertNotIn('IncompleteRead', json.dumps(report))
+                    self.assert_cleaned(servers)
+
+    def test_detail_requires_object_with_selected_handle(self):
+        for detail in (None, {'handle': 'wrong-handle'}):
+            with self.subTest(detail=detail):
+                factory, calls, servers = self.factory(
+                    detail_override=True, detail_payload=detail)
+                report = self.run_tiny(self.tool(), factory)
+                self.assertEqual(len(calls), 4)
+                self.assertEqual(report['samples'][0]['outcome'], 'invalid_response')
+                self.assertEqual(report['requests'][-1]['outcome'], 'invalid_response')
+                self.assert_cleaned(servers)
+
+    def test_redirect_is_failed_without_following_or_external_inventory(self):
+        hits = []
+
+        class SentinelHandler(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                hits.append(handler.path)
+                handler.send_response(200)
+                handler.end_headers()
+                handler.wfile.write(b'{"selection_epoch": 0}')
+
+            def log_message(handler, *args):
+                pass
+
+        # A second loopback port is a distinct origin, without contacting any
+        # external network even if redirect prevention regresses.
+        sentinel = ThreadingHTTPServer(('127.0.0.1', 0), SentinelHandler)
+        thread = threading.Thread(target=sentinel.serve_forever, daemon=True)
+        thread.start()
+
+        def close_sentinel():
+            sentinel.shutdown()
+            sentinel.server_close()
+            thread.join()
+
+        self.addCleanup(close_sentinel)
+        external_origin = f'http://127.0.0.1:{sentinel.server_port}/SECRET_PATH'
+        for location in ('/api/state-redirected', external_origin):
+            with self.subTest(location=location):
+                factory, calls, servers = self.factory(redirect=location)
+                report = self.run_tiny(self.tool(), factory)
+                self.assertEqual(calls, [('GET', '/api/state')])
+                self.assertEqual(len(report['requests']), 1)
+                self.assertEqual(report['requests'][0]['status'], 302)
+                self.assertEqual(report['requests'][0]['outcome'], 'http_error')
+                self.assertEqual(report['samples'][0]['outcome'], 'http_error')
+                self.assertEqual(report['request_inventory']['requests'], [
+                    {'method': 'GET', 'route': '/api/state', 'count': 1}])
+                self.assertEqual(hits, [], 'redirect contacted another origin')
+                self.assertNotIn(external_origin, json.dumps(report))
+                self.assertNotIn('SECRET_PATH', json.dumps(report))
+                self.assert_cleaned(servers)
 
     def test_server_startup_failure_propagates_and_cleans_owned_scratch(self):
         tool = self.tool()

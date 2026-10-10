@@ -17,8 +17,12 @@ PY
 
 Defaults are 12 tracks, seed 70, two history generations, one sample. Requests
 are state, nonblank bounded summary search, current selection, then selected
-track detail only after an accepted POST. Errors and timeouts remain samples;
-failed response bodies, exceptions, scratch paths and selection handles are not
+track detail only after an accepted POST. Detail must be an object whose handle
+matches the selection. Redirects are not followed; 3xx responses are failed
+observations, not hidden request hops. Body stalls and truncated responses retain
+known status, received partial-byte counts and elapsed time as failed attempts.
+Errors and timeouts remain samples; failed response bodies, exceptions,
+scratch paths and selection handles are not
 published. Fixture construction and graph manifest construction are outside
 request timings; there is no graph HTTP request.
 
@@ -27,8 +31,13 @@ and at most 60 seconds per request. More than 12 tracks requires explicit
 `allow_large=True`; writer fixture bounds remain 12–20,000 tracks, unsigned
 32-bit seed, and 1–3 history generations. Fixture and server lifecycle cleanup
 runs on startup failure, HTTP rejection, timeout and ordinary completion.
-The injected factories are diagnostic/testing seams, not public private-target
-CLI inputs; do not use them against a nonpublic catalogue.
+The built-in factories guarantee the disposable public fixture and loopback-only
+ephemeral binding. Injected factories are **trusted** diagnostic/testing
+collaborators, not sandboxed inputs or public private-target CLI inputs. They
+must honor that same contract: a newly owned disposable public-only fixture and
+a server bound to `127.0.0.1` on an ephemeral port, with compatible cleanup.
+Arbitrary injected Python code is not checked for compliance; do not use it
+against a nonpublic catalogue.
 
 Reports preserve caller-supplied warm and process-cold profiles separately in
 `publish_http_report`; the live in-process runner labels its samples warm, not
@@ -36,8 +45,12 @@ disk-cold. Successful durations use nearest-rank p50/p95/max; failures never
 enter successful percentiles. An empty/all-failed profile has null percentiles.
 Intervals are validated using the original clock/flow identities before labels
 are sanitized, retaining invalid-order errors. HTTP durations measure the
-client request/response, not isolated server phases. Validation, membership,
-selected SQL, stage parse, mapping and serialization are explicitly unavailable
+client request/response, not isolated server phases. These are **observer-on HTTP
+wall times**: the SQL observer synchronously runs EXPLAIN and records operations
+**inside the timed requests**. They are not an uninstrumented baseline; neither
+observer overhead nor individual server phases can be inferred from them.
+Validation, membership, selected SQL, stage parse, mapping and serialization are
+explicitly unavailable
 unless independently instrumented; SQL EXPLAIN is not timing attribution.
 
 SQLite provenance records actual bound SQL and same-connection EXPLAIN rows,

@@ -1,18 +1,21 @@
 """Opt-in diagnostic against disposable public data over loopback HTTP only.
 
-Fixture construction and SQLite observation are outside request timing. This
-outward composition tool neither changes the server nor accepts private paths.
+Fixture construction is outside request timing. SQLite observation executes
+inside timed requests: these are observer-on HTTP wall times, not an
+uninstrumented baseline. This outward composition tool neither changes the
+server nor accepts private paths.
 No browser, rendering, server sub-phase or host-independent latency is inferred.
 """
 from contextlib import contextmanager
 import json
+from http.client import HTTPException, IncompleteRead
 import math
 import socket
 import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from music_explorer.frameworks.explorer.server import create_server
 from tools.explorer_fixture_inspection import fingerprint_sqlite_files
@@ -52,6 +55,29 @@ def _running_server(factory, database_path):
                     thread.join()
 
 
+class _NoRedirects(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
+def _read_entity(response, observation):
+    # read1 returns available bytes rather than waiting to fill a large read,
+    # retaining truthful partial-byte evidence if the next read times out.
+    chunks = []
+    while True:
+        try:
+            chunk = response.read1(64 * 1024)
+        except IncompleteRead as error:
+            observation['response_bytes'] += len(error.partial)
+            raise
+        if not chunk:
+            if response.length not in (None, 0):
+                raise IncompleteRead(b'')
+            return b''.join(chunks)
+        chunks.append(chunk)
+        observation['response_bytes'] += len(chunk)
+
+
 def _request(base, path, method, timeout, requests, intervals, phase, body=None):
     start = time.monotonic()
     observation = {'method': method, 'url': base + path, 'status': None,
@@ -61,26 +87,28 @@ def _request(base, path, method, timeout, requests, intervals, phase, body=None)
     request = Request(base + path, data=data, method=method,
                       headers={'Content-Type': 'application/json'} if data is not None else {})
     try:
-        with urlopen(request, timeout=timeout) as response:
+        try:
+            response = build_opener(_NoRedirects()).open(request, timeout=timeout)
+        except HTTPError as error:
+            # Read success and error bodies in the same protected boundary.
+            response = error
+        with response:
             observation['status'] = response.status
-            entity = response.read()
-            observation['response_bytes'] = len(entity)
-            try:
-                payload = json.loads(entity)
-                observation['outcome'] = 'ok'
-            except (ValueError, UnicodeError):
-                observation['outcome'] = 'invalid_response'
-    except HTTPError as error:
-        with error:
-            observation['status'] = error.code
-            observation['response_bytes'] = len(error.read())
-            observation['outcome'] = 'http_error'
+            entity = _read_entity(response, observation)
+            if not 200 <= response.status < 300:
+                observation['outcome'] = 'http_error'
+            else:
+                try:
+                    payload = json.loads(entity)
+                    observation['outcome'] = 'ok'
+                except (ValueError, UnicodeError):
+                    observation['outcome'] = 'invalid_response'
     except (TimeoutError, socket.timeout):
         observation['outcome'] = 'timeout'
     except URLError as error:
         observation['outcome'] = ('timeout' if isinstance(error.reason, TimeoutError)
                                   else 'connection_error')
-    except OSError:
+    except (OSError, HTTPException):
         observation['outcome'] = 'connection_error'
     end = time.monotonic()
     observation['elapsed_ms'] = (end - start) * 1000
@@ -119,8 +147,11 @@ def _sample(base, timeout, requests, intervals, token):
                                 or selected.get('current_track_id') != handle):
             outcome = 'invalid_response'
     if outcome == 'ok':
-        _, outcome = _request(base, '/api/tracks/' + quote(handle, safe=''), 'GET',
-                              timeout, requests, intervals, 'get_detail')
+        detail, outcome = _request(base, '/api/tracks/' + quote(handle, safe=''), 'GET',
+                                   timeout, requests, intervals, 'get_detail')
+        if outcome == 'ok' and (not isinstance(detail, dict) or detail.get('handle') != handle):
+            outcome = 'invalid_response'
+            requests[-1]['outcome'] = outcome
     # In-process execution does not establish process-cold conditions. A single
     # warm profile retains every attempted sequential interaction honestly.
     return {'profile': 'warm', 'outcome': outcome,
@@ -133,6 +164,9 @@ def run_public_http_diagnostic(*, track_count=12, seed=70, history_count=2,
                                fixture_factory=public_synthetic_fixture):
     """Run bounded selection/detail samples; retain failures and clean ownership.
 
+    Injected factories are TRUSTED collaborators, not sandboxed inputs. They
+    must honor the built-in loopback/ephemeral server and disposable public-only
+    fixture contract; only built-in factories guarantee it without that trust.
     Factories are outward test seams, not private catalogue path inputs. Reader
     validation remains enabled, including unrelated historical evidence checks.
     The fixture owner is quiescent throughout before/after byte fingerprints.
