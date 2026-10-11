@@ -1,4 +1,50 @@
-# Explorer selected-node camera focus (issue #70, PR6)
+# Explorer selected-node camera focus (issues #70 and #84)
+
+## Immediate graph-node clicks (#84)
+
+The real graph `onNodeClick` adapter recenters a mounted, visible, finite node
+synchronously, before the selection POST. It translates the camera and Trackball
+target together, retaining the existing viewing direction, distance, zoom and
+custom orbit bounds. It does not start an animation or replay focus when that
+POST acknowledges. The mounted layout, not transient coordinates on a pick,
+is authoritative. Invalid picks without an id do not submit selection; valid ids
+with ineligible geometry still follow the independent selection/detail path.
+Camera-adapter failure is best-effort and must not block that path. A finite
+translation that loses its usable orbit offset through floating-point rounding
+is skipped using the existing bundled-THREE normal squared-offset guard; graph
+clicks do not invent a recovery zoom or widen bounds. During a replacement's
+render gap, eligibility is checked against the visible graph while coordinates
+come from the still-mounted layout, never the unmounted replacement.
+
+This local view change is not selection acceptance or authorization to fetch
+track detail. A rejected POST reports its error, fetches no unaccepted detail,
+and leaves the clicked local view intact. Newer selection, orbit, history/reset
+and graph replacement retain their existing ownership rules. Graph clicks cancel
+older adapter-owned animations; acknowledgments do not acquire camera ownership.
+Search-result buttons retain the accepted, deferred **700 ms animated** focus
+described below. This is an outward delivery-adapter change, not a domain,
+application, database, index/cache or graph-performance change.
+
+Focused graph-click regressions (Node required, both mirrored complete assets):
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
+  tests.acceptance.test_explorer_graph_click_immediate \
+  tests.acceptance.test_explorer_graph_click_authority
+```
+
+The immediate suite began as the unchanged tests-only RED commit
+`9c4987c287e3b0830c76e9138c062114c36399a8`, directly on
+`0ba713630d1f026f056ce2ee752ec66bcc24844a`: four tests produced eight intended
+mirrored assertion failures, while the existing integration/custom-bounds
+baseline passed all 19 tests. These VM boundary assertions are not browser paint
+or elapsed-time evidence. Delivery browser evidence is retained externally with
+its exact implementation SHA and commands; receipt-to-pose and first observed
+render opportunity are distinguished from physical display paint. Neither this
+change nor its small public fixture completes broader #70 acceptance or #44's
+deferred 5k/20k performance work.
+
+## Accepted animated search/history focus
 
 Selection focus is an outward browser/ForceGraph concern. It does not change
 application/domain policy, graph topology, persistence, filters, or detail-fetch
@@ -170,6 +216,8 @@ and any full-suite skips separately from the focused no-skip results.
 
 Camera-call assertions are not proof of a useful real viewport, perceived smooth
 motion, final visible scale, or measured focus latency. Playwright/Chromium was
-unavailable during delivery; those real-browser checks remain unverified. No
-private library, live selection endpoint, database mutation, performance claim,
-or completion of all issue #70 acceptance is implied by this PR.
+unavailable during the original PR6 delivery; those broader animated-focus checks
+were not verified by that delivery. Issue #84's separate bounded tiny public
+Chromium/WebGL check concerns immediate graph clicks, not broader performance
+acceptance. No private library, live selection endpoint, database mutation,
+performance campaign, or completion of all issue #70 acceptance is implied.

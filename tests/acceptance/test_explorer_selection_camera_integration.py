@@ -276,12 +276,19 @@ assert.equal(JSON.stringify(run('getGraphControlsForTesting()')),filters);
 assert.equal(replacements,1,'selection cannot repopulate filtered topology');
 ''')
 
-    def test_graph_click_uses_selection_detail_and_animated_focus(self):
+    def test_graph_click_uses_selection_detail_and_immediate_translation(self):
         self.run_scenario(r'''
 render(); calls.length=0;
 assert.equal(typeof clickHandler,'function','real renderMap wires graph picking');
-await clickHandler(liveData.nodes.find(n=>n.id==='b')); tick(); tick();
-assert.deepEqual(details,['b']); assertFocus('b');
+const before={...camera.position}, target={...controls.target};
+const pending=clickHandler(liveData.nodes.find(n=>n.id==='b'));
+assert.deepEqual(controls.target,{x:b.fx,y:b.fy,z:b.fz});
+for(const axis of ['x','y','z'])
+  assert.equal(camera.position[axis],b['f'+axis]+(before[axis]-target[axis]));
+const centered={...camera.position}, count=calls.length;
+await pending; tick(); tick();
+assert.deepEqual(details,['b']); assertHalo('b');
+assert.deepEqual(camera.position,centered); assert.equal(calls.length,count,'acceptance does not replay focus');
 ''')
 
     def test_undo_replaces_pending_focus_with_authoritative_history_selection(self):
