@@ -633,7 +633,7 @@ function cancelCameraFocus(){
   cameraFocusFrame=null;
 }
 function observeCameraFocusControls(graph){
-  const controls=graph.controls();
+  const controls=typeof graph?.controls==='function'?graph.controls():null;
   if(controls===cameraFocusControls) return;
   cancelCameraFocus();
   if(cameraFocusControls?.removeEventListener) cameraFocusControls.removeEventListener('start',invalidateCameraViewIntent);

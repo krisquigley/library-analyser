@@ -61,10 +61,10 @@ def node_limits():
 
 
 class GraphClickImmediateTests(unittest.TestCase):
-    def run_scenario(self, scenario):
+    def run_scenario(self, scenario, fixture=FIXTURE):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node required: RED cannot be reported from skipped tests')
-        script = (FIXTURE + HELPERS + scenario +
+        script = (fixture + HELPERS + scenario +
                   '\n})().then(()=>console.log("SCENARIO_COMPLETED")).catch(error=>{console.error(error);process.exitCode=1;});')
         for asset in ASSETS:
             with self.subTest(asset=str(asset.relative_to(ROOT))):
@@ -92,6 +92,31 @@ class GraphClickImmediateTests(unittest.TestCase):
                 self.assertEqual(process.returncode, 0, diagnostic)
                 self.assertIn('SCENARIO_COMPLETED', diagnostic,
                               'Node exited without completing the bounded async scenario')
+
+    def test_optional_controls_adapter_does_not_block_render_or_accepted_selection(self):
+        seam = "if(key==='controls') return ()=>controls;"
+        self.assertEqual(FIXTURE.count(seam), 1)
+        fixture = FIXTURE.replace(seam, "if(key==='controls') return undefined;", 1)
+        self.run_scenario(r'''
+assert.doesNotThrow(()=>render(),'render must tolerate a graph adapter without controls');
+assert.equal(liveData.nodes.length,2,'topology still mounts without the optional camera adapter');
+await clickHandler(b); await flush(); tick(); tick();
+assert.deepEqual(details,['b'],'missing controls must not prevent accepted detail'); assertHalo('b');
+''', fixture=fixture)
+
+    def test_real_controls_start_cancels_focus_while_search_post_is_pending(self):
+        self.run_scenario(r'''
+render(); configureView(); calls.length=0;
+assert.equal(typeof controlListeners.get('start'),'function','real controls observer remains installed');
+let resolvePost; postHook=()=>new Promise(resolve=>{resolvePost=resolve;});
+const pending=searchButton('b').onclick();
+orbit({x:901,y:802,z:703},{x:91,y:82,z:73});
+const manual=pose(), count=calls.length;
+resolvePost(accept('b')); await pending; await flush(); tick(); tick();
+assert.deepEqual(pose(),manual,'accepted search cannot override newer controls start');
+assert.equal(calls.length,count,'late acceptance cannot schedule a camera animation');
+assert.deepEqual(details,['b']); assertHalo('b');
+''')
 
     def test_click_centers_synchronously_while_post_pending_without_replay_and_search_animates(self):
         self.run_scenario(r'''
