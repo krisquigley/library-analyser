@@ -21,6 +21,7 @@ let selectionDetailFlight=null;
 let pendingSelectionIntent=null;
 let pendingSelectionOperation=null;
 let pendingCameraSelection=null;
+let cameraViewIntentGeneration=0;
 let cameraFocusGeneration=0;
 let cameraFocusFrame=null;
 let cameraFocusControls=null;
@@ -63,9 +64,9 @@ function syncSelectionEpoch(snapshot){
   if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
   return snapshot;
 }
-function invalidateSelectionIntent(){cancelCameraFocus(); selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null; pendingCameraSelection=null;}
+function invalidateSelectionIntent(){invalidateCameraViewIntent(); selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null; pendingCameraSelection=null;}
 async function applyHistorySelection(path){
-  cancelCameraFocus();
+  const viewIntentGeneration=invalidateCameraViewIntent();
   const token=++selectionRequestSeq;
   pendingCameraSelection=null;
   pendingSelectionIntent=null;
@@ -74,9 +75,11 @@ async function applyHistorySelection(path){
   try{
     const posted=await api(path,{method:'POST'});
     if(token!==selectionRequestSeq) return;
-    cancelCameraFocus();
     state=syncSelectionEpoch(posted);
-    pendingCameraSelection=state.current_track_id;
+    if(viewIntentGeneration===cameraViewIntentGeneration){
+      cancelCameraFocus();
+      pendingCameraSelection=state.current_track_id;
+    }
     pendingSelectionOperation=null;
     await refresh();
   }catch(error){
@@ -181,7 +184,7 @@ async function refreshSelectionDependent(token){
   return flight.promise;
 }
 async function setCurrent(id,{focusCamera=true}={}){
-  cancelCameraFocus();
+  const viewIntentGeneration=invalidateCameraViewIntent();
   const token=++selectionRequestSeq;
   const postToken=nextSelectionPostSeq();
   pendingCameraSelection=null;
@@ -193,9 +196,11 @@ async function setCurrent(id,{focusCamera=true}={}){
   try{
     const posted=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})});
     if(token!==selectionRequestSeq) return;
-    cancelCameraFocus();
     state=syncSelectionEpoch(posted);
-    pendingCameraSelection=focusCamera?state.current_track_id:null;
+    if(viewIntentGeneration===cameraViewIntentGeneration){
+      cancelCameraFocus();
+      pendingCameraSelection=focusCamera?state.current_track_id:null;
+    }
     pendingSelectionIntent=null;
     pendingSelectionOperation=null;
     await refreshSelectionDependent(token);
@@ -306,12 +311,12 @@ function renderGraphLoadStatus(){const root=document.getElementById('graph-load-
     return;
   }
   panel.replaceChildren(); panel.append(text(document.createElement('h3'),'Library graph')); const p=document.createElement('p'); if(graphLoadState.status==='error'){p.setAttribute('role','alert'); p.setAttribute('aria-live','assertive');} text(p,graphLoadState.message||'The library graph starts automatically; search and track detail remain usable.'); panel.append(p); if(graphLoadState.status==='error'||graphLoadState.status==='ready'){const button=document.createElement('button'); button.id=graphLoadState.status==='error'?'retry-graph':'reload-graph'; button.type='button'; text(button,graphLoadState.status==='error'?'Retry graph':'Reload graph'); button.onclick=()=>loadGraph().catch(()=>{}); panel.append(button);} if(graphLoadState.status==='ready') appendM3UDownloadControls(panel); else if(graphLoadState.status==='loading'||graphLoadState.status==='rendering'){const busy=document.createElement('p'); busy.setAttribute('role','status'); busy.setAttribute('aria-live','polite'); text(busy,graphLoadState.status==='loading'?'Loading graph…':'Rendering graph…'); panel.append(busy);} panel.dataset.graphStatusSignature=signature; panel.dataset.graphLoadStatus=graphLoadState.status;}
-async function loadGraph(){const seq=(graphLoadState.requestSeq||0)+1; graphLoadState={...graphLoadState,status:'loading',message:'Loading graph. The track list, search, history, and detail remain usable.',requestSeq:seq}; renderGraphLoadStatus(); try{const controlQuery=graphQueryFromControls(); const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v3'); if(seq!==graphLoadState.requestSeq) return; graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); graphLoadState={...graphLoadState,status:'rendering',message:`Rendering ${visibleGraph.nodes.length} positioned tracks`,requestSeq:seq}; renderGraphLoadStatus(); await nextFrame(); if(seq!==graphLoadState.requestSeq) return; renderMap(visibleGraph); const statusCopy=graphStatusMessage(graphModel.metadata.graph_status,visibleGraph.nodes.length); graphLoadState={...graphLoadState,status:statusCopy.status,message:statusCopy.message,requestSeq:seq}; renderGraphLoadStatus();}catch(error){if(seq!==graphLoadState.requestSeq) return; graphLoadState={...graphLoadState,status:'error',message:`Graph failed: ${error&&error.message?error.message:error}`,requestSeq:seq}; renderGraphLoadStatus(); throw error;}}
+async function loadGraph(){invalidateCameraViewIntent(); const seq=(graphLoadState.requestSeq||0)+1; graphLoadState={...graphLoadState,status:'loading',message:'Loading graph. The track list, search, history, and detail remain usable.',requestSeq:seq}; renderGraphLoadStatus(); try{const controlQuery=graphQueryFromControls(); const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v3'); if(seq!==graphLoadState.requestSeq) return; graphModel=buildMoodGraphModel(graph); syncGraphControlOptions(graphModel); visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); graphLoadState={...graphLoadState,status:'rendering',message:`Rendering ${visibleGraph.nodes.length} positioned tracks`,requestSeq:seq}; renderGraphLoadStatus(); await nextFrame(); if(seq!==graphLoadState.requestSeq) return; renderMap(visibleGraph); const statusCopy=graphStatusMessage(graphModel.metadata.graph_status,visibleGraph.nodes.length); graphLoadState={...graphLoadState,status:statusCopy.status,message:statusCopy.message,requestSeq:seq}; renderGraphLoadStatus();}catch(error){if(seq!==graphLoadState.requestSeq) return; graphLoadState={...graphLoadState,status:'error',message:`Graph failed: ${error&&error.message?error.message:error}`,requestSeq:seq}; renderGraphLoadStatus(); throw error;}}
 
 function appendM3UDownloadControls(panel){const fs=document.createElement('fieldset'); fs.id='m3u-download-controls'; const legend=document.createElement('legend'); text(legend,'Download M3U'); fs.append(legend); const bpmMin=document.createElement('input'); bpmMin.id='m3u-bpm-min'; bpmMin.type='number'; bpmMin.value=selectedGraphControls.m3uBpmMin||''; bpmMin.placeholder='min BPM'; const bpmMax=document.createElement('input'); bpmMax.id='m3u-bpm-max'; bpmMax.type='number'; bpmMax.value=selectedGraphControls.m3uBpmMax||''; bpmMax.placeholder='max BPM'; const count=document.createElement('input'); count.id='m3u-count'; count.type='number'; count.min='1'; count.max='1000'; count.value=selectedGraphControls.m3uCount||'10'; for(const input of [bpmMin,bpmMax,count]) input.onchange=()=>{selectedGraphControls.m3uBpmMin=bpmMin.value; selectedGraphControls.m3uBpmMax=bpmMax.value; selectedGraphControls.m3uCount=count.value;}; const button=document.createElement('button'); button.id='download-m3u'; button.type='button'; text(button,'Download M3U'); button.onclick=async()=>{selectedGraphControls.m3uBpmMin=bpmMin.value; selectedGraphControls.m3uBpmMax=bpmMax.value; selectedGraphControls.m3uCount=count.value; try{await downloadM3UPlaylist();}catch(error){const status=document.getElementById('m3u-download-status'); if(status){status.setAttribute('role','alert'); status.setAttribute('aria-live','assertive'); text(status,`M3U download failed: ${error&&error.message?error.message:error}`);}}}; const status=document.createElement('p'); status.id='m3u-download-status'; status.className='muted'; status.setAttribute('role','status'); status.setAttribute('aria-live','polite'); fs.append(bpmMin,bpmMax,count,button,status); panel.append(fs);}
 async function downloadM3UPlaylist(){if(!state.current_track_id) throw new Error('Select a start track before downloading M3U'); const params=new URLSearchParams(); params.set('start',state.current_track_id); params.set('bpm_min',selectedGraphControls.m3uBpmMin||''); params.set('bpm_max',selectedGraphControls.m3uBpmMax||''); params.set('count',selectedGraphControls.m3uCount||'10'); const response=await fetch('/api/playlists/m3u?'+params.toString()); const body=response.text?await response.text():''; if(!response.ok) throw new Error(body||'M3U download failed'); const disposition=response.headers&&response.headers.get?response.headers.get('content-disposition')||'':''; const filename=((/filename="?([^";]+)"?/i.exec(disposition)||[])[1])||'library-graph-playlist.m3u'; const warning=response.headers&&response.headers.get?response.headers.get('X-Music-Explorer-Playlist-Warning'):''; const status=document.getElementById('m3u-download-status'); if(status){status.setAttribute('role','status'); status.setAttribute('aria-live','polite'); text(status,warning?`M3U downloaded. Warning: ${warning}`:'M3U downloaded.');} const blob=new Blob([body],{type:(response.headers&&response.headers.get?response.headers.get('content-type'):'')||'audio/x-mpegurl;charset=utf-8'}); const url=URL.createObjectURL(blob); const anchor=document.createElement('a'); anchor.href=url; anchor.download=filename; try{if(document.body&&document.body.append) document.body.append(anchor); anchor.click();}finally{if(anchor.remove) anchor.remove(); URL.revokeObjectURL(url);}}
 function graphStatusMessage(graphStatus,positionedCount){const build='Run music-analyzer graph build --database DB, then reload this read-only explorer.'; const status=graphStatus&&typeof graphStatus.state==='string'?graphStatus.state:'ready'; switch(status){case 'ready': return {status:'ready',message:`Graph ready: ${positionedCount} positioned tracks`}; case 'stale': return {status:'ready',message:`Graph stale: showing the last stored snapshot for ${positionedCount} positioned tracks. ${build}`}; case 'build_needed': return {status:'ready',message:`Graph needs a build: no current stored graph snapshot is available. ${build}`}; case 'failed': return {status:'ready',message:`Graph failed: the last stored graph build did not complete successfully. ${build}`}; case 'building': return {status:'ready',message:`Graph building: a stored graph snapshot is not ready yet. ${build}`}; default: return {status:'ready',message:`Graph status unavailable: showing ${positionedCount} positioned tracks from the stored snapshot. ${build}`};}}
-function applyCurrentGraphFilters(){if(graphLoadState.status!=='ready'){renderGraphLoadStatus(); return false;} visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); const statusCopy=graphStatusMessage(graphModel.metadata.graph_status,visibleGraph.nodes.length); graphLoadState={...graphLoadState,message:statusCopy.message}; renderMap(visibleGraph); renderGraphLoadStatus(); return true;}
+function applyCurrentGraphFilters(){invalidateCameraViewIntent(); if(graphLoadState.status!=='ready'){renderGraphLoadStatus(); return false;} visibleGraph=applyMoodGraphFilters(graphModel,selectedGraphControls); const statusCopy=graphStatusMessage(graphModel.metadata.graph_status,visibleGraph.nodes.length); graphLoadState={...graphLoadState,message:statusCopy.message}; renderMap(visibleGraph); renderGraphLoadStatus(); return true;}
 function renderInitialDetail(model){const root=document.getElementById('detail'); if(!root) return; root.setAttribute('aria-busy','false'); root.replaceChildren();}
 function fieldDisplay(f){const a=f.automatic||{}; if(a.values&&a.values.length) return a.values; if(a.summary_values&&a.summary_values.length) return a.summary_values; return f.effective_source;}
 // Detail is a presentation of retained evidence, not a graph filter or analysis threshold.
@@ -614,6 +619,13 @@ function animateGraphAxes(){
   if(forceGraph){syncGraphAxes(forceGraph,pendingGraphAxisSpec,document.getElementById('graph3d'));placeGraphAxisLabels(forceGraph);syncSelectedNodeHalo(forceGraph,visibleGraph);}
   requestAnimationFrame(animateGraphAxes);
 }
+// View ownership outlives a POST or a deferred layout, independently of the RAF timeline.
+function invalidateCameraViewIntent(){
+  cameraViewIntentGeneration++;
+  pendingCameraSelection=null;
+  cancelCameraFocus();
+  return cameraViewIntentGeneration;
+}
 // Own the timeline: bundled cameraPosition's timed tweens have no public cancellation.
 function cancelCameraFocus(){
   cameraFocusGeneration++;
@@ -624,9 +636,9 @@ function observeCameraFocusControls(graph){
   const controls=graph.controls();
   if(controls===cameraFocusControls) return;
   cancelCameraFocus();
-  if(cameraFocusControls?.removeEventListener) cameraFocusControls.removeEventListener('start',cancelCameraFocus);
+  if(cameraFocusControls?.removeEventListener) cameraFocusControls.removeEventListener('start',invalidateCameraViewIntent);
   cameraFocusControls=controls;
-  if(controls?.addEventListener) controls.addEventListener('start',cancelCameraFocus);
+  if(controls?.addEventListener) controls.addEventListener('start',invalidateCameraViewIntent);
 }
 // Normalize by the largest component before measuring: finite wheel poses can
 // have an overflowing radius, while subnormal gaps have overflowing reciprocals.
@@ -832,7 +844,7 @@ function renderMoodStrip(data){
   picker.oninput=show; show();
   canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
 }
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true);} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true);} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
