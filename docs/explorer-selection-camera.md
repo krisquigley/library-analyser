@@ -94,8 +94,9 @@ the exact selected-node endpoint, avoiding large-start interpolation cancellatio
 
 Reset, history/new-selection intent, and changed authoritative selection
 reconciliation supersede active motion as well as pending intent. User orbit
-cancels active motion; an accepted focus deferred for a replacement graph still
-reconciles after that graph is rendered. The bundled
+cancels active motion and retires pending focus, including an accepted focus
+deferred for a replacement graph. Only an unsuperseded deferred focus reconciles
+after that graph is rendered. The bundled
 ForceGraph camera API has no public tween-cancellation method: its timed
 `cameraPosition` creates private position and look-at tweens, and a zero-duration
 setter does **not** cancel those tweens. Consequently, focus animation belongs
