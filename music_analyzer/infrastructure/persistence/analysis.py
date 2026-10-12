@@ -23,6 +23,7 @@ from music_analyzer.application.use_cases.graph_feature_evidence import (
 )
 from music_analyzer.application.use_cases.metadata_validation import validate_metadata
 from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
+from music_analyzer.domain.catalogue import validate_file_size
 from music_analyzer.domain.projection import (
     DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, validate_graph_source_fingerprint,
 )
@@ -1324,6 +1325,12 @@ class SQLiteAnalysisRepository:
     def register(self, inventory):
         try:
             for file in inventory.files:
+                validate_file_size(file.identity.size)
+                # INTEGER affinity cannot retain whole-byte values outside signed64.
+                # Compare as integers: float(2**63 - 1) rounds up to 2**63.
+                if int(file.identity.size) > 2**63 - 1:
+                    raise ValueError('Invalid file size for SQLite INTEGER; use a whole-byte size '
+                                     'between 0 and 9223372036854775807 (signed 64-bit)')
                 validate_metadata(file.metadata)
         except ValueError as error:
             raise AnalysisError(str(error)) from error

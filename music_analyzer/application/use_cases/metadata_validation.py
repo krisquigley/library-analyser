@@ -5,8 +5,9 @@ from music_analyzer.application.dto.catalogue import TrackMetadata
 def validate_metadata(metadata: TrackMetadata) -> None:
     """Require text common/tag pairs and text warnings without coercing values.
 
-    Lists and tuples represent the same ordered metadata contract. Durations
-    retain their separate eligibility policy; no text-size policy is imposed.
+    Lists and tuples represent the same ordered metadata contract. Boolean
+    durations are not measurements; other duration normalization and eligibility
+    remain separate policies. No text-size policy is imposed.
     """
     if not _pairs(metadata.common, common=True):
         raise ValueError('Invalid metadata common pairs')
@@ -14,6 +15,8 @@ def validate_metadata(metadata: TrackMetadata) -> None:
         raise ValueError('Invalid metadata tag pairs')
     if not _texts(metadata.warnings):
         raise ValueError('Invalid metadata warnings')
+    if isinstance(metadata.duration_seconds, bool):
+        raise ValueError('Invalid duration: boolean is not a numeric measurement')
 
 
 def _texts(values) -> bool:

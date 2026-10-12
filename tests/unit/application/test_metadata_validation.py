@@ -15,6 +15,20 @@ class MetadataValidationTests(unittest.TestCase):
             with self.subTest(metadata=metadata):
                 self.assertIsNone(validate_metadata(metadata))
 
+    def test_rejects_boolean_duration_without_coercion(self):
+        for seconds in (True, False):
+            for source in ('mutagen', 'ffprobe', 'tag', ''):
+                with self.subTest(seconds=seconds, source=source):
+                    with self.assertRaisesRegex(ValueError, '[Dd]uration.*numeric'):
+                        validate_metadata(TrackMetadata(duration_seconds=seconds, duration_source=source))
+
+    def test_duration_validation_preserves_separate_normalization_and_eligibility(self):
+        for seconds in (None, 0, -1, 180, 180.5, 1201, float('nan'), float('inf'), -float('inf'), '180'):
+            with self.subTest(seconds=seconds):
+                metadata = TrackMetadata(duration_seconds=seconds, duration_source='mutagen')
+                self.assertIsNone(validate_metadata(metadata))
+                self.assertIs(metadata.duration_seconds, seconds)
+
     def test_rejects_non_pair_collections_and_malformed_common_values(self):
         for common in ({'title': 'Song'}, 'title', None, (('title',),),
                        (('title', 'Song', 'extra'),), ((1, 'Song'),),
