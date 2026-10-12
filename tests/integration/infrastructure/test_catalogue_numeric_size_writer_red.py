@@ -11,6 +11,8 @@ the writer's private connection or mutates persisted data.
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
+from math import nextafter, inf
+from unittest.mock import patch
 import sqlite3
 import tempfile
 import unittest
@@ -152,6 +154,53 @@ class CatalogueNumericSizeWriterTests(unittest.TestCase):
             self.assertEqual(self.writer.current_graph_snapshot(2, self.revision)['build_id'],
                              self.build_id)
         self._assert_corrected_retry_succeeds()
+
+    def test_register_rejects_unrepresentable_sizes_before_connection_and_allows_retry(self):
+        limit = 2**63
+        sizes = (float(limit), float(limit - 1), nextafter(float(limit), inf), limit, limit + 1)
+        before = self._public_state()
+        persisted_before = self._persisted_snapshot()
+        for index, size in enumerate(sizes):
+            with self.subTest(size=size, type=type(size).__name__):
+                malformed = self._replacement(size)
+                malformed = (malformed[0], replace(malformed[1], identity=FileIdentity(f'{index + 3:064x}', size)))
+                # Observe the SQLite boundary, not the writer's private connection.
+                with patch('sqlite3.connect', wraps=sqlite3.connect) as connect:
+                    with self.assertRaises(AnalysisError) as rejected:
+                        self.writer.register(self._inventory(malformed))
+                    connect.assert_not_called()
+                self.assertRegex(str(rejected.exception), r'(?i)size')
+                self.assertRegex(str(rejected.exception), r'(?i)SQLite|signed.64')
+                self.assertRegex(str(rejected.exception), r'9223372036854775807')
+                self.assertEqual(self._persisted_snapshot(), persisted_before)
+                self.assertEqual(self._public_state(), before)
+        self._assert_corrected_retry_succeeds()
+
+    def test_register_accepts_signed64_max_and_supported_integral_sizes(self):
+        sizes = (2**63 - 1, nextafter(float(2**63), -inf), 456.0, True, False)
+        for index, size in enumerate(sizes):
+            with self.subTest(size=size):
+                files = self._replacement(size)
+                files = (files[0], replace(files[1], identity=FileIdentity(f'{index + 3:064x}', size)))
+                self.writer.register(self._inventory(files))
+                reader = ReadOnlyExplorerSQLiteRepository(str(self.path))
+                stored = reader.read_track(files[1].identity.track_id)
+                self.assertIs(type(stored.size), int)
+                self.assertEqual(stored.size, int(size))
+                self.assertEqual(stored.metadata, files[1].metadata)
+                self.assertIn(files[1].location, reader.available_audio_paths())
+                reopened = SQLiteAnalysisRepository(str(self.path))
+                self.assertEqual(reopened.read_track(files[1].identity.track_id).size, int(size))
+
+    def test_supported_integral_float_with_unknown_audio_remains_readable(self):
+        file = replace(self._replacement(456.0)[1], metadata=TrackMetadata())
+        self.writer.register(self._inventory((file,)))
+        reader = ReadOnlyExplorerSQLiteRepository(str(self.path))
+        stored = reader.read_track(file.identity.track_id)
+        self.assertEqual(stored.size, 456)
+        self.assertIsNone(stored.metadata.duration_seconds)
+        self.assertEqual(stored.metadata.duration_source, '')
+        self.assertNotIn(file.identity.track_id, reader.track_ids())
 
     def test_valid_integer_size_replacement_is_accepted_and_public_reader_remains_usable(self):
         self._public_state()

@@ -1326,6 +1326,11 @@ class SQLiteAnalysisRepository:
         try:
             for file in inventory.files:
                 validate_file_size(file.identity.size)
+                # INTEGER affinity cannot retain whole-byte values outside signed64.
+                # Compare as integers: float(2**63 - 1) rounds up to 2**63.
+                if int(file.identity.size) > 2**63 - 1:
+                    raise ValueError('Invalid file size for SQLite INTEGER; use a whole-byte size '
+                                     'between 0 and 9223372036854775807 (signed 64-bit)')
                 validate_metadata(file.metadata)
         except ValueError as error:
             raise AnalysisError(str(error)) from error
