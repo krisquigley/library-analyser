@@ -21,6 +21,7 @@ from music_analyzer.application.use_cases.graph_feature_evidence import (
     build_graph_feature_evidence,
     validate_graph_feature_evidence_payload,
 )
+from music_analyzer.application.use_cases.metadata_validation import validate_metadata
 from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
 from music_analyzer.domain.projection import (
     DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, validate_graph_source_fingerprint,
@@ -1321,6 +1322,11 @@ class SQLiteAnalysisRepository:
             return 'backfilled'
 
     def register(self, inventory):
+        try:
+            for file in inventory.files:
+                validate_metadata(file.metadata)
+        except ValueError as error:
+            raise AnalysisError(str(error)) from error
         missing = []
         with self._transaction() as db:
             source_changed = False
