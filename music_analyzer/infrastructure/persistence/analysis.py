@@ -853,6 +853,11 @@ class SQLiteAnalysisRepository:
             return {'state': 'stale', 'reason': 'warm graph snapshot is not current', 'action': action}
 
     def begin_graph_build(self, sparse_k: int, source_revision: str) -> str | None:
+        source_revision = str(source_revision)
+        try:
+            validate_graph_source_fingerprint(source_revision)
+        except ValueError as exc:
+            raise AnalysisError(str(exc)) from exc
         build_id = str(uuid4())
         with self._transaction() as db:
             building = db.execute('''
