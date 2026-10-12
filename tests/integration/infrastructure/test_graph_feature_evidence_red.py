@@ -97,6 +97,100 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / 'analysis.sqlite'
 
+    def _register_writer_tracks(self, repository):
+        identities = (FileIdentity('a' * 64, 123), FileIdentity('b' * 64, 123))
+        repository.register(Inventory('/music', tuple(
+            ScannedFile(location, identity, 1, 'flac',
+                        TrackMetadata(duration_seconds=180.0, duration_source='mutagen'))
+            for location, identity in zip(('/music/song.flac', '/music/other.flac'), identities)
+        ), (), True))
+        return identities
+
+    def _publication_state(self):
+        # Observe committed public SQLite data, not repository implementation seams.
+        with closing(sqlite3.connect(self.path)) as db:
+            return tuple(db.iterdump())
+
+    def test_finish_rejects_generated_text_bpm_evidence_atomically_and_good_candidate_retries(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity, other = self._register_writer_tracks(repository)
+        prior_run = _complete_graph_relevant_run(repository, identity)
+        other_run = _complete_graph_relevant_run(repository, other, '/music/other.flac')
+        run_id = repository.start(AudioSource('/music/song.flac', identity.track_id))
+        for stage in _graph_relevant_stages():
+            if stage.stage == 'bpm':
+                stage = StageResult('bpm', stage.provenance, stage.uncertainty, (('bpm', 'fast'),))
+            repository.save_stage(run_id, stage)
+        # Start/checkpoints already invalidate publication. Establish the snapshot
+        # AFTER those mutations: finish itself must not destroy this valid state.
+        edges = (ProjectionEdge(identity.track_id, other.track_id, 0.25, 2),)
+        build_id = repository.replace_graph_snapshot(edges, 10, 'source-fp', positioned_edges=edges)
+        before = self._publication_state()
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone(), ('running',))
+            self.assertEqual(tuple(row[1] for row in _current_graph_feature_rows(db)), (other_run,))
+            self.assertEqual(db.execute('SELECT is_current FROM graph_builds WHERE id=?', (build_id,)).fetchone(), (1,))
+
+        with self.assertRaisesRegex(AnalysisError, r'(?i)(bpm|feature|evidence)'):
+            repository.finish(run_id, 'completed', '')
+
+        self.assertEqual(self._publication_state(), before,
+                         'Rejected finish must preserve runs, stages, evidence, current snapshot and graph history')
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone(), ('running',))
+            self.assertEqual(db.execute('SELECT count(*) FROM graph_feature_evidence WHERE run_id=?', (run_id,)).fetchone(), (0,))
+            self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (prior_run,)).fetchone(), ('completed',))
+
+        # Checkpoints are immutable: retry with a fresh valid candidate via the
+        # public lifecycle, never patch stored stages or bypass writer validation.
+        retry_run = _complete_graph_relevant_run(repository, identity)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (retry_run,)).fetchone(), ('completed',))
+            self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone(), ('running',))
+            self.assertEqual({row[1] for row in _current_graph_feature_rows(db)}, {retry_run, other_run})
+        self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids(), (identity.track_id, other.track_id))
+        self.assertEqual(StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids(), (identity.track_id, other.track_id))
+
+    def test_save_stage_rejects_mismatched_summary_shape_atomically_and_valid_retry_succeeds(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity, other = self._register_writer_tracks(repository)
+        run_id = repository.start(AudioSource('/music/song.flac', identity.track_id))
+        edges = (ProjectionEdge(identity.track_id, other.track_id, 0.25, 2),)
+        repository.replace_graph_snapshot(edges, 10, 'source-fp', positioned_edges=edges)
+        before = self._publication_state()
+        malformed = StageResult('mood', (), 'synthetic summary',
+                                summary=ScoreSummary(('happy', 'dark'), (0.75,), (0.70, 0.10), (0.80, 0.30), 1.0))
+
+        with self.assertRaisesRegex(AnalysisError, r'(?i)(stage|summary)'):
+            repository.save_stage(run_id, malformed)
+
+        self.assertEqual(self._publication_state(), before)
+        valid = next(stage for stage in _graph_relevant_stages() if stage.stage == 'mood')
+        repository.save_stage(run_id, valid)
+        repository.finish(run_id, 'completed', '')
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone(), ('completed',))
+            self.assertEqual(db.execute('SELECT count(*) FROM stages WHERE run_id=?', (run_id,)).fetchone(), (1,))
+            self.assertEqual(_current_graph_feature_rows(db), ())
+
+    def test_public_writer_preserves_optional_legacy_stages_and_missing_graph_features(self):
+        repository = SQLiteAnalysisRepository(str(self.path))
+        identity, other = self._register_writer_tracks(repository)
+        partial = repository.start(AudioSource('/music/song.flac', identity.track_id))
+        repository.save_stage(partial, _graph_relevant_stages()[0])
+        repository.finish(partial, 'completed', '')
+        optional = repository.start(AudioSource('/music/other.flac', other.track_id))
+        for stage in _graph_relevant_stages():
+            if stage.stage in {'genres', 'mood', 'energy'}:
+                stage = StageResult(stage.stage, (), 'unavailable; legacy optional output')
+            repository.save_stage(optional, stage)
+        repository.finish(optional, 'completed', '')
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(tuple(row[1] for row in _current_graph_feature_rows(db)), (optional,))
+            self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (partial,)).fetchone(), ('completed',))
+        self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids(), (identity.track_id, other.track_id))
+        self.assertEqual(StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids(), (identity.track_id, other.track_id))
+
     def test_v8_migrates_to_v10_without_losing_catalogue_runs_stages_graph_history_or_overrides(self):
         repository = SQLiteAnalysisRepository(str(self.path))
         identity = _register_track(repository)
