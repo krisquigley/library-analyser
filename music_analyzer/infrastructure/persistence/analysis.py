@@ -23,6 +23,7 @@ from music_analyzer.application.use_cases.graph_feature_evidence import (
 )
 from music_analyzer.application.use_cases.metadata_validation import validate_metadata
 from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
+from music_analyzer.domain.catalogue import validate_file_size
 from music_analyzer.domain.projection import (
     DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, validate_graph_source_fingerprint,
 )
@@ -1324,6 +1325,7 @@ class SQLiteAnalysisRepository:
     def register(self, inventory):
         try:
             for file in inventory.files:
+                validate_file_size(file.identity.size)
                 validate_metadata(file.metadata)
         except ValueError as error:
             raise AnalysisError(str(error)) from error
