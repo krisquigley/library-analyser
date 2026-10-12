@@ -21,6 +21,7 @@ from music_analyzer.application.use_cases.graph_feature_evidence import (
     build_graph_feature_evidence,
     validate_graph_feature_evidence_payload,
 )
+from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 from music_analyzer.domain.library_duration_policy import (
     DurationVerification,
@@ -1049,6 +1050,10 @@ class SQLiteAnalysisRepository:
         return run_id
 
     def save_stage(self, run_id: str, result: StageResult) -> None:
+        try:
+            validate_stage_result(result)
+        except ValueError as error:
+            raise AnalysisError('Invalid stage result: ' + str(error)) from error
         payload = json.dumps(asdict(result), allow_nan=False, ensure_ascii=False)
         with self._transaction() as db:
             row = db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone()
@@ -1091,6 +1096,10 @@ class SQLiteAnalysisRepository:
         evidence = build_graph_feature_evidence(track_id, run_id, stages)
         if evidence is None:
             return
+        try:
+            validate_graph_feature_evidence_payload(track_id, run_id, evidence.fingerprint, evidence.payload)
+        except ValueError as error:
+            raise AnalysisError('Invalid generated graph feature evidence: ' + str(error)) from error
         if self._latest_active_run_for_track(db, track_id) != (run_id, 'completed'):
             return
         db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (track_id,))
