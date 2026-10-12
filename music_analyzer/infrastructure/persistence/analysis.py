@@ -1072,6 +1072,8 @@ class SQLiteAnalysisRepository:
         except ValueError as error:
             raise AnalysisError('Invalid stage result: ' + str(error)) from error
         payload = json.dumps(asdict(result), allow_nan=False, ensure_ascii=False)
+        if len(payload.encode('utf-8')) > _MAX_STORED_STAGE_RESULT_BYTES:
+            raise AnalysisError('Oversized stored stage (16 MiB limit)')
         with self._transaction() as db:
             row = db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone()
             if row != ('running',):
@@ -1102,7 +1104,12 @@ class SQLiteAnalysisRepository:
             return
         from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_mapping
         stages = []
-        for stage_name, payload in db.execute('SELECT stage,result FROM stages WHERE run_id=? ORDER BY stage', (run_id,)):
+        for stage_name, size in db.execute(
+                'SELECT stage,length(CAST(result AS BLOB)) FROM stages WHERE run_id=? ORDER BY stage', (run_id,)):
+            if size > _MAX_STORED_STAGE_RESULT_BYTES:
+                raise AnalysisError('Oversized stored stage (16 MiB limit)')
+            payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?',
+                                 (run_id, stage_name)).fetchone()[0]
             try:
                 stage = stage_from_mapping(json.loads(payload))
                 if stage.stage != stage_name:
