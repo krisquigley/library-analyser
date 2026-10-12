@@ -13,6 +13,12 @@ NEIGHBOUR_POLICY_VERSION = 'endpoint-local-exact-top-k-neighbours-v2'
 DISTANCE_POLICY_VERSION = 'symmetric-feature-distance-v1'
 
 
+def validate_graph_source_fingerprint(value: str) -> None:
+    """A graph publication identifies its source with nonempty opaque text."""
+    if not isinstance(value, str) or not value:
+        raise ValueError('Graph source fingerprint must be nonempty text')
+
+
 @dataclass(frozen=True)
 class ProjectionParameters:
     k: int = 10

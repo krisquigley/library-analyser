@@ -22,7 +22,9 @@ from music_analyzer.application.use_cases.graph_feature_evidence import (
     validate_graph_feature_evidence_payload,
 )
 from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
-from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
+from music_analyzer.domain.projection import (
+    DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, validate_graph_source_fingerprint,
+)
 from music_analyzer.domain.library_duration_policy import (
     DurationVerification,
     TRUSTED_DURATION_SOURCES,
@@ -851,6 +853,11 @@ class SQLiteAnalysisRepository:
             return {'state': 'stale', 'reason': 'warm graph snapshot is not current', 'action': action}
 
     def begin_graph_build(self, sparse_k: int, source_revision: str) -> str | None:
+        source_revision = str(source_revision)
+        try:
+            validate_graph_source_fingerprint(source_revision)
+        except ValueError as exc:
+            raise AnalysisError(str(exc)) from exc
         build_id = str(uuid4())
         with self._transaction() as db:
             building = db.execute('''
@@ -879,6 +886,11 @@ class SQLiteAnalysisRepository:
         return build_id
 
     def replace_graph_snapshot(self, edges, sparse_k: int, source_fingerprint: str, positioned_edges=(), source_revision: str | None = None, attempt_id: str | None = None) -> str:
+        source_fingerprint = str(source_fingerprint)
+        try:
+            validate_graph_source_fingerprint(source_fingerprint)
+        except ValueError as exc:
+            raise AnalysisError(str(exc)) from exc
         edges = tuple(edges)
         positioned_edges = tuple(positioned_edges)
         build_id = str(attempt_id) if attempt_id is not None else str(uuid4())
@@ -893,7 +905,7 @@ class SQLiteAnalysisRepository:
                 stale_same_fingerprint = db.execute('''
                     SELECT 1 FROM graph_builds
                     WHERE source_fingerprint=? AND source_revision<>? LIMIT 1
-                ''', (str(source_fingerprint), current_source_revision)).fetchone()
+                ''', (source_fingerprint, current_source_revision)).fetchone()
             if stale_same_fingerprint:
                 raise AnalysisError('Graph source changed before snapshot promotion; run graph build again')
             if attempt_id is None:
@@ -902,7 +914,7 @@ class SQLiteAnalysisRepository:
                         id,status,detail,edge_count,sparse_k,source_fingerprint,source_revision,attempt_revision,
                         distance_policy_version,neighbour_policy_version,is_current,completed_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?,0,CURRENT_TIMESTAMP)''',
-                    (build_id, 'completed', '', len(edges), int(sparse_k), str(source_fingerprint), current_source_revision,
+                    (build_id, 'completed', '', len(edges), int(sparse_k), source_fingerprint, current_source_revision,
                      attempt_revision, DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION),
                 )
             else:
@@ -912,7 +924,7 @@ class SQLiteAnalysisRepository:
                            source_revision=?, attempt_revision=?, distance_policy_version=?, neighbour_policy_version=?,
                            completed_at=CURRENT_TIMESTAMP
                        WHERE id=? AND status='building' AND is_current=0 AND source_revision=?''',
-                    (len(edges), int(sparse_k), str(source_fingerprint), current_source_revision, attempt_revision,
+                    (len(edges), int(sparse_k), source_fingerprint, current_source_revision, attempt_revision,
                      DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, build_id, current_source_revision),
                 )
                 if cursor.rowcount != 1:
@@ -1005,6 +1017,11 @@ class SQLiteAnalysisRepository:
             raise AnalysisError('Graph build attempt is no longer active')
 
     def record_graph_failure(self, sparse_k: int, source_fingerprint: str, detail: str, source_revision: str | None = None) -> str:
+        source_fingerprint = str(source_fingerprint)
+        try:
+            validate_graph_source_fingerprint(source_fingerprint)
+        except ValueError as exc:
+            raise AnalysisError(str(exc)) from exc
         build_id = str(uuid4())
         with self._transaction() as db:
             revision = str(source_revision) if source_revision is not None else self._graph_source_revision(db)
@@ -1013,7 +1030,7 @@ class SQLiteAnalysisRepository:
                     id,status,detail,edge_count,sparse_k,source_fingerprint,source_revision,attempt_revision,
                     distance_policy_version,neighbour_policy_version,is_current,completed_at)
                    VALUES(?,?,?,?,?,?,?,?,?,?,0,CURRENT_TIMESTAMP)''',
-                (build_id, 'failed', str(detail)[:1000], 0, int(sparse_k), str(source_fingerprint), revision,
+                (build_id, 'failed', str(detail)[:1000], 0, int(sparse_k), source_fingerprint, revision,
                  str(uuid4()), DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION),
             )
         return build_id
