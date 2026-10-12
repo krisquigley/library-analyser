@@ -4,11 +4,18 @@ from music_analyzer.domain.analysis import finite
 
 
 def validate_stage_result(result: StageResult) -> None:
-    """Check retained summary shape without imposing graph-feature semantics.
+    """Check retained text and summary shape without graph-feature semantics.
 
     Checkpoints may contain string-valued estimates or omit optional summaries.
     Compact graph evidence has a separate, stricter contract at publication.
     """
+    if not isinstance(result.stage, str) or not isinstance(result.uncertainty, str):
+        raise ValueError('Invalid stage text')
+    if (not isinstance(result.provenance, (list, tuple))
+            or any(not isinstance(pair, (list, tuple)) or len(pair) != 2
+                   or not all(isinstance(value, str) for value in pair)
+                   for pair in result.provenance)):
+        raise ValueError('Invalid stage provenance')
     summary = result.summary
     if summary is None:
         return

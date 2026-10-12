@@ -9,6 +9,23 @@ class StageResultValidationTests(unittest.TestCase):
         from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
         validate_stage_result(result)
 
+    def test_rejects_nontext_stage_and_uncertainty(self):
+        for result in (StageResult(123, (), ''), StageResult('instruments', (), 123)):
+            with self.subTest(result=result):
+                with self.assertRaisesRegex(ValueError, 'stage text'):
+                    self.validate(result)
+
+    def test_rejects_provenance_that_is_not_text_pairs(self):
+        for provenance in (None, 'source', (('source', 123),), ((123, 'synthetic'),),
+                           (('source',),), (('source', 'synthetic', 'extra'),)):
+            with self.subTest(provenance=provenance):
+                with self.assertRaisesRegex(ValueError, 'stage provenance'):
+                    self.validate(StageResult('instruments', provenance, ''))
+
+    def test_accepts_text_provenance_and_open_stage_names(self):
+        self.validate(StageResult('custom-stage', (('source', 'synthetic'),), 'uncertain',
+                                  (('instrument', 'piano'), ('confidence', 0.75), ('count', 2))))
+
     def test_rejects_summary_vectors_that_do_not_match_labels(self):
         for field in ('mean', 'minimum', 'maximum'):
             values = dict(labels=('happy', 'dark'), mean=(0.7, 0.2),
