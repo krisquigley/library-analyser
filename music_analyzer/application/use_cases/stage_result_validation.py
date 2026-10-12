@@ -16,6 +16,13 @@ def validate_stage_result(result: StageResult) -> None:
                    or not all(isinstance(value, str) for value in pair)
                    for pair in result.provenance)):
         raise ValueError('Invalid stage provenance')
+    if (not isinstance(result.values, (list, tuple))
+            or any(not isinstance(pair, (list, tuple)) or len(pair) != 2
+                   or not isinstance(pair[0], str)
+                   or isinstance(pair[1], bool)
+                   or not (isinstance(pair[1], str) or finite(pair[1]))
+                   for pair in result.values)):
+        raise ValueError('Invalid stage values')
     summary = result.summary
     if summary is None:
         return

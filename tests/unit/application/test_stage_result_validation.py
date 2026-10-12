@@ -48,6 +48,22 @@ class StageResultValidationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'stage summary'):
                     self.validate(StageResult('mood', (), '', summary=summary))
 
+    def test_rejects_values_not_supported_by_retained_mapping(self):
+        for values in (None, 'score', ((123, 1),), (('score',),),
+                       (('score', 1, 2),), (('score', True),), (('score', False),),
+                       (('score', float('nan')),), (('score', float('inf')),),
+                       (('score', None),)):
+            with self.subTest(values=values):
+                with self.assertRaisesRegex(ValueError, 'stage values'):
+                    self.validate(StageResult('bpm', (), '', values))
+
+    def test_accepts_finite_numeric_and_string_values_with_optional_summary(self):
+        for summary in (None, ScoreSummary(('score',), (0.7,), (0.6,), (0.8,), 1.0)):
+            for values in ((), [], (('score', 1),), (('score', 0.5),),
+                           (('score', -2),), (('score', 'estimated'),)):
+                with self.subTest(summary=summary, values=values):
+                    self.validate(StageResult('bpm', (), '', values, summary=summary))
+
     def test_accepts_valid_summary(self):
         self.validate(StageResult('mood', (), '', summary=ScoreSummary(
             ('happy', 'dark'), (0.7, 0.2), (0.6, 0.1), (0.8, 0.3), 0.5)))
