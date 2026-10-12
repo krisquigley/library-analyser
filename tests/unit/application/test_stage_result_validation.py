@@ -151,6 +151,21 @@ class StageResultValidationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'coverage window'):
                     self.validate(StageResult('mood', (), '', windows=windows, summary=summary))
 
+    def test_normalizes_window_arithmetic_overflow_as_invalid_window(self):
+        summary = ScoreSummary(('happy',), (0.7,), (0.7,), (0.7,), 1.0)
+        with self.assertRaisesRegex(ValueError, 'Invalid .*window'):
+            self.validate(StageResult('mood', (), '',
+                                      windows=(ScoreWindow(0, 10**309, (0.7,)),),
+                                      summary=summary))
+
+    def test_accepts_float_and_integer_window_arithmetic(self):
+        for end, coverage in ((10, 1), (10, 1.0), (10.0, 1.0)):
+            with self.subTest(end=end, coverage=coverage):
+                self.validate(StageResult('mood', (), '',
+                                          windows=(ScoreWindow(0, end, (0.7,)),),
+                                          summary=ScoreSummary(('happy',), (0.7,), (0.7,),
+                                                               (0.7,), coverage)))
+
     def test_rejects_absent_windows_container_without_summary(self):
         with self.assertRaisesRegex(ValueError, 'coverage window'):
             self.validate(StageResult('mood', (), '', windows=None))

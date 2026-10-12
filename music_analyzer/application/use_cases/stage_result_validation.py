@@ -50,10 +50,13 @@ def validate_stage_result(result: StageResult) -> None:
             or not finite(summary.coverage) or not 0 < summary.coverage <= 1):
         raise ValueError('Invalid stage summary')
     if result.windows:
-        duration = sum(window.end - window.start for window in result.windows) / summary.coverage
-        # Inverting rounded coverage can lose an ULP at the final boundary.
-        # Correct reconstruction roundoff only, as retained readers do.
-        end = result.windows[-1].end
-        if finite(end) and duration < end and isclose(duration, end, rel_tol=1e-14, abs_tol=0):
-            duration = end
-        summarize_scores(summary.labels, result.windows, duration)
+        try:
+            duration = sum(window.end - window.start for window in result.windows) / summary.coverage
+            # Inverting rounded coverage can lose an ULP at the final boundary.
+            # Correct reconstruction roundoff only, as retained readers do.
+            end = result.windows[-1].end
+            if finite(end) and duration < end and isclose(duration, end, rel_tol=1e-14, abs_tol=0):
+                duration = end
+            summarize_scores(summary.labels, result.windows, duration)
+        except OverflowError as error:
+            raise ValueError('Invalid score shape, score, or coverage window') from error
