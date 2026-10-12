@@ -88,6 +88,51 @@ class GraphWriterOriginContractTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (self.historical_id,)).fetchone()[0], len(self.full))
             self.assertEqual(db.execute('SELECT count(*) FROM graph_build_positioned_edges WHERE build_id=?', (self.historical_id,)).fetchone()[0], len(self.positioned))
 
+    def test_begin_rejects_empty_revision_placeholder_without_changing_publication(self):
+        before = self._database_bytes()
+        with self.assertRaisesRegex(AnalysisError, 'Graph source fingerprint must be nonempty text'):
+            self.writer.begin_graph_build(2, '')
+        self.assertEqual(self._database_bytes(), before)
+        self.assertEqual(self.peer.source_revision(), self.revision)
+        self._assert_previous_current()
+        retry_id = self.writer.begin_graph_build(2, self.revision)
+        self.assertIsNotNone(retry_id)
+        self.assertEqual(self._replace('valid-begin-retry', retry_id), retry_id)
+        self.assertEqual(self.peer.current_graph_snapshot(2, self.revision)['build_id'], retry_id)
+
+    def test_begin_rejects_empty_revision_and_preserves_prior_attempt_for_retry(self):
+        attempt_id = self.writer.begin_graph_build(2, self.revision)
+        self.assertIsNotNone(attempt_id)
+        before = self._database_bytes()
+        with self.assertRaisesRegex(AnalysisError, 'Graph source fingerprint must be nonempty text'):
+            self.peer.begin_graph_build(2, '')
+        self.assertEqual(self._database_bytes(), before)
+        self._assert_previous_current()
+        self.assertIsNone(self.peer.begin_graph_build(2, self.revision))
+        self.assertEqual(self._database_bytes(), before)
+        self.writer.finish_graph_build_attempt(attempt_id, 'failed', 'safe retry')
+        retry_id = self.peer.begin_graph_build(2, self.revision)
+        self.assertIsNotNone(retry_id)
+        self.assertNotEqual(retry_id, attempt_id)
+        self.assertEqual(self._replace('valid-begin-owned-retry', retry_id), retry_id)
+        self.assertEqual(self.peer.current_graph_snapshot(2, self.revision)['build_id'], retry_id)
+
+    def test_begin_preserves_normalized_nonempty_opaque_revision_contract(self):
+        for revision in (None, False, 0, ' ', 'opaque-revision'):
+            with self.subTest(revision=revision):
+                attempt_id = self.writer.begin_graph_build(2, revision)
+                self.assertIsNotNone(attempt_id)
+                with closing(sqlite3.connect(self.path)) as db:
+                    self.assertEqual(
+                        db.execute(
+                            'SELECT source_fingerprint,source_revision FROM graph_builds WHERE id=?',
+                            (attempt_id,),
+                        ).fetchone(),
+                        (str(revision), str(revision)),
+                    )
+                self.writer.finish_graph_build_attempt(attempt_id, 'failed', 'opaque control')
+                self._assert_previous_current()
+
     def test_direct_replacement_rejects_empty_fingerprint_without_changing_publication(self):
         before = self._database_bytes()
         with self.assertRaises(AnalysisError, msg='direct graph replacement must reject the persisted empty fingerprint contract'):
