@@ -16,6 +16,8 @@ from tests.integration.infrastructure.integrity_d1_public_fixture import create_
 class IntegrityD1InstalledControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if os.environ.get('RUN_PACKAGING_TESTS') == '0':
+            raise unittest.SkipTest('RUN_PACKAGING_TESTS=0 disables installed-wheel packaging controls')
         cls.scratch = tempfile.TemporaryDirectory(prefix='integrity-d1-installed-')
         cls.root = Path(cls.scratch.name)
         cls.outside = cls.root / 'outside'
