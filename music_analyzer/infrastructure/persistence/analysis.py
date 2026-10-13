@@ -39,6 +39,14 @@ _SQLITE_OCTET_LENGTH_VERSION = (3, 43, 0)
 _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT = 16 * 1024 * 1024
 
 
+def _bounded_graph_feature_evidence_json(evidence):
+    """Serialize once and bound the exact UTF-8 bytes published by writers."""
+    payload_json = evidence.payload_json()
+    if len(payload_json.encode('utf-8')) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
+        raise AnalysisError('Oversized stored graph feature evidence (16 MiB limit)')
+    return payload_json
+
+
 def _graph_feature_evidence_size_expression(column='evidence_json'):
     if column != 'evidence_json':
         raise ValueError('Unsupported graph feature evidence column')
@@ -1126,6 +1134,7 @@ class SQLiteAnalysisRepository:
             validate_graph_feature_evidence_payload(track_id, run_id, evidence.fingerprint, evidence.payload)
         except ValueError as error:
             raise AnalysisError('Invalid generated graph feature evidence: ' + str(error)) from error
+        payload_json = _bounded_graph_feature_evidence_json(evidence)
         if self._latest_active_run_for_track(db, track_id) != (run_id, 'completed'):
             return
         db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (track_id,))
@@ -1136,7 +1145,7 @@ class SQLiteAnalysisRepository:
                    fingerprint=excluded.fingerprint,
                    evidence_json=excluded.evidence_json,
                    is_current=1''',
-            (track_id, run_id, evidence.fingerprint, evidence.payload_json()),
+            (track_id, run_id, evidence.fingerprint, payload_json),
         )
 
     @classmethod
@@ -1229,12 +1238,24 @@ class SQLiteAnalysisRepository:
                 yield row
             after = page[-1][0]
 
+    def _read_current_graph_feature_evidence(self, db, track_id, run_id):
+        size_expression = _graph_feature_evidence_size_expression()
+        size = db.execute(
+            f'SELECT {size_expression} FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
+            (track_id, run_id),
+        ).fetchone()
+        if size is None:
+            return None
+        if int(size[0]) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
+            raise AnalysisError('Oversized stored graph feature evidence (16 MiB limit)')
+        return db.execute(
+            'SELECT fingerprint,evidence_json FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
+            (track_id, run_id),
+        ).fetchone()
+
     def _graph_feature_current_matches(self, track_id, run_id):
         with self._backfill_transaction() as db:
-            current = db.execute(
-                'SELECT fingerprint,evidence_json FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
-                (track_id, run_id),
-            ).fetchone()
+            current = self._read_current_graph_feature_evidence(db, track_id, run_id)
         if current is None:
             return False
         fingerprint, payload_json = current
@@ -1295,15 +1316,12 @@ class SQLiteAnalysisRepository:
     def _publish_historical_graph_feature_evidence(self, evidence):
         payload = evidence.payload
         validate_graph_feature_evidence_payload(evidence.track_id, evidence.run_id, evidence.fingerprint, payload)
-        payload_json = evidence.payload_json()
+        payload_json = _bounded_graph_feature_evidence_json(evidence)
         with self._backfill_transaction(immediate=True) as db:
             latest = self._latest_active_run_for_track(db, evidence.track_id)
             if latest != (evidence.run_id, 'completed'):
                 return 'stale_skipped'
-            current = db.execute(
-                'SELECT fingerprint,evidence_json FROM graph_feature_evidence WHERE track_id=? AND run_id=? AND is_current=1',
-                (evidence.track_id, evidence.run_id),
-            ).fetchone()
+            current = self._read_current_graph_feature_evidence(db, evidence.track_id, evidence.run_id)
             if current == (evidence.fingerprint, payload_json):
                 return 'already_current'
             db.execute('UPDATE graph_feature_evidence SET is_current=0 WHERE track_id=? AND is_current=1', (evidence.track_id,))
