@@ -208,6 +208,38 @@ class IntegrityD1FakeFixtureControls(unittest.TestCase):
 
 
 class IntegrityD1RecognitionConsistency(unittest.TestCase):
+    def assert_sanitized_read_error(self, scan):
+        report = CheckIntegrity(FakeScanner(scan)).execute('PRIVATE TARGET.sqlite')
+        self.assertEqual(report.stop_reason, 'read_error')
+        self.assertEqual(report.status, 'incomplete')
+        self.assertEqual(report.exit_code, 4)
+        self.assertFalse(report.implemented_scope_complete)
+        self.assertIsNone(report.schema_version)
+        self.assertFalse(report.findings_truncated)
+        self.assertEqual(tuple((f.check_id, f.code) for f in report.findings),
+                         (('resource_access', 'read_failed'),))
+        self.assertNotIn('PRIVATE', repr(report))
+
+    def test_truncation_cannot_claim_completed_scope_or_another_stop(self):
+        from dataclasses import replace
+        self.assert_sanitized_read_error(replace(healthy_scan(6), findings_truncated=True))
+        self.assert_sanitized_read_error(replace(stopped_scan('deadline'), findings_truncated=True))
+        report = CheckIntegrity(FakeScanner(stopped_scan('finding_limit'))).execute('explicit-public.sqlite')
+        self.assertEqual(report.stop_reason, 'finding_limit')
+        self.assertTrue(report.findings_truncated)
+        self.assertFalse(report.implemented_scope_complete)
+        self.assertEqual(report.exit_code, 4)
+
+    def test_unsupported_database_requires_completed_compatibility_rejection(self):
+        from dataclasses import replace
+        self.assert_sanitized_read_error(replace(stopped_scan('deadline'), stop_reason='unsupported_database'))
+        self.assert_sanitized_read_error(replace(stopped_scan('unsupported_database'), findings=()))
+        report = CheckIntegrity(FakeScanner(stopped_scan('unsupported_database'))).execute('explicit-public.sqlite')
+        self.assertEqual(report.stop_reason, 'unsupported_database')
+        self.assertEqual(report.status, 'unsupported')
+        self.assertEqual(report.exit_code, 3)
+        self.assertFalse(report.implemented_scope_complete)
+
     def test_contradictory_recognition_dependency_and_database_counts_use_safe_fallback(self):
         from dataclasses import replace
         from music_analyzer.application.dto.integrity import IntegrityFinding

@@ -95,6 +95,12 @@ def _valid(scan):
             return False
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
+    if scan.findings_truncated and (
+            scan.implemented_scope_complete or scan.stop_reason != 'finding_limit'):
+        return False
+    if scan.stop_reason == 'unsupported_database' and (
+            by_id['compatibility'].state != 'completed' or not compatibility_failed):
+        return False
     if version is not None and (by_id['compatibility'].state != 'completed' or compatibility_failed
                                 or scan.stop_reason in ('unsupported_database', 'unreadable_database')):
         return False
