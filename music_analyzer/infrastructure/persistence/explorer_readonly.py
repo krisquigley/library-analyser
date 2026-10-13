@@ -754,7 +754,7 @@ class ReadOnlyExplorerSQLiteRepository:
     def _summary_from_row(self, row):
         track_id, _sha, _size, first_path, available_locations, common_json, tags_json, display_label, _sort_key = row
         label = Path(first_path).name if first_path else display_label
-        metadata = self._metadata_from_json(common_json, tags_json, '[]', None)
+        metadata = self._summary_metadata(common_json, tags_json)
         title = self._metadata_value(metadata, 'title') or label or track_id
         artist = self._metadata_value(metadata, 'artist') or 'Unknown artist'
         return ExplorerTrackSummary(track_id, title, artist, label, int(available_locations))
@@ -763,27 +763,43 @@ class ReadOnlyExplorerSQLiteRepository:
         warnings = tuple(str(x) for x in json.loads(warnings_json))
         return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(common_json)), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(tags_json)), warnings, audio[0] if audio else None, audio[1] if audio else '')
 
-    def _summary_sort_key(self, order, common_json, tags_json, display_label, track_id):
+    def _summary_metadata(self, common_json, tags_json):
         try:
-            metadata = self._metadata_from_json(common_json or '[]', tags_json or '[]', '[]', None)
-            label = str(display_label or '')
-            if order == 'artist':
-                return self._metadata_value(metadata, 'artist') or 'Unknown artist'
-            if order == 'title':
-                return self._metadata_value(metadata, 'title') or label or str(track_id or '')
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
-        return str(track_id or '')
+            # Stored summary metadata is a list of key/value pairs, not a JSON
+            # object (even an empty object must not masquerade as no metadata).
+            for common, payload in ((True, common_json), (False, tags_json)):
+                pairs = json.loads(payload)
+                if not isinstance(pairs, list) or any(
+                    not isinstance(pair, list) or len(pair) != 2 for pair in pairs
+                ):
+                    raise ValueError('Invalid metadata pairs')
+                for key, value in pairs:
+                    if not isinstance(key, str) or not (
+                        (common and isinstance(value, str)) or
+                        (isinstance(value, list) and all(isinstance(text, str) for text in value))
+                    ):
+                        raise ValueError('Invalid metadata values')
+            return self._metadata_from_json(common_json, tags_json, '[]', None)
+        except (TypeError, ValueError, RecursionError):
+            # JSON decoder recursion failure is malformed stored metadata,
+            # not an unsanitized request or SQLite UDF error.
+            raise AnalysisError('Invalid stored metadata') from None
+
+    def _summary_sort_key(self, order, common_json, tags_json, display_label, track_id):
+        if order not in ('title', 'artist'):
+            # ID ordering does not consume metadata, including its lookahead.
+            return str(track_id or '')
+        metadata = self._summary_metadata(common_json, tags_json)
+        if order == 'artist':
+            return self._metadata_value(metadata, 'artist') or 'Unknown artist'
+        return self._metadata_value(metadata, 'title') or str(display_label or '') or str(track_id or '')
 
     def _summary_search_key(self, field, common_json, tags_json, display_label, track_id):
         if field == 'title':
             return self._summary_sort_key('title', common_json, tags_json, display_label, track_id)
         if field == 'artist':
-            try:
-                metadata = self._metadata_from_json(common_json or '[]', tags_json or '[]', '[]', None)
-                return self._metadata_value(metadata, 'artist') or ''
-            except (TypeError, ValueError, json.JSONDecodeError):
-                return ''
+            metadata = self._summary_metadata(common_json, tags_json)
+            return self._metadata_value(metadata, 'artist') or ''
         return ''
 
     def _summary_fold(self, value):
@@ -842,17 +858,34 @@ class ReadOnlyExplorerSQLiteRepository:
     def _connection(self):
         self._check_path()
         db = None
+        metadata_failed = False
+
+        def summary_callback(callback):
+            def evaluate(*args):
+                nonlocal metadata_failed
+                try:
+                    return callback(*args)
+                except AnalysisError:
+                    # sqlite3 masks UDF exceptions. Keep only a category flag,
+                    # scoped to this connection, never raw metadata or state on
+                    # the shared repository instance.
+                    metadata_failed = True
+                    raise
+            return evaluate
+
         try:
             uri = self._path.as_uri() + '?mode=ro'
             db = sqlite3.connect(uri, uri=True, timeout=1)
             db.create_function('_explorer_basename', 1, lambda value: Path(str(value)).name if value else '')
-            db.create_function('_explorer_summary_sort_key', 5, self._summary_sort_key)
-            db.create_function('_explorer_summary_search_key', 5, self._summary_search_key)
+            db.create_function('_explorer_summary_sort_key', 5, summary_callback(self._summary_sort_key))
+            db.create_function('_explorer_summary_search_key', 5, summary_callback(self._summary_search_key))
             db.create_function('_explorer_summary_fold', 1, self._summary_fold)
             db.execute('PRAGMA foreign_keys=ON')
             db.execute('PRAGMA query_only=ON')
             yield db
         except (sqlite3.Error, OSError) as error:
+            if metadata_failed:
+                raise AnalysisError('Invalid stored metadata') from None
             raise AnalysisError(f'Analysis database error: {error}') from error
         finally:
             if db is not None:
