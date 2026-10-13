@@ -12,6 +12,16 @@ checks, pilot selection/ratings/measurement, backup/recovery and required Mixxx
 inputs. Representative listening/calibration, Mixxx acceptance and final
 release gates remain **not completed**.
 
+## LIMITED offline integrity diagnostic
+
+`music-analyzer integrity --database DB [--json]` explicitly checks supported
+schema6–10 and core identity/audio rows without loading configuration or starting
+analysis/writer services. D1 is deliberately **incomplete**, even on healthy input:
+exit4, `complete=false`, no clean/trust certificate and no P8 eligibility. The
+report exposes omitted applicable checks and genuine legacy N/A separately.
+See [the LIMITED integrity contract and safety guide](docs/integrity.md) for the
+finite checklist, snapshot/WAL caveats, privacy, work limits and exit meanings.
+
 ## Install and run
 
 Python **3.11+** is required for this CLI, not a promise of Essentia compatibility.
