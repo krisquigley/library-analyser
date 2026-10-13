@@ -272,7 +272,7 @@ class WarmGraphReadSafetyControls(unittest.TestCase):
                 tracks, _identities = create_public_warm_fixture(path)
                 repo = module.ReadOnlyExplorerSQLiteRepository(str(path))
                 self.assertEqual(builder(repo).execute('relaxing').metadata['graph_status']['state'], 'ready')
-                SQLiteAnalysisRepository(str(path)).set_override(tracks[0], 'bpm', 121.0)
+                SQLiteAnalysisRepository(str(path)).set_override(tracks[0], 'bpm', '121.0')
                 before = path.read_bytes()
                 graph = builder(repo).execute('relaxing')
                 self.assertEqual(graph.metadata['graph_status']['state'], 'stale')
