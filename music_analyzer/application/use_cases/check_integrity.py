@@ -130,7 +130,13 @@ def _valid(scan):
     if not _operationally_consistent(scan, by_id['resource_access']):
         return False
     if scan.stop_reason == 'unsupported_database' and (
-            by_id['compatibility'].state != 'completed' or not compatibility_failed):
+            by_id['compatibility'].state != 'completed' or not compatibility_failed
+            or any(item.check_id != 'compatibility' for item in scan.findings)):
+        return False
+    if scan.stop_reason == 'schema_blocked' and (
+            version is None or not schema_failed
+            or by_id['schema'].state not in ('completed', 'blocked')
+            or by_id['core_rows'].state != 'blocked'):
         return False
     if version is not None and (by_id['compatibility'].state != 'completed' or compatibility_failed
                                 or scan.stop_reason in ('unsupported_database', 'unreadable_database')):
