@@ -184,6 +184,8 @@ class SQLiteAnalysisRepository:
                 db.execute('PRAGMA user_version=1')
             elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
+            if version >= 6:
+                self._validate_adopted_views(db)
             if db.execute('PRAGMA user_version').fetchone()[0] == 1:
                 self._validate(db, 1)
                 db.execute('CREATE TABLE tracks(id TEXT PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, size INTEGER NOT NULL)')
@@ -239,6 +241,17 @@ class SQLiteAnalysisRepository:
                 self._migrate_graph_builds_to_v10(db)
                 db.execute('PRAGMA user_version=10')
             self._validate(db, 10)
+
+    def _validate_adopted_views(self, db):
+        # Adoption-only contract check, before historical migrations can write.
+        # Use the same SQL that creates the views, not a second predicate policy.
+        for name, expected_sql in _ACTIVE_VIEWS.items():
+            row = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='view' AND name=?", (name,)
+            ).fetchone()
+            if (row is None or not isinstance(row[0], str)
+                    or ' '.join(row[0].rstrip(';').split()) != ' '.join(expected_sql.rstrip(';').split())):
+                raise AnalysisError('Unexpected analysis database view schema')
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
