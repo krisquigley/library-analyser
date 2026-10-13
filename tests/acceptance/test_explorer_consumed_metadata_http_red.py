@@ -1,5 +1,7 @@
 """Issue88 P6: canonical/alias summary HTTP is all-or-error, not fallback."""
 import json
+import sqlite3
+from contextlib import closing
 import tempfile
 import threading
 import unittest
@@ -61,6 +63,21 @@ class ExplorerConsumedMetadataHTTPTests(unittest.TestCase):
         corrupt_common(self.path, self.handles[3])
         for route, parameter in self.routes:
             with self.subTest(route=route):
+                self.assert_sanitized_failure(route, **{parameter: 'beacon', 'limit': 1, 'order': 'id'})
+
+    def test_selected_metadata_error_is_sanitized_on_both_routes(self):
+        corrupt_common(self.path, self.handles[0])
+        for route, _parameter in self.routes:
+            with self.subTest(route=route):
+                self.assert_sanitized_failure(route, limit=1, order='id')
+
+    def test_late_evaluated_tags_error_is_sanitized_on_both_routes(self):
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute('UPDATE track_metadata SET tags_json=? WHERE track_id=?', ('{}', self.handles[3]))
+            db.commit()
+        for route, parameter in self.routes:
+            with self.subTest(route=route):
+                self.assert_sanitized_failure(route, limit=1, order='artist')
                 self.assert_sanitized_failure(route, **{parameter: 'beacon', 'limit': 1, 'order': 'id'})
 
     def test_valid_alias_counts_order_cursor_and_unrelated_page_are_preserved(self):

@@ -8,6 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from music_analyzer.application.dto.analysis import AnalysisError as AnalyzerError
@@ -92,6 +93,43 @@ class ExplorerConsumedMetadataTests(unittest.TestCase):
                 # Bad's fabricated ID/empty artist cannot match beacon; the
                 # current bug returns a misleading count=3/page instead.
                 self.assert_clear_error(reader(str(self.path)), error_type, query='beacon', order='id')
+
+    def test_late_evaluated_common_and_tags_errors_are_sanitized(self):
+        for column in ('common_json', 'tags_json'):
+            for payload in ('{}', 'null', '""', '{', '[null]', '[["title"]]'):
+                for reader, error_type in self.readers:
+                    with self.subTest(column=column, payload=payload, reader=reader.__module__):
+                        with closing(sqlite3.connect(self.path)) as db:
+                            original = db.execute(f'SELECT {column} FROM track_metadata WHERE track_id=?', (self.handles[3],)).fetchone()[0]
+                            db.execute(f'UPDATE track_metadata SET {column}=? WHERE track_id=?', (payload, self.handles[3]))
+                            db.commit()
+                        try:
+                            self.assert_clear_error(reader(str(self.path)), error_type, order='artist')
+                            self.assert_clear_error(reader(str(self.path)), error_type, query='beacon', order='id')
+                        finally:
+                            with closing(sqlite3.connect(self.path)) as db:
+                                db.execute(f'UPDATE track_metadata SET {column}=? WHERE track_id=?', (original, self.handles[3]))
+                                db.commit()
+
+    def test_selected_id_page_metadata_error_is_sanitized(self):
+        corrupt_common(self.path, self.handles[0])
+        for reader, error_type in self.readers:
+            with self.subTest(reader=reader.__module__):
+                self.assert_clear_error(reader(str(self.path)), error_type, order='id')
+
+    def test_failure_context_is_not_shared_between_requests(self):
+        corrupt_common(self.path, self.handles[3])
+        for reader, error_type in self.readers:
+            repo = reader(str(self.path))
+            with self.subTest(reader=reader.__module__):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    failed = pool.submit(repo.list_track_summaries, 1, order='title')
+                    healthy = pool.submit(repo.list_track_summaries, 1, order='id')
+                    with self.assertRaises(error_type) as raised:
+                        failed.result(timeout=5)
+                    self.assertEqual(str(raised.exception), 'Invalid stored metadata')
+                    self.assertEqual(healthy.result(timeout=5)[1], 4)
+                self.assertEqual(repo.list_track_summaries(1, order='id')[1], 4)
 
     def test_valid_pages_counts_cursors_and_query_contracts_are_unchanged(self):
         before = stored_snapshot(self.path)
