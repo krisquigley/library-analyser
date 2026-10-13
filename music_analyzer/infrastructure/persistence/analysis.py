@@ -24,6 +24,7 @@ from music_analyzer.application.use_cases.graph_feature_evidence import (
 from music_analyzer.application.use_cases.metadata_validation import validate_metadata
 from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
 from music_analyzer.domain.catalogue import validate_file_size
+from music_analyzer.domain.review import validate_override
 from music_analyzer.domain.projection import (
     DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, validate_graph_source_fingerprint,
 )
@@ -1456,6 +1457,10 @@ class SQLiteAnalysisRepository:
             raise AnalysisError('Invalid stored metadata') from error
 
     def set_override(self, track_id, field, value):
+        try:
+            validate_override(field, value)
+        except ValueError as error:
+            raise AnalysisError(str(error)) from error
         with self._transaction() as db:
             if not db.execute('SELECT 1 FROM tracks WHERE id=?', (track_id,)).fetchone():
                 raise AnalysisError('Unknown track ID; scan first')
