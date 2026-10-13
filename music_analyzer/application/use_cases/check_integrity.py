@@ -25,6 +25,38 @@ CODES = {
 STOPS = ('scope_not_implemented', 'unsupported_database', 'unreadable_database', 'schema_blocked',
          'deadline', 'row_limit', 'utf8_limit', 'value_limit', 'finding_limit', 'read_error', 'cleanup_error', 'cancelled')
 SELECTED = ('compatibility', 'schema', 'core_rows', 'resource_access')
+OPERATIONAL_STOPS = {
+    'unreadable_database': 'initial_access_failed', 'read_error': 'read_failed',
+    'cleanup_error': 'cleanup_failed', 'deadline': 'deadline_exceeded',
+    'cancelled': 'cancelled', 'row_limit': 'row_limit_reached',
+    'utf8_limit': 'utf8_limit_reached', 'value_limit': 'value_limit_reached',
+    'finding_limit': 'finding_limit_reached',
+}
+
+
+def _operationally_consistent(scan, resource):
+    causes = {item.code for item in scan.findings if item.check_id == 'resource_access'}
+    # At capacity the finding-limit stop need not admit an extra operational group.
+    if scan.findings_truncated:
+        if 'finding_limit_reached' not in causes and len(scan.findings) != 100:
+            return False
+        causes.add('finding_limit_reached')
+        if scan.stop_reason not in ('finding_limit', 'cleanup_error', 'cancelled'):
+            return False
+    if scan.supported and 'initial_access_failed' in causes:
+        return False
+    if causes:
+        if resource.state == 'completed' or scan.implemented_scope_complete:
+            return False
+        # Group inventory order carries no event chronology. Only these two
+        # overrides are unconditional; ordinary stops must match a retained cause.
+        if 'cancelled' in causes:
+            return scan.stop_reason == 'cancelled'
+        if 'cleanup_failed' in causes:
+            return scan.stop_reason == 'cleanup_error'
+        return OPERATIONAL_STOPS.get(scan.stop_reason) in causes
+    return (resource.state == 'completed'
+            and scan.stop_reason in ('scope_not_implemented', 'schema_blocked', 'unsupported_database'))
 
 
 def _count_valid(count):
@@ -95,8 +127,7 @@ def _valid(scan):
             return False
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
-    if scan.findings_truncated and (
-            scan.implemented_scope_complete or scan.stop_reason != 'finding_limit'):
+    if not _operationally_consistent(scan, by_id['resource_access']):
         return False
     if scan.stop_reason == 'unsupported_database' and (
             by_id['compatibility'].state != 'completed' or not compatibility_failed):
