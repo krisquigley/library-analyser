@@ -8,6 +8,9 @@ import hashlib
 from pathlib import Path
 import subprocess
 
+from music_analyzer.application.use_cases.check_integrity import CheckIntegrity
+from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner
+from music_analyzer.interface_adapters.presenters.integrity import present_integrity
 from music_analyzer.application.use_cases.analyze_batch import AnalyzeBatch
 from music_analyzer.infrastructure.persistence.batch import SQLiteBatchQueue
 from music_analyzer.infrastructure.analysis.embedding_cache import FileEmbeddingCache
@@ -164,10 +167,46 @@ def add_configuration_options(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(option, default=argparse.SUPPRESS, help=help_text)
 
 
+def _integrity_requested(argv):
+    # Do not mistake a database/config value or another command's operand for
+    # the integrity command. Unknown integrity options still get safe errors.
+    values = iter(argv)
+    other_commands = {'doctor', 'models', 'scan', 'status', 'analyze', 'show', 'reaggregate',
+                      'list', 'override', 'export', 'explorer', 'graph', 'prepare-projection'}
+    root_value_options = ('--database', '--config', '--model-directory')
+    for token in values:
+        option, separator, value = token.partition('=')
+        matches = [name for name in root_value_options if option.startswith('--') and name.startswith(option)]
+        if len(matches) == 1:
+            # argparse accepts unambiguous root abbreviations. Consume the same
+            # operand so a value named 'doctor' cannot disable safe errors.
+            if not separator:
+                next(values, None)
+            continue
+        if token == 'integrity':
+            return True
+        elif token in other_commands:
+            return False
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog='music-analyzer', description='Local catalogue and single-worker analysis.')
+    arguments = sys.argv[1:] if argv is None else argv
+    safe_errors = _integrity_requested(arguments)
+
+    class CommandParser(argparse.ArgumentParser):
+        def error(self, message):
+            if safe_errors:
+                self.exit(2, 'music-analyzer: invalid integrity invocation\n')
+            super().error(message)
+
+    parser = CommandParser(prog='music-analyzer', description='Local catalogue and single-worker analysis.')
     add_configuration_options(parser)
     commands = parser.add_subparsers(dest='command', required=True)
+    integrity = commands.add_parser('integrity', help='LIMITED offline read-only diagnostic (not P7 complete).')
+    integrity.add_argument('--database', default=argparse.SUPPRESS)
+    integrity.add_argument('--json', action='store_true')
+    integrity.add_argument('--audit-deadline-seconds', type=float, default=120)
     doctor = commands.add_parser('doctor', help='Check dependency availability (not analysis readiness).')
     add_configuration_options(doctor)
     doctor.add_argument('--json', action='store_true', help='Print a machine-readable report.')
@@ -242,6 +281,13 @@ def main(argv: list[str] | None = None) -> int:
     projection.add_argument('--k', type=int, default=10, help='Maximum undirected neighbour degree; default 10.')
     projection.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
+    if args.command == 'integrity':
+        if ('database' not in vars(args) or 'config' in vars(args) or 'model_directory' in vars(args)
+                or not finite(args.audit_deadline_seconds) or not 0 < args.audit_deadline_seconds <= 120):
+            parser.exit(2, 'music-analyzer: invalid integrity invocation\n')
+        report = CheckIntegrity(SQLiteIntegrityScanner()).execute(args.database, args.audit_deadline_seconds)
+        print(present_integrity(report, args.json))
+        return report.exit_code
     if args.command == 'analyze' and (not finite(args.max_duration) or not 0 < args.max_duration <= MAX_ANALYSIS_DURATION_SECONDS):
         parser.error(f'--max-duration must be positive, finite and at most {MAX_ANALYSIS_DURATION_SECONDS} seconds')
     if args.command == 'analyze':
