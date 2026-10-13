@@ -767,14 +767,22 @@ class ReadOnlyExplorerSQLiteRepository:
         try:
             # Stored summary metadata is a list of key/value pairs, not a JSON
             # object (even an empty object must not masquerade as no metadata).
-            for payload in (common_json, tags_json):
+            for common, payload in ((True, common_json), (False, tags_json)):
                 pairs = json.loads(payload)
                 if not isinstance(pairs, list) or any(
                     not isinstance(pair, list) or len(pair) != 2 for pair in pairs
                 ):
                     raise ValueError('Invalid metadata pairs')
+                for key, value in pairs:
+                    if not isinstance(key, str) or not (
+                        (common and isinstance(value, str)) or
+                        (isinstance(value, list) and all(isinstance(text, str) for text in value))
+                    ):
+                        raise ValueError('Invalid metadata values')
             return self._metadata_from_json(common_json, tags_json, '[]', None)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
+            # JSON decoder recursion failure is malformed stored metadata,
+            # not an unsanitized request or SQLite UDF error.
             raise AnalysisError('Invalid stored metadata') from None
 
     def _summary_sort_key(self, order, common_json, tags_json, display_label, track_id):

@@ -117,6 +117,39 @@ class ExplorerConsumedMetadataTests(unittest.TestCase):
             with self.subTest(reader=reader.__module__):
                 self.assert_clear_error(reader(str(self.path)), error_type, order='id')
 
+    def test_raw_types_and_nested_json_are_sanitized(self):
+        cases = (
+            ('common_json', json.dumps([['title', None]])),
+            ('common_json', json.dumps([['title', {'private': PRIVATE_MARKER}]])),
+            ('common_json', json.dumps([[None, 'title']])),
+            ('common_json', json.dumps([['title', True]])),
+            ('common_json', json.dumps([['title', [12]]])),
+            ('tags_json', json.dumps([['title', PRIVATE_MARKER]])),
+            ('tags_json', json.dumps([['title', [12]]])),
+            ('tags_json', json.dumps([['title', None]])),
+            ('tags_json', json.dumps([['title', [False, {'private': PRIVATE_MARKER}]]])),
+            ('tags_json', json.dumps([[12, ['title']]])),
+            ('common_json', '[' * 10000 + '0' + ']' * 10000),
+        )
+        self.assertEqual(len(cases[-1][1]), 20001)
+        for column, payload in cases:
+            for index in (0, 3):
+                with closing(sqlite3.connect(self.path)) as db:
+                    original = db.execute(f'SELECT {column} FROM track_metadata WHERE track_id=?', (self.handles[index],)).fetchone()[0]
+                    db.execute(f'UPDATE track_metadata SET {column}=? WHERE track_id=?', (payload, self.handles[index]))
+                    db.commit()
+                try:
+                    for reader, error_type in self.readers:
+                        with self.subTest(column=column, index=index, reader=reader.__module__, payload=payload[:60]):
+                            repo = reader(str(self.path))
+                            self.assert_clear_error(repo, error_type, order='id' if index == 0 else 'title')
+                            if index == 3:
+                                self.assert_clear_error(repo, error_type, query='beacon', order='id')
+                finally:
+                    with closing(sqlite3.connect(self.path)) as db:
+                        db.execute(f'UPDATE track_metadata SET {column}=? WHERE track_id=?', (original, self.handles[index]))
+                        db.commit()
+
     def test_failure_context_is_not_shared_between_requests(self):
         corrupt_common(self.path, self.handles[3])
         for reader, error_type in self.readers:
@@ -130,6 +163,33 @@ class ExplorerConsumedMetadataTests(unittest.TestCase):
                     self.assertEqual(str(raised.exception), 'Invalid stored metadata')
                     self.assertEqual(healthy.result(timeout=5)[1], 4)
                 self.assertEqual(repo.list_track_summaries(1, order='id')[1], 4)
+
+    def test_valid_scalar_and_text_lists_and_empty_optional_metadata(self):
+        for common, tags in (([['title', 'Alpha Beacon']], []),
+                             ([['title', ['Alpha Beacon']], ['artist', []]], [['comment', []]]),
+                             ([], [])):
+            with closing(sqlite3.connect(self.path)) as db:
+                db.execute('UPDATE track_metadata SET common_json=?,tags_json=? WHERE track_id=?',
+                           (json.dumps(common), json.dumps(tags), self.handles[0]))
+                db.commit()
+            for reader, _error_type in self.readers:
+                with self.subTest(reader=reader.__module__, common=common):
+                    page = reader(str(self.path)).list_track_summaries(1, order='id')
+                    self.assertEqual(page[1], 4)
+                    self.assertEqual(page[2][0].handle, self.handles[0])
+
+    def test_nested_decoder_failure_context_is_request_local(self):
+        corrupt_common(self.path, self.handles[3], '[' * 10000 + '0' + ']' * 10000)
+        for reader, error_type in self.readers:
+            repo = reader(str(self.path))
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                failed = pool.submit(repo.list_track_summaries, 1, order='title')
+                healthy = pool.submit(repo.list_track_summaries, 1, order='id')
+                with self.assertRaises(error_type) as raised:
+                    failed.result(timeout=5)
+                self.assertEqual(str(raised.exception), 'Invalid stored metadata')
+                self.assertEqual(healthy.result(timeout=5)[1], 4)
+            self.assertEqual(repo.list_track_summaries(1, order='id')[1], 4)
 
     def test_valid_pages_counts_cursors_and_query_contracts_are_unchanged(self):
         before = stored_snapshot(self.path)
