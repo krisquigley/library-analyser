@@ -28,6 +28,7 @@ class Delivery:
         self.connection = connection
         self.deadline = deadline
         self.interrupted = None
+        self.first_error = None
         self.core_count = 0
         self.core_counts = {}
         self.schema_findings = []
@@ -86,18 +87,32 @@ class Delivery:
             return 1
         return 0
 
+    def observe_error(self):
+        # Keep only timing/category, before cursor finally blocks can delay or
+        # interrupt propagation. Never retain an exception or input value.
+        if self.first_error is None:
+            self.first_error = (monotonic(), self.interrupted)
+
     def execute(self, sql, params=()):
         self.guard()
         remaining_ms = max(0, int((self.deadline - monotonic()) * 1000))
-        self.close_all(self.connection.execute(f'PRAGMA busy_timeout={remaining_ms}'))
-        self.guard()
-        return self.connection.execute(sql, params)
+        try:
+            self.close_all(self.connection.execute(f'PRAGMA busy_timeout={remaining_ms}'))
+            self.guard()
+            return self.connection.execute(sql, params)
+        except (sqlite3.Error, OSError, UnicodeError):
+            self.observe_error()
+            raise
 
     def one(self, cursor):
         self.guard()
         if self.count >= MAX_ROWS:
             raise AdmissionStop('row_limit')
-        row = cursor.fetchone()
+        try:
+            row = cursor.fetchone()
+        except (sqlite3.Error, OSError, UnicodeError):
+            self.observe_error()
+            raise
         if row is not None:
             self.count += 1
         self.guard()
@@ -134,6 +149,9 @@ class Delivery:
                 if descriptor:
                     self.schema_count += 1
                 yield row
+        except (sqlite3.Error, OSError, UnicodeError):
+            self.observe_error()
+            raise
         finally:
             self.close_all(preflight, values)
 
@@ -229,12 +247,14 @@ class SQLiteIntegrityScanner:
         except KeyboardInterrupt:
             stop = 'cancelled'
         except (sqlite3.Error, OSError, UnicodeError):
-            # Classify when the error returns, before cleanup can consume time.
-            error_at = monotonic()
+            # Delivery observes errors before its paired cursor cleanup; initial
+            # connection errors have no Delivery and are sampled here.
+            error_at, interrupted_at = (delivery.first_error if delivery and delivery.first_error
+                                        else (monotonic(), delivery.interrupted if delivery else None))
             if error_at >= deadline:
                 stop = 'deadline'
             else:
-                stop = delivery.interrupted if delivery and delivery.interrupted else ('read_error' if version else 'unreadable_database')
+                stop = interrupted_at or ('read_error' if version else 'unreadable_database')
         finally:
             earlier_stop = stop
             cleanup_failed = bool(delivery and delivery.cursor_cleanup_failed)
