@@ -229,7 +229,12 @@ class SQLiteIntegrityScanner:
         except KeyboardInterrupt:
             stop = 'cancelled'
         except (sqlite3.Error, OSError, UnicodeError):
-            stop = delivery.interrupted if delivery and delivery.interrupted else ('read_error' if version else 'unreadable_database')
+            # Classify when the error returns, before cleanup can consume time.
+            error_at = monotonic()
+            if error_at >= deadline:
+                stop = 'deadline'
+            else:
+                stop = delivery.interrupted if delivery and delivery.interrupted else ('read_error' if version else 'unreadable_database')
         finally:
             earlier_stop = stop
             cleanup_failed = bool(delivery and delivery.cursor_cleanup_failed)
