@@ -1,5 +1,6 @@
 """Focused fresh scanner packets using public literal schemas only."""
 from contextlib import closing
+from unittest.mock import patch
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -294,3 +295,108 @@ class IntegrityD1DescriptorDrain(unittest.TestCase):
             self.assertIn('schema_columns_mismatch', [f.code for f in result.findings])
             schema = next(c for c in result.checks if c.check_id == 'schema')
             self.assertEqual(schema.count, expected, 'exact schema count must include all excess delivered descriptors')
+
+
+class SchemaFailureConnection:
+    """Delegate real SQLite behavior, except the selected late read failure."""
+    def __init__(self, connection, failure):
+        self.connection = connection
+        self.failure = failure
+        self.failed = False
+        self.closed = False
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+    def execute(self, sql, *args, **kwargs):
+        descriptor_queries = {
+            'active_tracks': "SELECT name FROM pragma_table_info('active_tracks') ORDER BY cid",
+            'stages': 'SELECT name,type,"notnull",pk FROM pragma_table_info(\'stages\') ORDER BY cid',
+        }
+        if sql == descriptor_queries.get(self.failure):
+            self.failed = True
+            raise sqlite3.OperationalError('public induced descriptor failure')
+        cursor = self.connection.execute(sql, *args, **kwargs)
+        if self.failure == 'inventory' and sql.startswith('SELECT name,type FROM sqlite_master'):
+            return SchemaFailureCursor(cursor, self)
+        return cursor
+
+    def close(self):
+        self.connection.close()
+        self.closed = True
+
+
+class SchemaFailureCursor:
+    def __init__(self, cursor, connection):
+        self.cursor = cursor
+        self.connection = connection
+        self.delivered = 0
+
+    def fetchone(self):
+        if self.delivered == 1:
+            self.connection.failed = True
+            raise sqlite3.OperationalError('public induced inventory failure')
+        row = self.cursor.fetchone()
+        self.delivered += 1
+        return row
+
+    def close(self):
+        self.cursor.close()
+
+
+class IntegrityD1SchemaFindingPrecision(unittest.TestCase):
+    def scan_extra(self, failure=None, *, drift_columns=False):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'public-v6.sqlite'
+            create_public_core_database(path, 6)
+            with closing(sqlite3.connect(path)) as db:
+                db.execute('CREATE TABLE AAA_extra(value TEXT)')
+                if drift_columns:
+                    db.execute('ALTER TABLE runs ADD COLUMN extra TEXT')
+                db.commit()
+            real_connect = sqlite3.connect
+            connections = []
+
+            def connect(*args, **kwargs):
+                connection = SchemaFailureConnection(real_connect(*args, **kwargs), failure)
+                connections.append(connection)
+                return connection
+
+            with patch('sqlite3.connect', connect):
+                result = SQLiteIntegrityScanner().scan(str(path))
+            self.assertEqual(len(connections), 1)
+            self.assertEqual(connections[0].failed, failure is not None)
+            self.assertTrue(connections[0].closed)
+            self.assertEqual(result.schema_version, 6)
+            self.assertTrue(result.supported)
+            self.assertFalse(result.implemented_scope_complete)
+            self.assertEqual(next(c for c in result.checks if c.check_id == 'core_rows').state, 'blocked')
+            inventory = next(f for f in result.findings if f.code == 'schema_object_set_mismatch')
+            self.assertEqual(inventory.count, 1)
+            return result, inventory
+
+    def test_exhausted_inventory_positive_baseline_is_exact(self):
+        result, inventory = self.scan_extra()
+        self.assertEqual(result.stop_reason, 'schema_blocked')
+        self.assertEqual(next(c for c in result.checks if c.check_id == 'schema').state, 'completed')
+        self.assertEqual(inventory.count_precision, 'exact')
+
+    def test_exhausted_inventory_stays_exact_after_active_tracks_descriptor_error(self):
+        result, inventory = self.scan_extra('active_tracks')
+        self.assertEqual(result.stop_reason, 'read_error')
+        schema = next(c for c in result.checks if c.check_id == 'schema')
+        self.assertEqual((schema.state, schema.count_precision), ('interrupted', 'lower_bound'))
+        self.assertIn('read_failed', [f.code for f in result.findings])
+        self.assertEqual(inventory.count_precision, 'exact')
+
+    def test_partial_descriptor_family_remains_lower_bound_after_later_error(self):
+        result, inventory = self.scan_extra('stages', drift_columns=True)
+        self.assertEqual(result.stop_reason, 'read_error')
+        columns = next(f for f in result.findings if f.code == 'schema_columns_mismatch')
+        self.assertEqual((columns.count, columns.count_precision), (1, 'lower_bound'))
+        self.assertEqual(inventory.count_precision, 'exact')
+
+    def test_inventory_interrupted_before_exhaustion_remains_lower_bound(self):
+        result, inventory = self.scan_extra('inventory')
+        self.assertEqual(result.stop_reason, 'read_error')
+        self.assertEqual(inventory.count_precision, 'lower_bound')

@@ -32,6 +32,7 @@ class Delivery:
         self.core_count = 0
         self.core_counts = {}
         self.schema_findings = []
+        self.schema_inventory_exhausted = False
         self.group_keys = set()
         self.findings_truncated = False
         self.cursor_cleanup_failed = False
@@ -288,7 +289,10 @@ class SQLiteIntegrityScanner:
         if interrupted and version and delivery:
             if phase == 'schema' and schema_check.state == 'blocked':
                 schema_check = check('schema', 'interrupted', delivery.schema_count, 'schema_descriptors')
-                findings.extend(finding('schema', item.code, item.count, 'lower_bound') for item in delivery.schema_findings)
+                findings.extend(finding('schema', item.code, item.count,
+                                        'exact' if item.code == 'schema_object_set_mismatch'
+                                        and delivery.schema_inventory_exhausted else 'lower_bound')
+                                for item in delivery.schema_findings)
             if phase == 'core_rows' and core_check.state == 'blocked':
                 core_check = check('core_rows', 'interrupted', delivery.core_count, 'rows')
                 findings.extend(finding('core_rows', code, count, 'lower_bound') for code, count in delivery.core_counts.items() if count)
@@ -360,6 +364,8 @@ class SQLiteIntegrityScanner:
                     delivery.record_schema(findings, 'schema_object_set_mismatch')
                 else:
                     findings[0] = finding('schema', 'schema_object_set_mismatch', unexpected, 'lower_bound')
+        # Inventory precision is independent of the later descriptor families.
+        delivery.schema_inventory_exhausted = True
         missing = objects - seen
         if unexpected:
             findings[0] = finding('schema', 'schema_object_set_mismatch', unexpected + len(missing))
