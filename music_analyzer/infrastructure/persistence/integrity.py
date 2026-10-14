@@ -320,6 +320,8 @@ class SQLiteIntegrityScanner:
                 ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
                 ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6)):
             state = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
+            if check_id in ('current_graph', 'historical_graph') and state == 'not_implemented':
+                state = 'blocked'
             checks.append(graph_checks.get(check_id, check(check_id, state, None, unit)))
         checks.append(resource_check)
         # Bounded fixed predicate groups; never retain row identities or samples.
@@ -456,15 +458,14 @@ class SQLiteIntegrityScanner:
                     unequal = False
                     try:
                         for published_row, retained_row in zip_longest(left, right):
-                            if published_row != retained_row:
+                            if published_row != retained_row and not unequal:
+                                record('graph_mirror_invalid')
                                 unequal = True
                     finally:
                         try:
                             left.close()
                         finally:
                             right.close()
-                    if unequal:
-                        record('graph_mirror_invalid')
         return check(owner, 'completed', delivery.graph_work[owner], 'rows'), tuple(
             finding(owner, code, count) for code, count in counts.items())
 

@@ -106,7 +106,7 @@ def _valid(scan):
                 return False
         elif item.state not in ('completed', 'interrupted', 'blocked'):
             return False
-        if version is None and name in ('schema', 'core_rows') and item.state != 'blocked':
+        if version is None and name in ('schema', 'core_rows', 'current_graph', 'historical_graph') and item.state != 'blocked':
             return False
     if type(scan.findings) is not tuple or len(scan.findings) > 100:
         return False
@@ -123,6 +123,8 @@ def _valid(scan):
         severity = 'compatibility' if item.check_id == 'compatibility' else ('operational' if item.check_id == 'resource_access' else 'corruption')
         key = (item.check_id, item.code)
         if item.severity != severity or key in keys:
+            return False
+        if version == 6 and item.check_id in ('current_graph', 'historical_graph'):
             return False
         keys.add(key)
     by_id = {item.check_id: item for item in scan.checks}
@@ -148,8 +150,12 @@ def _valid(scan):
     if version is not None and (by_id['compatibility'].state != 'completed' or compatibility_failed
                                 or scan.stop_reason in ('unsupported_database', 'unreadable_database')):
         return False
-    if (by_id['schema'].state != 'completed' or schema_failed) and by_id['core_rows'].state != 'blocked':
-        return False
+    if by_id['schema'].state != 'completed' or schema_failed:
+        if by_id['core_rows'].state != 'blocked':
+            return False
+        if version is not None and version >= 7 and any(
+                by_id[name].state != 'blocked' for name in ('current_graph', 'historical_graph')):
+            return False
     if scan.stop_reason == 'scope_not_implemented' and (
             version is None or compatibility_failed or schema_failed
             or any(by_id[name].state not in ('completed', 'not_applicable') for name in SELECTED)):
