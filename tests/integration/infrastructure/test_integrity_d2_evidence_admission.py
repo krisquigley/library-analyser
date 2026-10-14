@@ -27,6 +27,21 @@ SLICE_SQL = ('SELECT substr(CAST(evidence_json AS BLOB),?,4096) '
              'FROM graph_feature_evidence WHERE track_id=? AND run_id=?')
 
 
+def evidence_sql(sql):
+    normalized = ' '.join(sql.lower().split())
+    return normalized.startswith('select ') and ' from graph_feature_evidence' in normalized
+
+
+def canonical_target_failure(value, *args, **kwargs):
+    if (isinstance(value, dict) and value.get('run_id') == OLD_RUNS[0]
+            and kwargs.get('sort_keys') and kwargs.get('ensure_ascii') is False):
+        raise RecursionError('PRIVATE canonical depth')
+    return ORIGINAL_DUMPS(value, *args, **kwargs)
+
+
+ORIGINAL_DUMPS = json.dumps
+
+
 def create_encoded(path, encoding='UTF-8', version=10):
     with closing(sqlite3.connect(path)) as db:
         db.execute("PRAGMA encoding='" + encoding + "'")
@@ -456,14 +471,24 @@ class IntegrityD2EvidenceAdmissionControls(AdmissionCase):
             self.assertTrue(delivery.findings_truncated)
 
     def test_canonical_recursion_proxy_fires_only_canonical_operation(self):
-        real_dumps = json.dumps
-        def fault(value, *args, **kwargs):
-            if kwargs.get('sort_keys') and kwargs.get('ensure_ascii') is False:
-                raise RecursionError('PRIVATE canonical depth')
-            return real_dumps(value, *args, **kwargs)
-        self.assertEqual(fault({'x': 1}), '{"x": 1}')
+        target = {'run_id': OLD_RUNS[0]}
+        other = {'run_id': CURRENT_RUNS[0]}
+        self.assertEqual(canonical_target_failure(target), ORIGINAL_DUMPS(target))
+        self.assertEqual(canonical_target_failure(other, sort_keys=True, ensure_ascii=False),
+                         ORIGINAL_DUMPS(other, sort_keys=True, ensure_ascii=False))
         with self.assertRaises(RecursionError):
-            fault({'x': 1}, sort_keys=True, ensure_ascii=False)
+            canonical_target_failure(target, sort_keys=True, ensure_ascii=False)
+
+    def test_evidence_budget_boundary_excludes_schema_and_matches_delivery(self):
+        self.assertFalse(evidence_sql("SELECT name FROM pragma_table_info('graph_feature_evidence') ORDER BY cid"))
+        self.assertFalse(evidence_sql("SELECT length(CAST(name AS BLOB)) FROM (SELECT name FROM pragma_table_info('graph_feature_evidence'))"))
+        self.assertTrue(evidence_sql('SELECT track_id,run_id FROM graph_feature_evidence WHERE is_current=1'))
+        self.assertTrue(evidence_sql('SELECT length(CAST(track_id AS BLOB)) FROM (SELECT track_id FROM graph_feature_evidence WHERE is_current=1)'))
+
+    def test_real_parser_recursive_input_control(self):
+        raw = ('[' * 10000 + '0' + ']' * 10000).encode()
+        with self.assertRaises(RecursionError):
+            json.loads(raw)
 
     def test_delivery_reduced_budget_selfcontrols_are_shared_and_inclusive(self):
         # Existing Delivery controls are NOT prospective evidence-scanner RED.
@@ -603,7 +628,8 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
     def test_blob_codec_raw_surrogate_and_parse_depth_suppression(self):
         for raw, code in ((b'\xffbad', 'evidence_json_invalid'),
                           (b'"\xed\xa0\x80"', 'evidence_fingerprint_invalid'),
-                          (('[' * 1500 + '0' + ']' * 1500).encode(), 'evidence_json_invalid')):
+                          (('[' * 1500 + '0' + ']' * 1500).encode(), 'evidence_contract_invalid'),
+                          (('[' * 10000 + '0' + ']' * 10000).encode(), 'evidence_json_invalid')):
             with self.subTest(code=code, bytes=len(raw)):
                 path, _ = self.public()
                 change(path, 'UPDATE graph_feature_evidence SET evidence_json=? WHERE run_id=?', (raw, OLD_RUNS[0]))
@@ -620,20 +646,15 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
                     scan_call = lambda: self.scan(path)
                 else:
                     text = canonical(value)
-                    real_dumps = json.dumps
-                    def canonical_failure(obj, *args, **kwargs):
-                        if kwargs.get('sort_keys') and kwargs.get('ensure_ascii') is False:
-                            raise RecursionError('PRIVATE canonical depth')
-                        return real_dumps(obj, *args, **kwargs)
                     def scan_call():
-                        with patch('json.dumps', canonical_failure):
+                        with patch('json.dumps', canonical_target_failure):
                             return self.scan(path)
                 # Canonical-depth injection is proxy-only: contract depth is
                 # finite; direct control below proves intended operation fires.
                 change(path, 'UPDATE graph_feature_evidence SET evidence_json=? WHERE run_id=?', (text, OLD_RUNS[0]))
                 if case == 'canonical_depth':
                     with self.assertRaises(RecursionError):
-                        canonical_failure(value, sort_keys=True, ensure_ascii=False)
+                        canonical_target_failure(value, sort_keys=True, ensure_ascii=False)
                 self.assertEqual(findings(scan_call()), [('historical_evidence', 'evidence_fingerprint_invalid', 1, 'exact')])
 
     def test_raw_sql_scalar_and_null_proxy_are_json_invalid_not_contract(self):
@@ -689,8 +710,7 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
                 instances.append(self)
 
             def execute(self, sql, params=()):
-                if (self.before_evidence is None and 'graph_feature_evidence' in sql.lower()
-                        and sql.lstrip().upper().startswith('SELECT')):
+                if self.before_evidence is None and evidence_sql(sql):
                     self.before_evidence = self.count, self.utf8_bytes
                 return super().execute(sql, params)
         # Capture phase boundary, NOT the completed evidence scan. On baseline
