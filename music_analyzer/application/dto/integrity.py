@@ -44,7 +44,7 @@ class IntegrityReport:
     findings: tuple[IntegrityFinding, ...]
     findings_truncated: bool
     report_version: int = 1
-    coverage_revision: str = 'D2a'
+    coverage_revision: str = 'D2'
     required_scope_revision: str = 'P7-1'
     supported_schema_versions: tuple[int, ...] = (6, 7, 8, 9, 10)
     complete: bool = False

@@ -42,6 +42,9 @@ class Delivery:
         self.utf8_bytes = 0
         self.schema_count = 0
         self.encoding_factor = 1
+        self.encoding = 'UTF-8'
+        self.evidence_work = {}
+        self.evidence_findings = {}
         self.graph_work = {}
         self.graph_findings = {}
 
@@ -204,6 +207,7 @@ class SQLiteIntegrityScanner:
         schema_check = check('schema', 'blocked', None, 'schema_descriptors')
         core_check = check('core_rows', 'blocked', None, 'rows')
         graph_checks = {}
+        evidence_checks = {}
         findings = []
         stop = 'scope_not_implemented'
         phase = 'compatibility'
@@ -237,6 +241,7 @@ class SQLiteIntegrityScanner:
             else:
                 version = literal_version
                 encoding = delivery.scalar('SELECT encoding FROM pragma_encoding', ('encoding',))
+                delivery.encoding = encoding
                 delivery.encoding_factor = 1 if encoding == 'UTF-8' else 2
                 phase = 'schema'
                 schema_check, schema_findings = self._schema(delivery, version)
@@ -252,6 +257,12 @@ class SQLiteIntegrityScanner:
                             phase = owner
                             graph_checks[owner], graph_findings = self._graph(delivery, version, owner)
                             findings.extend(graph_findings)
+                    if version >= 9:
+                        from music_analyzer.infrastructure.persistence.integrity_evidence import scan_evidence
+                        for owner in ('current_evidence', 'historical_evidence'):
+                            phase = owner
+                            evidence_checks[owner], evidence_findings = scan_evidence(delivery, owner)
+                            findings.extend(evidence_findings)
         except AdmissionStop as error:
             stop = error.reason
         except KeyboardInterrupt:
@@ -309,6 +320,10 @@ class SQLiteIntegrityScanner:
                 graph_checks[phase] = check(phase, 'interrupted', delivery.graph_work.get(phase, 0), 'rows')
                 findings.extend(finding(phase, code, count, 'lower_bound')
                                 for code, count in delivery.graph_findings.get(phase, {}).items())
+            if phase in ('current_evidence', 'historical_evidence') and phase not in evidence_checks:
+                evidence_checks[phase] = check(phase, 'interrupted', delivery.evidence_work.get(phase, 0), 'rows')
+                findings.extend(finding(phase, code, count, 'lower_bound')
+                                for code, count in delivery.evidence_findings.get(phase, {}).items())
         compatibility_check = check('compatibility', 'completed', 1, 'databases') if compatibility_complete else check(
             'compatibility', 'interrupted' if access_started else 'blocked', 0 if access_started else None, 'databases')
         resource_check = check('resource_access', 'completed', 1, 'databases') if not interrupted else check(
@@ -320,9 +335,9 @@ class SQLiteIntegrityScanner:
                 ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
                 ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6)):
             state = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
-            if check_id in ('current_graph', 'historical_graph') and state == 'not_implemented':
+            if check_id in ('current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and state == 'not_implemented':
                 state = 'blocked'
-            checks.append(graph_checks.get(check_id, check(check_id, state, None, unit)))
+            checks.append(evidence_checks.get(check_id, graph_checks.get(check_id, check(check_id, state, None, unit))))
         checks.append(resource_check)
         # Bounded fixed predicate groups; never retain row identities or samples.
         order = {item.check_id: index for index, item in enumerate(checks)}
@@ -334,6 +349,8 @@ class SQLiteIntegrityScanner:
                  'read_failed', 'cleanup_failed', 'deadline_exceeded', 'cancelled', 'row_limit_reached',
                  'utf8_limit_reached', 'value_limit_reached', 'graph_lifecycle_invalid',
                  'graph_counts_invalid', 'graph_pointer_invalid', 'graph_mirror_invalid', 'graph_edge_invalid')
+        from music_analyzer.application.use_cases.integrity_evidence import EvidenceCode
+        codes += tuple(code.value for code in EvidenceCode)
         grouped = {}
         for item in findings:
             key = (item.check_id, item.code)
@@ -358,7 +375,10 @@ class SQLiteIntegrityScanner:
                              and schema_check.state == 'completed' and core_check.state == 'completed'
                              and (version < 7 or all(graph_checks.get(owner) is not None
                                   and graph_checks[owner].state == 'completed'
-                                  for owner in ('current_graph', 'historical_graph'))))
+                                  for owner in ('current_graph', 'historical_graph')))
+                             and (version < 9 or all(evidence_checks.get(owner) is not None
+                                  and evidence_checks[owner].state == 'completed'
+                                  for owner in ('current_evidence', 'historical_evidence'))))
 
     def _graph(self, delivery, version, owner):
         """Stream namespace-owned work; auxiliary lookups only charge admission.

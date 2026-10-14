@@ -3,6 +3,10 @@ from music_analyzer.application.dto.integrity import (
     IntegrityCheck, IntegrityFinding, IntegrityReport, IntegrityScan,
 )
 from music_analyzer.application.ports.integrity import IntegrityScanner
+from music_analyzer.application.use_cases.integrity_evidence import EvidenceCode
+
+
+EVIDENCE_CODES = tuple(code.value for code in EvidenceCode)
 
 
 CHECKS = (
@@ -23,12 +27,14 @@ CODES = {
                       'graph_mirror_invalid', 'graph_edge_invalid'),
     'historical_graph': ('graph_lifecycle_invalid', 'graph_counts_invalid', 'graph_pointer_invalid',
                          'graph_mirror_invalid', 'graph_edge_invalid'),
+    'current_evidence': EVIDENCE_CODES,
+    'historical_evidence': EVIDENCE_CODES,
     'resource_access': ('initial_access_failed', 'read_failed', 'cleanup_failed', 'deadline_exceeded',
                         'cancelled', 'row_limit_reached', 'utf8_limit_reached', 'value_limit_reached', 'finding_limit_reached'),
 }
 STOPS = ('scope_not_implemented', 'unsupported_database', 'unreadable_database', 'schema_blocked',
          'deadline', 'row_limit', 'utf8_limit', 'value_limit', 'finding_limit', 'read_error', 'cleanup_error', 'cancelled')
-SELECTED = ('compatibility', 'schema', 'core_rows', 'current_graph', 'historical_graph', 'resource_access')
+SELECTED = ('compatibility', 'schema', 'core_rows', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence', 'resource_access')
 OPERATIONAL_STOPS = {
     'unreadable_database': 'initial_access_failed', 'read_error': 'read_failed',
     'cleanup_error': 'cleanup_failed', 'deadline': 'deadline_exceeded',
@@ -101,12 +107,12 @@ def _valid(scan):
             expected = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
             if item.state != expected:
                 return False
-        elif name in ('current_graph', 'historical_graph') and version is not None and version < first_version:
+        elif name in ('current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and version is not None and version < first_version:
             if item.state != 'not_applicable':
                 return False
         elif item.state not in ('completed', 'interrupted', 'blocked'):
             return False
-        if version is None and name in ('schema', 'core_rows', 'current_graph', 'historical_graph') and item.state != 'blocked':
+        if version is None and name in ('schema', 'core_rows', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and item.state != 'blocked':
             return False
     if type(scan.findings) is not tuple or len(scan.findings) > 100:
         return False
@@ -124,7 +130,8 @@ def _valid(scan):
         key = (item.check_id, item.code)
         if item.severity != severity or key in keys:
             return False
-        if version == 6 and item.check_id in ('current_graph', 'historical_graph'):
+        if version is not None and ((version < 7 and item.check_id in ('current_graph', 'historical_graph'))
+                or (version < 9 and item.check_id in ('current_evidence', 'historical_evidence'))):
             return False
         keys.add(key)
     by_id = {item.check_id: item for item in scan.checks}
@@ -137,8 +144,8 @@ def _valid(scan):
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
     for item in scan.findings:
-        if item.check_id in ('current_graph', 'historical_graph') and (
-                version is None or version < 7 or compatibility_failed
+        if item.check_id in ('current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and (
+                version is None or version < (9 if item.check_id.endswith('_evidence') else 7) or compatibility_failed
                 or by_id['compatibility'].state != 'completed'
                 or by_id['schema'].state != 'completed' or schema_failed
                 or by_id[item.check_id].state not in ('completed', 'interrupted')):
@@ -160,8 +167,10 @@ def _valid(scan):
     if by_id['schema'].state != 'completed' or schema_failed:
         if by_id['core_rows'].state != 'blocked':
             return False
-        if version is not None and version >= 7 and any(
-                by_id[name].state != 'blocked' for name in ('current_graph', 'historical_graph')):
+        if version is not None and any(
+                by_id[name].state != 'blocked' for name, first in
+                (('current_graph', 7), ('historical_graph', 7),
+                 ('current_evidence', 9), ('historical_evidence', 9)) if version >= first):
             return False
     if scan.stop_reason == 'scope_not_implemented' and (
             version is None or compatibility_failed or schema_failed

@@ -13,7 +13,7 @@ class IntegrityD1Presenter(unittest.TestCase):
     def test_json_exact_frozen_envelope_and_order(self):
         report = CheckIntegrity(FakeScanner(healthy_scan(6))).execute('PRIVATE TARGET.sqlite')
         expected = {
-            'report_version': 1, 'coverage_revision': 'D2a', 'required_scope_revision': 'P7-1',
+            'report_version': 1, 'coverage_revision': 'D2', 'required_scope_revision': 'P7-1',
             'supported_schema_versions': [6, 7, 8, 9, 10], 'schema_version': 6,
             'status': 'incomplete', 'complete': False, 'implemented_scope_complete': True,
             'stop_reason': 'scope_not_implemented', 'exit_code': 4,
@@ -31,7 +31,7 @@ class IntegrityD1Presenter(unittest.TestCase):
             'core_rows', 'track_size_invalid', 'corruption', 1, count_precision='exact'),))
         report = CheckIntegrity(FakeScanner(scan)).execute('PRIVATE TARGET.sqlite')
         output = present_integrity(report)
-        for label in ('LIMITED', 'D2a', 'P7-1', 'incomplete', 'scope_not_implemented',
+        for label in ('LIMITED', 'D2', 'P7-1', 'incomplete', 'scope_not_implemented',
                       'exit=4', 'track_size_invalid', 'occurrences', 'exact'):
             with self.subTest(label=label):
                 self.assertIn(label, output)

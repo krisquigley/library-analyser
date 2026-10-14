@@ -15,8 +15,9 @@ release gates remain **not completed**.
 ## LIMITED offline integrity diagnostic
 
 `music-analyzer integrity --database DB [--json]` explicitly checks supported
-schema6–10, core identity/audio rows and v7+ current/historical graphs without loading configuration or starting
-analysis/writer services. Graph-only D2a is deliberately **incomplete**, even on healthy input:
+schema6–10, core identity/audio rows, v7+ current/historical graphs and all v9+ compact
+evidence without loading configuration or starting analysis/writer services. Full D2
+is deliberately **incomplete**, even on healthy input:
 exit4, `complete=false`, no clean/trust certificate and no P8 eligibility. The
 report exposes omitted applicable checks and genuine legacy N/A separately.
 See [the LIMITED integrity contract and safety guide](docs/integrity.md) for the
