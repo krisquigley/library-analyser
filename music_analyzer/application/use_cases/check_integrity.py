@@ -136,6 +136,13 @@ def _valid(scan):
             return False
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
+    for item in scan.findings:
+        if item.check_id in ('current_graph', 'historical_graph') and (
+                version is None or version < 7 or compatibility_failed
+                or by_id['compatibility'].state != 'completed'
+                or by_id['schema'].state != 'completed' or schema_failed
+                or by_id[item.check_id].state not in ('completed', 'interrupted')):
+            return False
     if not _operationally_consistent(scan, by_id['resource_access']):
         return False
     if scan.stop_reason == 'unsupported_database' and (

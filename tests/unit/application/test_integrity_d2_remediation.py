@@ -83,6 +83,27 @@ class IntegrityD2PrerequisiteRemediation(unittest.TestCase):
                                           owner=owner, state=state):
                             self.assert_sanitized(change_checks(scan, (owner,), state))
 
+    def test_blocked_graph_findings_cannot_bypass_unknown_or_failed_prerequisites(self):
+        for scan in (stopped_scan('read_error'), schema_stop(10)):
+            with self.subTest(version=scan.schema_version, stop=scan.stop_reason):
+                owner = next(c for c in scan.checks if c.check_id == 'historical_graph')
+                self.assertEqual((owner.state, owner.count, owner.count_precision),
+                                 ('blocked', None, 'unavailable'))
+                malformed = replace(scan, findings=scan.findings + (IntegrityFinding(
+                    'historical_graph', 'graph_edge_invalid', 'corruption', 1,
+                    count_precision='exact'),))
+                self.assert_sanitized(malformed)
+
+    def test_blocked_owner_cannot_carry_graph_findings_after_successful_schema(self):
+        scan = change_checks(selected_scan(10), ('historical_graph', 'resource_access'), 'interrupted')
+        scan = change_checks(scan, ('historical_graph',), 'blocked')
+        scan = replace(scan, stop_reason='read_error', implemented_scope_complete=False,
+                       findings=(IntegrityFinding('resource_access', 'read_failed', 'operational', 1),))
+        self.assert_preserved(scan)
+        self.assert_sanitized(replace(scan, findings=scan.findings + (IntegrityFinding(
+            'historical_graph', 'graph_edge_invalid', 'corruption', 1,
+            count_precision='exact'),)))
+
     def test_v6_not_applicable_graphs_cannot_carry_any_graph_corruption(self):
         scan = selected_scan(6)
         self.assert_preserved(scan)
@@ -106,6 +127,9 @@ class IntegrityD2PrerequisiteRemediation(unittest.TestCase):
         for version in range(7, 11):
             self.assert_preserved(selected_scan(version))
             for owner in OWNERS:
+                with self.subTest(version=version, owner=owner, state='completed'):
+                    self.assert_preserved(replace(selected_scan(version), findings=(IntegrityFinding(
+                        owner, 'graph_edge_invalid', 'corruption', 1, count_precision='exact'),)))
                 scan = change_checks(selected_scan(version), (owner, 'resource_access'), 'interrupted')
                 scan = replace(scan, stop_reason='read_error', implemented_scope_complete=False,
                                findings=(IntegrityFinding(owner, 'graph_edge_invalid', 'corruption', 1),

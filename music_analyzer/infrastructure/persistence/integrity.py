@@ -385,7 +385,7 @@ class SQLiteIntegrityScanner:
         pointer = None
         if current:
             pointers = 0
-            for build_id, in delivery.rows('SELECT id FROM graph_builds WHERE is_current=1 ORDER BY rowid', ('id',)):
+            for build_id, in delivery.rows('SELECT id FROM graph_builds WHERE is_current=1 ORDER BY id', ('id',)):
                 pointers += 1
                 pointer = build_id
             if pointers > 1:
@@ -395,7 +395,7 @@ class SQLiteIntegrityScanner:
                          'neighbour_policy_version', 'is_current')
         where = ' WHERE is_current=1' if current else ''
         for build_id, status, declared, sparse_k, distance_policy, neighbour_policy, is_current in delivery.rows(
-                f'SELECT {",".join(build_columns)} FROM graph_builds{where} ORDER BY rowid', build_columns):
+                f'SELECT {",".join(build_columns)} FROM graph_builds{where} ORDER BY id', build_columns):
             work()
             allowed = ('completed', 'failed') if version < 10 else ('building', 'completed', 'failed', 'interrupted')
             if (status not in allowed or not isinstance(sparse_k, int) or sparse_k < 0
@@ -417,7 +417,7 @@ class SQLiteIntegrityScanner:
             if current:
                 sql += ' WHERE build_id=?'
                 params = (pointer,)
-            for build_id, declared in delivery.rows(sql + ' ORDER BY rowid', ('build_id', 'edge_count'), params):
+            for build_id, declared in delivery.rows(sql + ' ORDER BY build_id', ('build_id', 'edge_count'), params):
                 if not current:
                     work()
                 actual = delivery.scalar('SELECT count(*) AS n FROM graph_build_positioned_edges WHERE build_id=?', ('n',), (build_id,))
@@ -432,7 +432,8 @@ class SQLiteIntegrityScanner:
             # Include the build ID in historical delivery, not just in SQL, so
             # late cursor errors preserve findings from the actual value stream.
             columns = edge_columns if current else ('build_id',) + edge_columns
-            for row in delivery.rows(f'SELECT {",".join(columns)} FROM {table} ORDER BY rowid', columns):
+            # Independent edge predicates need no ordering or hidden rowid.
+            for row in delivery.rows(f'SELECT {",".join(columns)} FROM {table}', columns):
                 work()
                 source, target, score, distance, support, distance_policy, neighbour_policy = row[-7:]
                 if (not isinstance(source, str) or not isinstance(target, str) or source >= target

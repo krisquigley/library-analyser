@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from music_analyzer.application.use_cases.check_integrity import CheckIntegrity
 from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner
+from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
+from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository as StandaloneReadOnlyExplorerSQLiteRepository
 from tests.integration.infrastructure.integrity_d2_public_fixture import create_public_graph_database
 
 
@@ -122,6 +124,41 @@ class IntegrityD2Remediation(unittest.TestCase):
                 self.assertTrue(scan.implemented_scope_complete)
                 self.assertEqual(self.report(scan).exit_code, 4)
                 self.assertEqual(observed.exhausted, int(version >= 7))
+
+    def test_genuine_v7_without_rowid_history_retains_full_reader_tolerance(self):
+        self.create(7)
+        with closing(sqlite3.connect(self.path)) as db:
+            table = 'graph_build_edges'
+            ddl = db.execute('SELECT sql FROM sqlite_master WHERE name=?', (table,)).fetchone()[0]
+            indexes = db.execute("SELECT sql FROM sqlite_master WHERE tbl_name=? AND type='index' AND sql IS NOT NULL ORDER BY name", (table,)).fetchall()
+            columns = db.execute(f'PRAGMA table_info({table})').fetchall()
+            foreign_keys = db.execute(f'PRAGMA foreign_key_list({table})').fetchall()
+            rows = db.execute(f'SELECT * FROM {table} ORDER BY build_id,source_track_id,target_track_id').fetchall()
+            db.execute(f'ALTER TABLE {table} RENAME TO saved_edges')
+            db.execute(ddl + ' WITHOUT ROWID')
+            db.execute(f'INSERT INTO {table} SELECT * FROM saved_edges')
+            db.execute('DROP TABLE saved_edges')
+            for (sql,) in indexes:
+                db.execute(sql)
+            db.commit()
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
+            self.assertEqual(db.execute('SELECT sql FROM sqlite_master WHERE name=?', (table,)).fetchone()[0], ddl + ' WITHOUT ROWID')
+            self.assertEqual(db.execute(f'PRAGMA table_info({table})').fetchall(), columns)
+            self.assertEqual(db.execute(f'PRAGMA foreign_key_list({table})').fetchall(), foreign_keys)
+            self.assertEqual(db.execute("SELECT sql FROM sqlite_master WHERE tbl_name=? AND type='index' AND sql IS NOT NULL ORDER BY name", (table,)).fetchall(), indexes)
+            self.assertEqual(db.execute(f'SELECT * FROM {table} ORDER BY build_id,source_track_id,target_track_id').fetchall(), rows)
+        # Established FULL readers remain positive controls, not changed policy.
+        for repository in (ReadOnlyExplorerSQLiteRepository, StandaloneReadOnlyExplorerSQLiteRepository):
+            reader = repository(str(self.path))
+            self.assertEqual(reader.metadata()['schema_version'], 7)
+            self.assertEqual(len(reader.current_graph_edges()[1]), 1)
+        scan = self.scan()
+        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertFalse(scan.findings)
+        self.assertTrue(scan.implemented_scope_complete)
+        for owner in ('current_graph', 'historical_graph'):
+            self.assertEqual(check(scan, owner).state, 'completed')
+        self.assertEqual(self.report(scan).exit_code, 4)
 
     def test_real_late_error_wrapper_self_control(self):
         self.create()
