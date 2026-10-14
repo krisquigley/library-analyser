@@ -71,7 +71,7 @@ class IntegrityD1Lifecycle(unittest.TestCase):
                 for check_id in ('compatibility', 'schema', 'core_rows', 'resource_access'):
                     self.assertEqual(states[check_id], 'completed')
                 self.assertEqual(states['metadata'], 'not_implemented')
-                self.assertEqual(states['current_graph'], 'not_applicable' if version == 6 else 'not_implemented')
+                self.assertEqual(states['current_graph'], 'not_applicable' if version == 6 else 'completed')
                 self.assertEqual(states['historical_evidence'], 'not_applicable' if version < 9 else 'not_implemented')
 
     def test_absolute_deadline_includes_initial_access_and_cleanup(self):

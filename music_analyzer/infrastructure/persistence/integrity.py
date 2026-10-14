@@ -1,6 +1,7 @@
 """Dedicated read-only LIMITED diagnostic adapter; never constructs a writer."""
 from pathlib import Path
 from math import isfinite
+from itertools import zip_longest
 import re
 import sqlite3
 from time import monotonic
@@ -41,6 +42,8 @@ class Delivery:
         self.utf8_bytes = 0
         self.schema_count = 0
         self.encoding_factor = 1
+        self.graph_work = {}
+        self.graph_findings = {}
 
     def claim_group(self, check_id, code):
         key = (check_id, code)
@@ -200,6 +203,7 @@ class SQLiteIntegrityScanner:
         compatibility_complete = False
         schema_check = check('schema', 'blocked', None, 'schema_descriptors')
         core_check = check('core_rows', 'blocked', None, 'rows')
+        graph_checks = {}
         findings = []
         stop = 'scope_not_implemented'
         phase = 'compatibility'
@@ -243,6 +247,11 @@ class SQLiteIntegrityScanner:
                     phase = 'core_rows'
                     core_check, core_findings = self._core(delivery)
                     findings.extend(core_findings)
+                    if version >= 7:
+                        for owner in ('current_graph', 'historical_graph'):
+                            phase = owner
+                            graph_checks[owner], graph_findings = self._graph(delivery, version, owner)
+                            findings.extend(graph_findings)
         except AdmissionStop as error:
             stop = error.reason
         except KeyboardInterrupt:
@@ -296,6 +305,10 @@ class SQLiteIntegrityScanner:
             if phase == 'core_rows' and core_check.state == 'blocked':
                 core_check = check('core_rows', 'interrupted', delivery.core_count, 'rows')
                 findings.extend(finding('core_rows', code, count, 'lower_bound') for code, count in delivery.core_counts.items() if count)
+            if phase in ('current_graph', 'historical_graph') and phase not in graph_checks:
+                graph_checks[phase] = check(phase, 'interrupted', delivery.graph_work.get(phase, 0), 'rows')
+                findings.extend(finding(phase, code, count, 'lower_bound')
+                                for code, count in delivery.graph_findings.get(phase, {}).items())
         compatibility_check = check('compatibility', 'completed', 1, 'databases') if compatibility_complete else check(
             'compatibility', 'interrupted' if access_started else 'blocked', 0 if access_started else None, 'databases')
         resource_check = check('resource_access', 'completed', 1, 'databases') if not interrupted else check(
@@ -307,7 +320,7 @@ class SQLiteIntegrityScanner:
                 ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
                 ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6)):
             state = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
-            checks.append(check(check_id, state, None, unit))
+            checks.append(graph_checks.get(check_id, check(check_id, state, None, unit)))
         checks.append(resource_check)
         # Bounded fixed predicate groups; never retain row identities or samples.
         order = {item.check_id: index for index, item in enumerate(checks)}
@@ -317,7 +330,8 @@ class SQLiteIntegrityScanner:
                  'track_digest_invalid', 'track_size_invalid', 'track_audio_missing', 'track_audio_orphan',
                  'track_audio_duration_invalid', 'track_audio_policy_invalid', 'initial_access_failed',
                  'read_failed', 'cleanup_failed', 'deadline_exceeded', 'cancelled', 'row_limit_reached',
-                 'utf8_limit_reached', 'value_limit_reached')
+                 'utf8_limit_reached', 'value_limit_reached', 'graph_lifecycle_invalid',
+                 'graph_counts_invalid', 'graph_pointer_invalid', 'graph_mirror_invalid', 'graph_edge_invalid')
         grouped = {}
         for item in findings:
             key = (item.check_id, item.code)
@@ -339,7 +353,120 @@ class SQLiteIntegrityScanner:
         return IntegrityScan(schema_version=version, checks=tuple(checks), findings=tuple(findings),
                              supported=version is not None, stop_reason=stop, findings_truncated=truncated,
                              implemented_scope_complete=version is not None and stop == 'scope_not_implemented'
-                             and schema_check.state == 'completed' and core_check.state == 'completed')
+                             and schema_check.state == 'completed' and core_check.state == 'completed'
+                             and (version < 7 or all(graph_checks.get(owner) is not None
+                                  and graph_checks[owner].state == 'completed'
+                                  for owner in ('current_graph', 'historical_graph'))))
+
+    def _graph(self, delivery, version, owner):
+        """Stream namespace-owned work; auxiliary lookups only charge admission.
+
+        The established FULL-reader predicates are repeated here deliberately:
+        diagnostics must exhaust invalid relations rather than fail on row one.
+        Ordered paired streams avoid retaining input-sized mirrors or ID sets.
+        """
+        counts = {}
+        delivery.graph_findings[owner] = counts
+        delivery.graph_work[owner] = 0
+
+        def record(code):
+            delivery.claim_group(owner, code)
+            counts[code] = counts.get(code, 0) + 1
+
+        def work():
+            delivery.graph_work[owner] += 1
+
+        current = owner == 'current_graph'
+        edge_columns = ('source_track_id', 'target_track_id', 'score', 'distance',
+                        'supported_group_count', 'distance_policy_version', 'neighbour_policy_version')
+        edge_list = ','.join(edge_columns)
+        pointer = None
+        if current:
+            pointers = 0
+            for build_id, in delivery.rows('SELECT id FROM graph_builds WHERE is_current=1 ORDER BY rowid', ('id',)):
+                pointers += 1
+                pointer = build_id
+            if pointers > 1:
+                record('graph_pointer_invalid')
+
+        build_columns = ('id', 'status', 'edge_count', 'sparse_k', 'distance_policy_version',
+                         'neighbour_policy_version', 'is_current')
+        where = ' WHERE is_current=1' if current else ''
+        for build_id, status, declared, sparse_k, distance_policy, neighbour_policy, is_current in delivery.rows(
+                f'SELECT {",".join(build_columns)} FROM graph_builds{where} ORDER BY rowid', build_columns):
+            work()
+            allowed = ('completed', 'failed') if version < 10 else ('building', 'completed', 'failed', 'interrupted')
+            if (status not in allowed or not isinstance(sparse_k, int) or sparse_k < 0
+                    or not isinstance(distance_policy, str) or not distance_policy
+                    or not isinstance(neighbour_policy, str) or not neighbour_policy
+                    or is_current not in (0, 1) or (status != 'completed' and is_current)):
+                record('graph_lifecycle_invalid')
+            actual = delivery.scalar('SELECT count(*) AS n FROM graph_build_edges WHERE build_id=?', ('n',), (build_id,))
+            if (not isinstance(declared, int) or declared < 0
+                    or (status == 'completed' and declared != actual)
+                    or (status == 'failed' and actual != 0)):
+                record('graph_counts_invalid')
+
+        if version >= 8:
+            # Current descriptors were already counted as the current build;
+            # positioned descriptors are semantic work only in retained history.
+            sql = 'SELECT build_id,edge_count FROM graph_build_positioned_snapshots'
+            params = ()
+            if current:
+                sql += ' WHERE build_id=?'
+                params = (pointer,)
+            for build_id, declared in delivery.rows(sql + ' ORDER BY rowid', ('build_id', 'edge_count'), params):
+                if not current:
+                    work()
+                actual = delivery.scalar('SELECT count(*) AS n FROM graph_build_positioned_edges WHERE build_id=?', ('n',), (build_id,))
+                if not isinstance(declared, int) or declared < 0 or declared != actual:
+                    record('graph_counts_invalid')
+
+        tables = [('graph_edges', 'graph_build_edges')]
+        if version >= 8:
+            tables.append(('graph_positioned_edges', 'graph_build_positioned_edges'))
+        for published, retained in tables:
+            table = published if current else retained
+            # Include the build ID in historical delivery, not just in SQL, so
+            # late cursor errors preserve findings from the actual value stream.
+            columns = edge_columns if current else ('build_id',) + edge_columns
+            for row in delivery.rows(f'SELECT {",".join(columns)} FROM {table} ORDER BY rowid', columns):
+                work()
+                source, target, score, distance, support, distance_policy, neighbour_policy = row[-7:]
+                if (not isinstance(source, str) or not isinstance(target, str) or source >= target
+                        or not isinstance(score, (int, float)) or not 0 <= score <= 1
+                        or not isinstance(distance, (int, float)) or not 0 <= distance <= 1
+                        or round(1 - distance, 6) != round(score, 6)
+                        or not isinstance(support, int) or support <= 0
+                        or not isinstance(distance_policy, str) or not distance_policy
+                        or not isinstance(neighbour_policy, str) or not neighbour_policy):
+                    record('graph_edge_invalid')
+            if current:
+                if pointer is None:
+                    if delivery.scalar(f'SELECT count(*) AS n FROM {published}', ('n',)):
+                        record('graph_pointer_invalid')
+                else:
+                    # Exhaust both ordered streams, even after a difference.
+                    # Keep only one admitted row per side; do not materialize
+                    # mirrors in Python or in an SQL EXCEPT temporary relation.
+                    order = ' ORDER BY source_track_id,target_track_id'
+                    left = delivery.rows(f'SELECT {edge_list} FROM {published}' + order, edge_columns)
+                    right = delivery.rows(f'SELECT {edge_list} FROM {retained} WHERE build_id=?' + order,
+                                          edge_columns, (pointer,))
+                    unequal = False
+                    try:
+                        for published_row, retained_row in zip_longest(left, right):
+                            if published_row != retained_row:
+                                unequal = True
+                    finally:
+                        try:
+                            left.close()
+                        finally:
+                            right.close()
+                    if unequal:
+                        record('graph_mirror_invalid')
+        return check(owner, 'completed', delivery.graph_work[owner], 'rows'), tuple(
+            finding(owner, code, count) for code, count in counts.items())
 
     def _schema(self, delivery, version):
         schema = dict(contract._EXPECTED_SCHEMA)
