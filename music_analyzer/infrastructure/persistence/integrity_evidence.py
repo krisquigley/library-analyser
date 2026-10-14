@@ -63,7 +63,7 @@ def _document_size(delivery, track, run, storage, kind):
     return total, None
 
 
-def _payload(delivery, track, run, fingerprint, storage, kind, decoded_size, record):
+def _admit_full_row(delivery, track, run, storage, kind, decoded_size):
     from music_analyzer.infrastructure.persistence.integrity import MAX_VALUE_BYTES, MAX_UTF8_BYTES, AdmissionStop
     bound = storage * (delivery.encoding_factor if kind == 'text' else 1)
     if bound > MAX_VALUE_BYTES:
@@ -75,22 +75,30 @@ def _payload(delivery, track, run, fingerprint, storage, kind, decoded_size, rec
                       if isinstance(value, str))
     if utf8_bound > MAX_UTF8_BYTES - delivery.utf8_bytes:
         raise AdmissionStop('utf8_limit')
-    cursor = delivery.execute('SELECT track_id,run_id,evidence_json FROM graph_feature_evidence '
-                              'WHERE track_id=? AND run_id=?', (track, run))
-    try:
-        row = delivery.one(cursor)
-        if row is None:
-            record(EvidenceCode.DELIVERY_INVALID)
-            return
+
+
+def _full_row(delivery, cursor, track, run, storage, kind, decoded_size):
+    _admit_full_row(delivery, track, run, storage, kind, decoded_size)
+    row = delivery.one(cursor)
+    if row is not None:
         for value in row:
             if isinstance(value, str):
                 _charge(delivery, value)
-        del value
         if isinstance(row[2], bytes):
-            # Exact decoded size was proved by bounded preflight in this
-            # same snapshot. Charge full delivery again without retaining
-            # a second whole decoded document beside json.loads' input.
+            # Bounded preflight proved decoded size in this pinned snapshot.
             delivery.utf8_bytes += decoded_size
+    return row
+
+
+def _payload(delivery, track, run, fingerprint, storage, kind, decoded_size, record):
+    _admit_full_row(delivery, track, run, storage, kind, decoded_size)
+    cursor = delivery.execute('SELECT track_id,run_id,evidence_json FROM graph_feature_evidence '
+                              'WHERE track_id=? AND run_id=?', (track, run))
+    try:
+        row = _full_row(delivery, cursor, track, run, storage, kind, decoded_size)
+        if row is None:
+            record(EvidenceCode.DELIVERY_INVALID)
+            return
         if row[:2] != (track, run):
             record(EvidenceCode.DELIVERY_INVALID)
         else:
@@ -110,7 +118,7 @@ def _payload(delivery, track, run, fingerprint, storage, kind, decoded_size, rec
             finally:
                 del raw
         del row
-        if delivery.one(cursor) is not None:
+        if _full_row(delivery, cursor, track, run, storage, kind, decoded_size) is not None:
             record(EvidenceCode.DELIVERY_INVALID)
     except (sqlite3.Error, OSError, UnicodeError):
         delivery.observe_error()

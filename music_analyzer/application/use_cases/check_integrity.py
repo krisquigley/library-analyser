@@ -144,6 +144,10 @@ def _valid(scan):
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
     for item in scan.findings:
+        if (item.check_id in ('current_evidence', 'historical_evidence')
+                and by_id[item.check_id].state == 'interrupted'
+                and item.count_precision != 'lower_bound'):
+            return False
         if item.check_id in ('current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and (
                 version is None or version < (9 if item.check_id.endswith('_evidence') else 7) or compatibility_failed
                 or by_id['compatibility'].state != 'completed'
