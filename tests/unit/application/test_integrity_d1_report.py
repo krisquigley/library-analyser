@@ -20,6 +20,8 @@ def healthy_scan(version):
     for name, unit, first_version in CHECKS:
         if name in ('compatibility', 'schema', 'core_rows', 'resource_access'):
             state, count, precision = 'completed', 1, 'exact'
+        elif name in ('current_graph', 'historical_graph') and version >= 7:
+            state, count, precision = 'completed', 0, 'exact'
         else:
             state = 'not_applicable' if version < first_version else 'not_implemented'
             count, precision = None, 'unavailable'
@@ -89,7 +91,7 @@ class IntegrityD1WireGate(unittest.TestCase):
     def test_frozen_report_revisions_and_all_twelve_checks_are_visible(self):
         report = CheckIntegrity(FakeScanner(healthy_scan(6))).execute('explicit-public.sqlite')
         for field, expected in (
-                ('report_version', 1), ('coverage_revision', 'D1'),
+                ('report_version', 1), ('coverage_revision', 'D2a'),
                 ('required_scope_revision', 'P7-1'), ('supported_schema_versions', (6, 7, 8, 9, 10)),
                 ('schema_version', 6), ('checks', healthy_scan(6).checks)):
             with self.subTest(field=field):

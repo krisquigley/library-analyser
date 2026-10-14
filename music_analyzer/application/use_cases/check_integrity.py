@@ -19,12 +19,16 @@ CODES = {
                'schema_foreign_keys_mismatch', 'schema_unique_indexes_mismatch', 'schema_checks_mismatch'),
     'core_rows': ('track_identity_invalid', 'track_digest_invalid', 'track_size_invalid',
                   'track_audio_missing', 'track_audio_orphan', 'track_audio_duration_invalid', 'track_audio_policy_invalid'),
+    'current_graph': ('graph_lifecycle_invalid', 'graph_counts_invalid', 'graph_pointer_invalid',
+                      'graph_mirror_invalid', 'graph_edge_invalid'),
+    'historical_graph': ('graph_lifecycle_invalid', 'graph_counts_invalid', 'graph_pointer_invalid',
+                         'graph_mirror_invalid', 'graph_edge_invalid'),
     'resource_access': ('initial_access_failed', 'read_failed', 'cleanup_failed', 'deadline_exceeded',
                         'cancelled', 'row_limit_reached', 'utf8_limit_reached', 'value_limit_reached', 'finding_limit_reached'),
 }
 STOPS = ('scope_not_implemented', 'unsupported_database', 'unreadable_database', 'schema_blocked',
          'deadline', 'row_limit', 'utf8_limit', 'value_limit', 'finding_limit', 'read_error', 'cleanup_error', 'cancelled')
-SELECTED = ('compatibility', 'schema', 'core_rows', 'resource_access')
+SELECTED = ('compatibility', 'schema', 'core_rows', 'current_graph', 'historical_graph', 'resource_access')
 OPERATIONAL_STOPS = {
     'unreadable_database': 'initial_access_failed', 'read_error': 'read_failed',
     'cleanup_error': 'cleanup_failed', 'deadline': 'deadline_exceeded',
@@ -97,9 +101,12 @@ def _valid(scan):
             expected = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
             if item.state != expected:
                 return False
+        elif name in ('current_graph', 'historical_graph') and version is not None and version < first_version:
+            if item.state != 'not_applicable':
+                return False
         elif item.state not in ('completed', 'interrupted', 'blocked'):
             return False
-        if version is None and name in ('schema', 'core_rows') and item.state != 'blocked':
+        if version is None and name in ('schema', 'core_rows', 'current_graph', 'historical_graph') and item.state != 'blocked':
             return False
     if type(scan.findings) is not tuple or len(scan.findings) > 100:
         return False
@@ -117,6 +124,8 @@ def _valid(scan):
         key = (item.check_id, item.code)
         if item.severity != severity or key in keys:
             return False
+        if version == 6 and item.check_id in ('current_graph', 'historical_graph'):
+            return False
         keys.add(key)
     by_id = {item.check_id: item for item in scan.checks}
     for name in ('compatibility', 'resource_access'):
@@ -127,6 +136,13 @@ def _valid(scan):
             return False
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
+    for item in scan.findings:
+        if item.check_id in ('current_graph', 'historical_graph') and (
+                version is None or version < 7 or compatibility_failed
+                or by_id['compatibility'].state != 'completed'
+                or by_id['schema'].state != 'completed' or schema_failed
+                or by_id[item.check_id].state not in ('completed', 'interrupted')):
+            return False
     if not _operationally_consistent(scan, by_id['resource_access']):
         return False
     if scan.stop_reason == 'unsupported_database' and (
@@ -141,14 +157,18 @@ def _valid(scan):
     if version is not None and (by_id['compatibility'].state != 'completed' or compatibility_failed
                                 or scan.stop_reason in ('unsupported_database', 'unreadable_database')):
         return False
-    if (by_id['schema'].state != 'completed' or schema_failed) and by_id['core_rows'].state != 'blocked':
-        return False
+    if by_id['schema'].state != 'completed' or schema_failed:
+        if by_id['core_rows'].state != 'blocked':
+            return False
+        if version is not None and version >= 7 and any(
+                by_id[name].state != 'blocked' for name in ('current_graph', 'historical_graph')):
+            return False
     if scan.stop_reason == 'scope_not_implemented' and (
             version is None or compatibility_failed or schema_failed
-            or any(by_id[name].state != 'completed' for name in SELECTED)):
+            or any(by_id[name].state not in ('completed', 'not_applicable') for name in SELECTED)):
         return False
     selected_complete = (version is not None and scan.stop_reason == 'scope_not_implemented'
-                         and all(item.state == 'completed' for item in scan.checks if item.check_id in SELECTED)
+                         and all(item.state in ('completed', 'not_applicable') for item in scan.checks if item.check_id in SELECTED)
                          and not any(item.check_id == 'schema' for item in scan.findings))
     return scan.implemented_scope_complete == selected_complete
 

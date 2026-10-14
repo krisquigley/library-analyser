@@ -11,6 +11,7 @@ import unittest
 import venv
 
 from tests.integration.infrastructure.integrity_d1_public_fixture import create_public_core_database
+from tests.integration.infrastructure.integrity_d2_public_fixture import create_public_graph_database
 
 
 class IntegrityD1InstalledControls(unittest.TestCase):
@@ -44,7 +45,7 @@ class IntegrityD1InstalledControls(unittest.TestCase):
         origin = cls.run_child([str(cls.python), '-c', 'import music_analyzer; print(music_analyzer.__file__)'], cls.outside, expected=0)
         if str(cls.venv) not in origin.stdout:
             raise AssertionError('Installed origin must be isolated venv, not checkout')
-        print('installed origin verified outside checkout')
+        print('installed origin verified outside checkout:', origin.stdout.strip())
 
     @classmethod
     def tearDownClass(cls):
@@ -54,6 +55,7 @@ class IntegrityD1InstalledControls(unittest.TestCase):
     def run_child(cls, args, cwd=None, expected=None):
         result = subprocess.run(args, cwd=cwd or cls.outside, env=cls.environment,
                                 capture_output=True, text=True, timeout=120)
+        print('owned offline command', repr(args), 'cwd', str(cwd or cls.outside), 'exit', result.returncode)
         if expected is not None and result.returncode != expected:
             raise AssertionError(f'Owned child expected exit{expected}, actual{result.returncode}: {result.stderr}')
         return result
@@ -77,11 +79,41 @@ class IntegrityD1InstalledControls(unittest.TestCase):
                     for name in ('schema', 'core_rows', 'resource_access'):
                         self.assertEqual(checks[name]['state'], 'completed')
                     self.assertEqual(checks['core_rows']['count'], 4)
-                    self.assertEqual(checks['current_graph']['state'], 'not_applicable' if version == 6 else 'not_implemented')
+                    self.assertEqual(checks['current_graph']['state'], 'not_applicable' if version == 6 else 'completed')
                     self.assertEqual(checks['current_evidence']['state'], 'not_applicable' if version < 9 else 'not_implemented')
                     self.assertEqual(result.stderr, '')
                     self.assertNotIn(str(path), result.stdout)
                     self.assertEqual(path.read_bytes(), before)
+
+    def test_installed_graph_healthy_and_corrupt_are_selected_complete_but_incomplete(self):
+        for version in range(7, 11):
+            path = self.root / f'public-graph-v{version}.sqlite'
+            create_public_graph_database(path, version)
+            for corrupt in (False, True):
+                if corrupt:
+                    with closing(sqlite3.connect(path)) as db:
+                        db.execute('UPDATE graph_edges SET score=0.6,distance=0.4')
+                        db.commit()
+                before = path.read_bytes()
+                for command in ([str(self.script)], [str(self.python), '-m', 'music_analyzer']):
+                    with self.subTest(version=version, corrupt=corrupt, entry=command[-1]):
+                        result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=4)
+                        report = json.loads(result.stdout)
+                        self.assertEqual(report['coverage_revision'], 'D2a')
+                        self.assertEqual(report['status'], 'incomplete')
+                        self.assertFalse(report['complete'])
+                        self.assertTrue(report['implemented_scope_complete'])
+                        checks = {c['check_id']: c for c in report['checks']}
+                        for owner, count in zip(('current_graph', 'historical_graph'),
+                                                (2, 4) if version == 7 else (3, 8)):
+                            self.assertEqual((checks[owner]['state'], checks[owner]['count'],
+                                              checks[owner]['count_precision']), ('completed', count, 'exact'))
+                        graph_findings = [f for f in report['findings'] if f['check_id'].endswith('_graph')]
+                        self.assertEqual([(f['check_id'], f['code'], f['count'], f['count_precision'])
+                                          for f in graph_findings],
+                                         [('current_graph', 'graph_mirror_invalid', 1, 'exact')] if corrupt else [])
+                        self.assertEqual(result.stderr, '')
+                        self.assertEqual(path.read_bytes(), before)
 
     def test_corruption_schema_blocked_unsupported_and_usage_exits_are_honest(self):
         path = self.root / 'public-errors.sqlite'
