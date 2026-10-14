@@ -441,3 +441,34 @@ class IntegrityD2EvidencePayload(EvidenceCase):
         value['features']['mood'] = {'summary': {'coverage': 99}}
         store_payload(path, OLD_RUNS[0], value)
         self.assert_codes(SQLiteIntegrityScanner().scan(str(path)), 'historical_evidence', ['evidence_feature_invalid'])
+
+
+class IntegrityD2EvidenceSummaryParity(EvidenceCase):
+    """Genuine v10 records retain established equality-only summary semantics."""
+    def test_numeric_equality_healthy_control(self):
+        path, _ = self.public()
+        scan = SQLiteIntegrityScanner().scan(str(path))
+        self.assertFalse(scan.findings)
+        self.assert_exhausted(scan)
+
+    def test_true_one_and_false_zero_summary_equality(self):
+        for mean, displayed in ((1, True), (0, False)):
+            with self.subTest(mean=mean, displayed=displayed):
+                path, ids = self.public()
+                value = payload(ids[0], CURRENT_RUNS[0])
+                mood = value['features']['mood']
+                mood['summary']['mean'] = [mean]
+                mood['summary_values'] = [['public', displayed]]
+                store_payload(path, CURRENT_RUNS[0], value)
+                scan = SQLiteIntegrityScanner().scan(str(path))
+                self.assertFalse(scan.findings)
+                self.assert_exhausted(scan)
+
+    def test_unequal_boolean_summary_control(self):
+        path, ids = self.public()
+        value = payload(ids[0], CURRENT_RUNS[0])
+        value['features']['mood']['summary']['mean'] = [0]
+        value['features']['mood']['summary_values'] = [['public', True]]
+        store_payload(path, CURRENT_RUNS[0], value)
+        self.assert_codes(SQLiteIntegrityScanner().scan(str(path)), 'current_evidence',
+                          ['evidence_summary_invalid'])

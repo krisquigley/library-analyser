@@ -69,6 +69,10 @@ def _payload(delivery, track, run, fingerprint, storage, kind, decoded_size, rec
     if bound > MAX_VALUE_BYTES:
         raise AdmissionStop('value_limit')
     utf8_bound = bound if kind == 'text' else decoded_size
+    # The envelope already delivered these identities in this pinned snapshot.
+    # The full row repeats them, so admit their UTF8 again before fetching it.
+    utf8_bound += sum(len(value.encode('utf-8')) for value in (track, run)
+                      if isinstance(value, str))
     if utf8_bound > MAX_UTF8_BYTES - delivery.utf8_bytes:
         raise AdmissionStop('utf8_limit')
     cursor = delivery.execute('SELECT track_id,run_id,evidence_json FROM graph_feature_evidence '
@@ -78,17 +82,19 @@ def _payload(delivery, track, run, fingerprint, storage, kind, decoded_size, rec
         if row is None:
             record(EvidenceCode.DELIVERY_INVALID)
             return
+        for value in row:
+            if isinstance(value, str):
+                _charge(delivery, value)
+        del value
+        if isinstance(row[2], bytes):
+            # Exact decoded size was proved by bounded preflight in this
+            # same snapshot. Charge full delivery again without retaining
+            # a second whole decoded document beside json.loads' input.
+            delivery.utf8_bytes += decoded_size
         if row[:2] != (track, run):
             record(EvidenceCode.DELIVERY_INVALID)
         else:
             raw = row[2]
-            if isinstance(raw, str):
-                _charge(delivery, raw)
-            elif isinstance(raw, bytes):
-                # Exact decoded size was proved by bounded preflight in this
-                # same snapshot. Charge full delivery again without retaining
-                # a second whole decoded document beside json.loads' input.
-                delivery.utf8_bytes += decoded_size
             try:
                 if not isinstance(raw, (str, bytes, bytearray)):
                     record(EvidenceCode.JSON_INVALID)

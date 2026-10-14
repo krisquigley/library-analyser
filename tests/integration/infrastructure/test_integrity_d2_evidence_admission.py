@@ -15,6 +15,7 @@ import weakref
 from unittest.mock import patch
 
 from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner, Delivery, AdmissionStop
+from music_analyzer.infrastructure.persistence import integrity_evidence as evidence_adapter
 from time import monotonic
 from tests.integration.infrastructure.integrity_d2_evidence_public_fixture import (
     create_public_evidence_database, payload, canonical, fingerprint, store_payload,
@@ -40,6 +41,27 @@ def canonical_target_failure(value, *args, **kwargs):
 
 
 ORIGINAL_DUMPS = json.dumps
+
+
+def real_nested_parser_code(case, depth):
+    """Approved PR104 correction; original RED281ae7/b505 remain immutable.
+
+    Parser recursion is runtime-dependent, not an application depth policy.
+    Successful results are checked iteratively, never by recursive equality.
+    """
+    raw = ('[' * depth + '0' + ']' * depth).encode()
+    try:
+        parsed = json.loads(raw)
+    except RecursionError:
+        return raw, 'evidence_json_invalid'
+    node = parsed
+    for _ in range(depth):
+        case.assertIsInstance(node, list)
+        case.assertEqual(len(node), 1)
+        node = node[0]
+    case.assertEqual(node, 0)
+    return raw, 'evidence_contract_invalid'
+
 
 
 def create_encoded(path, encoding='UTF-8', version=10):
@@ -486,9 +508,9 @@ class IntegrityD2EvidenceAdmissionControls(AdmissionCase):
         self.assertTrue(evidence_sql('SELECT length(CAST(track_id AS BLOB)) FROM (SELECT track_id FROM graph_feature_evidence WHERE is_current=1)'))
 
     def test_real_parser_recursive_input_control(self):
-        raw = ('[' * 10000 + '0' + ']' * 10000).encode()
-        with self.assertRaises(RecursionError):
-            json.loads(raw)
+        raw, code = real_nested_parser_code(self, 10000)
+        self.assertEqual(len(raw), 20001)
+        self.assertIn(code, ('evidence_json_invalid', 'evidence_contract_invalid'))
 
     def test_delivery_reduced_budget_selfcontrols_are_shared_and_inclusive(self):
         # Existing Delivery controls are NOT prospective evidence-scanner RED.
@@ -584,22 +606,124 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
         self.assertNotIn(OLD_RUNS[0], obs.value_runs)
         self.assertNotIn('value_limit_reached', [f.code for f in scan.findings])
 
+    def test_blob_bom_decoded_domain_oversize(self):
+        # Domain admission remains separate from raw runtime admission.
+        path, ids = self.public()
+        value, text = sized_payload(ids[0], OLD_RUNS[0], DOMAIN + 1)
+        store_payload(path, OLD_RUNS[0], value, text=text.encode('utf-16'))
+        scan = self.scan(path)
+        self.assertEqual(findings(scan), [('historical_evidence', 'evidence_payload_oversized', 1, 'exact')])
+        self.assert_complete(scan)
+
     def test_blob_bom_decoded_domain_and_separate_runtime_bound(self):
-        for codec, size in (('utf-16', DOMAIN + 1), ('utf-32', 9 << 20)):
-            with self.subTest(codec=codec):
-                path, ids = self.public()
-                value, text = sized_payload(ids[0], OLD_RUNS[0], size)
-                store_payload(path, OLD_RUNS[0], value, text=text.encode(codec))
-                scan = self.scan(path)
-                if size > DOMAIN:
-                    self.assertEqual(findings(scan), [('historical_evidence', 'evidence_payload_oversized', 1, 'exact')])
-                    self.assert_complete(scan)
+        # Mandatory empirical qualification, NOT the deterministic guard proof.
+        # Preserve original RED281ae7/b505 provenance: deadline is never accepted
+        # as proof of the full-fetch value predicate; external supervision120s.
+        path, ids = self.public()
+        value, text = sized_payload(ids[0], OLD_RUNS[0], 9 << 20)
+        raw = text.encode('utf-32')
+        self.assertEqual(len(text.encode('utf-8')), 9 << 20)
+        self.assertGreater(len(raw), 32 << 20)
+        self.assertLess(len(text.encode('utf-8')), DOMAIN)
+        store_payload(path, OLD_RUNS[0], value, text=raw)
+        obs = Observation()
+        scan = self.scan(path, obs)
+        self.assertEqual(scan.stop_reason, 'value_limit')
+        self.assertFalse(scan.implemented_scope_complete)
+        self.assertIn('value_limit_reached', [f.code for f in scan.findings])
+        self.assertEqual(selected(scan, 'historical_evidence').state, 'interrupted')
+        self.assertEqual(findings(scan), [])
+        self.assertNotIn(OLD_RUNS[0], obs.value_runs)
+
+    def test_raw_runtime_guard_after_exact_decoded_preflight(self):
+        # Controlled fixed-slice delivery proxy, not whole-scanner performance
+        # or physical SQLite corruption. Real production decoder/preflight and
+        # full-payload guard run unchanged; no limits, clock or size result patch.
+        class Cursor:
+            def __init__(self, rows):
+                self.rows = iter(rows)
+            def fetchone(self):
+                return next(self.rows, None)
+            def close(self):
+                pass
+
+        class FixedSliceDelivery(Delivery):
+            def __init__(self, db, raw, track, run):
+                super().__init__(db, monotonic() + 120)
+                self.raw, self.track, self.run = raw, track, run
+                self.slices = self.full_requests = 0
+            def execute(self, sql, params=()):
+                self.guard()
+                if sql.startswith('SELECT substr(CAST(evidence_json AS BLOB),?,4096)'):
+                    self.slices += 1
+                    offset, track, run = params
+                    if (track, run) != (self.track, self.run):
+                        raise AssertionError('Wrong preflight identity')
+                    return Cursor([(self.raw[offset-1:offset-1+4096],)])
+                if sql.startswith('SELECT track_id,run_id,evidence_json'):
+                    self.full_requests += 1
+                    return Cursor([(self.track, self.run, self.raw)])
+                raise AssertionError('Unexpected SQL in controlled delivery')
+
+        track, run = 'sha256:' + 'a' * 64, OLD_RUNS[0]
+        for size in (4096, 8 << 20, 9 << 20):
+            with self.subTest(decoded=size):
+                value, text = sized_payload(track, run, size)
+                # No BOM: inclusive raw32MiB boundary is exact for8MiB ASCII.
+                raw = text.encode('utf-32-le')
+                self.assertEqual(len(raw), size * 4)
+                self.assertEqual(json.detect_encoding(raw[:4096]), 'utf-32-le')
+                codes = []
+                with closing(sqlite3.connect(':memory:')) as db:
+                    delivery = FixedSliceDelivery(db, raw, track, run)
+                    decoded, code = evidence_adapter._document_size(delivery, track, run, len(raw), 'blob')
+                    self.assertEqual((decoded, code), (size, None))
+                    self.assertEqual(delivery.utf8_bytes, size)
+                    self.assertEqual(delivery.slices, (len(raw)+4095)//4096)
+                    args = (delivery, track, run, fingerprint(value), len(raw), 'blob', decoded, codes.append)
+                    if len(raw) > 32 << 20:
+                        with self.assertRaises(AdmissionStop) as caught:
+                            evidence_adapter._payload(*args)
+                        self.assertEqual(caught.exception.reason, 'value_limit')
+                        self.assertEqual(delivery.full_requests, 0)
+                        self.assertEqual(delivery.utf8_bytes, size)
+                    else:
+                        evidence_adapter._payload(*args)
+                        self.assertEqual(delivery.full_requests, 1)
+                        identities = len(track.encode()) + len(run.encode())
+                        self.assertEqual(delivery.utf8_bytes, size * 2 + identities)
+                    self.assertEqual(codes, [])
+
+    def test_parser_recursion_proxy_has_healthy_and_firing_controls(self):
+        # Bounded parser-only proxy; no production depth ban. Approved PR104
+        # correction preserves original immutable RED281ae7 and b505 evidence.
+        path, ids = self.public()
+        target = canonical(payload(ids[0], OLD_RUNS[0]))
+        original_loads = json.loads
+        for firing in (False, True):
+            with self.subTest(firing=firing):
+                calls = []
+                def loads(raw, *args, **kwargs):
+                    if raw == target:
+                        calls.append(raw)
+                        if firing:
+                            raise RecursionError('PRIVATE bounded parser proxy')
+                    return original_loads(raw, *args, **kwargs)
+                self.assertEqual(loads('{}'), {})
+                self.assertEqual(calls, [])
+                if firing:
+                    with self.assertRaises(RecursionError):
+                        loads(target)
                 else:
-                    self.assertEqual(scan.stop_reason, 'value_limit')
-                    self.assertFalse(scan.implemented_scope_complete)
-                    self.assertIn('value_limit_reached', [f.code for f in scan.findings])
-                    self.assertEqual(selected(scan, 'historical_evidence').state, 'interrupted')
-                    self.assertEqual(findings(scan), [])
+                    self.assertEqual(loads(target), payload(ids[0], OLD_RUNS[0]))
+                self.assertEqual(len(calls), 1)
+                calls.clear()
+                with patch('json.loads', loads):
+                    scan = self.scan(path)
+                self.assertEqual(len(calls), 1, 'Target parser operation must fire exactly once')
+                self.assertEqual(findings(scan), [('historical_evidence', 'evidence_json_invalid', 1, 'exact')] if firing else [])
+                self.assert_complete(scan)
+                self.assertNotIn('PRIVATE', repr(scan))
 
     def test_utf16_embedded_nul_oversized_tail_cannot_hide_from_admission(self):
         for encoding in ('UTF-16le', 'UTF-16be'):
@@ -628,8 +752,8 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
     def test_blob_codec_raw_surrogate_and_parse_depth_suppression(self):
         for raw, code in ((b'\xffbad', 'evidence_json_invalid'),
                           (b'"\xed\xa0\x80"', 'evidence_fingerprint_invalid'),
-                          (('[' * 1500 + '0' + ']' * 1500).encode(), 'evidence_contract_invalid'),
-                          (('[' * 10000 + '0' + ']' * 10000).encode(), 'evidence_json_invalid')):
+                          real_nested_parser_code(self, 1500),
+                          real_nested_parser_code(self, 10000)):
             with self.subTest(code=code, bytes=len(raw)):
                 path, _ = self.public()
                 change(path, 'UPDATE graph_feature_evidence SET evidence_json=? WHERE run_id=?', (raw, OLD_RUNS[0]))

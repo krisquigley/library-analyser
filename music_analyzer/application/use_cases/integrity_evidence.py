@@ -173,5 +173,8 @@ def _summary(stage: dict) -> bool:
             or type(summary['provisional']) is not bool or not isinstance(summary['uncertainty'], str)):
         return False
     values = stage['summary_values']
-    return (_sequence(values) and all(_pair(item, finite) for item in values)
+    # This derived field follows established equality semantics (True == 1,
+    # False == 0); finite/nonboolean policy belongs to the vectors above.
+    return (_sequence(values)
+            and all(_sequence(item) and len(item) == 2 for item in values)
             and tuple(tuple(item) for item in values) == tuple(zip(labels, summary['mean'])))

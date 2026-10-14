@@ -19,7 +19,13 @@ class IntegrityEvidenceBlobBudget(unittest.TestCase):
             value = payload(ids[0], OLD_RUNS[0])
             value['features']['bpm']['uncertainty'] = '尾' * 100
             text = canonical(value)
-            expected = len(text.encode('utf-8'))
+            document_bytes = len(text.encode('utf-8'))
+            identity_bytes = sum(len(item.encode('utf-8')) for item in (ids[0], OLD_RUNS[0]))
+            # Approved PR104 identity-recharge oracle correction. Preserve
+            # immutable RED281ae7/b505 and the prior failed assertion externally.
+            # Full-row delivery repeats identities as well as decoded document;
+            # the preceding fragment preflight charge is NOT part of this delta.
+            expected = document_bytes + identity_bytes
             store_payload(path, OLD_RUNS[0], value, text=text.encode('utf-16'))
             meters = []
             observations = []
@@ -51,11 +57,11 @@ class IntegrityEvidenceBlobBudget(unittest.TestCase):
             healthy = scan()
             self.assertTrue(healthy.implemented_scope_complete)
             self.assertFalse(healthy.findings)
-            self.assertEqual(observations, [expected], 'Full decoded BLOB must charge after already-charged fragments')
+            self.assertEqual(observations, [expected], 'Full row must charge identities and decoded BLOB after already-charged fragments')
             boundary = meters[0].before_full
             observations.clear()
             # Leave room for all prior phases, envelopes and fragments, but one
-            # byte too little for the independently measured full document.
+            # byte too little for the independently measured repeated full row.
             with patch('music_analyzer.infrastructure.persistence.integrity.MAX_UTF8_BYTES', boundary + expected - 1):
                 limited = scan()
             self.assertEqual(limited.stop_reason, 'utf8_limit')
@@ -66,3 +72,4 @@ class IntegrityEvidenceBlobBudget(unittest.TestCase):
                              ('interrupted', 'lower_bound'))
             self.assertIn('utf8_limit_reached', [f.code for f in limited.findings])
             self.assertFalse(observations, 'Budget stop must precede JSON decoding')
+            self.assertIsNone(meters[-1].before_full, 'Full-row refusal must precede the actual full SELECT')
