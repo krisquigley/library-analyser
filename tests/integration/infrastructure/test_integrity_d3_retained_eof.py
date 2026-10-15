@@ -277,7 +277,7 @@ class RetainedEnvelopeEOF(unittest.TestCase):
         self.assertEqual([(f.check_id, f.code, f.count, f.count_precision) for f in scan.findings],
                          [(owner, code, 1, 'exact')])
         self.assertEqual(scan.stop_reason, 'scope_not_implemented')
-        self.assertFalse(scan.complete)
+        self.assertTrue(scan.implemented_scope_complete)
 
     def test_metadata_duplicate_envelope_eof_is_owner_finding(self):
         self.assert_owner_duplicate(0)

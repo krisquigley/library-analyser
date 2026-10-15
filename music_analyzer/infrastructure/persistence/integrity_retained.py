@@ -255,6 +255,10 @@ def scan_retained(delivery, owner):
             # An unexpected extra physical delivery has no trustworthy content.
             delivery.claim_group(owner, prefix + '_delivery_invalid')
             counts[prefix + '_delivery_invalid'] = counts.get(prefix + '_delivery_invalid', 0) + 1
+    except DeliveryMismatch:
+        # Envelope EOF presence is owner-invalid, not a SQLite driver failure.
+        delivery.claim_group(owner, prefix + '_delivery_invalid')
+        counts[prefix + '_delivery_invalid'] = counts.get(prefix + '_delivery_invalid', 0) + 1
     except (sqlite3.Error, OSError, UnicodeError, MemoryError):
         delivery.observe_error()
         raise
