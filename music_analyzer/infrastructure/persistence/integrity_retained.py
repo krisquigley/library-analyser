@@ -92,7 +92,7 @@ def _stage_codes(raw, name):
 
 def scan_retained(delivery, owner):
     from music_analyzer.infrastructure.persistence.integrity import (
-        MAX_VALUE_BYTES, MAX_UTF8_BYTES, AdmissionStop, check, finding,
+        MAX_VALUE_BYTES, MAX_UTF8_BYTES, AdmissionStop, DeliveryMismatch, check, finding,
     )
     stage = owner == 'retained_stages'
     table = 'stages' if stage else 'track_metadata'
@@ -245,7 +245,13 @@ def scan_retained(delivery, owner):
                         record('json_invalid')
                     elif not valid(value):
                         record('contract_invalid')
-        if values is not None and delivery.one(values, expected_eof=total is not None and delivered == total) is not None:
+        extra = False
+        if values is not None:
+            try:
+                extra = delivery.one(values, expected_eof=total is not None and delivered == total) is not None
+            except DeliveryMismatch:
+                extra = True
+        if extra:
             # An unexpected extra physical delivery has no trustworthy content.
             delivery.claim_group(owner, prefix + '_delivery_invalid')
             counts[prefix + '_delivery_invalid'] = counts.get(prefix + '_delivery_invalid', 0) + 1

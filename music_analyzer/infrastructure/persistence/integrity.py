@@ -23,6 +23,10 @@ class AdmissionStop(Exception):
         self.reason = reason
 
 
+class DeliveryMismatch(sqlite3.DatabaseError):
+    """Observed unexpected delivery, distinct from a driver/read exception."""
+
+
 class Delivery:
     """Preflight scalar sizes before delivering any input-sized Python value."""
     def __init__(self, connection, deadline):
@@ -125,10 +129,10 @@ class Delivery:
             self.observe_error()
             raise
         if row is not None:
-            self.count += 1
             if expected_eof:
-                self.observe_error()
-                raise sqlite3.DatabaseError('delivery cardinality mismatch')
+                # Presence disproves EOF; do not admit or inspect the payload.
+                raise DeliveryMismatch('delivery cardinality mismatch')
+            self.count += 1
         self.guard()
         return row
 
