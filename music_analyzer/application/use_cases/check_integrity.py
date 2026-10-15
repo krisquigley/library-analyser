@@ -157,6 +157,10 @@ def _valid(scan):
                 or by_id['schema'].state != 'completed' or schema_failed
                 or by_id[item.check_id].state not in ('completed', 'interrupted')):
             return False
+        if item.check_id in ('metadata', 'retained_stages'):
+            owner = by_id[item.check_id]
+            if item.count_precision != owner.count_precision or item.count > owner.count:
+                return False
     if not _operationally_consistent(scan, by_id['resource_access']):
         return False
     if scan.stop_reason == 'unsupported_database' and (

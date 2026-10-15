@@ -107,3 +107,85 @@ class D3aReportTests(unittest.TestCase):
                 self.assertEqual((report.schema_version,report.stop_reason,report.complete),(None,'read_error',False))
                 self.assertEqual(report.findings,(IntegrityFinding('resource_access','read_failed','operational',1),))
                 self.assertNotIn('PRIVATE',repr(report))
+
+
+class D3aFindingCardinalityTests(unittest.TestCase):
+    """Independent fake ports enforce per-code physical-row evidence bounds."""
+
+    def scan_with_owner(self, owner, interrupted=False, rows=None):
+        scan = d3a_scan()
+        if not interrupted:
+            return scan if rows is None else changed(scan, owner, count=rows)
+        scan = changed(scan, owner, state='interrupted', count=rows,
+                       count_precision='lower_bound')
+        order = ('metadata', 'retained_stages', 'current_graph', 'historical_graph',
+                 'current_evidence', 'historical_evidence')
+        for later in order[order.index(owner) + 1:]:
+            scan = changed(scan, later, state='blocked', count=None,
+                           count_precision='unavailable')
+        scan = changed(scan, 'resource_access', state='interrupted', count=0,
+                       count_precision='lower_bound')
+        return replace(scan, stop_reason='read_error', implemented_scope_complete=False,
+                       findings=(IntegrityFinding('resource_access', 'read_failed', 'operational', 1),))
+
+    def with_findings(self, scan, owner, count, precision):
+        return replace(scan, findings=tuple(
+            IntegrityFinding(owner, code, 'corruption', count, count_precision=precision)
+            for code in CODES[owner]) + scan.findings)
+
+    def assert_sanitized(self, scan):
+        report = execute(scan)
+        self.assertEqual((report.schema_version, report.stop_reason, report.exit_code,
+                          report.complete, report.implemented_scope_complete),
+                         (None, 'read_error', 4, False, False))
+        self.assertEqual(report.findings,
+                         (IntegrityFinding('resource_access', 'read_failed', 'operational', 1),))
+
+    def test_completed_each_code_equality_underbound_and_zero_are_accepted_not_summed(self):
+        for owner, rows in (('metadata', 2), ('retained_stages', 8)):
+            for count in (0, 1, rows):
+                with self.subTest(owner=owner, count=count):
+                    scan = self.with_findings(self.scan_with_owner(owner), owner, count, 'exact')
+                    report = execute(scan)
+                    self.assertEqual((report.schema_version, report.checks, report.findings),
+                                     (10, scan.checks, scan.findings))
+                    self.assertTrue(report.implemented_scope_complete)
+            scan = self.with_findings(self.scan_with_owner(owner, rows=0), owner, 0, 'exact')
+            self.assertEqual(execute(scan).findings, scan.findings)
+
+    def test_completed_lower_bound_and_over_observed_rows_are_sanitized_for_both_owners(self):
+        for owner, rows in (('metadata', 2), ('retained_stages', 8)):
+            for count, precision in ((1, 'lower_bound'), (rows + 1, 'exact')):
+                with self.subTest(owner=owner, count=count, precision=precision):
+                    self.assert_sanitized(self.with_findings(
+                        self.scan_with_owner(owner), owner, count, precision))
+
+    def test_interrupted_each_code_is_lower_bound_and_independently_row_bounded(self):
+        for owner, rows in (('metadata', 2), ('retained_stages', 8)):
+            for count in (0, 1, rows):
+                with self.subTest(owner=owner, count=count):
+                    scan = self.with_findings(self.scan_with_owner(owner, True, rows),
+                                              owner, count, 'lower_bound')
+                    report = execute(scan)
+                    self.assertEqual((report.schema_version, report.checks, report.findings),
+                                     (10, scan.checks, scan.findings))
+                    self.assertFalse(report.implemented_scope_complete)
+            scan = self.with_findings(self.scan_with_owner(owner, True, 0), owner, 0, 'lower_bound')
+            self.assertEqual(execute(scan).findings, scan.findings)
+
+    def test_interrupted_exact_or_over_observed_rows_are_sanitized_for_both_owners(self):
+        for owner, rows in (('metadata', 2), ('retained_stages', 8)):
+            for count, precision in ((1, 'exact'), (rows + 1, 'lower_bound')):
+                with self.subTest(owner=owner, count=count, precision=precision):
+                    self.assert_sanitized(self.with_findings(
+                        self.scan_with_owner(owner, True, rows), owner, count, precision))
+
+    def test_invalid_counts_remain_sanitized_for_completed_and_interrupted_owners(self):
+        for owner in CODES:
+            for interrupted in (False, True):
+                for count in (-1, True, 1.0, None, 2_000_001):
+                    with self.subTest(owner=owner, interrupted=interrupted, count=count):
+                        scan = self.scan_with_owner(owner, interrupted, 2)
+                        precision = 'lower_bound' if interrupted else 'exact'
+                        self.assert_sanitized(self.with_findings(scan, owner, count, precision))
+                        self.assert_sanitized(changed(scan, owner, count=count))
