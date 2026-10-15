@@ -12,6 +12,9 @@ import venv
 
 from tests.integration.infrastructure.integrity_d1_public_fixture import create_public_core_database
 from tests.integration.infrastructure.integrity_d2_public_fixture import create_public_graph_database
+from tests.integration.infrastructure.integrity_d2_evidence_public_fixture import (
+    create_public_evidence_database, OLD_RUNS,
+)
 
 
 class IntegrityD1InstalledControls(unittest.TestCase):
@@ -80,7 +83,7 @@ class IntegrityD1InstalledControls(unittest.TestCase):
                         self.assertEqual(checks[name]['state'], 'completed')
                     self.assertEqual(checks['core_rows']['count'], 4)
                     self.assertEqual(checks['current_graph']['state'], 'not_applicable' if version == 6 else 'completed')
-                    self.assertEqual(checks['current_evidence']['state'], 'not_applicable' if version < 9 else 'not_implemented')
+                    self.assertEqual(checks['current_evidence']['state'], 'not_applicable' if version < 9 else 'completed')
                     self.assertEqual(result.stderr, '')
                     self.assertNotIn(str(path), result.stdout)
                     self.assertEqual(path.read_bytes(), before)
@@ -99,7 +102,7 @@ class IntegrityD1InstalledControls(unittest.TestCase):
                     with self.subTest(version=version, corrupt=corrupt, entry=command[-1]):
                         result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=4)
                         report = json.loads(result.stdout)
-                        self.assertEqual(report['coverage_revision'], 'D2a')
+                        self.assertEqual(report['coverage_revision'], 'D2')
                         self.assertEqual(report['status'], 'incomplete')
                         self.assertFalse(report['complete'])
                         self.assertTrue(report['implemented_scope_complete'])
@@ -112,6 +115,37 @@ class IntegrityD1InstalledControls(unittest.TestCase):
                         self.assertEqual([(f['check_id'], f['code'], f['count'], f['count_precision'])
                                           for f in graph_findings],
                                          [('current_graph', 'graph_mirror_invalid', 1, 'exact')] if corrupt else [])
+                        self.assertEqual(result.stderr, '')
+                        self.assertEqual(path.read_bytes(), before)
+
+    def test_installed_evidence_history_is_checked_by_script_and_module(self):
+        for version in (9, 10):
+            path = self.root / f'public-evidence-v{version}.sqlite'
+            create_public_evidence_database(path, version)
+            for corrupt in (False, True):
+                if corrupt:
+                    with closing(sqlite3.connect(path)) as db:
+                        db.execute('UPDATE graph_feature_evidence SET evidence_json=? WHERE run_id=?',
+                                   ('PRIVATE invalid JSON', OLD_RUNS[0]))
+                        db.commit()
+                before = path.read_bytes()
+                for command in ([str(self.script)], [str(self.python), '-m', 'music_analyzer']):
+                    with self.subTest(version=version, corrupt=corrupt, entry=command[-1]):
+                        result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=4)
+                        report = json.loads(result.stdout)
+                        self.assertEqual((report['coverage_revision'], report['report_version'],
+                                          report['required_scope_revision']), ('D2', 1, 'P7-1'))
+                        self.assertFalse(report['complete'])
+                        self.assertTrue(report['implemented_scope_complete'])
+                        checks = {c['check_id']: c for c in report['checks']}
+                        for owner in ('current_evidence', 'historical_evidence'):
+                            self.assertEqual((checks[owner]['state'], checks[owner]['count'],
+                                              checks[owner]['count_precision']), ('completed', 2, 'exact'))
+                        self.assertEqual([(f['check_id'], f['code'], f['count'], f['count_precision'])
+                                          for f in report['findings']],
+                                         [('historical_evidence', 'evidence_json_invalid', 1, 'exact')] if corrupt else [])
+                        self.assertNotIn('PRIVATE', result.stdout + result.stderr)
+                        self.assertNotIn(OLD_RUNS[0], result.stdout)
                         self.assertEqual(result.stderr, '')
                         self.assertEqual(path.read_bytes(), before)
 

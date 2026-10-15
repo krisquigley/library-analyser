@@ -28,6 +28,8 @@ def selected_scan(version, empty=False):
             state, count, precision = 'completed', 1, 'exact'
         elif name in OWNERS and version >= 7:
             state, count, precision = 'completed', 0 if empty else graph_counts[OWNERS.index(name)], 'exact'
+        elif name in ('current_evidence', 'historical_evidence') and version >= 9:
+            state, count, precision = 'completed', 0, 'exact'
         else:
             state = 'not_applicable' if version < first_version else 'not_implemented'
             count, precision = None, 'unavailable'
@@ -58,7 +60,7 @@ class IntegrityD2Report(unittest.TestCase):
                     ('schema_version', version), ('checks', scan.checks), ('findings', ()),
                     ('implemented_scope_complete', True), ('stop_reason', 'scope_not_implemented'),
                     ('status', 'incomplete'), ('exit_code', 4), ('complete', False),
-                    ('report_version', 1), ('coverage_revision', 'D2a'),
+                    ('report_version', 1), ('coverage_revision', 'D2'),
                     ('required_scope_revision', 'P7-1'),
                     ('supported_schema_versions', (6, 7, 8, 9, 10))):
                 with self.subTest(version=version, field=field):
@@ -128,7 +130,7 @@ class IntegrityD2ReportControls(unittest.TestCase):
             self.assertEqual(graph, expected)
             for c in scan.checks:
                 if c.check_id in ('current_evidence', 'historical_evidence'):
-                    self.assertEqual(c.state, 'not_applicable' if version < 9 else 'not_implemented')
+                    self.assertEqual(c.state, 'not_applicable' if version < 9 else 'completed')
 
     def test_injected_port_forwards_only_explicit_target_and_deadline(self):
         port = FakeScanner(selected_scan(6))

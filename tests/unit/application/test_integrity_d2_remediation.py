@@ -22,6 +22,8 @@ def schema_stop(version, schema_state='completed', cancelled=False):
     scan = change_checks(selected_scan(version), ('core_rows',), 'blocked')
     if version >= 7:
         scan = change_checks(scan, OWNERS, 'blocked')
+    if version >= 9:
+        scan = change_checks(scan, ('current_evidence', 'historical_evidence'), 'blocked')
     scan = change_checks(scan, ('schema',), schema_state)
     findings = (IntegrityFinding('schema', 'schema_object_set_mismatch', 'corruption', 1,
                                  count_precision='exact'),)
