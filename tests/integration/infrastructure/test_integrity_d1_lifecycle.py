@@ -70,7 +70,7 @@ class IntegrityD1Lifecycle(unittest.TestCase):
                 states = {c.check_id: c.state for c in result.checks}
                 for check_id in ('compatibility', 'schema', 'core_rows', 'resource_access'):
                     self.assertEqual(states[check_id], 'completed')
-                self.assertEqual(states['metadata'], 'not_implemented')
+                self.assertEqual(states['metadata'], 'completed')
                 self.assertEqual(states['current_graph'], 'not_applicable' if version == 6 else 'completed')
                 self.assertEqual(states['historical_evidence'], 'not_applicable' if version < 9 else 'completed')
 

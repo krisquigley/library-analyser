@@ -22,7 +22,7 @@ CODES = ('evidence_envelope_invalid', 'evidence_link_invalid', 'evidence_json_in
 def evidence_scan(version=10, empty=False):
     checks = []
     for name, unit, first in CHECKS:
-        if name in ('compatibility', 'schema', 'core_rows', 'resource_access'):
+        if name in ('compatibility', 'schema', 'core_rows', 'metadata', 'retained_stages', 'resource_access'):
             state, count, precision = 'completed', 1, 'exact'
         elif name in ('current_graph', 'historical_graph') and version >= 7:
             graph_counts = (2, 4) if version == 7 else (3, 8)
@@ -95,14 +95,14 @@ class IntegrityD2EvidenceReport(unittest.TestCase):
             with self.subTest(version=version):
                 scan = evidence_scan(version)
                 report = execute(scan)
-                self.assertEqual(report.coverage_revision, 'D2')
+                self.assertEqual(report.coverage_revision, 'D3a')
                 self.assertEqual(report.checks, scan.checks)
                 self.assertEqual((report.report_version, report.required_scope_revision), (1, 'P7-1'))
                 self.assertEqual((report.status, report.exit_code, report.complete), ('incomplete', 4, False))
                 self.assertTrue(report.implemented_scope_complete)
                 self.assertEqual(report.supported_schema_versions, (6, 7, 8, 9, 10))
                 for c in report.checks:
-                    if c.check_id in ('metadata', 'retained_stages', 'sqlite_physical', 'sqlite_foreign_keys'):
+                    if c.check_id in ('sqlite_physical', 'sqlite_foreign_keys'):
                         self.assertEqual(c.state, 'not_implemented')
 
     def test_empty_evidence_completed_zero_exact_is_not_unavailable(self):
@@ -147,6 +147,6 @@ class IntegrityD2EvidenceReport(unittest.TestCase):
         checks = tuple(replace(c, state='not_implemented', count=None, count_precision='unavailable') if c.check_id == OWNERS[1] else c for c in scan.checks)
         report = execute(replace(scan, checks=checks))
         self.assertFalse(report.implemented_scope_complete)
-        self.assertEqual(report.coverage_revision, 'D2')
+        self.assertEqual(report.coverage_revision, 'D3a')
         self.assertEqual((report.exit_code, report.complete), (4, False))
 

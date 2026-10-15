@@ -86,7 +86,7 @@ class NonOperationalContract(unittest.TestCase):
     def test_schema_blocked_requires_drift_and_no_interrupted_schema_work(self):
         base = healthy_scan(6)
         blocked_core = tuple(replace(c, state='blocked', count=None, count_precision='unavailable')
-                             if c.check_id == 'core_rows' else c for c in base.checks)
+                             if c.check_id in ('core_rows', 'metadata', 'retained_stages') else c for c in base.checks)
         drift = replace(base, checks=blocked_core, implemented_scope_complete=False,
                         stop_reason='schema_blocked', findings=(IntegrityFinding(
                             'schema', 'schema_checks_mismatch', 'corruption', 1),))
@@ -96,7 +96,7 @@ class NonOperationalContract(unittest.TestCase):
     def test_schema_blocked_cannot_claim_interrupted_schema_work(self):
         base = healthy_scan(6)
         drift = replace(base, checks=tuple(replace(c, state='blocked', count=None,
-                        count_precision='unavailable') if c.check_id == 'core_rows' else c
+                        count_precision='unavailable') if c.check_id in ('core_rows', 'metadata', 'retained_stages') else c
                         for c in base.checks), implemented_scope_complete=False,
                         stop_reason='schema_blocked', findings=(IntegrityFinding(
                             'schema', 'schema_checks_mismatch', 'corruption', 1),))

@@ -138,7 +138,7 @@ class OperationalContract(unittest.TestCase):
         schema_finding = IntegrityFinding('schema', 'schema_checks_mismatch', 'corruption', 1,
                                           count_precision='exact')
         checks = tuple(replace(c, state='blocked', count=None, count_precision='unavailable')
-                       if c.check_id == 'core_rows' else c for c in healthy.checks)
+                       if c.check_id in ('core_rows', 'metadata', 'retained_stages') else c for c in healthy.checks)
         schema_blocked = replace(healthy, checks=checks, findings=(schema_finding,),
                                  stop_reason='schema_blocked', implemented_scope_complete=False)
         report = CheckIntegrity(FakeScanner(schema_blocked)).execute('public')

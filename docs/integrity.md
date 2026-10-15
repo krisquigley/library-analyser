@@ -1,4 +1,4 @@
-# LIMITED offline integrity diagnostic (full D2)
+# LIMITED offline integrity diagnostic (D3a)
 
 ```sh
 music-analyzer integrity --database DB --json
@@ -8,15 +8,71 @@ python -m music_analyzer integrity --database DB --audit-deadline-seconds 30
 
 A database path must be supplied explicitly. Repeated root/subcommand `--database` options (including `--database=DB`) select the **last explicit value in argv order**; earlier values are never opened. The command does not load Settings, default/XDG configuration, models, inference backends, FFmpeg, audio files, cache, graph builders or servers. Configuration/model and unrelated command options are rejected. It performs no migration or repair and does not change SQLite `user_version`.
 
-## What D2 covers — and does not certify
+## What D3a covers — and does not certify
 
-D2 recognizes the existing application ID and true schema versions **6–10**, checks the exact existing FULL-reader schema contract (including its existing legacy tolerances), and examines every core track identity/digest/size and audio-policy row, including missing/orphan audio relationships. Both FULL readers and their trust behavior remain unchanged.
+D3a recognizes the existing application ID and true schema versions **6–10**, checks the exact existing FULL-reader schema contract (including its existing legacy tolerances), and examines every core track identity/digest/size and audio-policy row, including missing/orphan audio relationships. Both FULL readers and their trust behavior remain unchanged.
 
-Every report exposes the finite twelve-check checklist: compatibility, schema, core_rows, metadata, retained_stages, current_graph, historical_graph, current_evidence, historical_evidence, sqlite_physical, sqlite_foreign_keys, resource_access. Metadata, retained stage payloads and SQLite physical/foreign-key checks remain **not implemented** and are deferred to D3, as is certification. D2 includes both graph checks and both compact evidence checks, not just the former graph-only D2a capability. Graph checks are genuinely not applicable in v6, and evidence checks in v6–8, only after trustworthy application/version recognition. Missing applicable coverage is never labeled not applicable. Schema drift can block dependent core checks.
+Every report exposes the finite twelve-check checklist: compatibility, schema, core_rows, metadata, retained_stages, current_graph, historical_graph, current_evidence, historical_evidence, sqlite_physical, sqlite_foreign_keys, resource_access. D3a adds metadata and retained stage payload checks. SQLite physical/foreign-key checks remain **not implemented**, deferred to D3b along with certification. D3a retains both graph checks and both compact evidence checks. Graph checks are genuinely not applicable in v6, and evidence checks in v6–8, only after trustworthy application/version recognition. Missing applicable coverage is never labeled not applicable. Schema drift can block dependent core checks.
 
-Even a healthy v6 database returns `status=incomplete`, `complete=false`, `stop_reason=scope_not_implemented`, **exit4**. Core corruption findings remain visible but do not change that incomplete precedence. `implemented_scope_complete=true` means only the selected schema/core/graph/evidence work and resource cleanup completed; it can also be true when fully drained core scans found corruption. It is **not** P7 completion, a clean result, a trust token, or suitability for P8. No D2 invocation returns clean0/corrupt-complete1. #85's six-second case remains unresolved; no latency guarantee is made. #96 is separate, and P8 planning remains blocked until complete D3 diagnostics and separate exact-head writer parity are delivered.
+Even a healthy v6 database returns `status=incomplete`, `complete=false`, `stop_reason=scope_not_implemented`, **exit4**. Core corruption findings remain visible but do not change that incomplete precedence. `implemented_scope_complete=true` means only the selected schema/core/metadata/retained-stage/graph/evidence work and resource cleanup completed; it can also be true when fully drained core scans found corruption. It is **not** P7 completion, a clean result, a trust token, or suitability for P8. No D3a invocation returns clean0/corrupt-complete1. #85's six-second case remains unresolved; no latency guarantee is made. #96 is separate, and P8 planning remains blocked until complete D3 diagnostics and separate exact-head writer parity are delivered.
 
-Wire shape is `report_version=1`, capability is `coverage_revision=D2`, and the finite promised checklist is `required_scope_revision=P7-1`. These fields do not change the package version or database schema version. Findings use fixed predicate codes and grouped occurrence counts, not distinct corrupt-track totals. Several findings can overlap on the same row; do not sum them as corrupt tracks. Completed counts are exact; interrupted counts/findings are lower bounds; blocked/unimplemented/N/A counts are unavailable, not fabricated zeroes.
+Wire shape is `report_version=1`, capability is `coverage_revision=D3a`, and the finite promised checklist is `required_scope_revision=P7-1`. These fields do not change the package version or database schema version. Findings use fixed predicate codes and grouped occurrence counts, not distinct corrupt-track totals. Several findings can overlap on the same row; do not sum them as corrupt tracks. Completed counts are exact; interrupted counts/findings are lower bounds; blocked/unimplemented/N/A counts are unavailable, not fabricated zeroes.
+
+## Metadata and retained-stage ownership
+
+On every supported schema6–10, metadata examines every physical track_metadata row,
+including inactive tracks, without a filtering join. Its three JSON documents are
+parsed independently: malformed JSON contributes `metadata_json_invalid`; an
+independently parsed malformed sibling can also contribute
+`metadata_contract_invalid`. Common pairs require string keys and string or
+sequence-of-string values; tags require string keys and sequence-of-string values;
+warnings require a sequence of strings. Empty strings/keys/lists and duplicate keys
+remain accepted. There is no mandatory title/artist, coercion, uniqueness/order rule
+or metadata domain byte cap. Audio duration remains core-owned. Unreliable admitted
+delivery contributes `metadata_delivery_invalid` and suppresses unreliable content
+judgments.
+
+Retained stages examine every physical stages row, regardless of run status,
+currentness, track availability or stage name. Open/custom stage names remain
+accepted. Successfully parsed objects use the established strict mapper and retained
+validation without clearing raw predictions; successful mapping must agree with the
+row stage. Optional windows/raw/summary and extra keys retain existing normalization.
+Finite nonboolean numeric vectors and summary coverage **0<coverage<=1** are required;
+window intervals retain existing ordering, disjointness, bounds and duration roundoff.
+Nonempty unique labels are required only with windows. No new probability,
+min/mean/max ordering, raw-summary agreement or original JSON container strictness is
+introduced. Accepted empty outputs and negative/string estimates remain accepted.
+
+The fixed ordered retained codes are `stage_json_invalid`, `stage_contract_invalid`,
+`stage_identity_invalid`, `stage_payload_oversized`, `stage_delivery_invalid`.
+Mapping failure blocks identity judgment. The fixed metadata code order is
+`metadata_json_invalid`, `metadata_contract_invalid`, `metadata_delivery_invalid`.
+Each code contributes at most one row-OR occurrence per physical row, not one per
+component or defect. Codes may overlap; their sum is not a distinct-track total.
+
+Both owners count one successfully observed bounded envelope per physical row,
+even invalid or oversized; preflights/fragments/relookups do not inflate semantic
+work. Exact counts require stream exhaustion and successful cursor cleanup. Empty
+drained phases are exact0; interrupted work/findings are lower_bound including0;
+unvisited applicable phases are blocked with unavailable/null counts. Previously
+drained phases remain exact after later failures.
+
+Stage domain admission is **inclusive16MiB decoded-document UTF8**, established
+before fetching the whole payload. Metadata has no corresponding16MiB validity cap.
+Runtime32MiB single-value and shared row/UTF8/group/deadline budgets still apply to
+both. UTF16 TEXT/BLOB use incremental4096-byte storage decoding including embedded
+NUL and split units; BLOB encoding/BOM handling follows json.loads, while TEXT BOM
+is not stripped. A raw BLOB lone surrogate that cannot be strictly UTF8-sized yields
+operational `read_error`, not stage/metadata corruption; an escaped JSON surrogate
+continues through established content policy. Codec/read errors and MemoryError
+are operational, not corruption evidence. No constant native scratch, linear-time,
+hard wall-time or universal RSS guarantee is made.
+
+These phases run in the displayed twelve-check order using the same pinned
+read-only snapshot and shared operational meters as the other checks. They do not
+change reader trust, writer policy, schema, graph/evidence derivation or P8 eligibility.
+Healthy and corrupt supported databases both remain incomplete4/complete=false;
+physical/FK completion is deliberately outside D3a.
 
 ## Graph ownership and counts
 
@@ -72,7 +128,7 @@ All paths attempt cleanup. Deadline, caps, blocked dependencies, late read error
 |---|---|
 |2|Invalid invocation; fixed sanitized stderr, no report and no target access|
 |3|Unsupported application/version or initially unreadable/refused target|
-|4|LIMITED D2 report, whether healthy, corrupt-observed, blocked, capped or late-error|
+|4|LIMITED D3a report, whether healthy, corrupt-observed, blocked, capped or late-error|
 |130|Cancellation/SIGINT; incomplete report after attempted cleanup|
 
 The first compatibility read can fail even after connection open; that remains an initially unreadable target (exit3), not late read failure. Operational deadline/caps before version recognition remain incomplete4, not unsupported3. Cleanup failure can supersede an unsupported result with incomplete4.
