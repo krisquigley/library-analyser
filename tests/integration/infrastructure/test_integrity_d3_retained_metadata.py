@@ -155,9 +155,14 @@ class RetainedControls(RetainedCase):
         mapped = stage_from_mapping(accepted[0])
         self.assertEqual(mapped.raw_predictions, ((),))
         self.assertEqual(mapped.windows, ())
-        # Actual parser recursion, not an assumed interpreter recursion threshold.
-        with self.assertRaises(RecursionError):
-            json.loads('[' * 20000 + '0' + ']' * 20000)
+        # Native parser recursion thresholds vary across supported interpreters.
+        # Successful parsing is a nonobject, not a JSON decoding failure.
+        try:
+            parsed = json.loads('[' * 20000 + '0' + ']' * 20000)
+        except RecursionError:
+            pass
+        else:
+            self.assertIsInstance(parsed, list)
 
     def test_fault_proxy_hits_only_target(self):
         path = self.public()
@@ -218,11 +223,49 @@ class RetainedPolicyTests(RetainedCase):
                 self.assert_codes(SQLiteIntegrityScanner().scan(str(path)), 'stage_json_invalid')
 
     def test_parse_nonobject_and_recursion_have_distinct_codes(self):
+        deep = '[' * 20000 + '0' + ']' * 20000
+        try:
+            parsed = json.loads(deep)
+        except RecursionError:
+            native_code = 'stage_json_invalid'
+        else:
+            self.assertIsInstance(parsed, list)
+            native_code = 'stage_contract_invalid'
         for raw, code in [('[]', 'stage_contract_invalid'), ('null', 'stage_contract_invalid'),
-                          ('[' * 20000 + '0' + ']' * 20000, 'stage_json_invalid')]:
+                          (deep, native_code)]:
             with self.subTest(code=code, size=len(raw)):
                 path = self.public(); replace_stage(path, raw, raw=True)
                 self.assert_codes(SQLiteIntegrityScanner().scan(str(path)), code)
+
+        # Deterministically exercise parser refusal without imposing a depth policy.
+        real_loads = json.loads
+        target = '{"portable_recursion_target":true}'
+        fired = []
+
+        def scoped_loads(raw, *args, **kwargs):
+            if raw == target:
+                fired.append(raw)
+                raise RecursionError('scoped parser refusal')
+            return real_loads(raw, *args, **kwargs)
+
+        path = self.public()
+        with patch('music_analyzer.infrastructure.persistence.integrity_retained.json.loads',
+                   side_effect=scoped_loads):
+            self.assertEqual(json.loads('{}'), {})
+            with self.assertRaises(RecursionError):
+                json.loads(target)
+            self.assertEqual(fired, [target], 'direct fault control must fire')
+            healthy = SQLiteIntegrityScanner().scan(str(path))
+            self.assertFalse(findings(healthy))
+            self.assert_exhausted(healthy)
+            self.assertEqual(fired, [target], 'healthy parsing must delegate')
+            replace_stage(path, target, raw=True)
+            self.assert_codes(SQLiteIntegrityScanner().scan(str(path)), 'stage_json_invalid')
+            self.assertEqual(fired, [target, target], 'scanner must reach the scoped parser fault once')
+        replace_stage(path, stage_payload())
+        healthy = SQLiteIntegrityScanner().scan(str(path))
+        self.assertFalse(findings(healthy))
+        self.assert_exhausted(healthy)
 
     def test_contract_row_or_uses_existing_mapper_and_strict_predicate(self):
         base = stage_payload()
