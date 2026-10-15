@@ -118,6 +118,7 @@ def scan_retained(delivery, owner):
     total = None
     observed = 0
     delivered = 0
+    aligned = True
     try:
         while (envelope := delivery.one(envelopes, expected_eof=total is not None and observed == total)) is not None:
             cardinality = envelope[-1]
@@ -139,10 +140,24 @@ def scan_retained(delivery, owner):
                     counts[code] = counts.get(code, 0) + 1
                     seen.add(code)
 
+            def abandon():
+                nonlocal aligned, values
+                # An unconsumed or mismatched row makes the paired stream
+                # unusable. Never catch up by fetching unadmitted payloads.
+                aligned = False
+                delivery.close_all(values)
+                values = None
+
+            if not aligned:
+                delivery.retained_work[owner] += 1
+                record('delivery_invalid')
+                continue
+
             n = len(columns)
             if len(envelope) != 2*n + 1 + int(stage):
                 delivery.retained_work[owner] += 1
                 record('delivery_invalid')
+                abandon()
                 continue
             lengths, kinds = envelope[:n], envelope[n:2*n]
             identity = envelope[2*n]
@@ -154,6 +169,7 @@ def scan_retained(delivery, owner):
                 delivery.retained_work[owner] += 1
                 record('delivery_invalid')
                 # Do not let an unreliable envelope authorize any whole value.
+                abandon()
                 continue
             decoded = []
             faults = []
@@ -168,6 +184,7 @@ def scan_retained(delivery, owner):
             if 'delivery' in faults:
                 delivery.retained_work[owner] += 1
                 record('delivery_invalid')
+                abandon()
                 continue
             oversized = stage and decoded[0] is not None and decoded[0] > STAGE_BYTES
             # The global stage stream substitutes NULL for documents needing a
@@ -186,6 +203,7 @@ def scan_retained(delivery, owner):
                 if type(name_size) is not int or name_size < 0:
                     delivery.retained_work[owner] += 1
                     record('delivery_invalid')
+                    abandon()
                     continue
                 if name_size * delivery.encoding_factor > MAX_VALUE_BYTES:
                     raise AdmissionStop('value_limit')
@@ -199,8 +217,8 @@ def scan_retained(delivery, owner):
             delivery.retained_work[owner] += 1
             if row is None or len(row) != (3 if stage else n+1) or row[0] != identity:
                 record('delivery_invalid')
-                # Stop this unreliable content stream, but drain envelopes so
-                # semantic counts remain counts of observed physical rows.
+                # Drain only envelopes; all remaining content is untrustworthy.
+                abandon()
                 continue
             for value in row:
                 if isinstance(value, str):
@@ -245,6 +263,11 @@ def scan_retained(delivery, owner):
                         record('json_invalid')
                     elif not valid(value):
                         record('contract_invalid')
+        if total is not None and observed < total:
+            # Premature envelope EOF cannot authorize the remaining payloads.
+            # Attach the protocol fault to the last observed physical row.
+            record('delivery_invalid')
+            abandon()
         extra = False
         if values is not None:
             try:
@@ -252,13 +275,12 @@ def scan_retained(delivery, owner):
             except DeliveryMismatch:
                 extra = True
         if extra:
-            # An unexpected extra physical delivery has no trustworthy content.
-            delivery.claim_group(owner, prefix + '_delivery_invalid')
-            counts[prefix + '_delivery_invalid'] = counts.get(prefix + '_delivery_invalid', 0) + 1
+            # Terminal presence belongs to the last observed row, not a new
+            # admitted row. OR with any finding already recorded for that row.
+            record('delivery_invalid')
     except DeliveryMismatch:
         # Envelope EOF presence is owner-invalid, not a SQLite driver failure.
-        delivery.claim_group(owner, prefix + '_delivery_invalid')
-        counts[prefix + '_delivery_invalid'] = counts.get(prefix + '_delivery_invalid', 0) + 1
+        record('delivery_invalid')
     except (sqlite3.Error, OSError, UnicodeError, MemoryError):
         delivery.observe_error()
         raise
