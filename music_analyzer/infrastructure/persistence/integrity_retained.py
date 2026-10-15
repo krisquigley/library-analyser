@@ -176,8 +176,8 @@ def scan_retained(delivery, owner):
             for length, kind, size in zip(lengths, kinds, decoded):
                 storage = length if kind == 'text' else (-1-length if kind == 'blob' else 0)
                 bound = storage * (delivery.encoding_factor if kind == 'text' else 1)
-                delivered = not stage or (kind == 'text' and delivery.encoding == 'UTF-8' and not oversized)
-                if delivered:
+                value_delivered = not stage or (kind == 'text' and delivery.encoding == 'UTF-8' and not oversized)
+                if value_delivered:
                     if bound > MAX_VALUE_BYTES:
                         raise AdmissionStop('value_limit')
                     upper += size or 0
