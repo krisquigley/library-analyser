@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -37,8 +38,11 @@ class IntegrityD1InstalledControls(unittest.TestCase):
         cls.run_child([str(cls.python), '-m', 'pip', 'install', '--no-deps', '--no-index',
                        '--find-links', '/usr/share/python-wheels', 'setuptools>=77'], cls.outside, expected=0)
         repository = Path(__file__).resolve().parents[2]
+        source = cls.root / 'source'
+        shutil.copytree(repository, source, ignore=shutil.ignore_patterns(
+            '.git', '__pycache__', 'build', 'dist', '*.egg-info'))
         wheels = cls.root / 'wheels'
-        cls.run_child([str(cls.python), '-m', 'pip', 'wheel', str(repository), '--no-build-isolation',
+        cls.run_child([str(cls.python), '-m', 'pip', 'wheel', str(source), '--no-build-isolation',
                        '--no-deps', '--no-index', '--find-links', '/usr/share/python-wheels',
                        '--wheel-dir', str(wheels)], cls.outside, expected=0)
         wheel, = wheels.glob('music_analyzer-*.whl')
@@ -102,7 +106,7 @@ class IntegrityD1InstalledControls(unittest.TestCase):
                     with self.subTest(version=version, corrupt=corrupt, entry=command[-1]):
                         result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=4)
                         report = json.loads(result.stdout)
-                        self.assertEqual(report['coverage_revision'], 'D2')
+                        self.assertEqual(report['coverage_revision'], 'D3a')
                         self.assertEqual(report['status'], 'incomplete')
                         self.assertFalse(report['complete'])
                         self.assertTrue(report['implemented_scope_complete'])
@@ -134,7 +138,7 @@ class IntegrityD1InstalledControls(unittest.TestCase):
                         result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=4)
                         report = json.loads(result.stdout)
                         self.assertEqual((report['coverage_revision'], report['report_version'],
-                                          report['required_scope_revision']), ('D2', 1, 'P7-1'))
+                                          report['required_scope_revision']), ('D3a', 1, 'P7-1'))
                         self.assertFalse(report['complete'])
                         self.assertTrue(report['implemented_scope_complete'])
                         checks = {c['check_id']: c for c in report['checks']}

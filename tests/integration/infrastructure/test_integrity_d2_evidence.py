@@ -347,8 +347,18 @@ class IntegrityD2EvidencePayloadControls(EvidenceCase):
                        (OLD_RUNS[0], 'mood', '{PRIVATE invalid retained raw JSON'))
             db.commit()
         scan = SQLiteIntegrityScanner().scan(str(path))
-        self.assertFalse(scan.findings)
-        self.assertEqual(check(scan, 'retained_stages').state, 'not_implemented')
+        self.assertFalse([f for f in scan.findings if f.check_id in ('current_evidence', 'historical_evidence')])
+        self.assertEqual([(f.check_id, f.code, f.count, f.count_precision) for f in scan.findings],
+                         [('retained_stages', 'stage_json_invalid', 1, 'exact')])
+        retained = check(scan, 'retained_stages')
+        self.assertEqual((retained.state, retained.count, retained.count_precision), ('completed', 1, 'exact'))
+        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        from music_analyzer.application.use_cases.check_integrity import CheckIntegrity
+        class ObservedScanner:
+            def scan(self, database, deadline_seconds):
+                return scan
+        report = CheckIntegrity(ObservedScanner()).execute(str(path))
+        self.assertEqual((report.exit_code, report.complete), (4, False))
 
     def test_numeric_flags_and_missing_compact_rows_are_not_hardened(self):
         path, ids = self.public()

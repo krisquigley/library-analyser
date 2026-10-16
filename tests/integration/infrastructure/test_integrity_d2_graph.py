@@ -229,7 +229,7 @@ class IntegrityD2Graph(unittest.TestCase):
                 self.assertTrue(scan.implemented_scope_complete)
                 report = CheckIntegrity(SQLiteIntegrityScanner()).execute(str(path))
                 self.assertEqual((report.exit_code, report.complete), (4, False))
-                self.assertEqual(report.coverage_revision, 'D2')
+                self.assertEqual(report.coverage_revision, 'D3a')
 
     def test_old_full_descriptor_count_mismatch_belongs_to_history(self):
         for version in range(7, 11):

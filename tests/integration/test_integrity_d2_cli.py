@@ -44,7 +44,7 @@ class IntegrityD2CLI(unittest.TestCase):
                     if json_output:
                         report = json.loads(out.getvalue())
                         self.assertEqual((report['coverage_revision'], report['report_version'],
-                                          report['required_scope_revision']), ('D2', 1, 'P7-1'))
+                                          report['required_scope_revision']), ('D3a', 1, 'P7-1'))
                         self.assertFalse(report['complete'])
                         self.assertTrue(report['implemented_scope_complete'])
                         checks = {c['check_id']: c for c in report['checks']}
@@ -55,7 +55,7 @@ class IntegrityD2CLI(unittest.TestCase):
                                           for f in report['findings']],
                                          [('historical_evidence', 'evidence_json_invalid', 1, 'exact')])
                     else:
-                        self.assertIn('coverage_revision=D2', out.getvalue())
+                        self.assertIn('coverage_revision=D3a', out.getvalue())
                         self.assertIn('historical_evidence/evidence_json_invalid', out.getvalue())
                         self.assertIn('complete=false', out.getvalue())
 

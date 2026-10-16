@@ -24,7 +24,7 @@ def selected_scan(version, empty=False):
     checks = []
     graph_counts = (2, 4) if version == 7 else (3, 8)
     for name, unit, first_version in CHECKS:
-        if name in ('compatibility', 'schema', 'core_rows', 'resource_access'):
+        if name in ('compatibility', 'schema', 'core_rows', 'metadata', 'retained_stages', 'resource_access'):
             state, count, precision = 'completed', 1, 'exact'
         elif name in OWNERS and version >= 7:
             state, count, precision = 'completed', 0 if empty else graph_counts[OWNERS.index(name)], 'exact'
@@ -60,7 +60,7 @@ class IntegrityD2Report(unittest.TestCase):
                     ('schema_version', version), ('checks', scan.checks), ('findings', ()),
                     ('implemented_scope_complete', True), ('stop_reason', 'scope_not_implemented'),
                     ('status', 'incomplete'), ('exit_code', 4), ('complete', False),
-                    ('report_version', 1), ('coverage_revision', 'D2'),
+                    ('report_version', 1), ('coverage_revision', 'D3a'),
                     ('required_scope_revision', 'P7-1'),
                     ('supported_schema_versions', (6, 7, 8, 9, 10))):
                 with self.subTest(version=version, field=field):

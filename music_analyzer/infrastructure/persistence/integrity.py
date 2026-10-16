@@ -23,6 +23,10 @@ class AdmissionStop(Exception):
         self.reason = reason
 
 
+class DeliveryMismatch(sqlite3.DatabaseError):
+    """Observed unexpected delivery, distinct from a driver/read exception."""
+
+
 class Delivery:
     """Preflight scalar sizes before delivering any input-sized Python value."""
     def __init__(self, connection, deadline):
@@ -47,6 +51,8 @@ class Delivery:
         self.evidence_findings = {}
         self.graph_work = {}
         self.graph_findings = {}
+        self.retained_work = {}
+        self.retained_findings = {}
 
     def claim_group(self, check_id, code):
         key = (check_id, code)
@@ -107,20 +113,25 @@ class Delivery:
             self.close_all(self.connection.execute(f'PRAGMA busy_timeout={remaining_ms}'))
             self.guard()
             return self.connection.execute(sql, params)
-        except (sqlite3.Error, OSError, UnicodeError):
+        except (sqlite3.Error, OSError, UnicodeError, MemoryError):
             self.observe_error()
             raise
 
-    def one(self, cursor):
+    def one(self, cursor, *, expected_eof=False):
         self.guard()
-        if self.count >= MAX_ROWS:
+        # Only callers holding a reliable same-query cardinality may prove EOF
+        # at the exact cap. This is not permission to admit another value.
+        if self.count >= MAX_ROWS and not expected_eof:
             raise AdmissionStop('row_limit')
         try:
             row = cursor.fetchone()
-        except (sqlite3.Error, OSError, UnicodeError):
+        except (sqlite3.Error, OSError, UnicodeError, MemoryError):
             self.observe_error()
             raise
         if row is not None:
+            if expected_eof:
+                # Presence disproves EOF; do not admit or inspect the payload.
+                raise DeliveryMismatch('delivery cardinality mismatch')
             self.count += 1
         self.guard()
         return row
@@ -130,10 +141,27 @@ class Delivery:
         sizes = ','.join(
             f"CASE typeof({column}) WHEN 'text' THEN length(CAST({column} AS BLOB)) "
             f"WHEN 'blob' THEN -1-length({column}) ELSE NULL END" for column in columns)
-        preflight = self.execute(f'SELECT {sizes} FROM ({sql})', params)
+        preflight = self.execute(f'SELECT {sizes},count(*) OVER() FROM ({sql})', params)
         values = None
+        total = None
+        observed = 0
+        cardinality_available = True
         try:
-            while (lengths := self.one(preflight)) is not None:
+            while (envelope := self.one(preflight, expected_eof=cardinality_available and total is not None and observed == total)) is not None:
+                if len(envelope) == len(columns):
+                    # Preserve the established size-marker cursor protocol.
+                    # A legacy projection cannot authorize EOF beyond the cap.
+                    lengths = envelope
+                    cardinality_available = False
+                elif len(envelope) == len(columns) + 1:
+                    lengths, cardinality = envelope[:-1], envelope[-1]
+                    if (type(cardinality) is not int or cardinality < 1
+                            or (total is not None and cardinality != total)):
+                        raise sqlite3.DatabaseError('delivery cardinality invalid')
+                    total = cardinality
+                else:
+                    raise sqlite3.DatabaseError('delivery projection invalid')
+                observed += 1
                 upper_bytes = 0
                 for length in lengths:
                     if length is None:
@@ -156,7 +184,7 @@ class Delivery:
                 if descriptor:
                     self.schema_count += 1
                 yield row
-        except (sqlite3.Error, OSError, UnicodeError):
+        except (sqlite3.Error, OSError, UnicodeError, MemoryError):
             self.observe_error()
             raise
         finally:
@@ -208,6 +236,7 @@ class SQLiteIntegrityScanner:
         core_check = check('core_rows', 'blocked', None, 'rows')
         graph_checks = {}
         evidence_checks = {}
+        retained_checks = {}
         findings = []
         stop = 'scope_not_implemented'
         phase = 'compatibility'
@@ -252,6 +281,11 @@ class SQLiteIntegrityScanner:
                     phase = 'core_rows'
                     core_check, core_findings = self._core(delivery)
                     findings.extend(core_findings)
+                    from music_analyzer.infrastructure.persistence.integrity_retained import scan_retained
+                    for owner in ('metadata', 'retained_stages'):
+                        phase = owner
+                        retained_checks[owner], retained_findings = scan_retained(delivery, owner)
+                        findings.extend(retained_findings)
                     if version >= 7:
                         for owner in ('current_graph', 'historical_graph'):
                             phase = owner
@@ -267,7 +301,7 @@ class SQLiteIntegrityScanner:
             stop = error.reason
         except KeyboardInterrupt:
             stop = 'cancelled'
-        except (sqlite3.Error, OSError, UnicodeError):
+        except (sqlite3.Error, OSError, UnicodeError, MemoryError):
             # Delivery observes errors before its paired cursor cleanup; initial
             # connection errors have no Delivery and are sampled here.
             error_at, interrupted_at = (delivery.first_error if delivery and delivery.first_error
@@ -316,6 +350,10 @@ class SQLiteIntegrityScanner:
             if phase == 'core_rows' and core_check.state == 'blocked':
                 core_check = check('core_rows', 'interrupted', delivery.core_count, 'rows')
                 findings.extend(finding('core_rows', code, count, 'lower_bound') for code, count in delivery.core_counts.items() if count)
+            if phase in ('metadata', 'retained_stages') and phase not in retained_checks:
+                retained_checks[phase] = check(phase, 'interrupted', delivery.retained_work.get(phase, 0), 'rows')
+                findings.extend(finding(phase, code, count, 'lower_bound')
+                                for code, count in delivery.retained_findings.get(phase, {}).items())
             if phase in ('current_graph', 'historical_graph') and phase not in graph_checks:
                 graph_checks[phase] = check(phase, 'interrupted', delivery.graph_work.get(phase, 0), 'rows')
                 findings.extend(finding(phase, code, count, 'lower_bound')
@@ -335,9 +373,9 @@ class SQLiteIntegrityScanner:
                 ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
                 ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6)):
             state = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
-            if check_id in ('current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and state == 'not_implemented':
+            if check_id in ('metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and state == 'not_implemented':
                 state = 'blocked'
-            checks.append(evidence_checks.get(check_id, graph_checks.get(check_id, check(check_id, state, None, unit))))
+            checks.append(retained_checks.get(check_id, evidence_checks.get(check_id, graph_checks.get(check_id, check(check_id, state, None, unit)))))
         checks.append(resource_check)
         # Bounded fixed predicate groups; never retain row identities or samples.
         order = {item.check_id: index for index, item in enumerate(checks)}
@@ -350,7 +388,8 @@ class SQLiteIntegrityScanner:
                  'utf8_limit_reached', 'value_limit_reached', 'graph_lifecycle_invalid',
                  'graph_counts_invalid', 'graph_pointer_invalid', 'graph_mirror_invalid', 'graph_edge_invalid')
         from music_analyzer.application.use_cases.integrity_evidence import EvidenceCode
-        codes += tuple(code.value for code in EvidenceCode)
+        from music_analyzer.infrastructure.persistence.integrity_retained import CODES as retained_codes
+        codes += retained_codes + tuple(code.value for code in EvidenceCode)
         grouped = {}
         for item in findings:
             key = (item.check_id, item.code)
@@ -373,6 +412,9 @@ class SQLiteIntegrityScanner:
                              supported=version is not None, stop_reason=stop, findings_truncated=truncated,
                              implemented_scope_complete=version is not None and stop == 'scope_not_implemented'
                              and schema_check.state == 'completed' and core_check.state == 'completed'
+                             and all(retained_checks.get(owner) is not None
+                                     and retained_checks[owner].state == 'completed'
+                                     for owner in ('metadata', 'retained_stages'))
                              and (version < 7 or all(graph_checks.get(owner) is not None
                                   and graph_checks[owner].state == 'completed'
                                   for owner in ('current_graph', 'historical_graph')))
