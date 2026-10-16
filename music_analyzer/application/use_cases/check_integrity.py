@@ -159,9 +159,20 @@ def _valid(scan):
                 or by_id['schema'].state != 'completed' or schema_failed
                 or by_id[item.check_id].state not in ('completed', 'interrupted')):
             return False
+        owner = by_id[item.check_id]
+        if owner.state == 'completed' and item.count_precision != 'exact':
+            return False
+        # Each predicate may flag the same row independently: bound each
+        # row-owned group, never their sum. Graph counts, pointers and mirrors
+        # describe relations rather than one occurrence per semantic work row.
+        row_bounded = (item.check_id in ('core_rows', 'metadata', 'retained_stages',
+                                        'current_evidence', 'historical_evidence')
+                       or (item.check_id in ('current_graph', 'historical_graph')
+                           and item.code in ('graph_lifecycle_invalid', 'graph_edge_invalid')))
+        if row_bounded and owner.state in ('completed', 'interrupted') and item.count > owner.count:
+            return False
         if item.check_id in ('metadata', 'retained_stages'):
-            owner = by_id[item.check_id]
-            if item.count_precision != owner.count_precision or item.count > owner.count:
+            if item.count_precision != owner.count_precision:
                 return False
     physical = by_id['sqlite_physical']
     foreign_keys = by_id['sqlite_foreign_keys']
