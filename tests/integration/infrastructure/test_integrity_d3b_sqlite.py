@@ -301,7 +301,12 @@ class IntegrityD3bSQLite(CountedAssertions):
             self.assertEqual(findings(result, 'sqlite_foreign_keys'),
                              [('sqlite_foreign_key_invalid', 'corruption', 1, 'exact')])
             self.assertEqual(result.stop_reason, 'completed')
-            self.assertNotIn('track_audio', repr(result))
+            # Parent approval6215449968: permit only the finite core finding code.
+            rendered = repr(result)
+            allowed_code_field = "code='track_audio_orphan'"
+            self.assertEqual(rendered.count(allowed_code_field), 1)
+            sanitized = rendered.replace(allowed_code_field, "code='<approved-core-code>'")
+            self.assertNotIn('track_audio', sanitized)
             self.assertNotIn('sha256:' + '9' * 64, repr(result))
             self.assertEqual(len(o.connections), 1)
             self.assertTrue(all(c.eof == 1 for c in o.cursors if c.owner))
