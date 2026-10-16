@@ -198,8 +198,8 @@ class IntegrityD2GraphControls(unittest.TestCase):
             for name in ('current_graph', 'historical_graph'):
                 self.assertEqual(check(report, name).state, 'not_applicable')
                 self.assertIsNone(check(report, name).count)
-            self.assertEqual(report.exit_code, 4)
-            self.assertFalse(report.complete)
+            self.assertEqual(report.exit_code, 0)
+            self.assertTrue(report.complete)
 
 
 class IntegrityD2Graph(unittest.TestCase):
@@ -228,8 +228,8 @@ class IntegrityD2Graph(unittest.TestCase):
                 self.assertFalse(scan.findings)
                 self.assertTrue(scan.implemented_scope_complete)
                 report = CheckIntegrity(SQLiteIntegrityScanner()).execute(str(path))
-                self.assertEqual((report.exit_code, report.complete), (4, False))
-                self.assertEqual(report.coverage_revision, 'D3a')
+                self.assertEqual((report.exit_code, report.complete), (0, True))
+                self.assertEqual(report.coverage_revision, 'D3')
 
     def test_old_full_descriptor_count_mismatch_belongs_to_history(self):
         for version in range(7, 11):

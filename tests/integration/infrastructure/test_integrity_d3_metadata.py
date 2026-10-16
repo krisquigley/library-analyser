@@ -179,7 +179,7 @@ class MetadataCase(unittest.TestCase):
         c = check(scan)
         self.assertEqual((c.state, c.count, c.count_unit, c.count_precision), ('completed', 2, 'rows', 'exact'))
         self.assertEqual(findings(scan), [(code, 1, 'exact') for code in expected])
-        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertEqual(scan.stop_reason, 'completed')
 
 
 class MetadataControls(MetadataCase):

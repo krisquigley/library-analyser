@@ -53,6 +53,8 @@ class Delivery:
         self.graph_findings = {}
         self.retained_work = {}
         self.retained_findings = {}
+        self.sqlite_work = {}
+        self.sqlite_findings = {}
 
     def claim_group(self, check_id, code):
         key = (check_id, code)
@@ -117,11 +119,13 @@ class Delivery:
             self.observe_error()
             raise
 
-    def one(self, cursor, *, expected_eof=False):
+    def one(self, cursor, *, expected_eof=False, projection_eof=False):
         self.guard()
-        # Only callers holding a reliable same-query cardinality may prove EOF
-        # at the exact cap. This is not permission to admit another value.
-        if self.count >= MAX_ROWS and not expected_eof:
+        # Cardinality-proved EOF and fixed bounded projection EOF probes never
+        # authorize admission of another record. Raw value cursors cannot use
+        # projection_eof: an over-budget projected record is rejected uninspected.
+        at_limit = self.count >= MAX_ROWS
+        if at_limit and not expected_eof and not projection_eof:
             raise AdmissionStop('row_limit')
         try:
             row = cursor.fetchone()
@@ -129,6 +133,8 @@ class Delivery:
             self.observe_error()
             raise
         if row is not None:
+            if at_limit and projection_eof and not expected_eof:
+                raise AdmissionStop('row_limit')
             if expected_eof:
                 # Presence disproves EOF; do not admit or inspect the payload.
                 raise DeliveryMismatch('delivery cardinality mismatch')
@@ -147,7 +153,10 @@ class Delivery:
         observed = 0
         cardinality_available = True
         try:
-            while (envelope := self.one(preflight, expected_eof=cardinality_available and total is not None and observed == total)) is not None:
+            while (envelope := self.one(
+                    preflight,
+                    expected_eof=cardinality_available and total is not None and observed == total,
+                    projection_eof=cardinality_available and total is None)) is not None:
                 if len(envelope) == len(columns):
                     # Preserve the established size-marker cursor protocol.
                     # A legacy projection cannot authorize EOF beyond the cap.
@@ -237,6 +246,7 @@ class SQLiteIntegrityScanner:
         graph_checks = {}
         evidence_checks = {}
         retained_checks = {}
+        sqlite_checks = {}
         findings = []
         stop = 'scope_not_implemented'
         phase = 'compatibility'
@@ -297,6 +307,11 @@ class SQLiteIntegrityScanner:
                             phase = owner
                             evidence_checks[owner], evidence_findings = scan_evidence(delivery, owner)
                             findings.extend(evidence_findings)
+                    for owner in ('sqlite_physical', 'sqlite_foreign_keys'):
+                        phase = owner
+                        sqlite_checks[owner], sqlite_findings = self._sqlite(delivery, owner)
+                        findings.extend(sqlite_findings)
+                    stop = 'completed'
         except AdmissionStop as error:
             stop = error.reason
         except KeyboardInterrupt:
@@ -327,19 +342,19 @@ class SQLiteIntegrityScanner:
                 findings.append(finding('resource_access', 'cleanup_failed', precision='lower_bound'))
                 if stop != 'cancelled':
                     stop = 'cleanup_error'
-            if monotonic() >= deadline and stop in ('scope_not_implemented', 'schema_blocked', 'unsupported_database'):
+            if monotonic() >= deadline and stop in ('completed', 'scope_not_implemented', 'schema_blocked', 'unsupported_database'):
                 stop = 'deadline'
         operational = {
             'deadline': 'deadline_exceeded', 'row_limit': 'row_limit_reached',
             'utf8_limit': 'utf8_limit_reached', 'value_limit': 'value_limit_reached',
             'read_error': 'read_failed', 'unreadable_database': 'initial_access_failed',
-            'cancelled': 'cancelled',
+            'cancelled': 'cancelled', 'physical_limit': 'physical_limit_reached',
         }
         if earlier_stop in operational:
             findings.append(finding('resource_access', operational[earlier_stop], precision='lower_bound'))
         if stop in operational and stop != earlier_stop:
             findings.append(finding('resource_access', operational[stop], precision='lower_bound'))
-        interrupted = stop not in ('scope_not_implemented', 'schema_blocked', 'unsupported_database')
+        interrupted = stop not in ('completed', 'scope_not_implemented', 'schema_blocked', 'unsupported_database')
         if interrupted and version and delivery:
             if phase == 'schema' and schema_check.state == 'blocked':
                 schema_check = check('schema', 'interrupted', delivery.schema_count, 'schema_descriptors')
@@ -362,6 +377,11 @@ class SQLiteIntegrityScanner:
                 evidence_checks[phase] = check(phase, 'interrupted', delivery.evidence_work.get(phase, 0), 'rows')
                 findings.extend(finding(phase, code, count, 'lower_bound')
                                 for code, count in delivery.evidence_findings.get(phase, {}).items())
+            if phase in ('sqlite_physical', 'sqlite_foreign_keys') and phase not in sqlite_checks:
+                unit = 'physical_records' if phase == 'sqlite_physical' else 'foreign_key_records'
+                sqlite_checks[phase] = check(phase, 'interrupted', delivery.sqlite_work.get(phase, 0), unit)
+                findings.extend(finding(phase, code, count, 'lower_bound')
+                                for code, count in delivery.sqlite_findings.get(phase, {}).items())
         compatibility_check = check('compatibility', 'completed', 1, 'databases') if compatibility_complete else check(
             'compatibility', 'interrupted' if access_started else 'blocked', 0 if access_started else None, 'databases')
         resource_check = check('resource_access', 'completed', 1, 'databases') if not interrupted else check(
@@ -373,9 +393,10 @@ class SQLiteIntegrityScanner:
                 ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
                 ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6)):
             state = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
-            if check_id in ('metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and state == 'not_implemented':
+            if state == 'not_implemented':
                 state = 'blocked'
-            checks.append(retained_checks.get(check_id, evidence_checks.get(check_id, graph_checks.get(check_id, check(check_id, state, None, unit)))))
+            checks.append(sqlite_checks.get(check_id, retained_checks.get(check_id, evidence_checks.get(
+                check_id, graph_checks.get(check_id, check(check_id, state, None, unit))))))
         checks.append(resource_check)
         # Bounded fixed predicate groups; never retain row identities or samples.
         order = {item.check_id: index for index, item in enumerate(checks)}
@@ -386,7 +407,8 @@ class SQLiteIntegrityScanner:
                  'track_audio_duration_invalid', 'track_audio_policy_invalid', 'initial_access_failed',
                  'read_failed', 'cleanup_failed', 'deadline_exceeded', 'cancelled', 'row_limit_reached',
                  'utf8_limit_reached', 'value_limit_reached', 'graph_lifecycle_invalid',
-                 'graph_counts_invalid', 'graph_pointer_invalid', 'graph_mirror_invalid', 'graph_edge_invalid')
+                 'graph_counts_invalid', 'graph_pointer_invalid', 'graph_mirror_invalid', 'graph_edge_invalid',
+                 'sqlite_integrity_invalid', 'sqlite_foreign_key_invalid', 'physical_limit_reached')
         from music_analyzer.application.use_cases.integrity_evidence import EvidenceCode
         from music_analyzer.infrastructure.persistence.integrity_retained import CODES as retained_codes
         codes += retained_codes + tuple(code.value for code in EvidenceCode)
@@ -403,14 +425,17 @@ class SQLiteIntegrityScanner:
         truncated = bool(delivery and delivery.findings_truncated)
         if len(findings) > MAX_GROUPS:
             truncated = True
-            if stop in ('scope_not_implemented', 'schema_blocked', 'unsupported_database'):
+            if stop in ('completed', 'scope_not_implemented', 'schema_blocked', 'unsupported_database'):
                 stop = 'finding_limit'
             findings = findings[:MAX_GROUPS]
             checks[-1] = check('resource_access', 'interrupted' if access_started else 'blocked',
                                0 if access_started else None, 'databases')
         return IntegrityScan(schema_version=version, checks=tuple(checks), findings=tuple(findings),
                              supported=version is not None, stop_reason=stop, findings_truncated=truncated,
-                             implemented_scope_complete=version is not None and stop == 'scope_not_implemented'
+                             implemented_scope_complete=version is not None and stop == 'completed'
+                             and all(sqlite_checks.get(owner) is not None
+                                     and sqlite_checks[owner].state == 'completed'
+                                     for owner in ('sqlite_physical', 'sqlite_foreign_keys'))
                              and schema_check.state == 'completed' and core_check.state == 'completed'
                              and all(retained_checks.get(owner) is not None
                                      and retained_checks[owner].state == 'completed'
@@ -421,6 +446,50 @@ class SQLiteIntegrityScanner:
                              and (version < 9 or all(evidence_checks.get(owner) is not None
                                   and evidence_checks[owner].state == 'completed'
                                   for owner in ('current_evidence', 'historical_evidence'))))
+
+    def _sqlite(self, delivery, owner):
+        """Drain fixed numeric projections, never native diagnostics or identities.
+
+        Physical SQLite output has a native default maximum of 100; reaching
+        that many failures is conservatively incomplete, not proof of EOF.
+        The FK projection has no such cutoff, including WITHOUT ROWID tables.
+        """
+        physical = owner == 'sqlite_physical'
+        unit = 'physical_records' if physical else 'foreign_key_records'
+        code = 'sqlite_integrity_invalid' if physical else 'sqlite_foreign_key_invalid'
+        sql = ("SELECT CASE WHEN integrity_check='ok' THEN 1 ELSE 0 END AS marker FROM pragma_integrity_check"
+               if physical else 'SELECT 1 AS marker FROM pragma_foreign_key_check')
+        delivery.sqlite_work[owner] = 0
+        counts = {}
+        delivery.sqlite_findings[owner] = counts
+        ok_seen = False
+        cursor = delivery.execute(sql)
+        try:
+            while (row := delivery.one(cursor, projection_eof=True)) is not None:
+                if (not isinstance(row, tuple) or len(row) != 1
+                        or type(row[0]) is not int or row[0] not in (0, 1)
+                        or (not physical and row[0] != 1)):
+                    raise sqlite3.DatabaseError('invalid diagnostic marker')
+                marker = row[0]
+                if physical and (ok_seen or (marker == 1 and delivery.sqlite_work[owner])):
+                    raise sqlite3.DatabaseError('inconsistent diagnostic markers')
+                delivery.sqlite_work[owner] += 1
+                if physical and marker == 1:
+                    ok_seen = True
+                else:
+                    delivery.claim_group(owner, code)
+                    counts[code] = counts.get(code, 0) + 1
+                    if physical and delivery.sqlite_work[owner] == 100:
+                        raise AdmissionStop('physical_limit')
+            if physical and not delivery.sqlite_work[owner]:
+                raise sqlite3.DatabaseError('empty diagnostic markers')
+        except (sqlite3.Error, OSError, UnicodeError, MemoryError):
+            delivery.observe_error()
+            raise
+        finally:
+            delivery.close_all(cursor)
+        return (check(owner, 'completed', delivery.sqlite_work[owner], unit),
+                [finding(owner, code, count) for code, count in counts.items()])
 
     def _graph(self, delivery, version, owner):
         """Stream namespace-owned work; auxiliary lookups only charge admission.

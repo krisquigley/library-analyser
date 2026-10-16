@@ -42,6 +42,8 @@ class EOFConnection:
         self.raw, self.observation = raw, observation
 
     def execute(self, sql, *args):
+        if 'FROM pragma_integrity_check' in sql:
+            self.observation.physical_entry = self.observation.deliveries[-1].count
         cursor = self.raw.execute(sql, *args)
         self.observation.opened += 1
         target = (sql.startswith('SELECT rowid,') and
@@ -57,6 +59,8 @@ class Observation:
         self.real_connect = sqlite3.connect
         self.table, self.mode = table, mode
         self.fired = self.opened = self.closed = 0
+        self.deliveries = []
+        self.physical_entry = None
 
     def connect(self, *args, **kwargs):
         return EOFConnection(self.real_connect(*args, **kwargs), self)
@@ -93,29 +97,66 @@ class RetainedEOF(unittest.TestCase):
                     self.assertEqual(observation.fired, int(mode == 'duplicate'))
                     self.assertEqual(observation.opened, observation.closed)
 
+    def observed_scan(self, observation=None, cap=1_000_000):
+        deliveries = [] if observation is None else observation.deliveries
+        class ObservedDelivery(integrity.Delivery):
+            def __init__(self, *args):
+                super().__init__(*args)
+                deliveries.append(self)
+        with patch.object(integrity, 'MAX_ROWS', cap), patch.object(integrity, 'Delivery', ObservedDelivery):
+            if observation is None:
+                scan = integrity.SQLiteIntegrityScanner().scan(str(self.path))
+            else:
+                with patch.object(integrity.sqlite3, 'connect', observation.connect):
+                    scan = integrity.SQLiteIntegrityScanner().scan(str(self.path))
+        return scan, deliveries[-1]
+
+    def assert_retained_prefix_cap(self, scan, delivery):
+        checks = {c.check_id: c for c in scan.checks}
+        for owner, count in (('metadata', 2), ('retained_stages', 8)):
+            c = checks[owner]
+            self.assertEqual((c.state, c.count, c.count_precision), ('completed', count, 'exact'))
+        physical, foreign = checks['sqlite_physical'], checks['sqlite_foreign_keys']
+        self.assertEqual((physical.state, physical.count, physical.count_precision), ('interrupted', 0, 'lower_bound'))
+        self.assertEqual((foreign.state, foreign.count, foreign.count_precision), ('blocked', None, 'unavailable'))
+        resource = checks['resource_access']
+        self.assertEqual((resource.state, resource.count, resource.count_precision), ('interrupted', 0, 'lower_bound'))
+        self.assertEqual(scan.stop_reason, 'row_limit')
+        self.assertFalse(scan.implemented_scope_complete)
+        self.assertEqual(delivery.count, 217)
+
     def test_healthy_wrappers_equal_unwrapped_at_shared_exact_cap(self):
-        baseline = integrity.SQLiteIntegrityScanner().scan(str(self.path))
+        baseline, delivery = self.observed_scan()
         self.assertEqual(baseline.findings, ())
+        self.assertEqual(baseline.stop_reason, 'completed')
+        full_cap = delivery.count
+        self.assertGreater(full_cap, 217)
         for table in ('track_metadata', 'stages'):
-            for cap in (1_000_000, 217):
+            for cap in (1_000_000, full_cap):
                 with self.subTest(table=table, cap=cap):
                     observation = Observation(table, 'healthy')
-                    with patch.object(integrity.sqlite3, 'connect', observation.connect), patch.object(integrity, 'MAX_ROWS', cap):
-                        self.assertEqual(integrity.SQLiteIntegrityScanner().scan(str(self.path)), baseline)
+                    scan, _ = self.observed_scan(observation, cap)
+                    self.assertEqual(scan, baseline)
+                    self.assertEqual(observation.physical_entry, 217)
                     self.assertEqual(observation.fired, 0)
                     self.assertEqual(observation.opened, observation.closed)
+
+    def test_original_217_cap_preserves_exact_retained_prefix(self):
+        for table in ('track_metadata', 'stages'):
+            with self.subTest(table=table):
+                observation = Observation(table, 'healthy')
+                scan, delivery = self.observed_scan(observation, 217)
+                self.assert_retained_prefix_cap(scan, delivery)
+                self.assertEqual(observation.physical_entry, 217)
+                self.assertEqual([(f.check_id, f.code, f.count, f.count_precision) for f in scan.findings],
+                                 [('resource_access', 'row_limit_reached', 1, 'lower_bound')])
+                self.assertEqual(observation.opened, observation.closed)
 
     def assert_eof_scan(self, table, owner, count, mode):
         for cap in (1_000_000, 217):
             with self.subTest(table=table, cap=cap, mode=mode):
                 observation = Observation(table, mode)
-                deliveries = []
-                class ObservedDelivery(integrity.Delivery):
-                    def __init__(self, *args):
-                        super().__init__(*args)
-                        deliveries.append(self)
-                with patch.object(integrity.sqlite3, 'connect', observation.connect), patch.object(integrity, 'MAX_ROWS', cap), patch.object(integrity, 'Delivery', ObservedDelivery):
-                    scan = integrity.SQLiteIntegrityScanner().scan(str(self.path))
+                scan, delivery = self.observed_scan(observation, cap)
                 self.assertEqual(observation.fired, 1)
                 self.assertEqual(observation.opened, observation.closed)
                 result = next(c for c in scan.checks if c.check_id == owner)
@@ -124,14 +165,22 @@ class RetainedEOF(unittest.TestCase):
                     self.assertEqual(scan.stop_reason, 'read_error')
                     self.assertEqual((result.state, result.count, result.count_precision), ('interrupted', count, 'lower_bound'))
                     self.assertEqual(actual, [('resource_access', 'read_failed', 1, 'lower_bound')])
-                    self.assertIsNotNone(deliveries[-1].first_error)
+                    self.assertIsNotNone(delivery.first_error)
                 else:
-                    self.assertEqual(scan.stop_reason, 'scope_not_implemented')
                     self.assertEqual((result.state, result.count, result.count_precision), ('completed', count, 'exact'))
                     code = 'stage_delivery_invalid' if owner == 'retained_stages' else 'metadata_delivery_invalid'
-                    self.assertEqual(actual, [(owner, code, 1, 'exact')])
-                    self.assertIsNone(deliveries[-1].first_error)
-                    self.assertEqual(deliveries[-1].count, 217)
+                    expected = [(owner, code, 1, 'exact')]
+                    self.assertEqual(observation.physical_entry, 217)
+                    if cap == 217:
+                        self.assert_retained_prefix_cap(scan, delivery)
+                        expected.append(('resource_access', 'row_limit_reached', 1, 'lower_bound'))
+                        self.assertIsNone(delivery.first_error)
+                    else:
+                        baseline, complete_delivery = self.observed_scan()
+                        self.assertEqual(scan.stop_reason, 'completed')
+                        self.assertEqual(delivery.count, complete_delivery.count)
+                        self.assertIsNone(delivery.first_error)
+                    self.assertEqual(actual, expected)
 
     def test_metadata_unexpected_eof_delivery_is_owner_invalid(self):
         self.assert_eof_scan('track_metadata', 'metadata', 2, 'duplicate')
@@ -276,7 +325,7 @@ class RetainedEnvelopeEOF(unittest.TestCase):
         self.assertEqual((result.state, result.count, result.count_precision), ('completed', count, 'exact'))
         self.assertEqual([(f.check_id, f.code, f.count, f.count_precision) for f in scan.findings],
                          [(owner, code, 1, 'exact')])
-        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertEqual(scan.stop_reason, 'completed')
         self.assertTrue(scan.implemented_scope_complete)
 
     def test_metadata_duplicate_envelope_eof_is_owner_finding(self):

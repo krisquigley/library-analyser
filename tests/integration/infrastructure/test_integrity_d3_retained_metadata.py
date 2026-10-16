@@ -98,7 +98,7 @@ class RetainedCase(unittest.TestCase):
         item = retained(scan)
         self.assertEqual((item.state, item.count, item.count_unit, item.count_precision),
                          ('completed', count, 'rows', 'exact'))
-        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertEqual(scan.stop_reason, 'completed')
 
     def assert_codes(self, scan, *codes):
         self.assertEqual(findings(scan), [(code, 1, 'exact', 'corruption', 'occurrences')

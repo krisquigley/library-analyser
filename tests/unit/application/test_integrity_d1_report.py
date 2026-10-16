@@ -92,7 +92,7 @@ class IntegrityD1WireGate(unittest.TestCase):
     def test_frozen_report_revisions_and_all_twelve_checks_are_visible(self):
         report = CheckIntegrity(FakeScanner(healthy_scan(6))).execute('explicit-public.sqlite')
         for field, expected in (
-                ('report_version', 1), ('coverage_revision', 'D3a'),
+                ('report_version', 1), ('coverage_revision', 'D3'),
                 ('required_scope_revision', 'P7-1'), ('supported_schema_versions', (6, 7, 8, 9, 10)),
                 ('schema_version', 6), ('checks', healthy_scan(6).checks)):
             with self.subTest(field=field):

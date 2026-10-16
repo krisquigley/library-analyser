@@ -120,7 +120,13 @@ def scan_retained(delivery, owner):
     delivered = 0
     aligned = True
     try:
-        while (envelope := delivery.one(envelopes, expected_eof=total is not None and observed == total)) is not None:
+        # This envelope contains only sizes, numeric identity/cardinality and
+        # fixed SQLite typeof enums, never document text or stage names. Its
+        # initial EOF probe can prove an empty phase at the exhausted row cap;
+        # a present record is rejected before inspection or admission.
+        while (envelope := delivery.one(
+                envelopes, expected_eof=total is not None and observed == total,
+                projection_eof=total is None)) is not None:
             if not envelope:
                 # No cardinality field can authorize this delivery or catch-up.
                 # Stop operationally, preserving earlier completed phase evidence.

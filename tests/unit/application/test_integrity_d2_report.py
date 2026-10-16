@@ -60,7 +60,7 @@ class IntegrityD2Report(unittest.TestCase):
                     ('schema_version', version), ('checks', scan.checks), ('findings', ()),
                     ('implemented_scope_complete', True), ('stop_reason', 'scope_not_implemented'),
                     ('status', 'incomplete'), ('exit_code', 4), ('complete', False),
-                    ('report_version', 1), ('coverage_revision', 'D3a'),
+                    ('report_version', 1), ('coverage_revision', 'D3'),
                     ('required_scope_revision', 'P7-1'),
                     ('supported_schema_versions', (6, 7, 8, 9, 10))):
                 with self.subTest(version=version, field=field):

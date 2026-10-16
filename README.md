@@ -12,17 +12,19 @@ checks, pilot selection/ratings/measurement, backup/recovery and required Mixxx
 inputs. Representative listening/calibration, Mixxx acceptance and final
 release gates remain **not completed**.
 
-## LIMITED offline integrity diagnostic
+## D3 offline integrity diagnostic
 
 `music-analyzer integrity --database DB [--json]` explicitly checks supported
 schema6–10, core identity/audio rows, metadata, retained stages, v7+ current/historical
-graphs and all v9+ compact evidence without loading configuration or starting
-analysis/writer services. D3a
-is deliberately **incomplete**, even on healthy input:
-exit4, `complete=false`, no clean/trust certificate and no P8 eligibility. The
-report exposes omitted applicable checks and genuine legacy N/A separately.
-See [the LIMITED integrity contract and safety guide](docs/integrity.md) for the
-finite checklist, snapshot/WAL caveats, privacy, work limits and exit meanings.
+graphs, all v9+ compact evidence, and SQLite physical/foreign-key integrity without
+loading configuration or starting analysis/writer services. A fully drained exact
+snapshot diagnostic returns clean0 or corrupt1 with `complete=true`; blocked,
+capped or operationally interrupted work returns incomplete4/`complete=false`.
+Genuine legacy N/A is distinguished from missing applicable coverage. Physical
+integrity stops conservatively at SQLite's default100 diagnostic limit. This is
+not writer parity, an authenticity/trust token, automatic Explorer trust, or P8
+eligibility. See [the integrity contract and safety guide](docs/integrity.md) for
+the finite checklist, snapshot/WAL caveats, privacy, work limits and exit meanings.
 
 ## Install and run
 

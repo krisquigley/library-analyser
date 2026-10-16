@@ -203,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = CommandParser(prog='music-analyzer', description='Local catalogue and single-worker analysis.')
     add_configuration_options(parser)
     commands = parser.add_subparsers(dest='command', required=True)
-    integrity = commands.add_parser('integrity', help='LIMITED offline read-only diagnostic (not P7 complete).')
+    integrity = commands.add_parser('integrity', help='D3 offline read-only integrity diagnostic.')
     integrity.add_argument('--database', default=argparse.SUPPRESS)
     integrity.add_argument('--json', action='store_true')
     integrity.add_argument('--audit-deadline-seconds', type=float, default=120)

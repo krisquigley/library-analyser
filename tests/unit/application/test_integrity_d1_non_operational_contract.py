@@ -50,7 +50,7 @@ class NonOperationalContract(unittest.TestCase):
 
     def test_actual_healthy_v6_cannot_be_relabeled_schema_blocked(self):
         scan = self.actual_scan('healthy')
-        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertEqual(scan.stop_reason, 'completed')
         self.assertTrue(scan.implemented_scope_complete)
         self.assertEqual(scan.schema_version, 6)
         self.assertEqual(scan.findings, ())

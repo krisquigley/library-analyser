@@ -80,7 +80,7 @@ class IntegrityD1RealCLI(unittest.TestCase):
         with self.subTest(field='port_call'):
             self.assertEqual(calls, [('selected.sqlite', 2.5)])
         with self.subTest(field='text'):
-            self.assertIn('LIMITED', stdout)
+            self.assertIn('D3 offline integrity diagnostic', stdout)
         self.assertEqual(code, 4)
         self.assertEqual(stderr, '')
 
