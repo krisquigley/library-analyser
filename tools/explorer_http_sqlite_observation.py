@@ -24,10 +24,17 @@ def _operation(sql):
         return 'summary_page'
     if compact == 'SELECT id,sha256,size FROM tracks WHERE id=?':
         return 'selected_track'
-    if compact == 'SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path':
+    if compact in {
+        'SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path',
+        'SELECT path,mtime_ns,format FROM locations WHERE track_id=? AND available=1 ORDER BY path',
+    }:
         return 'selected_locations'
-    if compact == ('SELECT r.id,r.status,r.detail FROM runs r JOIN run_tracks t '
-                   'ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1'):
+    if compact in {
+        ('SELECT r.id,r.status,r.detail FROM runs r JOIN run_tracks t '
+         'ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1'),
+        ('SELECT t.run_id,r.status,r.detail,r.id FROM run_tracks t LEFT JOIN runs r '
+         'ON r.id=t.run_id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1'),
+    }:
         return 'selected_latest_run'
     if (compact.startswith('SELECT stage,') and
             compact.endswith(' FROM stages WHERE run_id=? ORDER BY stage')):

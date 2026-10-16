@@ -79,6 +79,33 @@ class ExplorerServerTests(unittest.TestCase):
             body['selection_client_id'] = selection_client_id
         return self.post_json('/api/current', body)
 
+    def test_unexpected_read_failure_is_private_error_only_and_retry_succeeds(self):
+        private = 'private-path-query-payload-marker'
+        for error in (RuntimeError(private), ValueError(private)):
+            with self.subTest(error=type(error).__name__):
+                with patch.object(standalone_server.ListExplorerTrackSummaries, 'execute', side_effect=error):
+                    with self.assertRaises(HTTPError) as raised:
+                        self.get_json('/api/track-summaries')
+                    self.assertEqual(raised.exception.code, 500)
+                    self.assertEqual(json.loads(raised.exception.read()), {'error': 'Explorer request failed'})
+                self.assertEqual(len(self.get_json('/api/track-summaries')['tracks']), 2)
+
+    def test_unexpected_selection_failure_is_private_and_does_not_change_state(self):
+        before = self.get_json('/api/state')
+        with patch.object(standalone_server.ExplorerState, 'set_current', side_effect=RuntimeError('private-selection-marker')):
+            with self.assertRaises(HTTPError) as raised:
+                self.post_current(self.first)
+            self.assertEqual(raised.exception.code, 500)
+            self.assertEqual(json.loads(raised.exception.read()), {'error': 'Explorer request failed'})
+        self.assertEqual(self.get_json('/api/state'), before)
+        self.assertEqual(self.post_current(self.first)['current_track_id'], self.first)
+
+    def test_malformed_summary_integer_is_bounded_error_only(self):
+        with self.assertRaises(HTTPError) as raised:
+            self.get_json('/api/track-summaries?limit=private-input-marker')
+        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(json.loads(raised.exception.read()), {'error': 'Invalid explorer request'})
+
     def test_track_summaries_endpoint_is_paginated_and_compact(self):
         page = self.get_json('/api/tracks/summary?limit=1&order=id')
 

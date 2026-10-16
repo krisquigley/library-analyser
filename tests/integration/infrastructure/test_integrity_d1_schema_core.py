@@ -201,11 +201,17 @@ class IntegrityD1SchemaFixtureControls(unittest.TestCase):
                 self.assertEqual(tuple(foreign), ())
                 self.assertIsNone(foreign.fetchone())
             reader = ObservedFullReader(str(path))
+            # Ordinary compatibility recognition does not certify schema topology.
+            self.assertEqual(reader.metadata()['schema_version'], 6)
+            self.assertEqual(reader.unique_checks, [])
             with self.assertRaises(AnalysisError) as failure:
-                reader.metadata()
+                reader.current_graph_edges()
             self.assertEqual(str(failure.exception), 'Unexpected analysis database schema')
             self.assertEqual(reader.unique_checks[-1], ('tracks', ()))
             self.assertEqual([table for table, indexes in reader.unique_checks], ['runs', 'stages', 'tracks'])
+            findings = SQLiteIntegrityScanner().scan(str(path)).findings
+            self.assertTrue(any(f.check_id == 'schema' and f.code == 'schema_unique_indexes_mismatch'
+                                for f in findings), findings)
 
 
 class IntegrityD1Core(unittest.TestCase):

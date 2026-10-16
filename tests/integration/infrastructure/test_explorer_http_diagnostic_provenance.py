@@ -178,7 +178,8 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
             'summary_page': ('FROM summary', 'ORDER BY', 'LIMIT ?'),
             'selected_track': ('SELECT id,sha256,size FROM tracks WHERE id=?',),
             'selected_locations': ('FROM locations WHERE track_id=?', 'available=1'),
-            'selected_latest_run': ('JOIN run_tracks', 'WHERE t.track_id=?', 'LIMIT 1'),
+            'selected_latest_run': ('FROM run_tracks t LEFT JOIN runs r ON r.id=t.run_id',
+                                    'WHERE t.track_id=?', 'ORDER BY r.rowid DESC LIMIT 1'),
         }
         for operation, fragments in expected_fragments.items():
             compact = ' '.join(by_operation[operation]['sql'].split())
@@ -241,8 +242,8 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
             with public_synthetic_fixture(**options) as fixture:
                 path = Path(fixture['db_path'])
                 with closing(sqlite3.connect(path)) as db, db:
-                    # Historical evidence is not the selected latest run. The
-                    # diagnostic must retain full reader trust validation.
+                    # Ordinary reads do not consume this historical row. D3
+                    # and the retained FULL graph path still reject it.
                     db.execute("UPDATE graph_feature_evidence SET fingerprint=? "
                                "WHERE rowid=(SELECT max(rowid) FROM graph_feature_evidence "
                                "WHERE is_current=0)", ('0' * 64,))
@@ -251,12 +252,28 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
                 observed['after'] = fingerprint_sqlite_files(path)
                 observed['path'] = path
 
-        report = self.run_tool(tool, fixture_factory=corrupt_fixture)
+        from tools.explorer_http_diagnostic import _request, _sample
+
+        def ordinary_then_graph(base, timeout, requests, intervals, token):
+            ordinary = _sample(base, timeout, requests, intervals, token)
+            self.assertEqual(ordinary['outcome'], 'ok')
+            _, outcome = _request(base, '/api/mood-axis-graph?contract=v3', 'GET',
+                                  timeout, requests, intervals, 'get_graph')
+            self.assertEqual(outcome, 'http_error')
+            return dict(ordinary, outcome=outcome)
+
+        # Explicit D3 retains the same fingerprint predicate; see
+        # IntegrityD2EvidencePayload.test_fingerprint_syntax_and_canonical_mismatch_or_once.
+        with patch('tools.explorer_http_diagnostic._sample', side_effect=ordinary_then_graph):
+            report = self.run_tool(tool, fixture_factory=corrupt_fixture)
+        ordinary_spans = [span for span in report['server_observation']['spans']
+                          if span['route'] != '/api/mood-axis-graph']
+        self.assertFalse(any(span['phase'].startswith('validation_evidence') for span in ordinary_spans))
         self.assertEqual(observed['before'], observed['after'])
         self.assertFalse(observed['path'].parent.exists())
         rejected = [request for request in report['requests']
                     if request['status'] is not None and request['status'] >= 400]
-        self.assertTrue(rejected, 'unrelated corrupt history must not become a successful baseline')
+        self.assertTrue(rejected, 'retained FULL graph must reject corrupt history')
         self.assertTrue(all(request['outcome'] == 'http_error' for request in rejected))
         self.assertGreater(sum(profile['failures'].get('http_error', 0)
                                for profile in report['profiles'].values()), 0)

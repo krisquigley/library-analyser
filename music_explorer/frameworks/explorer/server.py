@@ -16,9 +16,53 @@ from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, Fi
 from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http, to_indexed_mood_axis_graph_http
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection
-from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
+from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
+from music_analyzer.application.dto.analysis import AnalysisError as AnalyzerAnalysisError
 
 MAX_BODY = 64 * 1024
+
+# Only fixed, public messages cross the ordinary read boundary. In particular,
+# arbitrary ValueError text may contain a stored value or malformed request.
+_READ_ERRORS = frozenset({
+    'Not a supported music-analyzer analysis database',
+    'Explorer database must already exist',
+    'Refusing Mixxx-named or symlink database path',
+    'Invalid explorer summary cursor',
+    'Unknown explorer track',
+    'Invalid stored metadata',
+    'Invalid stored stage',
+    'Oversized stored stage (16 MiB limit)',
+    'Invalid stored graph feature evidence',
+    'Oversized stored graph feature evidence (16 MiB limit)',
+    'Unexpected analysis database rows',
+    'Unexpected analysis database schema',
+    'Analysis database error',
+})
+_REQUEST_ERRORS = frozenset({
+    'Invalid explorer request',
+    'Unknown explorer track',
+    'Explorer list limit must be between 1 and 500 or all',
+    'Explorer summary limit must be between 1 and 100',
+    'Explorer summary query must be at most 200 characters',
+    'Explorer summary query must not contain NUL characters',
+    'Explorer summary order must be title, artist, or id',
+    'Cursor paging is not supported for candidate selection',
+    'Candidate limit must be between 1 and 500',
+    'Unknown current track',
+    'track_id is required',
+    'selection_token must be an integer',
+    'selection_epoch must be an integer',
+    'selection_client_id must be a string',
+    'selection_token, selection_epoch, and selection_client_id are required together',
+    'JSON object required',
+})
+
+
+def _request_integer(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError('Invalid explorer request') from None
 
 
 class RequestTooLarge(Exception):
@@ -54,7 +98,7 @@ class ExplorerState:
         selection_epoch: int | None = None,
         selection_client_id: str | None = None,
     ):
-        if track_id not in self.repository.track_ids():
+        if not self.repository.contains_active_track(track_id):
             raise ValueError('Unknown explorer track')
         with self._lock:
             if not self._accept_selection_unlocked(selection_token, selection_epoch, selection_client_id):
@@ -114,18 +158,31 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
         def do_GET(self):
             try:
                 self._route_get()
-            except Exception as error:  # small local tool: convert expected failures to JSON
-                self._json({'error': str(error)}, HTTPStatus.BAD_REQUEST)
+            except Exception as error:
+                self._failure(error)
 
         def do_POST(self):
             try:
                 self._route_post()
             except RequestTooLarge as error:
                 self._json({'error': str(error)}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
-            except ValueError as error:
-                self._json({'error': str(error)}, HTTPStatus.BAD_REQUEST)
             except Exception as error:
-                self._json({'error': str(error)}, HTTPStatus.BAD_REQUEST)
+                self._failure(error)
+
+        def _failure(self, error):
+            message = str(error)
+            if isinstance(error, (AnalysisError, AnalyzerAnalysisError)) and message in _READ_ERRORS:
+                return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
+            if isinstance(error, (json.JSONDecodeError, UnicodeDecodeError)):
+                return self._json({'error': 'Invalid explorer request'}, HTTPStatus.BAD_REQUEST)
+            if isinstance(error, ValueError):
+                if message in _REQUEST_ERRORS:
+                    return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
+                # Preserve the existing dynamic mood/export validation API. R1
+                # does not redesign these endpoints or their policy messages.
+                if urlparse(self.path).path in {'/api/mood-axis-graph', '/api/playlists/m3u'}:
+                    return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
+            return self._json({'error': 'Explorer request failed'}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
         def _route_get(self):
             parsed = urlparse(self.path)
@@ -139,12 +196,12 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path == '/api/tracks':
                 query = parse_qs(parsed.query)
                 raw_limit = query.get('limit', ['100'])[0]
-                limit = 'all' if raw_limit == 'all' else int(raw_limit)
+                limit = 'all' if raw_limit == 'all' else _request_integer(raw_limit)
                 after = query.get('after', [None])[0]
                 return self._json(_to_json(ListExplorerTracks(repository).execute(limit, after)))
             if path in ('/api/tracks/summary', '/api/track-summaries'):
                 query = parse_qs(parsed.query)
-                limit = int(query.get('limit', ['100'])[0])
+                limit = _request_integer(query.get('limit', ['100'])[0])
                 cursor = query.get('cursor', [None])[0]
                 search = query.get('query', query.get('q', ['']))[0]
                 order = query.get('order', ['title'])[0]
@@ -158,7 +215,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 if current is None:
                     return self._json({'error': 'No current track'}, HTTPStatus.BAD_REQUEST)
                 controls = _parse_controls(query.get('control', ()))
-                limit = int(query.get('limit', ['50'])[0])
+                limit = _request_integer(query.get('limit', ['50'])[0])
                 result = SelectExplorerCandidates(repository).execute(CandidateQuery(current, controls, limit=limit))
                 return self._json(_to_json(result))
             if path == '/api/projection':
@@ -225,7 +282,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             return self._json(snapshot)
 
         def _body(self):
-            length = int(self.headers.get('Content-Length', '0') or '0')
+            length = _request_integer(self.headers.get('Content-Length', '0') or '0')
             if length > MAX_BODY:
                 raise RequestTooLarge('Request too large')
             raw = self.rfile.read(length) if length else b'{}'

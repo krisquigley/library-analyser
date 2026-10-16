@@ -233,8 +233,12 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
             with closing(sqlite3.connect(path)) as db, db:
                 db.execute('UPDATE graph_builds SET is_current=0')
 
+            reader = ReadOnlyExplorerSQLiteRepository(str(path))
+            # Ordinary metadata does not consume graph history or current pointers.
+            self.assertEqual(reader.metadata()['schema_version'], 10)
+            # R1 retains this graph invariant at the FULL graph read boundary.
             with self.assertRaises(AnalysisError):
-                ReadOnlyExplorerSQLiteRepository(str(path)).metadata()
+                reader.current_graph_edges()
 
 
 if __name__ == '__main__':

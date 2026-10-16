@@ -64,8 +64,6 @@ class GetExplorerTrackDetail:
         self.repository = repository
 
     def execute(self, handle):
-        if handle not in self.repository.track_ids():
-            raise ValueError('Unknown explorer track')
         return _map_track(self.repository.read_track(handle))
 
 

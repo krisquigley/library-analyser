@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import sqlite3
 import unittest
+from unittest.mock import patch
 
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 from tools.explorer_fixture_inspection import fingerprint_sqlite_files
@@ -69,26 +70,16 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
         self.assertEqual(len(post), 1)
         self.assertEqual(len(detail), 1)
         self.assertNotEqual(post[0]['request_id'], detail[0]['request_id'])
-        for request, expected_validations in ((post[0], 1), (detail[0], 2)):
+        for request, expected_memberships, expected_reads in ((post[0], 1, 0), (detail[0], 0, 1)):
             spans = request['spans']
             memberships = [s for s in spans if s['phase'] == 'membership']
-            self.assertEqual(len(memberships), 1)
-            validations = [s for s in spans if s['phase'] == 'validation']
-            self.assertEqual(len(validations), expected_validations,
-                             'observation must retain every existing validated transaction')
-            self.assertEqual(sum(s['parent_id'] == memberships[0]['span_id']
-                                 for s in validations), 1)
-            for validation in validations:
-                children = {s['phase'] for s in spans
-                            if s['parent_id'] == validation['span_id']}
-                self.assertTrue({'validation_schema', 'validation_rows',
-                                 'validation_graph', 'validation_evidence'}.issubset(children))
-                self.assertEqual(validation['status'], 'ok')
-        reads = [s for s in detail[0]['spans'] if s['phase'] == 'selected_read']
-        self.assertEqual(len(reads), 1)
-        self.assertEqual(sum(s['phase'] == 'validation' and
-                             s['parent_id'] == reads[0]['span_id']
-                             for s in detail[0]['spans']), 1)
+            reads = [s for s in spans if s['phase'] == 'selected_read']
+            self.assertEqual(len(memberships), expected_memberships)
+            self.assertEqual(len(reads), expected_reads)
+            self.assertFalse(any(s['phase'] == 'validation' or s['phase'].startswith('validation_')
+                                 for s in spans),
+                             'ordinary keyed admission/detail must not perform FULL validation')
+            self.assertTrue(all(s['status'] == 'ok' for s in memberships + reads))
         self.assertIs(report['readonly']['unchanged'], True)
 
         self.assert_response_scopes(requests)
@@ -117,7 +108,7 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
         observed = {}
         original = {name: getattr(ReadOnlyExplorerSQLiteRepository, name) for name in
                     ('_connection', '_transaction', '_validate', '_validate_rows',
-                     '_validate_graph_rows', '_validate_graph_feature_rows', 'track_ids', 'read_track')}
+                     '_validate_graph_rows', '_validate_graph_feature_rows', 'track_ids', 'contains_active_track', 'read_track')}
 
         @contextmanager
         def corrupt_fixture(**options):
@@ -132,7 +123,20 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
                 observed['after'] = fingerprint_sqlite_files(path)
                 observed['path'] = path
 
-        report = self.run_tool(fixture_factory=corrupt_fixture)
+        from tools.explorer_http_diagnostic import _request, _sample
+
+        def ordinary_then_graph(base, timeout, requests, intervals, token):
+            ordinary = _sample(base, timeout, requests, intervals, token)
+            self.assertEqual(ordinary['outcome'], 'ok')
+            _, outcome = _request(base, '/api/mood-axis-graph?contract=v3', 'GET',
+                                  timeout, requests, intervals, 'get_graph')
+            self.assertEqual(outcome, 'http_error')
+            return dict(ordinary, outcome=outcome)
+
+        # Same historical fingerprint predicate remains owned by explicit D3:
+        # IntegrityD2EvidencePayload.test_fingerprint_syntax_and_canonical_mismatch_or_once.
+        with patch('tools.explorer_http_diagnostic._sample', side_effect=ordinary_then_graph):
+            report = self.run_tool(fixture_factory=corrupt_fixture)
         self.assertEqual(observed['before'], observed['after'])
         self.assertFalse(observed['path'].parent.exists())
         self.assertTrue(any(r['outcome'] == 'http_error' for r in report['requests']))
@@ -149,9 +153,13 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
                           'all process-local wrappers must restore on exceptional exit')
         requests = self.observations(report)
         spans = [s for r in requests for s in r['spans']]
-        failed = [s for s in spans if s['phase'] == 'validation_evidence' and s['status'] == 'failed']
-        self.assertTrue(failed, 'unrelated corrupt historical evidence must remain fail-closed')
+        ordinary_spans = [s for r in requests if r['route'] != '/api/mood-axis-graph' for s in r['spans']]
+        graph_spans = [s for r in requests if r['route'] == '/api/mood-axis-graph' for s in r['spans']]
+        self.assertFalse(any(s['phase'].startswith('validation_evidence') for s in ordinary_spans))
+        failed = [s for s in graph_spans if s['phase'] == 'validation_evidence_payload' and s['status'] == 'failed']
+        self.assertTrue(failed, 'retained FULL graph must reject corrupt historical evidence')
         self.assertTrue(any(s['phase'] == 'validation_rows' and s['status'] == 'ok' for s in spans),
                         'completed earlier subphases survive the failed validation')
-        self.assertFalse(any(s['phase'] == 'selected_read' for s in spans))
+        self.assertFalse(any(s['phase'] == 'selected_read' for s in graph_spans))
+        self.assert_response_scopes(requests)
         self.assertIs(report['readonly']['unchanged'], True)

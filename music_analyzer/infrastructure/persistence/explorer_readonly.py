@@ -231,21 +231,22 @@ class ReadOnlyExplorerSQLiteRepository:
         self._check_path()
 
     def metadata(self):
-        with self._transaction() as db:
+        with self._transaction(full_validation=False) as db:
             return self._metadata(db)
 
     def list_tracks(self, limit: int, after: str | None = None):
-        with self._transaction() as db:
+        with self._transaction(full_validation=False) as db:
             metadata = self._metadata(db)
-            where = '' if after is None else 'WHERE id > ?'
+            where = '' if after is None else 'AND t.id > ?'
             params = () if after is None else (after,)
-            track_count = db.execute(f'SELECT count(*) FROM active_tracks {where}', params).fetchone()[0]
-            ids = tuple(row[0] for row in db.execute(f'SELECT id FROM active_tracks {where} ORDER BY id LIMIT ?', (*params, limit)))
+            base = self._active_candidate_sql()
+            track_count = db.execute(f'SELECT count(*) {base} {where}', params).fetchone()[0]
+            ids = tuple(row[0] for row in db.execute(f'SELECT t.id {base} {where} ORDER BY t.id LIMIT ?', (*params, limit)))
             return metadata, track_count, tuple(self._read_track(db, track_id) for track_id in ids)
 
 
     def list_track_summaries(self, limit: int, cursor: str | None = None, query: str = '', order: str = 'title'):
-        with self._transaction() as db:
+        with self._transaction(full_validation=False) as db:
             metadata = self._metadata(db)
             where = []
             params = []
@@ -271,16 +272,19 @@ class ReadOnlyExplorerSQLiteRepository:
             base = """
                 WITH first_location AS (
                     SELECT track_id, min(path) AS path, count(*) AS available_locations
-                    FROM active_locations GROUP BY track_id
+                    FROM locations WHERE available=1 GROUP BY track_id
                 ), summary AS (
                     SELECT t.id, t.sha256, t.size, COALESCE(first_location.path, '') AS first_path,
                            COALESCE(first_location.available_locations, 0) AS available_locations,
                            COALESCE(tm.common_json, '[]') AS common_json,
                            COALESCE(tm.tags_json, '[]') AS tags_json,
                            CASE WHEN COALESCE(first_location.path, '') = '' THEN '' ELSE _explorer_basename(first_location.path) END AS display_label
-                    FROM active_tracks t
+                    FROM tracks t
+                    LEFT JOIN track_audio a ON a.track_id=t.id
                     LEFT JOIN first_location ON first_location.track_id=t.id
                     LEFT JOIN track_metadata tm ON tm.track_id=t.id
+                    WHERE _explorer_active_candidate(t.id,t.sha256,t.size,
+                        a.duration_seconds,a.duration_source,a.status,a.reason)
                 )
                 SELECT id, sha256, size, first_path, available_locations, common_json, tags_json, display_label,
                        _explorer_summary_sort_key(?, common_json, tags_json, display_label, id) AS sort_key
@@ -371,12 +375,45 @@ class ReadOnlyExplorerSQLiteRepository:
         with self._transaction() as db:
             return tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
 
+    def contains_active_track(self, track_id: str):
+        with self._transaction(full_validation=False) as db:
+            row = db.execute('SELECT t.id,t.sha256,t.size,a.duration_seconds,a.duration_source,a.status,a.reason '
+                             'FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE t.id=?',
+                             (track_id,)).fetchone()
+            return bool(row is not None and self._active_candidate(*row))
+
+    def _active_candidate_sql(self):
+        return ('FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id '
+                'WHERE _explorer_active_candidate(t.id,t.sha256,t.size,'
+                'a.duration_seconds,a.duration_source,a.status,a.reason)')
+
+    def _validate_track_identity(self, track_id, sha256, size):
+        if (not isinstance(track_id, str) or not _TRACK_ID_RE.fullmatch(track_id)
+                or not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256)
+                or track_id != f'sha256:{sha256}'
+                or not isinstance(size, int) or isinstance(size, bool) or size < 0):
+            raise AnalysisError('Unexpected analysis database rows')
+
+    def _validate_audio(self, duration, source, status, reason):
+        if (not all(isinstance(value, str) for value in (source, status, reason))
+                or (duration is not None and (not isinstance(duration, (int, float))
+                    or isinstance(duration, bool) or not isfinite(duration)))):
+            raise AnalysisError('Unexpected analysis database rows')
+        decision = _duration_decision(duration, source)
+        if status != _expected_audio_status(duration, source) or reason != (decision.warning or ''):
+            raise AnalysisError('Unexpected analysis database rows')
+
+    def _active_candidate(self, track_id, sha256, size, duration, source, status, reason):
+        self._validate_track_identity(track_id, sha256, size)
+        self._validate_audio(duration, source, status, reason)
+        return status == 'eligible'
+
     def available_audio_paths(self):
         with self._transaction() as db:
             return tuple(row[0] for row in db.execute('SELECT path FROM active_locations ORDER BY path'))
 
     def read_track(self, track_id: str):
-        with self._transaction() as db:
+        with self._transaction(full_validation=False) as db:
             return self._read_track(db, track_id)
 
     def _current_graph_edges(self, db, requested_sparse_k=None):
@@ -724,35 +761,56 @@ class ReadOnlyExplorerSQLiteRepository:
             if result.stage != stage:
                 raise ValueError('Stage name mismatch')
             return type(result)(result.stage, result.provenance, result.uncertainty, result.values, result.windows, result.summary, ())
-        except (ValueError, KeyError, TypeError, IndexError, AttributeError, json.JSONDecodeError) as error:
-            raise AnalysisError('Invalid stored stage: ' + str(error)) from error
+        except (ValueError, KeyError, TypeError, IndexError, AttributeError, RecursionError) as error:
+            raise AnalysisError('Invalid stored stage') from error
 
     def _read_track(self, db, track_id: str):
         track = db.execute('SELECT id,sha256,size FROM tracks WHERE id=?', (track_id,)).fetchone()
         if not track:
             raise AnalysisError('Unknown explorer track')
-        locations = tuple(row[0] for row in db.execute('SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path', (track_id,)))
+        self._validate_track_identity(*track)
+        location_rows = tuple(db.execute('SELECT path,mtime_ns,format FROM locations WHERE track_id=? AND available=1 ORDER BY path', (track_id,)))
+        for path, mtime_ns, audio_format in location_rows:
+            if (not isinstance(path, str) or not isinstance(mtime_ns, int)
+                    or not isinstance(audio_format, str)):
+                raise AnalysisError('Unexpected analysis database rows')
+        locations = tuple(row[0] for row in location_rows)
         display_label = Path(locations[0]).name if locations else ''
-        row = db.execute('SELECT r.id,r.status,r.detail FROM runs r JOIN run_tracks t ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', (track_id,)).fetchone()
+        row = db.execute('SELECT t.run_id,r.status,r.detail,r.id FROM run_tracks t LEFT JOIN runs r ON r.id=t.run_id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', (track_id,)).fetchone()
         run = None
         if row:
+            if (not isinstance(row[0], str) or not row[0] or row[3] != row[0]
+                    or row[1] not in ('running', 'completed', 'failed', 'interrupted')
+                    or not isinstance(row[2], str)):
+                raise AnalysisError('Unexpected analysis database rows')
             stages = []
             size_expression = _stage_result_size_expression()
             stage_sizes = tuple(db.execute(f'SELECT stage,{size_expression} FROM stages WHERE run_id=? ORDER BY stage', (row[0],)))
             for _stage, size in stage_sizes:
+                if not isinstance(_stage, str) or not isinstance(size, int) or size < 0:
+                    raise AnalysisError('Invalid stored stage')
                 if int(size) > 16 * 1024 * 1024:
                     raise AnalysisError('Oversized stored stage (16 MiB limit)')
             for stage, size in stage_sizes:
-                payload = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (row[0], stage)).fetchone()[0]
+                payload_row = db.execute('SELECT result FROM stages WHERE run_id=? AND stage=?', (row[0], stage)).fetchone()
+                if payload_row is None:
+                    raise AnalysisError('Unexpected analysis database rows')
+                payload = payload_row[0]
                 stages.append(self._stage_from_payload(stage, size, payload))
             run = AnalysisReport(row[0], row[1], tuple(stages), row[2])
         overrides = tuple(db.execute('SELECT field,value FROM overrides WHERE track_id=? ORDER BY field', (track_id,)))
+        if any(not isinstance(field, str) or not isinstance(value, str) for field, value in overrides):
+            raise AnalysisError('Unexpected analysis database rows')
         metadata = self._read_metadata(db, track_id)
         return ExplorerStoredTrack(track[0], track[1], track[2], display_label, len(locations), run, overrides, metadata, locations)
 
 
     def _summary_from_row(self, row):
         track_id, _sha, _size, first_path, available_locations, common_json, tags_json, display_label, _sort_key = row
+        self._validate_track_identity(track_id, _sha, _size)
+        if (not isinstance(first_path, str) or not isinstance(display_label, str)
+                or not isinstance(available_locations, int) or available_locations < 0):
+            raise AnalysisError('Unexpected analysis database rows')
         label = Path(first_path).name if first_path else display_label
         metadata = self._summary_metadata(common_json, tags_json)
         title = self._metadata_value(metadata, 'title') or label or track_id
@@ -760,13 +818,8 @@ class ReadOnlyExplorerSQLiteRepository:
         return ExplorerTrackSummary(track_id, title, artist, label, int(available_locations))
 
     def _metadata_from_json(self, common_json, tags_json, warnings_json, audio):
-        warnings = tuple(str(x) for x in json.loads(warnings_json))
-        return TrackMetadata(tuple((str(k), tuple(v) if isinstance(v, list) else str(v)) for k, v in json.loads(common_json)), tuple((str(k), tuple(str(x) for x in v)) for k, v in json.loads(tags_json)), warnings, audio[0] if audio else None, audio[1] if audio else '')
-
-    def _summary_metadata(self, common_json, tags_json):
         try:
-            # Stored summary metadata is a list of key/value pairs, not a JSON
-            # object (even an empty object must not masquerade as no metadata).
+            decoded = []
             for common, payload in ((True, common_json), (False, tags_json)):
                 pairs = json.loads(payload)
                 if not isinstance(pairs, list) or any(
@@ -779,11 +832,18 @@ class ReadOnlyExplorerSQLiteRepository:
                         (isinstance(value, list) and all(isinstance(text, str) for text in value))
                     ):
                         raise ValueError('Invalid metadata values')
-            return self._metadata_from_json(common_json, tags_json, '[]', None)
+                decoded.append(tuple((key, tuple(value) if isinstance(value, list) else value)
+                                     for key, value in pairs))
+            warnings = json.loads(warnings_json)
+            if not isinstance(warnings, list) or not all(isinstance(text, str) for text in warnings):
+                raise ValueError('Invalid metadata warnings')
+            return TrackMetadata(decoded[0], decoded[1], tuple(warnings),
+                                 audio[0] if audio else None, audio[1] if audio else '')
         except (TypeError, ValueError, RecursionError):
-            # JSON decoder recursion failure is malformed stored metadata,
-            # not an unsanitized request or SQLite UDF error.
             raise AnalysisError('Invalid stored metadata') from None
+
+    def _summary_metadata(self, common_json, tags_json):
+        return self._metadata_from_json(common_json, tags_json, '[]', None)
 
     def _summary_sort_key(self, order, common_json, tags_json, display_label, track_id):
         if order not in ('title', 'artist'):
@@ -841,8 +901,11 @@ class ReadOnlyExplorerSQLiteRepository:
     def _read_metadata(self, db, track_id):
         row = db.execute('SELECT common_json,tags_json,warnings_json FROM track_metadata WHERE track_id=?', (track_id,)).fetchone()
         audio = db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (track_id,)).fetchone()
+        if audio is None:
+            raise AnalysisError('Unexpected analysis database rows')
+        self._validate_audio(*audio)
         if not row:
-            return TrackMetadata(duration_seconds=(audio[0] if audio else None), duration_source=(audio[1] if audio else ''))
+            return TrackMetadata(duration_seconds=audio[0], duration_source=audio[1])
         try:
             return self._metadata_from_json(row[0], row[1], row[2], audio)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -859,6 +922,7 @@ class ReadOnlyExplorerSQLiteRepository:
         self._check_path()
         db = None
         metadata_failed = False
+        candidate_failed = False
 
         def summary_callback(callback):
             def evaluate(*args):
@@ -873,9 +937,18 @@ class ReadOnlyExplorerSQLiteRepository:
                     raise
             return evaluate
 
+        def active_candidate_callback(*args):
+            nonlocal candidate_failed
+            try:
+                return self._active_candidate(*args)
+            except AnalysisError:
+                candidate_failed = True
+                raise
+
         try:
             uri = self._path.as_uri() + '?mode=ro'
             db = sqlite3.connect(uri, uri=True, timeout=1)
+            db.create_function('_explorer_active_candidate', 7, active_candidate_callback)
             db.create_function('_explorer_basename', 1, lambda value: Path(str(value)).name if value else '')
             db.create_function('_explorer_summary_sort_key', 5, summary_callback(self._summary_sort_key))
             db.create_function('_explorer_summary_search_key', 5, summary_callback(self._summary_search_key))
@@ -884,20 +957,31 @@ class ReadOnlyExplorerSQLiteRepository:
             db.execute('PRAGMA query_only=ON')
             yield db
         except (sqlite3.Error, OSError) as error:
+            if candidate_failed:
+                raise AnalysisError('Unexpected analysis database rows') from None
             if metadata_failed:
                 raise AnalysisError('Invalid stored metadata') from None
-            raise AnalysisError(f'Analysis database error: {error}') from error
+            raise AnalysisError('Analysis database error') from error
         finally:
             if db is not None:
                 db.close()
 
     @contextmanager
-    def _transaction(self, *, validate_evidence=True):
+    def _transaction(self, *, validate_evidence=True, full_validation=True):
         with self._connection() as db:
             db.execute('BEGIN')
-            self._validate(db, validate_evidence=validate_evidence)
+            if full_validation:
+                self._validate(db, validate_evidence=validate_evidence)
+            else:
+                self._validate_compatibility(db)
             yield db
             db.execute('COMMIT')
+
+    def _validate_compatibility(self, db):
+        # A compatibility guard, not a certificate of schema or retained history.
+        version = db.execute('PRAGMA user_version').fetchone()[0]
+        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
+            raise AnalysisError('Not a supported music-analyzer analysis database')
 
     def _validate(self, db, *, validate_evidence=True):
         version = _database_schema_version(db)
