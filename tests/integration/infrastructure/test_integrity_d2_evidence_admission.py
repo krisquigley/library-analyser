@@ -8,6 +8,7 @@ from pathlib import Path
 import codecs
 import hashlib
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -615,6 +616,8 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
         self.assertEqual(findings(scan), [('historical_evidence', 'evidence_payload_oversized', 1, 'exact')])
         self.assert_complete(scan)
 
+    @unittest.skipIf(os.environ.get('CI_EMPIRICAL_ALREADY_PASSED') == '1',
+                     'Dedicated strict hard120s empirical CI step already passed')
     def test_blob_bom_decoded_domain_and_separate_runtime_bound(self):
         # Mandatory empirical qualification, NOT the deterministic guard proof.
         # Preserve original RED281ae7/b505 provenance: deadline is never accepted
@@ -634,6 +637,39 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
         self.assertEqual(selected(scan, 'historical_evidence').state, 'interrupted')
         self.assertEqual(findings(scan), [])
         self.assertNotIn(OLD_RUNS[0], obs.value_runs)
+
+    def test_deadline_during_tiny_preflight_precedes_raw_admission(self):
+        # Positive clock control, not empirical proof of the raw value limit.
+        # Real SQLite executes a tiny slice; time expires before its delivery.
+        now = [0.0]
+        statements = []
+        track, run = 'sha256:' + 'a' * 64, OLD_RUNS[0]
+        raw = '{}'.encode('utf-32')
+        with closing(sqlite3.connect(':memory:')) as db:
+            db.execute('CREATE TABLE graph_feature_evidence '
+                       '(track_id TEXT, run_id TEXT, evidence_json BLOB)')
+            db.execute('INSERT INTO graph_feature_evidence VALUES (?,?,?)',
+                       (track, run, raw))
+            def trace(sql):
+                statements.append(sql)
+                if sql.startswith('SELECT substr(CAST(evidence_json AS BLOB)'):
+                    now[0] = 1.0
+            db.set_trace_callback(trace)
+            delivery = Delivery(db, deadline=1.0)
+            with patch('music_analyzer.infrastructure.persistence.integrity.monotonic',
+                       side_effect=lambda: now[0]):
+                with self.assertRaises(AdmissionStop) as caught:
+                    decoded, code = evidence_adapter._document_size(
+                        delivery, track, run, len(raw), 'blob')
+                    self.assertIsNone(code)
+                    evidence_adapter._payload(delivery, track, run, '', len(raw),
+                                              'blob', decoded, lambda code: None)
+            self.assertEqual(caught.exception.reason, 'deadline')
+            self.assertEqual(delivery.interrupted, 'deadline')
+            self.assertEqual(delivery.utf8_bytes, 0)
+            self.assertTrue(any(sql.startswith('SELECT substr(') for sql in statements))
+            self.assertFalse(any(sql.startswith('SELECT track_id,run_id,evidence_json')
+                                 for sql in statements))
 
     def test_raw_runtime_guard_after_exact_decoded_preflight(self):
         # Controlled fixed-slice delivery proxy, not whole-scanner performance

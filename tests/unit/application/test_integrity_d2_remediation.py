@@ -19,7 +19,8 @@ def change_checks(scan, names, state):
 
 
 def schema_stop(version, schema_state='completed', cancelled=False):
-    scan = change_checks(selected_scan(version), ('core_rows', 'metadata', 'retained_stages'), 'blocked')
+    scan = change_checks(selected_scan(version), ('core_rows', 'metadata', 'retained_stages',
+                                                  'sqlite_physical', 'sqlite_foreign_keys'), 'blocked')
     if version >= 7:
         scan = change_checks(scan, OWNERS, 'blocked')
     if version >= 9:

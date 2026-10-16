@@ -236,7 +236,8 @@ def _valid(scan):
         if version is not None and any(
                 by_id[name].state != 'blocked' for name, first in
                 (('metadata', 6), ('retained_stages', 6), ('current_graph', 7), ('historical_graph', 7),
-                 ('current_evidence', 9), ('historical_evidence', 9)) if version >= first):
+                 ('current_evidence', 9), ('historical_evidence', 9),
+                 ('sqlite_physical', 6), ('sqlite_foreign_keys', 6)) if version >= first):
             return False
     if scan.stop_reason == 'scope_not_implemented' and (
             any(by_id[name].state != 'not_implemented' for name in ('sqlite_physical', 'sqlite_foreign_keys')) or

@@ -40,6 +40,22 @@ def completed_scan():
         implemented_scope_complete=True, stop_reason='completed')
 
 
+def failed_schema_scan(version, schema_state):
+    scan = replace(completed_scan(), schema_version=version)
+    for owner in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
+                  'historical_graph', 'current_evidence', 'historical_evidence',
+                  'sqlite_physical', 'sqlite_foreign_keys'):
+        state = ('not_applicable' if version == 6 and owner in (
+            'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence')
+                 else 'blocked')
+        scan = changed(scan, owner, state=state, count=None, count_precision='unavailable')
+    if schema_state == 'blocked':
+        scan = changed(scan, 'schema', state='blocked', count=None, count_precision='unavailable')
+        return interrupted(scan)
+    return replace(scan, implemented_scope_complete=False, stop_reason='schema_blocked',
+                   findings=(corruption('schema', 'schema_checks_mismatch'),))
+
+
 def changed(scan, owner, **fields):
     return replace(scan, checks=tuple(replace(item, **fields) if item.check_id == owner else item
                                       for item in scan.checks))
@@ -84,6 +100,49 @@ class CompletedOwnerPortValidationTests(unittest.TestCase):
                                 'lower_bound' if name == 'resource_access' else 'unavailable')
                                for name, unit in CHECKS))
         self.assertNotIn('PRIVATE', repr(report))
+
+    def test_failed_schema_preserves_blocked_physical_and_foreign_key_controls(self):
+        for version in (6, 10):
+            for schema_state in ('completed', 'blocked'):
+                with self.subTest(version=version, schema_state=schema_state):
+                    scan = failed_schema_scan(version, schema_state)
+                    report = execute(scan)
+                    self.assertEqual((report.schema_version, report.stop_reason, report.exit_code,
+                                      report.complete, report.implemented_scope_complete),
+                                     (version, scan.stop_reason, 4, False, False))
+                    self.assertEqual(report.checks, scan.checks)
+                    self.assertEqual(report.findings, scan.findings)
+
+    def test_failed_schema_rejects_each_finding_free_physical_and_foreign_key_owner(self):
+        for version in (6, 10):
+            for schema_state in ('completed', 'blocked'):
+                control = failed_schema_scan(version, schema_state)
+                for owner in ('sqlite_physical', 'sqlite_foreign_keys'):
+                    for state in ('completed', 'interrupted'):
+                        with self.subTest(version=version, schema_state=schema_state,
+                                          owner=owner, state=state):
+                            # Change just one owner from its valid blocked control.
+                            count = 1 if owner == 'sqlite_physical' and state == 'completed' else 0
+                            scan = changed(control, owner, state=state, count=count,
+                                           count_precision='exact' if state == 'completed' else 'lower_bound')
+                            self.assert_sanitized(scan)
+
+    def test_completed_physical_and_foreign_key_findings_survive_later_failures(self):
+        for owner, code in (('sqlite_physical', 'sqlite_integrity_invalid'),
+                            ('sqlite_foreign_keys', 'sqlite_foreign_key_invalid')):
+            for reason, codes, exit_code in (
+                    ('read_error', ('read_failed',), 4),
+                    ('cleanup_error', ('read_failed', 'cleanup_failed'), 4),
+                    ('cancelled', ('read_failed', 'cleanup_failed', 'cancelled'), 130)):
+                with self.subTest(owner=owner, reason=reason):
+                    scan = changed(completed_scan(), owner, count=1)
+                    scan = interrupted(replace(scan, findings=(corruption(owner, code),)), reason, codes)
+                    report = execute(scan)
+                    self.assertEqual((report.schema_version, report.stop_reason, report.exit_code,
+                                      report.complete, report.implemented_scope_complete),
+                                     (10, reason, exit_code, False, False))
+                    self.assertEqual(report.checks, scan.checks)
+                    self.assertEqual(set(report.findings), set(scan.findings))
 
     def test_schema_blocked_preserves_legacy_lower_bound_schema_mismatch(self):
         # Schema descriptor findings are not row-owned semantic predicates;
