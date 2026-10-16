@@ -68,7 +68,7 @@ class FakeExplorerRepository:
         for record in self.records:
             if record.track_id == track_id:
                 return record
-        raise AssertionError('unexpected track lookup')
+        raise ValueError('Unknown explorer track')
 
 
 class ExplorerUseCaseTests(unittest.TestCase):
@@ -165,6 +165,15 @@ class ExplorerUseCaseTests(unittest.TestCase):
             use_case.execute(order='size')
         with self.assertRaises(ValueError):
             use_case.execute(query='x' * 201)
+
+    def test_detail_uses_only_keyed_read_boundary(self):
+        class KeyedOnlyRepository(FakeExplorerRepository):
+            def track_ids(self):
+                raise AssertionError('detail must not enumerate active IDs')
+
+        reader = KeyedOnlyRepository()
+        detail = GetExplorerTrackDetail(reader).execute(reader.records[0].track_id)
+        self.assertEqual(detail.handle, reader.records[0].track_id)
 
     def test_unknown_detail_handle_is_actionable(self):
         with self.assertRaises(ValueError):
