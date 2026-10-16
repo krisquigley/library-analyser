@@ -179,6 +179,7 @@ class WriterBrowserCompositionTests(unittest.TestCase):
         from tools.explorer_http_diagnostic import _sample
         from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
         original = ReadOnlyExplorerSQLiteRepository.track_ids
+        original_contains = ReadOnlyExplorerSQLiteRepository.contains_active_track
         args = SimpleNamespace(fixture_source='writer-v10', track_count=12, seed=70,
                                history_count=2, allow_large=False, graph_profile='small',
                                scenario='pending-then-ready', samples=1, observer_mode='verified')
@@ -196,6 +197,7 @@ class WriterBrowserCompositionTests(unittest.TestCase):
              patch('tools.explorer_browser_diagnostic.observe_attempt', side_effect=observe):
             report = collect(args, {'width': 1280, 'height': 720})
         self.assertIs(ReadOnlyExplorerSQLiteRepository.track_ids, original)
+        self.assertIs(ReadOnlyExplorerSQLiteRepository.contains_active_track, original_contains)
         server = report['server_observation']
         self.assertEqual(server['observer_mode'], 'observer_on')
         self.assertEqual(server['scope'], 'server-process-monotonic')
@@ -204,7 +206,10 @@ class WriterBrowserCompositionTests(unittest.TestCase):
         self.assertTrue(any(span['phase'] == 'selected_read' and span['method'] == 'GET'
                             for span in server['spans']))
         self.assertIsNone(server['sequential_total_ms'])
-        self.assertEqual(server['sampling']['status'], 'sampled')
+        # Scoped reads may remain below the telemetry cap; sampling is a
+        # statement about actual omitted spans, not required FULL-read work.
+        omitted = sum(counts['omitted'] for counts in server['sampling']['phases'].values())
+        self.assertEqual(server['sampling']['status'], 'sampled' if omitted else 'complete')
         self.assertEqual(report['failure_counts'], {'lifecycle:timeout': 1})
 
     def test_launch_and_close_failures_retain_attempts_and_server_cleanup(self):

@@ -72,7 +72,8 @@ class ServerObservation:
     def installed(self):
         repository = reader.ReadOnlyExplorerSQLiteRepository
         with ExitStack() as patches:
-            for name, phase in [('track_ids', 'membership'), ('read_track', 'selected_read'),
+            for name, phase in [('track_ids', 'membership'), ('contains_active_track', 'membership'),
+                                ('read_track', 'selected_read'),
                                 ('_validate_rows', 'validation_rows'),
                                 ('_validate_graph_rows', 'validation_graph'),
                                 ('_validate_graph_feature_rows', 'validation_evidence'),
