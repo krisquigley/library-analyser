@@ -67,7 +67,7 @@ class MemoryControls(MetadataCase):
     def test_transparent_metadata_and_stage_value_streams_drain_and_cleanup(self):
         path = self.public(6)
         plain = SQLiteIntegrityScanner().scan(str(path))
-        self.assertEqual(plain.stop_reason, 'scope_not_implemented')
+        self.assertEqual(plain.stop_reason, 'completed')
         self.assertFalse(plain.findings)
         for table in ('track_metadata', 'stages'):
             with self.subTest(table=table):

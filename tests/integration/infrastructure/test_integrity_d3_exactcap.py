@@ -51,13 +51,30 @@ class RetainedExactCap(unittest.TestCase):
                 self.assertEqual(db.execute('SELECT count(*) FROM stages').fetchone(), (8,))
             with patch.object(integrity, 'Delivery', Observed):
                 baseline = integrity.SQLiteIntegrityScanner().scan(str(path))
-                self.assertEqual(deliveries[-1].count, 217)
-                self.assertEqual(baseline.stop_reason, 'scope_not_implemented')
+                # The retained prefix remains exactly217; sole physical ok
+                # contributes one additional shared-meter delivery afterward.
+                self.assertEqual(deliveries[-1].count, 218)
+                self.assertEqual(deliveries[-1].count - deliveries[-1].sqlite_work['sqlite_physical'], 217)
+                self.assertEqual(baseline.stop_reason, 'completed')
                 for cap in (218, 217, 216):
                     with self.subTest(cap=cap), patch.object(integrity, 'MAX_ROWS', cap):
                         scan = integrity.SQLiteIntegrityScanner().scan(str(path))
                         result = next(c for c in scan.checks if c.check_id == 'retained_stages')
                         expected = ('interrupted', 7, 'lower_bound') if cap == 216 else ('completed', 8, 'exact')
                         self.assertEqual((result.state, result.count, result.count_precision), expected)
-                        self.assertEqual(scan.stop_reason, 'row_limit' if cap == 216 else 'scope_not_implemented')
-                        self.assertEqual(deliveries[-1].count, min(cap, 217))
+                        self.assertEqual(scan.stop_reason, 'completed' if cap == 218 else 'row_limit')
+                        self.assertEqual(deliveries[-1].count, min(cap, 218))
+                        physical = next(c for c in scan.checks if c.check_id == 'sqlite_physical')
+                        foreign_keys = next(c for c in scan.checks if c.check_id == 'sqlite_foreign_keys')
+                        if cap == 218:
+                            self.assertEqual((physical.state, physical.count, physical.count_precision),
+                                             ('completed', 1, 'exact'))
+                            self.assertEqual((foreign_keys.state, foreign_keys.count, foreign_keys.count_precision),
+                                             ('completed', 0, 'exact'))
+                        else:
+                            self.assertEqual((physical.state, physical.count, physical.count_precision),
+                                             ('interrupted', 0, 'lower_bound') if cap == 217
+                                             else ('blocked', None, 'unavailable'))
+                            self.assertEqual((foreign_keys.state, foreign_keys.count, foreign_keys.count_precision),
+                                             ('blocked', None, 'unavailable'))
+                            self.assertFalse(scan.implemented_scope_complete)

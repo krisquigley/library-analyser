@@ -127,7 +127,8 @@ class PairedAlignment(unittest.TestCase):
             report = CheckIntegrity(integrity.SQLiteIntegrityScanner()).execute(str(self.path))
         self.assertEqual(observation.fired, 1)
         self.assertEqual(observation.opened, observation.closed)
-        self.assertEqual(report.stop_reason, 'scope_not_implemented')
+        self.assertEqual(report.stop_reason, 'completed')
+        self.assertEqual(report.exit_code, 1)
         self.assertIsNotNone(report.schema_version)
         self.assertEqual([(f.check_id, f.code, f.count) for f in report.findings], [(owner, code, count)])
         # The conservative choice is to abandon; later envelopes cannot authorize
