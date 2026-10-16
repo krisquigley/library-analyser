@@ -133,6 +133,10 @@ class IntegrityD2PrerequisiteRemediation(unittest.TestCase):
                     self.assert_preserved(replace(selected_scan(version), findings=(IntegrityFinding(
                         owner, 'graph_edge_invalid', 'corruption', 1, count_precision='exact'),)))
                 scan = change_checks(selected_scan(version), (owner, 'resource_access'), 'interrupted')
+                # An observed invalid edge has already charged one semantic row;
+                # resource access remains interrupted at zero completed databases.
+                scan = replace(scan, checks=tuple(replace(c, count=1) if c.check_id == owner else c
+                                                  for c in scan.checks))
                 scan = replace(scan, stop_reason='read_error', implemented_scope_complete=False,
                                findings=(IntegrityFinding(owner, 'graph_edge_invalid', 'corruption', 1),
                                          IntegrityFinding('resource_access', 'read_failed', 'operational', 1)))
