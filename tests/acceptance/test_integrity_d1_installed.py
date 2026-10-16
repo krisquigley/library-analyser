@@ -74,12 +74,12 @@ class IntegrityD1InstalledControls(unittest.TestCase):
             before = path.read_bytes()
             for command in ([str(self.script)], [str(self.python), '-m', 'music_analyzer']):
                 with self.subTest(version=version, entry=command[-1]):
-                    result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=4)
+                    result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=0)
                     report = json.loads(result.stdout)
-                    self.assertEqual(report['status'], 'incomplete')
-                    self.assertFalse(report['complete'])
+                    self.assertEqual(report['status'], 'clean')
+                    self.assertTrue(report['complete'])
                     self.assertTrue(report['implemented_scope_complete'])
-                    self.assertEqual(report['stop_reason'], 'scope_not_implemented')
+                    self.assertEqual(report['stop_reason'], 'completed')
                     self.assertEqual(report['schema_version'], version)
                     checks = {c['check_id']: c for c in report['checks']}
                     self.assertEqual(len(checks), 12)
@@ -104,11 +104,11 @@ class IntegrityD1InstalledControls(unittest.TestCase):
                 before = path.read_bytes()
                 for command in ([str(self.script)], [str(self.python), '-m', 'music_analyzer']):
                     with self.subTest(version=version, corrupt=corrupt, entry=command[-1]):
-                        result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=4)
+                        result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=1 if corrupt else 0)
                         report = json.loads(result.stdout)
-                        self.assertEqual(report['coverage_revision'], 'D3a')
-                        self.assertEqual(report['status'], 'incomplete')
-                        self.assertFalse(report['complete'])
+                        self.assertEqual(report['coverage_revision'], 'D3')
+                        self.assertEqual(report['status'], 'corrupt' if corrupt else 'clean')
+                        self.assertTrue(report['complete'])
                         self.assertTrue(report['implemented_scope_complete'])
                         checks = {c['check_id']: c for c in report['checks']}
                         for owner, count in zip(('current_graph', 'historical_graph'),
@@ -135,11 +135,11 @@ class IntegrityD1InstalledControls(unittest.TestCase):
                 before = path.read_bytes()
                 for command in ([str(self.script)], [str(self.python), '-m', 'music_analyzer']):
                     with self.subTest(version=version, corrupt=corrupt, entry=command[-1]):
-                        result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=4)
+                        result = self.run_child(command + ['integrity', '--database', str(path), '--json'], expected=1 if corrupt else 0)
                         report = json.loads(result.stdout)
                         self.assertEqual((report['coverage_revision'], report['report_version'],
-                                          report['required_scope_revision']), ('D3a', 1, 'P7-1'))
-                        self.assertFalse(report['complete'])
+                                          report['required_scope_revision']), ('D3', 1, 'P7-1'))
+                        self.assertTrue(report['complete'])
                         self.assertTrue(report['implemented_scope_complete'])
                         checks = {c['check_id']: c for c in report['checks']}
                         for owner in ('current_evidence', 'historical_evidence'):
@@ -159,7 +159,7 @@ class IntegrityD1InstalledControls(unittest.TestCase):
         with closing(sqlite3.connect(path)) as db:
             db.execute('UPDATE tracks SET size=-1 WHERE rowid=(SELECT MAX(rowid) FROM tracks)')
             db.commit()
-        result = self.run_child([str(self.script), 'integrity', '--database', str(path), '--json'], expected=4)
+        result = self.run_child([str(self.script), 'integrity', '--database', str(path), '--json'], expected=1)
         report = json.loads(result.stdout)
         self.assertIn('track_size_invalid', [f['code'] for f in report['findings']])
         self.assertTrue(report['implemented_scope_complete'])

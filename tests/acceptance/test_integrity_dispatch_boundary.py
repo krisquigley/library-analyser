@@ -61,7 +61,7 @@ class IntegrityDispatchBoundaryTests(unittest.TestCase):
             settings.assert_not_called()
             for guard in guards.values():
                 guard.assert_not_called()
-            self.assertEqual(result, 4, 'D1 LIMITED is incomplete, never clean0')
+            self.assertEqual(result, 0, 'Complete healthy D3 diagnostic is clean0')
 
 
 if __name__ == '__main__':

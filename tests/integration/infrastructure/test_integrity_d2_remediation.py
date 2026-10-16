@@ -122,7 +122,7 @@ class IntegrityD2Remediation(unittest.TestCase):
                 scan = self.scan(observed)
                 self.assertFalse(scan.findings)
                 self.assertTrue(scan.implemented_scope_complete)
-                self.assertEqual(self.report(scan).exit_code, 4)
+                self.assertEqual(self.report(scan).exit_code, 0)
                 self.assertEqual(observed.exhausted, int(version >= 7))
 
     def test_genuine_v7_without_rowid_history_retains_full_reader_tolerance(self):
@@ -153,12 +153,12 @@ class IntegrityD2Remediation(unittest.TestCase):
             self.assertEqual(reader.metadata()['schema_version'], 7)
             self.assertEqual(len(reader.current_graph_edges()[1]), 1)
         scan = self.scan()
-        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertEqual(scan.stop_reason, 'completed')
         self.assertFalse(scan.findings)
         self.assertTrue(scan.implemented_scope_complete)
         for owner in ('current_graph', 'historical_graph'):
             self.assertEqual(check(scan, owner).state, 'completed')
-        self.assertEqual(self.report(scan).exit_code, 4)
+        self.assertEqual(self.report(scan).exit_code, 0)
 
     def test_real_late_error_wrapper_self_control(self):
         self.create()

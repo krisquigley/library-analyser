@@ -1,4 +1,4 @@
-"""Deterministic presentation of sanitized LIMITED application reports."""
+"""Deterministic presentation of sanitized application diagnostic reports."""
 from dataclasses import asdict
 import json
 
@@ -24,10 +24,10 @@ def present_integrity(report: IntegrityReport, as_json=False):
         }
         return json.dumps(payload, ensure_ascii=True, separators=(',', ':'))
     lines = [
-        'LIMITED integrity diagnostic — not P7 complete; not suitable for P8.',
+        'D3 offline integrity diagnostic — snapshot checks, not writer parity or a trust token.',
         f'report_version={report.report_version} coverage_revision={report.coverage_revision} required_scope_revision={report.required_scope_revision}',
         'supported_schema_versions=6,7,8,9,10',
-        f'schema_version={report.schema_version} status={report.status} complete=false implemented_scope_complete={str(report.implemented_scope_complete).lower()}',
+        f'schema_version={report.schema_version} status={report.status} complete={str(report.complete).lower()} implemented_scope_complete={str(report.implemented_scope_complete).lower()}',
         f'stop_reason={report.stop_reason} exit={report.exit_code}',
     ]
     for item in report.checks:

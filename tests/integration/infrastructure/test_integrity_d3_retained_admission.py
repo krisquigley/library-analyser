@@ -10,6 +10,7 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 
+from music_analyzer.application.use_cases.check_integrity import CheckIntegrity
 from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner
 from tests.integration.infrastructure.integrity_d3_public_fixture import create_public_retained_database, replace_stage, stage_payload
 from tests.integration.infrastructure.test_integrity_d3_metadata import MetadataCase, PhaseObservation, check, findings
@@ -72,7 +73,12 @@ class RetainedAdmissionTests(MetadataCase):
         c=check(scan,'retained_stages')
         self.assertEqual((c.state,c.count,c.count_precision),('completed',8,'exact'))
         self.assertEqual(findings(scan,'retained_stages'),[(code,1,'exact') for code in codes])
-        self.assertEqual(scan.stop_reason,'scope_not_implemented')
+        self.assertEqual(scan.stop_reason,'completed')
+        self.assertTrue(scan.implemented_scope_complete)
+        class Retained:
+            def scan(self, database, deadline_seconds=120):
+                return scan
+        self.assertEqual(CheckIntegrity(Retained()).execute('public.sqlite').exit_code, 1 if codes else 0)
 
     def boundary(self,size,oversized):
         path=self.public(); raw=sized_document(size)

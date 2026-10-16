@@ -1,4 +1,4 @@
-# LIMITED offline integrity diagnostic (D3a)
+# D3 offline integrity diagnostic
 
 ```sh
 music-analyzer integrity --database DB --json
@@ -8,15 +8,15 @@ python -m music_analyzer integrity --database DB --audit-deadline-seconds 30
 
 A database path must be supplied explicitly. Repeated root/subcommand `--database` options (including `--database=DB`) select the **last explicit value in argv order**; earlier values are never opened. The command does not load Settings, default/XDG configuration, models, inference backends, FFmpeg, audio files, cache, graph builders or servers. Configuration/model and unrelated command options are rejected. It performs no migration or repair and does not change SQLite `user_version`.
 
-## What D3a covers — and does not certify
+## What D3 covers — and does not certify
 
-D3a recognizes the existing application ID and true schema versions **6–10**, checks the exact existing FULL-reader schema contract (including its existing legacy tolerances), and examines every core track identity/digest/size and audio-policy row, including missing/orphan audio relationships. Both FULL readers and their trust behavior remain unchanged.
+D3 recognizes the existing application ID and true schema versions **6–10**, checks the exact existing FULL-reader schema contract (including its existing legacy tolerances), and examines every core track identity/digest/size and audio-policy row, including missing/orphan audio relationships. Both FULL readers and their trust behavior remain unchanged.
 
-Every report exposes the finite twelve-check checklist: compatibility, schema, core_rows, metadata, retained_stages, current_graph, historical_graph, current_evidence, historical_evidence, sqlite_physical, sqlite_foreign_keys, resource_access. D3a adds metadata and retained stage payload checks. SQLite physical/foreign-key checks remain **not implemented**, deferred to D3b along with certification. D3a retains both graph checks and both compact evidence checks. Graph checks are genuinely not applicable in v6, and evidence checks in v6–8, only after trustworthy application/version recognition. Missing applicable coverage is never labeled not applicable. Schema drift can block dependent core checks.
+Every report exposes the finite twelve-check checklist: compatibility, schema, core_rows, metadata, retained_stages, current_graph, historical_graph, current_evidence, historical_evidence, sqlite_physical, sqlite_foreign_keys, resource_access. D3 includes metadata and retained stage payload checks, SQLite physical and foreign-key checks, both graph checks and both compact evidence checks. Graph checks are genuinely not applicable in v6, and evidence checks in v6–8, only after trustworthy application/version recognition. Missing applicable coverage is never labeled not applicable. Schema drift can block dependent core checks.
 
-Even a healthy v6 database returns `status=incomplete`, `complete=false`, `stop_reason=scope_not_implemented`, **exit4**. Core corruption findings remain visible but do not change that incomplete precedence. `implemented_scope_complete=true` means only the selected schema/core/metadata/retained-stage/graph/evidence work and resource cleanup completed; it can also be true when fully drained core scans found corruption. It is **not** P7 completion, a clean result, a trust token, or suitability for P8. No D3a invocation returns clean0/corrupt-complete1. #85's six-second case remains unresolved; no latency guarantee is made. #96 is separate, and P8 planning remains blocked until complete D3 diagnostics and separate exact-head writer parity are delivered.
+A supported database returns `status=clean`, `complete=true`, `stop_reason=completed`, **exit0** only when all twelve applicable checks have completed with exact counts, genuine legacy N/A is justified, and final connection cleanup and the deadline check succeed. Fully completed diagnostics with corruption findings return `status=corrupt`, `complete=true`, **exit1**. Missing/blocked coverage, read errors, resource stops, cleanup failure and deadline expiry return `status=incomplete`, `complete=false`, **exit4**; late cancellation takes priority with **exit130**. `implemented_scope_complete` records completion of the implemented diagnostic scope, not the absence of corruption. Complete does not mean writer parity, authenticity, a trust token, or automatic Explorer/P8 eligibility. #85's six-second case remains unresolved; no latency guarantee is made. #96 is separate, and P8 planning remains blocked on separate exact-head writer parity and its other gates.
 
-Wire shape is `report_version=1`, capability is `coverage_revision=D3a`, and the finite promised checklist is `required_scope_revision=P7-1`. These fields do not change the package version or database schema version. Findings use fixed predicate codes and grouped occurrence counts, not distinct corrupt-track totals. Several findings can overlap on the same row; do not sum them as corrupt tracks. Completed counts are exact; interrupted counts/findings are lower bounds; blocked/unimplemented/N/A counts are unavailable, not fabricated zeroes.
+Wire shape is `report_version=1`, capability is `coverage_revision=D3`, and the finite promised checklist is `required_scope_revision=P7-1`. These fields do not change the package version or database schema version. Findings use fixed predicate codes and grouped occurrence counts, not distinct corrupt-track totals. Several findings can overlap on the same row; do not sum them as corrupt tracks. Completed counts are exact; interrupted counts/findings are lower bounds; blocked/unimplemented/N/A counts are unavailable, not fabricated zeroes.
 
 ## Metadata and retained-stage ownership
 
@@ -71,8 +71,8 @@ hard wall-time or universal RSS guarantee is made.
 These phases run in the displayed twelve-check order using the same pinned
 read-only snapshot and shared operational meters as the other checks. They do not
 change reader trust, writer policy, schema, graph/evidence derivation or P8 eligibility.
-Healthy and corrupt supported databases both remain incomplete4/complete=false;
-physical/FK completion is deliberately outside D3a.
+Healthy or corrupt findings do not alone determine completion: physical/FK checks and
+final resource cleanup must also complete exactly.
 
 ## Graph ownership and counts
 
@@ -80,7 +80,7 @@ On v7+, current_graph checks the current pointer, current descriptors, current e
 
 Both owners accept corruption codes `graph_lifecycle_invalid`, `graph_counts_invalid`, `graph_pointer_invalid`, `graph_mirror_invalid`, `graph_edge_invalid`. Occurrences are per invalid build for lifecycle; per invalid full-build/positioned descriptor for counts; per unequal full/positioned relation for mirror; and one OR-ed occurrence per bad edge row, even when several edge predicates fail.
 
-Graph check counts represent semantic work, not all query deliveries: descriptors plus physical edge rows, excluding repeated preflights, mirror comparisons and lookups. The public two-build/one-edge fixture gives current/history **2/4** on v7 and **3/8** on v8–10. Empty drained graphs are completed with exact0; v6 graphs are N/A with unavailable/null counts. Every delivered SQLite row, including excluded semantic work, still charges the runtime row budget. Completion requires full streams and successful cleanup; healthy and corrupt supported graphs remain incomplete4/complete=false.
+Graph check counts represent semantic work, not all query deliveries: descriptors plus physical edge rows, excluding repeated preflights, mirror comparisons and lookups. The public two-build/one-edge fixture gives current/history **2/4** on v7 and **3/8** on v8–10. Empty drained graphs are completed with exact0; v6 graphs are N/A with unavailable/null counts. Every delivered SQLite row, including excluded semantic work, still charges the runtime row budget. Completion requires full streams and successful cleanup; graph completion alone does not establish whole-report completion.
 
 ## Compact evidence ownership, predicates and counts
 
@@ -112,6 +112,29 @@ The writer's domain bound is **inclusive16MiB decoded-document UTF8**, independe
 
 TEXT storage length in a UTF16 database is not UTF8 length. UTF16 TEXT and BLOB are preflighted using fixed4096-byte storage slices with incremental codec state and exact decoded UTF8 accounting, including embedded NUL and split code units/surrogate pairs; no character-length truncation at NUL and no full payload accumulation. UTF8 TEXT uses exact storage-byte admission. Every preflight/fragment/full delivery charges the shared budgets without resets. SQLite CAST/slicing may still allocate storage-sized scratch or repeat work: qualification fixtures do not prove universal constant memory or linear runtime. No hard wall-time/RSS guarantee is made.
 
+## SQLite physical and foreign-key checks
+
+Both checks use the same pinned read-only connection and shared delivery meter.
+Physical checking executes the no-argument projection
+`SELECT CASE WHEN integrity_check='ok' THEN 1 ELSE 0 END AS marker FROM pragma_integrity_check`.
+Only numeric markers cross into Python; raw SQLite diagnostic messages are not
+admitted. A sole1 followed by EOF and successful cursor cleanup is healthy exact1.
+One through99 zero markers followed by EOF and cleanup are exact corruption
+occurrences under `sqlite_integrity_invalid`. The100th zero stops conservatively
+at SQLite's native default100 limit: `physical_limit`, interrupted100/lower_bound,
+`physical_limit_reached` operational finding, incomplete4. It does not prove EOF,
+exactly100 underlying defects, or an unseen101st result. Empty, mixed, repeated-ok,
+malformed type/shape or read protocols are operational `read_error`, not inferred
+corruption. There is no raw-message fallback or unsupported101-argument probe.
+
+Foreign-key checking drains `SELECT 1 AS marker FROM pragma_foreign_key_check`
+without the physical100 cutoff. Each violation contributes one
+`sqlite_foreign_key_invalid` occurrence. Projection handles WITHOUT ROWID violations
+whose native rowid is NULL without exposing table names, rowids, keys or payloads.
+Exact counts require EOF and successful cursor cleanup. Later failures do not
+erase earlier fully drained exact phases. Projection bounds Python-visible values,
+not native SQLite allocation or runtime; no native bounded-memory guarantee is made.
+
 ## Safety, snapshot and work limits
 
 The adapter uses an escaped SQLite URI with `mode=ro`, `query_only`, and an explicit BEGIN/first-read snapshot. No immutable shortcut, writer adapter, DDL/DML, migration, checkpoint or ATTACH is used. The report applies only to that pinned snapshot, finite checklist and diagnostic revision—not future/restored/external bytes or general database authenticity. It does not inspect audio files or authorize repair, backfill, or mutation.
@@ -128,7 +151,9 @@ All paths attempt cleanup. Deadline, caps, blocked dependencies, late read error
 |---|---|
 |2|Invalid invocation; fixed sanitized stderr, no report and no target access|
 |3|Unsupported application/version or initially unreadable/refused target|
-|4|LIMITED D3a report, whether healthy, corrupt-observed, blocked, capped or late-error|
+|0|Complete exact diagnostic with no findings (`clean`, `complete=true`)|
+|1|Complete exact diagnostic with corruption findings (`corrupt`, `complete=true`)|
+|4|Incomplete diagnostic: missing/blocked coverage, resource cutoff or operational failure|
 |130|Cancellation/SIGINT; incomplete report after attempted cleanup|
 
 The first compatibility read can fail even after connection open; that remains an initially unreadable target (exit3), not late read failure. Operational deadline/caps before version recognition remain incomplete4, not unsupported3. Cleanup failure can supersede an unsupported result with incomplete4.

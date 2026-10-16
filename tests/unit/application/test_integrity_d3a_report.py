@@ -54,7 +54,7 @@ class D3aReportTests(unittest.TestCase):
             for field,expected in (('schema_version',version),('checks',scan.checks),('findings',()),
                                    ('implemented_scope_complete',True),('stop_reason','scope_not_implemented'),
                                    ('status','incomplete'),('exit_code',4),('complete',False),('report_version',1),
-                                   ('coverage_revision','D3a'),('required_scope_revision','P7-1')):
+                                   ('coverage_revision','D3'),('required_scope_revision','P7-1')):
                 with self.subTest(version=version,field=field): self.assertEqual(getattr(report,field),expected)
 
     def test_empty_selected_phases_are_completed_exact_zero(self):

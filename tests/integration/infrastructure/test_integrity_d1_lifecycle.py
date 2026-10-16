@@ -66,7 +66,7 @@ class IntegrityD1Lifecycle(unittest.TestCase):
                 result = SQLiteIntegrityScanner().scan(str(path))
                 self.assertTrue(result.implemented_scope_complete, 'completed selected scope needs honest true flag')
                 self.assertEqual(tuple(c.check_id for c in result.checks), IDS)
-                self.assertEqual(result.stop_reason, 'scope_not_implemented')
+                self.assertEqual(result.stop_reason, 'completed')
                 states = {c.check_id: c.state for c in result.checks}
                 for check_id in ('compatibility', 'schema', 'core_rows', 'resource_access'):
                     self.assertEqual(states[check_id], 'completed')

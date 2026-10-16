@@ -95,7 +95,7 @@ class IntegrityD2EvidenceReport(unittest.TestCase):
             with self.subTest(version=version):
                 scan = evidence_scan(version)
                 report = execute(scan)
-                self.assertEqual(report.coverage_revision, 'D3a')
+                self.assertEqual(report.coverage_revision, 'D3')
                 self.assertEqual(report.checks, scan.checks)
                 self.assertEqual((report.report_version, report.required_scope_revision), (1, 'P7-1'))
                 self.assertEqual((report.status, report.exit_code, report.complete), ('incomplete', 4, False))
@@ -147,6 +147,6 @@ class IntegrityD2EvidenceReport(unittest.TestCase):
         checks = tuple(replace(c, state='not_implemented', count=None, count_precision='unavailable') if c.check_id == OWNERS[1] else c for c in scan.checks)
         report = execute(replace(scan, checks=checks))
         self.assertFalse(report.implemented_scope_complete)
-        self.assertEqual(report.coverage_revision, 'D3a')
+        self.assertEqual(report.coverage_revision, 'D3')
         self.assertEqual((report.exit_code, report.complete), (4, False))
 

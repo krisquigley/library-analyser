@@ -32,10 +32,12 @@ CODES = {
                          'graph_mirror_invalid', 'graph_edge_invalid'),
     'current_evidence': EVIDENCE_CODES,
     'historical_evidence': EVIDENCE_CODES,
+    'sqlite_physical': ('sqlite_integrity_invalid',),
+    'sqlite_foreign_keys': ('sqlite_foreign_key_invalid',),
     'resource_access': ('initial_access_failed', 'read_failed', 'cleanup_failed', 'deadline_exceeded',
-                        'cancelled', 'row_limit_reached', 'utf8_limit_reached', 'value_limit_reached', 'finding_limit_reached'),
+                        'cancelled', 'physical_limit_reached', 'row_limit_reached', 'utf8_limit_reached', 'value_limit_reached', 'finding_limit_reached'),
 }
-STOPS = ('scope_not_implemented', 'unsupported_database', 'unreadable_database', 'schema_blocked',
+STOPS = ('completed', 'physical_limit', 'scope_not_implemented', 'unsupported_database', 'unreadable_database', 'schema_blocked',
          'deadline', 'row_limit', 'utf8_limit', 'value_limit', 'finding_limit', 'read_error', 'cleanup_error', 'cancelled')
 SELECTED = ('compatibility', 'schema', 'core_rows', 'metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence', 'resource_access')
 OPERATIONAL_STOPS = {
@@ -43,7 +45,7 @@ OPERATIONAL_STOPS = {
     'cleanup_error': 'cleanup_failed', 'deadline': 'deadline_exceeded',
     'cancelled': 'cancelled', 'row_limit': 'row_limit_reached',
     'utf8_limit': 'utf8_limit_reached', 'value_limit': 'value_limit_reached',
-    'finding_limit': 'finding_limit_reached',
+    'finding_limit': 'finding_limit_reached', 'physical_limit': 'physical_limit_reached',
 }
 
 
@@ -69,7 +71,7 @@ def _operationally_consistent(scan, resource):
             return scan.stop_reason == 'cleanup_error'
         return OPERATIONAL_STOPS.get(scan.stop_reason) in causes
     return (resource.state == 'completed'
-            and scan.stop_reason in ('scope_not_implemented', 'schema_blocked', 'unsupported_database'))
+            and scan.stop_reason in ('completed', 'scope_not_implemented', 'schema_blocked', 'unsupported_database'))
 
 
 def _count_valid(count):
@@ -106,9 +108,9 @@ def _valid(scan):
                 return False
         else:
             return False
-        if name not in SELECTED:
-            expected = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
-            if item.state != expected:
+        if name in ('sqlite_physical', 'sqlite_foreign_keys'):
+            allowed = ('blocked',) if version is None else ('completed', 'interrupted', 'blocked', 'not_implemented')
+            if item.state not in allowed:
                 return False
         elif name in ('current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and version is not None and version < first_version:
             if item.state != 'not_applicable':
@@ -147,20 +149,73 @@ def _valid(scan):
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
     for item in scan.findings:
-        if (item.check_id in ('metadata', 'retained_stages', 'current_evidence', 'historical_evidence')
+        if (item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
+                              'historical_graph', 'current_evidence', 'historical_evidence')
                 and by_id[item.check_id].state == 'interrupted'
                 and item.count_precision != 'lower_bound'):
             return False
-        if item.check_id in ('metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and (
-                version is None or version < (9 if item.check_id.endswith('_evidence') else (6 if item.check_id in ('metadata', 'retained_stages') else 7)) or compatibility_failed
+        if item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and (
+                version is None or version < (9 if item.check_id.endswith('_evidence') else (6 if item.check_id in ('core_rows', 'metadata', 'retained_stages') else 7)) or compatibility_failed
                 or by_id['compatibility'].state != 'completed'
                 or by_id['schema'].state != 'completed' or schema_failed
                 or by_id[item.check_id].state not in ('completed', 'interrupted')):
             return False
+        owner = by_id[item.check_id]
+        if (item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
+                              'historical_graph', 'current_evidence', 'historical_evidence')
+                and owner.state == 'completed' and item.count_precision != 'exact'):
+            return False
+        # Each predicate may flag the same row independently: bound each
+        # row-owned group, never their sum. Graph counts, pointers and mirrors
+        # describe relations rather than one occurrence per semantic work row.
+        row_bounded = (item.check_id in ('core_rows', 'metadata', 'retained_stages',
+                                        'current_evidence', 'historical_evidence')
+                       or (item.check_id in ('current_graph', 'historical_graph')
+                           and item.code in ('graph_lifecycle_invalid', 'graph_edge_invalid')))
+        # Core orphan markers precede delivery/charging of audio value rows.
+        # Only their interrupted lower-bound prefix may exceed semantic work;
+        # missing markers and all other core predicates follow charged rows.
+        orphan_prefix = (item.check_id == 'core_rows' and item.code == 'track_audio_orphan'
+                         and owner.state == 'interrupted' and item.count_precision == 'lower_bound')
+        if (row_bounded and owner.state in ('completed', 'interrupted')
+                and item.count > owner.count and not orphan_prefix):
+            return False
         if item.check_id in ('metadata', 'retained_stages'):
-            owner = by_id[item.check_id]
-            if item.count_precision != owner.count_precision or item.count > owner.count:
+            if item.count_precision != owner.count_precision:
                 return False
+    physical = by_id['sqlite_physical']
+    if physical.count is not None and physical.count > 100:
+        return False
+    foreign_keys = by_id['sqlite_foreign_keys']
+    physical_findings = tuple(item for item in scan.findings if item.check_id == 'sqlite_physical')
+    for item in scan.findings:
+        if item.check_id not in ('sqlite_physical', 'sqlite_foreign_keys'):
+            continue
+        owner = by_id[item.check_id]
+        if (version is None or compatibility_failed or schema_failed
+                or by_id['compatibility'].state != 'completed'
+                or by_id['schema'].state != 'completed'
+                or owner.state not in ('completed', 'interrupted')
+                or item.count <= 0 or item.count != owner.count
+                or item.count_precision != owner.count_precision):
+            return False
+    if physical.state == 'completed':
+        if not 1 <= physical.count <= 99 or (not physical_findings and physical.count != 1):
+            return False
+    if foreign_keys.state == 'completed' and foreign_keys.count > 0 and not any(
+            item.check_id == 'sqlite_foreign_keys' for item in scan.findings):
+        return False
+    limit_findings = tuple(item for item in scan.findings
+                           if item.check_id == 'resource_access' and item.code == 'physical_limit_reached')
+    if limit_findings or scan.stop_reason == 'physical_limit':
+        if (len(limit_findings) != 1 or limit_findings[0].count != 1
+                or limit_findings[0].count_precision != 'lower_bound'
+                or physical.state != 'interrupted' or physical.count != 100
+                or len(physical_findings) != 1 or physical_findings[0].count != 100
+                or foreign_keys.state != 'blocked'
+                or scan.stop_reason not in ('physical_limit', 'cleanup_error', 'cancelled')
+                or scan.implemented_scope_complete):
+            return False
     if not _operationally_consistent(scan, by_id['resource_access']):
         return False
     if scan.stop_reason == 'unsupported_database' and (
@@ -181,15 +236,22 @@ def _valid(scan):
         if version is not None and any(
                 by_id[name].state != 'blocked' for name, first in
                 (('metadata', 6), ('retained_stages', 6), ('current_graph', 7), ('historical_graph', 7),
-                 ('current_evidence', 9), ('historical_evidence', 9)) if version >= first):
+                 ('current_evidence', 9), ('historical_evidence', 9),
+                 ('sqlite_physical', 6), ('sqlite_foreign_keys', 6)) if version >= first):
             return False
     if scan.stop_reason == 'scope_not_implemented' and (
+            any(by_id[name].state != 'not_implemented' for name in ('sqlite_physical', 'sqlite_foreign_keys')) or
             version is None or compatibility_failed or schema_failed
             or any(by_id[name].state not in ('completed', 'not_applicable') for name in SELECTED)):
         return False
     selected_complete = (version is not None and scan.stop_reason == 'scope_not_implemented'
                          and all(item.state in ('completed', 'not_applicable') for item in scan.checks if item.check_id in SELECTED)
                          and not any(item.check_id == 'schema' for item in scan.findings))
+    if scan.stop_reason == 'completed':
+        full_complete = (version is not None and not compatibility_failed and not schema_failed
+                         and not scan.findings_truncated
+                         and all(item.state in ('completed', 'not_applicable') for item in scan.checks))
+        return full_complete and scan.implemented_scope_complete
     return scan.implemented_scope_complete == selected_complete
 
 
@@ -207,9 +269,13 @@ def _report(scan):
     exit_code = 130 if scan.stop_reason == 'cancelled' else (3 if scan.stop_reason in ('unsupported_database', 'unreadable_database') else 4)
     order = {name: index for index, (name, unit, first_version) in enumerate(CHECKS)}
     findings = tuple(sorted(scan.findings, key=lambda item: (order[item.check_id], CODES[item.check_id].index(item.code))))
-    return IntegrityReport(scan.schema_version, 'unsupported' if exit_code == 3 else 'incomplete',
+    complete = scan.stop_reason == 'completed'
+    if complete:
+        exit_code = 1 if findings else 0
+    status = ('corrupt' if findings else 'clean') if complete else ('unsupported' if exit_code == 3 else 'incomplete')
+    return IntegrityReport(scan.schema_version, status,
                            scan.implemented_scope_complete, scan.stop_reason, exit_code,
-                           scan.checks, findings, scan.findings_truncated)
+                           scan.checks, findings, scan.findings_truncated, complete=complete)
 
 
 class CheckIntegrity:

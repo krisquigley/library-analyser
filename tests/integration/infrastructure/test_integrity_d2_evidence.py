@@ -107,7 +107,7 @@ class EvidenceCase(unittest.TestCase):
             self.assertEqual((item.state, item.count, item.count_unit, item.count_precision),
                              ('completed', count, 'rows', 'exact'), owner)
         self.assertTrue(scan.implemented_scope_complete)
-        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertEqual(scan.stop_reason, 'completed')
 
     def assert_codes(self, scan, owner, codes, counts=None):
         expected = [(owner, code, 1 if counts is None else counts.get(code, 1), 'exact')
@@ -352,13 +352,13 @@ class IntegrityD2EvidencePayloadControls(EvidenceCase):
                          [('retained_stages', 'stage_json_invalid', 1, 'exact')])
         retained = check(scan, 'retained_stages')
         self.assertEqual((retained.state, retained.count, retained.count_precision), ('completed', 1, 'exact'))
-        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertEqual(scan.stop_reason, 'completed')
         from music_analyzer.application.use_cases.check_integrity import CheckIntegrity
         class ObservedScanner:
             def scan(self, database, deadline_seconds):
                 return scan
         report = CheckIntegrity(ObservedScanner()).execute(str(path))
-        self.assertEqual((report.exit_code, report.complete), (4, False))
+        self.assertEqual((report.exit_code, report.complete), (1, True))
 
     def test_numeric_flags_and_missing_compact_rows_are_not_hardened(self):
         path, ids = self.public()

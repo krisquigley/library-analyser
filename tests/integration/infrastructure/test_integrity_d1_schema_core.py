@@ -20,7 +20,7 @@ class IntegrityD1Compatibility(unittest.TestCase):
                 self.assertEqual(result.schema_version, version, 'scanner must recognize true supported schema')
                 self.assertTrue(result.supported)
                 self.assertTrue(result.implemented_scope_complete)
-                self.assertEqual(result.stop_reason, 'scope_not_implemented')
+                self.assertEqual(result.stop_reason, 'completed')
 
     def test_wrong_application_never_recognizes_legacy_applicability(self):
         with tempfile.TemporaryDirectory() as td:
@@ -250,7 +250,7 @@ class IntegrityD1Core(unittest.TestCase):
                 own = next(f for f in result.findings if f.code == code)
                 self.assertEqual(own.count, 1)
                 self.assertEqual(own.count_precision, 'exact')
-                self.assertEqual(result.stop_reason, 'scope_not_implemented')
+                self.assertEqual(result.stop_reason, 'completed')
 
     def test_embedded_nul_text_is_safely_preflighted_before_core_allocation(self):
         from unittest.mock import patch

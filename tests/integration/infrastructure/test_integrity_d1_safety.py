@@ -65,7 +65,7 @@ class IntegrityD1AccessSafety(unittest.TestCase):
             with patch('sqlite3.connect', observation.connect):
                 result = SQLiteIntegrityScanner().scan(str(path))
             self.assertTrue(result.implemented_scope_complete)
-            self.assertEqual(result.stop_reason, 'scope_not_implemented')
+            self.assertEqual(result.stop_reason, 'completed')
             self.assertEqual(path.read_bytes(), before)
             self.assertEqual(len(observation.calls), 1, 'scanner must open its explicit read-only target')
             database, kwargs = observation.calls[0]

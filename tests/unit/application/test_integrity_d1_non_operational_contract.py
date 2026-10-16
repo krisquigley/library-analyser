@@ -50,7 +50,7 @@ class NonOperationalContract(unittest.TestCase):
 
     def test_actual_healthy_v6_cannot_be_relabeled_schema_blocked(self):
         scan = self.actual_scan('healthy')
-        self.assertEqual(scan.stop_reason, 'scope_not_implemented')
+        self.assertEqual(scan.stop_reason, 'completed')
         self.assertTrue(scan.implemented_scope_complete)
         self.assertEqual(scan.schema_version, 6)
         self.assertEqual(scan.findings, ())
@@ -86,7 +86,7 @@ class NonOperationalContract(unittest.TestCase):
     def test_schema_blocked_requires_drift_and_no_interrupted_schema_work(self):
         base = healthy_scan(6)
         blocked_core = tuple(replace(c, state='blocked', count=None, count_precision='unavailable')
-                             if c.check_id in ('core_rows', 'metadata', 'retained_stages') else c for c in base.checks)
+                             if c.check_id in ('core_rows', 'metadata', 'retained_stages', 'sqlite_physical', 'sqlite_foreign_keys') else c for c in base.checks)
         drift = replace(base, checks=blocked_core, implemented_scope_complete=False,
                         stop_reason='schema_blocked', findings=(IntegrityFinding(
                             'schema', 'schema_checks_mismatch', 'corruption', 1),))
@@ -96,7 +96,7 @@ class NonOperationalContract(unittest.TestCase):
     def test_schema_blocked_cannot_claim_interrupted_schema_work(self):
         base = healthy_scan(6)
         drift = replace(base, checks=tuple(replace(c, state='blocked', count=None,
-                        count_precision='unavailable') if c.check_id in ('core_rows', 'metadata', 'retained_stages') else c
+                        count_precision='unavailable') if c.check_id in ('core_rows', 'metadata', 'retained_stages', 'sqlite_physical', 'sqlite_foreign_keys') else c
                         for c in base.checks), implemented_scope_complete=False,
                         stop_reason='schema_blocked', findings=(IntegrityFinding(
                             'schema', 'schema_checks_mismatch', 'corruption', 1),))
