@@ -149,12 +149,13 @@ def _valid(scan):
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
     for item in scan.findings:
-        if (item.check_id in ('metadata', 'retained_stages', 'current_evidence', 'historical_evidence')
+        if (item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
+                              'historical_graph', 'current_evidence', 'historical_evidence')
                 and by_id[item.check_id].state == 'interrupted'
                 and item.count_precision != 'lower_bound'):
             return False
-        if item.check_id in ('metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and (
-                version is None or version < (9 if item.check_id.endswith('_evidence') else (6 if item.check_id in ('metadata', 'retained_stages') else 7)) or compatibility_failed
+        if item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and (
+                version is None or version < (9 if item.check_id.endswith('_evidence') else (6 if item.check_id in ('core_rows', 'metadata', 'retained_stages') else 7)) or compatibility_failed
                 or by_id['compatibility'].state != 'completed'
                 or by_id['schema'].state != 'completed' or schema_failed
                 or by_id[item.check_id].state not in ('completed', 'interrupted')):

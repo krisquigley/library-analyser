@@ -102,6 +102,43 @@ class CompletedOwnerPortValidationTests(unittest.TestCase):
         self.assertEqual(report.checks, scan.checks)
         self.assertEqual(report.findings, scan.findings)
 
+    def test_schema_blocked_core_cannot_claim_exact_corruption(self):
+        scan = completed_scan()
+        for owner in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
+                      'historical_graph', 'current_evidence', 'historical_evidence',
+                      'sqlite_physical', 'sqlite_foreign_keys'):
+            scan = changed(scan, owner, state='blocked', count=None, count_precision='unavailable')
+        scan = replace(scan, implemented_scope_complete=False, stop_reason='schema_blocked',
+                       findings=(corruption('schema', 'schema_checks_mismatch',
+                                            precision='lower_bound'),))
+        for owner, code in (('core_rows', 'track_size_invalid'),
+                            ('metadata', 'metadata_json_invalid'),
+                            ('current_graph', 'graph_edge_invalid')):
+            with self.subTest(owner=owner):
+                self.assert_sanitized(replace(scan, findings=scan.findings + (corruption(owner, code),)))
+
+    def test_interrupted_core_and_graph_codes_require_lower_bound_precision(self):
+        for owner in ('core_rows', 'current_graph', 'historical_graph'):
+            codes = (ROW_CODES[owner] if owner == 'core_rows' else
+                     ('graph_lifecycle_invalid', 'graph_counts_invalid', 'graph_pointer_invalid',
+                      'graph_mirror_invalid', 'graph_edge_invalid'))
+            for code in codes:
+                for precision in ('exact', 'lower_bound'):
+                    with self.subTest(owner=owner, code=code, precision=precision):
+                        scan = changed(completed_scan(), owner, state='interrupted', count=1,
+                                       count_precision='lower_bound')
+                        scan = interrupted(replace(scan, findings=(corruption(
+                            owner, code, precision=precision),)))
+                        if precision == 'exact':
+                            self.assert_sanitized(scan)
+                        else:
+                            report = execute(scan)
+                            self.assertEqual((report.schema_version, report.stop_reason, report.exit_code,
+                                              report.complete, report.implemented_scope_complete),
+                                             (10, 'read_error', 4, False, False))
+                            self.assertEqual(report.checks, scan.checks)
+                            self.assertEqual(set(report.findings), set(scan.findings))
+
     def test_zero_completed_owner_cannot_claim_one_lower_bound_corruption(self):
         for owner in ('core_rows', 'current_graph', 'current_evidence'):
             with self.subTest(owner=owner):
@@ -224,9 +261,10 @@ class CompletedOwnerPortValidationTests(unittest.TestCase):
 
     def test_completed_exact_corruption_survives_cleanup_and_cancel_precedence(self):
         for reason, codes, exit_code in (
+                ('read_error', ('read_failed',), 4),
                 ('cleanup_error', ('read_failed', 'cleanup_failed'), 4),
                 ('cancelled', ('read_failed', 'cleanup_failed', 'cancelled'), 130)):
-            for owner in ('core_rows', 'current_graph', 'current_evidence'):
+            for owner in ('core_rows', 'current_graph', 'historical_graph', 'current_evidence'):
                 with self.subTest(reason=reason, owner=owner):
                     scan = changed(completed_scan(), owner, count=1)
                     scan = replace(scan, findings=(corruption(owner, ROW_CODES[owner][0]),))
