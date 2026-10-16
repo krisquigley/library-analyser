@@ -175,6 +175,8 @@ def _valid(scan):
             if item.count_precision != owner.count_precision:
                 return False
     physical = by_id['sqlite_physical']
+    if physical.count is not None and physical.count > 100:
+        return False
     foreign_keys = by_id['sqlite_foreign_keys']
     physical_findings = tuple(item for item in scan.findings if item.check_id == 'sqlite_physical')
     for item in scan.findings:
