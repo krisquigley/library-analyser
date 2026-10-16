@@ -22,6 +22,18 @@ from tools.explorer_synthetic_fixture import public_synthetic_fixture
 
 
 class DetailSQLitePhaseObservationRedTests(unittest.TestCase):
+    def test_classifier_retains_legacy_and_scoped_selected_query_shapes(self):
+        from tools.explorer_http_sqlite_observation import _operation
+        for sql, expected in (
+            ('SELECT path FROM locations WHERE track_id=? AND available=1 ORDER BY path', 'selected_locations'),
+            ('SELECT path,mtime_ns,format FROM locations WHERE track_id=? AND available=1 ORDER BY path', 'selected_locations'),
+            ('SELECT r.id,r.status,r.detail FROM runs r JOIN run_tracks t ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', 'selected_latest_run'),
+            ('SELECT t.run_id,r.status,r.detail,r.id FROM run_tracks t LEFT JOIN runs r ON r.id=t.run_id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', 'selected_latest_run'),
+        ):
+            with self.subTest(operation=expected, sql=sql):
+                self.assertEqual(_operation(sql), expected)
+        self.assertIsNone(_operation('SELECT path,mtime_ns,format FROM locations'))
+
     def assert_span(self, span):
         self.assertEqual(span['clock'], 'monotonic')
         self.assertIn(span['status'], ('ok', 'failed', 'partial'))
@@ -36,6 +48,14 @@ class DetailSQLitePhaseObservationRedTests(unittest.TestCase):
         connect = sqlite3.connect
 
         class Cursor(sqlite3.Cursor):
+            def __next__(cursor):
+                evidence['fetches'].append(('iteration', cursor.sql))
+                try:
+                    return super().__next__()
+                except StopIteration:
+                    evidence['fetches'].append(('iteration_exhausted', cursor.sql))
+                    raise
+
             def fetchone(cursor):
                 evidence['fetches'].append(('fetchone', cursor.sql))
                 return super().fetchone()
@@ -98,15 +118,17 @@ class DetailSQLitePhaseObservationRedTests(unittest.TestCase):
                             in evidence['queries'] for conn, sql, params in executions))
         selected = {plan['operation']: plan for plan in plans}
         for operation, method in (('selected_track', 'fetchone'),
-                                  ('selected_locations', 'fetchall')):
+                                  ('selected_locations', 'iteration')):
             self.assertIn((method, selected[operation]['sql']), evidence['fetches'])
+        self.assertIn(('iteration_exhausted', selected['selected_locations']['sql']),
+                      evidence['fetches'], 'tuple(cursor) must observe terminal exhaustion')
         self.assertNotIn(evidence['path'], json.dumps(report))
 
         self.assertIn('spans', report['sqlite'],
                       'PR B missing actual SQLite execute/fetch spans; EQP is not drain timing')
         spans = report['sqlite']['spans']
         for operation, method in (('selected_track', 'fetchone'),
-                                  ('selected_locations', 'fetchall')):
+                                  ('selected_locations', 'iteration')):
             with self.subTest(operation=operation):
                 execute = [span for span in spans if span['operation'] == operation
                            and span['phase'] == 'selected_sql_execute']
@@ -166,8 +188,25 @@ class DetailSQLitePhaseObservationRedTests(unittest.TestCase):
                 yield fixture
                 historical['after'] = fingerprint_sqlite_files(path)
 
-        rejected = run_public_http_diagnostic(sample_count=1, timeout_seconds=5,
-                                              fixture_factory=corrupt_fixture)
+        from tools.explorer_http_diagnostic import _request, _sample
+
+        def ordinary_then_graph(base, timeout, requests, intervals, token):
+            ordinary = _sample(base, timeout, requests, intervals, token)
+            self.assertEqual(ordinary['outcome'], 'ok')
+            _, outcome = _request(base, '/api/mood-axis-graph?contract=v3', 'GET',
+                                  timeout, requests, intervals, 'get_graph')
+            self.assertEqual(outcome, 'http_error')
+            return dict(ordinary, outcome=outcome)
+
+        # D3 historical fingerprint rejection is retained by
+        # IntegrityD2EvidencePayload.test_fingerprint_syntax_and_canonical_mismatch_or_once.
+        with patch('tools.explorer_http_diagnostic._sample', side_effect=ordinary_then_graph):
+            rejected = run_public_http_diagnostic(sample_count=1, timeout_seconds=5,
+                                                  fixture_factory=corrupt_fixture)
+        ordinary_spans = [span for span in rejected['server_observation']['spans']
+                          if span['route'] != '/api/mood-axis-graph']
+        self.assertFalse(any(span['phase'].startswith('validation_evidence') for span in ordinary_spans))
+        self.assertTrue(rejected['readonly']['unchanged'])
         self.assertTrue(any(request['status'] is not None and request['status'] >= 400
                             for request in rejected['requests']))
         self.assertEqual(historical['before'], historical['after'])

@@ -8,6 +8,7 @@ from pathlib import Path
 from music_analyzer.frameworks.cli.main import main
 from music_analyzer.infrastructure.persistence.analysis import APPLICATION_ID
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
+from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository as StandaloneReadOnlyExplorerSQLiteRepository
 
 
@@ -111,20 +112,27 @@ class GraphBuildVersionedHistoryTests(unittest.TestCase):
             create_candidate_database(path)
             build(path)
             cases = (
-                "UPDATE graph_builds SET status='running'",
-                "UPDATE graph_builds SET edge_count=-1",
-                "UPDATE graph_builds SET is_current=0",
+                ("UPDATE graph_builds SET status='running'", 'historical_graph', 'graph_lifecycle_invalid'),
+                ("UPDATE graph_builds SET edge_count=-1", 'historical_graph', 'graph_counts_invalid'),
+                ("UPDATE graph_builds SET is_current=0", 'current_graph', 'graph_pointer_invalid'),
             )
-            for sql in cases:
+            for sql, check_id, code in cases:
                 case_path = Path(td) / (str(abs(hash(sql))) + '.sqlite')
                 case_path.write_bytes(path.read_bytes())
                 with closing(sqlite3.connect(case_path)) as db, db:
                     db.execute('PRAGMA ignore_check_constraints=ON')
                     db.execute(sql)
-                with self.assertRaises(Exception):
-                    ReadOnlyExplorerSQLiteRepository(str(case_path)).metadata()
-                with self.assertRaises(Exception):
-                    StandaloneReadOnlyExplorerSQLiteRepository(str(case_path)).metadata()
+                for reader_type in (ReadOnlyExplorerSQLiteRepository, StandaloneReadOnlyExplorerSQLiteRepository):
+                    reader = reader_type(str(case_path))
+                    # Ordinary metadata consumes neither descriptors nor graph history.
+                    self.assertEqual(reader.metadata()['schema_version'], 10)
+                    # R1 still retains FULL validation at the graph read boundary.
+                    with self.assertRaises(Exception):
+                        reader.current_graph_edges()
+                # The explicit diagnostic owns this same corruption even after R2.
+                findings = SQLiteIntegrityScanner().scan(str(case_path)).findings
+                self.assertTrue(any(f.check_id == check_id and f.code == code for f in findings),
+                                (check_id, code, findings))
             ReadOnlyExplorerSQLiteRepository(str(path)).metadata()
             StandaloneReadOnlyExplorerSQLiteRepository(str(path)).metadata()
 
