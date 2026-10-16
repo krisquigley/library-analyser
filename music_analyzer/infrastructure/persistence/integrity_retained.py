@@ -121,6 +121,10 @@ def scan_retained(delivery, owner):
     aligned = True
     try:
         while (envelope := delivery.one(envelopes, expected_eof=total is not None and observed == total)) is not None:
+            if not envelope:
+                # No cardinality field can authorize this delivery or catch-up.
+                # Stop operationally, preserving earlier completed phase evidence.
+                raise sqlite3.DatabaseError('delivery cardinality unavailable')
             cardinality = envelope[-1]
             if (type(cardinality) is not int or cardinality < 1
                     or (total is not None and total != cardinality)):
