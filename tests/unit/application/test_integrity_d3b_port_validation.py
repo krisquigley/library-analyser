@@ -127,11 +127,56 @@ class CompletedOwnerPortValidationTests(unittest.TestCase):
     def test_each_row_bounded_code_cannot_exceed_its_interrupted_owner(self):
         for owner, codes in ROW_CODES.items():
             for code in codes:
+                if owner == 'core_rows' and code == 'track_audio_orphan':
+                    continue  # Orphan markers precede audio semantic-row delivery.
                 with self.subTest(owner=owner, code=code):
                     scan = changed(completed_scan(), owner, state='interrupted', count=1,
                                    count_precision='lower_bound')
                     scan = replace(scan, findings=(corruption(owner, code, 2, 'lower_bound'),))
                     self.assert_sanitized(interrupted(scan))
+
+    def test_interrupted_orphan_prefix_retains_lower_bound_and_stop_precedence(self):
+        # Relation markers can be observed before the audio value rows that
+        # contribute semantic core work; no phantom row may be charged.
+        for owner_count, orphan_count in ((0, 1), (0, 2), (1, 2)):
+            for reason, codes, exit_code in (
+                    ('read_error', ('read_failed',), 4),
+                    ('cleanup_error', ('read_failed', 'cleanup_failed'), 4),
+                    ('cancelled', ('read_failed', 'cleanup_failed', 'cancelled'), 130)):
+                with self.subTest(owner_count=owner_count, orphan_count=orphan_count,
+                                  reason=reason):
+                    scan = changed(completed_scan(), 'core_rows', state='interrupted',
+                                   count=owner_count, count_precision='lower_bound')
+                    scan = replace(scan, findings=(corruption(
+                        'core_rows', 'track_audio_orphan', orphan_count, 'lower_bound'),))
+                    scan = interrupted(scan, reason, codes)
+                    report = execute(scan)
+                    self.assertEqual((report.schema_version, report.stop_reason, report.exit_code,
+                                      report.complete, report.implemented_scope_complete),
+                                     (10, reason, exit_code, False, False))
+                    self.assertEqual(report.checks, scan.checks)
+                    self.assertEqual(set(report.findings), set(scan.findings))
+
+    def test_interrupted_orphan_overcount_requires_lower_bound_precision(self):
+        for owner_count in (0, 1):
+            with self.subTest(owner_count=owner_count):
+                scan = changed(completed_scan(), 'core_rows', state='interrupted',
+                               count=owner_count, count_precision='lower_bound')
+                scan = replace(scan, findings=(corruption(
+                    'core_rows', 'track_audio_orphan', owner_count + 1),))
+                self.assert_sanitized(interrupted(scan))
+
+    def test_orphan_prefix_does_not_excuse_another_impossible_group(self):
+        for code in ROW_CODES['core_rows']:
+            if code == 'track_audio_orphan':
+                continue
+            with self.subTest(code=code):
+                scan = changed(completed_scan(), 'core_rows', state='interrupted',
+                               count=0, count_precision='lower_bound')
+                scan = replace(scan, findings=(
+                    corruption('core_rows', 'track_audio_orphan', precision='lower_bound'),
+                    corruption('core_rows', code, precision='lower_bound')))
+                self.assert_sanitized(interrupted(scan))
 
     def test_completed_relational_graph_findings_also_require_exact_precision(self):
         for owner in ('current_graph', 'historical_graph'):

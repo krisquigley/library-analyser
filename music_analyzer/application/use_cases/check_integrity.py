@@ -171,7 +171,13 @@ def _valid(scan):
                                         'current_evidence', 'historical_evidence')
                        or (item.check_id in ('current_graph', 'historical_graph')
                            and item.code in ('graph_lifecycle_invalid', 'graph_edge_invalid')))
-        if row_bounded and owner.state in ('completed', 'interrupted') and item.count > owner.count:
+        # Core orphan markers precede delivery/charging of audio value rows.
+        # Only their interrupted lower-bound prefix may exceed semantic work;
+        # missing markers and all other core predicates follow charged rows.
+        orphan_prefix = (item.check_id == 'core_rows' and item.code == 'track_audio_orphan'
+                         and owner.state == 'interrupted' and item.count_precision == 'lower_bound')
+        if (row_bounded and owner.state in ('completed', 'interrupted')
+                and item.count > owner.count and not orphan_prefix):
             return False
         if item.check_id in ('metadata', 'retained_stages'):
             if item.count_precision != owner.count_precision:
