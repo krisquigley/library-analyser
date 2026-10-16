@@ -85,6 +85,23 @@ class CompletedOwnerPortValidationTests(unittest.TestCase):
                                for name, unit in CHECKS))
         self.assertNotIn('PRIVATE', repr(report))
 
+    def test_schema_blocked_preserves_legacy_lower_bound_schema_mismatch(self):
+        # Schema descriptor findings are not row-owned semantic predicates;
+        # preserve this existing port contract independently of row validation.
+        scan = completed_scan()
+        for owner in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
+                      'historical_graph', 'current_evidence', 'historical_evidence',
+                      'sqlite_physical', 'sqlite_foreign_keys'):
+            scan = changed(scan, owner, state='blocked', count=None, count_precision='unavailable')
+        scan = replace(scan, implemented_scope_complete=False, stop_reason='schema_blocked',
+                       findings=(corruption('schema', 'schema_checks_mismatch',
+                                            precision='lower_bound'),))
+        report = execute(scan)
+        self.assertEqual((report.schema_version, report.stop_reason, report.exit_code, report.complete),
+                         (10, 'schema_blocked', 4, False))
+        self.assertEqual(report.checks, scan.checks)
+        self.assertEqual(report.findings, scan.findings)
+
     def test_zero_completed_owner_cannot_claim_one_lower_bound_corruption(self):
         for owner in ('core_rows', 'current_graph', 'current_evidence'):
             with self.subTest(owner=owner):

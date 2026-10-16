@@ -160,7 +160,9 @@ def _valid(scan):
                 or by_id[item.check_id].state not in ('completed', 'interrupted')):
             return False
         owner = by_id[item.check_id]
-        if owner.state == 'completed' and item.count_precision != 'exact':
+        if (item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
+                              'historical_graph', 'current_evidence', 'historical_evidence')
+                and owner.state == 'completed' and item.count_precision != 'exact'):
             return False
         # Each predicate may flag the same row independently: bound each
         # row-owned group, never their sum. Graph counts, pointers and mirrors
