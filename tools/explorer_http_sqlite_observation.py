@@ -26,6 +26,8 @@ def _operation(sql):
     if (compact.startswith('SELECT * FROM (SELECT matched.*, count(*) OVER () AS match_count')
             and 'FROM summary' in compact):
         return 'summary_page'
+    if compact == 'SELECT 1 FROM tracks WHERE id=?':
+        return 'selected_track_exists'
     if compact == 'SELECT id,sha256,size FROM tracks WHERE id=?':
         return 'selected_track'
     if compact in {

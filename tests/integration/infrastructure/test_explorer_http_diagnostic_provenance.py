@@ -158,7 +158,7 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
         # The summary count is part of the single-pass summary_page statement;
         # summary_count is only a separate fallback past the last page.
         required = {
-            'summary_page', 'selected_track',
+            'summary_page', 'selected_track_exists', 'selected_track',
             'selected_locations', 'selected_latest_run',
         }
         plans = sql_report['plans']
@@ -177,6 +177,7 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
         # as the requested summary or selected lookup plan.
         expected_fragments = {
             'summary_page': ('FROM summary', 'count(*) OVER ()', 'ORDER BY', 'LIMIT ?'),
+            'selected_track_exists': ('SELECT 1 FROM tracks WHERE id=?',),
             'selected_track': ('SELECT id,sha256,size FROM tracks WHERE id=?',),
             'selected_locations': ('FROM locations WHERE track_id=?', 'available=1'),
             'selected_latest_run': ('FROM run_tracks t LEFT JOIN runs r ON r.id=t.run_id',
@@ -191,7 +192,7 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
             self.assertIn('_explorer_summary_', by_operation[operation]['sql'])
             self.assertIn('?', by_operation[operation]['sql'])
             self.assertTrue(by_operation[operation]['parameters'])
-        for operation in ('selected_track', 'selected_locations', 'selected_latest_run'):
+        for operation in ('selected_track_exists', 'selected_track', 'selected_locations', 'selected_latest_run'):
             self.assertIn('?', by_operation[operation]['sql'])
             self.assertEqual(len(by_operation[operation]['parameters']), 1)
         self.assertTrue(observed['connections'])
