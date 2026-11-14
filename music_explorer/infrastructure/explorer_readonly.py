@@ -90,6 +90,12 @@ def stage_from_mapping(data):
 
 _SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 _TRACK_ID_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
+# Scoped active eligibility: identity/audio rows are validated by the
+# request-local _explorer_active_candidate UDF as they are consumed.
+_ACTIVE_CANDIDATE_JOIN = 'FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id'
+_ACTIVE_CANDIDATE_PREDICATE = ('_explorer_active_candidate(t.id,t.sha256,t.size,'
+                               'a.duration_seconds,a.duration_source,a.status,a.reason)')
+_ACTIVE_CANDIDATES_FROM = f'{_ACTIVE_CANDIDATE_JOIN} WHERE {_ACTIVE_CANDIDATE_PREDICATE}'
 _SQLITE_OCTET_LENGTH_VERSION = (3, 43, 0)
 _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT = 16 * 1024 * 1024
 
@@ -290,9 +296,12 @@ class ReadOnlyExplorerSQLiteRepository:
             metadata = self._metadata(db)
             where = '' if after is None else 'AND t.id > ?'
             params = () if after is None else (after,)
-            base = self._active_candidate_sql()
-            track_count = db.execute(f'SELECT count(*) {base} {where}', params).fetchone()[0]
-            ids = tuple(row[0] for row in db.execute(f'SELECT t.id {base} {where} ORDER BY t.id LIMIT ?', (*params, limit)))
+            # One catalogue pass: the window count is taken over the filtered
+            # candidates before LIMIT, so each row is eligibility-checked once.
+            rows = db.execute(f'SELECT t.id, count(*) OVER () {_ACTIVE_CANDIDATES_FROM} {where} ORDER BY t.id LIMIT ?',
+                              (*params, limit)).fetchall()
+            track_count = rows[0][1] if rows else 0
+            ids = tuple(row[0] for row in rows)
             return metadata, track_count, tuple(self._read_track(db, track_id) for track_id in ids)
 
 
@@ -310,22 +319,20 @@ class ReadOnlyExplorerSQLiteRepository:
                     like = '%' + literal + '%'
                     where.append(f"({visible_title} LIKE ? ESCAPE '\\' OR {visible_artist} LIKE ? ESCAPE '\\')")
                     params.extend([like, like])
-            count_where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
-            count_params = tuple(params)
+            match_where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+            match_params = tuple(params)
             cursor_key, cursor_id = self._decode_summary_cursor(cursor)
             order_key = order if order in ('title', 'artist') else 'id'
-            order_expr = "_explorer_summary_fold(_explorer_summary_sort_key(?, common_json, tags_json, display_label, id))" if order_key in ('title', 'artist') else 'id'
+            order_expr = '_explorer_summary_fold(sort_key)' if order_key in ('title', 'artist') else 'id'
+            cursor_where_sql = ''
+            cursor_params = ()
             if cursor_key is not None and cursor_id is not None:
-                where.append(f"({order_expr} > ? OR ({order_expr} = ? AND id > ?))")
-                if order_key in ('title', 'artist'):
-                    params.extend([order_key, cursor_key, order_key, cursor_key, cursor_id])
-                else:
-                    params.extend([cursor_key, cursor_key, cursor_id])
-            where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+                cursor_where_sql = 'WHERE (page_order > ? OR (page_order = ? AND id > ?))'
+                cursor_params = (cursor_key, cursor_key, cursor_id)
             base = """
                 WITH first_location AS (
                     SELECT track_id, min(path) AS path, count(*) AS available_locations
-                    FROM active_locations GROUP BY track_id
+                    FROM locations WHERE available=1 GROUP BY track_id
                 ), summary AS (
                     SELECT t.id, t.sha256, t.size, COALESCE(first_location.path, '') AS first_path,
                            COALESCE(first_location.available_locations, 0) AS available_locations,
@@ -336,17 +343,29 @@ class ReadOnlyExplorerSQLiteRepository:
                     LEFT JOIN track_audio a ON a.track_id=t.id
                     LEFT JOIN first_location ON first_location.track_id=t.id
                     LEFT JOIN track_metadata tm ON tm.track_id=t.id
-                    WHERE _explorer_active_candidate(t.id,t.sha256,t.size,
-                        a.duration_seconds,a.duration_source,a.status,a.reason)
+                    WHERE """ + _ACTIVE_CANDIDATE_PREDICATE + """
                 )
                 SELECT id, sha256, size, first_path, available_locations, common_json, tags_json, display_label,
                        _explorer_summary_sort_key(?, common_json, tags_json, display_label, id) AS sort_key
                 FROM summary
             """
             select_order_key_params = (order_key,) if order_key in ('title', 'artist') else ('id',)
-            order_params = (order_key,) if order_key in ('title', 'artist') else ()
-            track_count = db.execute('SELECT count(*) FROM (' + base + count_where_sql + ')', (*select_order_key_params, *count_params)).fetchone()[0]
-            rows = db.execute(base + where_sql + f' ORDER BY {order_expr}, id LIMIT ?', (*select_order_key_params, *params, *order_params, limit + 1)).fetchall()
+            matched = base + match_where_sql
+            # The window subquery is materialized once: the whole-match count and
+            # page/cursor filtering share a single eligibility/search/sort pass.
+            rows = db.execute(
+                f'SELECT * FROM (SELECT matched.*, count(*) OVER () AS match_count, {order_expr} AS page_order '
+                f'FROM ({matched}) matched) {cursor_where_sql} ORDER BY page_order, id LIMIT ?',
+                (*select_order_key_params, *match_params, *cursor_params, limit + 1)).fetchall()
+            if rows:
+                track_count = rows[0][9]
+            elif cursor_where_sql:
+                # Past the last page: the count still covers every match.
+                track_count = db.execute('SELECT count(*) FROM (' + matched + ')',
+                                         (*select_order_key_params, *match_params)).fetchone()[0]
+            else:
+                track_count = 0
+            rows = [row[:9] for row in rows]
             page_rows = rows[:limit]
             summaries = tuple(self._summary_from_row(row) for row in page_rows)
             next_cursor = None
@@ -392,15 +411,9 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def contains_active_track(self, track_id: str):
         with self._transaction(full_validation=False) as db:
-            row = db.execute('SELECT t.id,t.sha256,t.size,a.duration_seconds,a.duration_source,a.status,a.reason '
-                             'FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE t.id=?',
+            row = db.execute(f'SELECT {_ACTIVE_CANDIDATE_PREDICATE} {_ACTIVE_CANDIDATE_JOIN} WHERE t.id=?',
                              (track_id,)).fetchone()
-            return bool(row is not None and self._active_candidate(*row))
-
-    def _active_candidate_sql(self):
-        return ('FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id '
-                'WHERE _explorer_active_candidate(t.id,t.sha256,t.size,'
-                'a.duration_seconds,a.duration_source,a.status,a.reason)')
+            return bool(row is not None and row[0])
 
     def _validate_track_identity(self, track_id, sha256, size):
         if (not isinstance(track_id, str) or not _TRACK_ID_RE.fullmatch(track_id)
@@ -465,6 +478,12 @@ class ReadOnlyExplorerSQLiteRepository:
 
     def read_track(self, track_id: str):
         with self._transaction(full_validation=False) as db:
+            return self._read_track(db, track_id)
+
+    def find_track(self, track_id: str):
+        with self._transaction(full_validation=False) as db:
+            if db.execute('SELECT 1 FROM tracks WHERE id=?', (track_id,)).fetchone() is None:
+                return None
             return self._read_track(db, track_id)
 
     def _current_graph_edges(self, db, requested_sparse_k=None):
@@ -780,7 +799,10 @@ class ReadOnlyExplorerSQLiteRepository:
                 raise AnalysisError('Unexpected analysis database rows')
         locations = tuple(row[0] for row in location_rows)
         display_label = Path(locations[0]).name if locations else ''
-        row = db.execute('SELECT t.run_id,r.status,r.detail,r.id FROM run_tracks t LEFT JOIN runs r ON r.id=t.run_id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1', (track_id,)).fetchone()
+        # Orphan links (no runs row) sort first, so ANY orphan link for the
+        # selected track is consumed and rejected below, not skipped.
+        row = db.execute('SELECT t.run_id,r.status,r.detail,r.id FROM run_tracks t LEFT JOIN runs r ON r.id=t.run_id '
+                         'WHERE t.track_id=? ORDER BY r.id IS NULL DESC, r.rowid DESC LIMIT 1', (track_id,)).fetchone()
         run = None
         if row:
             if (not isinstance(row[0], str) or not row[0] or row[3] != row[0]
@@ -910,10 +932,7 @@ class ReadOnlyExplorerSQLiteRepository:
         self._validate_audio(*audio)
         if not row:
             return TrackMetadata(duration_seconds=audio[0], duration_source=audio[1])
-        try:
-            return self._metadata_from_json(row[0], row[1], row[2], audio)
-        except (TypeError, ValueError, json.JSONDecodeError) as error:
-            raise AnalysisError('Invalid stored metadata') from error
+        return self._metadata_from_json(row[0], row[1], row[2], audio)
 
     def _check_path(self):
         if self._path.stem.lower() == 'mixxx' or any(p.is_symlink() for p in (self._path, *self._path.parents)):
@@ -981,16 +1000,16 @@ class ReadOnlyExplorerSQLiteRepository:
             yield db
             db.execute('COMMIT')
 
-    def _validate_compatibility(self, db):
+    def _validate_compatibility(self, db, version=None):
         # A compatibility guard, not a certificate of schema or retained history.
-        version = db.execute('PRAGMA user_version').fetchone()[0]
+        if version is None:
+            version = db.execute('PRAGMA user_version').fetchone()[0]
         if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
             raise AnalysisError('Not a supported music-analyzer analysis database')
 
     def _validate(self, db, *, validate_evidence=True):
         version = _database_schema_version(db)
-        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
-            raise AnalysisError('Not a supported music-analyzer analysis database')
+        self._validate_compatibility(db, version)
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','index')"))
         schema = dict(_EXPECTED_SCHEMA)
         expected_objects = {(name, 'table') for name in schema} | {(name, 'view') for name in _EXPECTED_VIEWS}

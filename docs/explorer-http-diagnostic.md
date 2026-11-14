@@ -72,7 +72,9 @@ JSON encoding as separate spans with the same phase label; neither is hidden
 inside mapping or UTF8 encoding. The inclusive request root wraps the actual
 handler GET/POST call. Selected SQL execution and actual cursor draining
 are distinct; EXPLAIN itself is not execution/fetch attribution. The SQL
-operation allowlist covers `summary_count`, `summary_page`, `selected_track`,
+operation allowlist covers `summary_page` (one statement carrying the whole-match
+count and the cursor page), `summary_count` (only the fallback count past the last
+page), `selected_track`,
 `selected_locations`, `selected_latest_run`, `selected_stage_sizes`,
 `selected_stage_payload`, `selected_overrides`, `selected_metadata` and
 `selected_audio`, including actual bindings and same-connection query plans.

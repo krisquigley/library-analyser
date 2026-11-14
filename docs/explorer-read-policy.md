@@ -14,13 +14,19 @@ Ordinary readers validate the identities, audio eligibility, locations and metad
 they actually consume. Search/sort/count can consume nonmatching or unreturned
 candidates; required SQL/UDF validation still applies there. Count and sorting may
 scan the catalogue: neither the whole search nor each request is promised O(1).
+List and summary pages take the count and the page from one statement (a window
+count over the matched candidates), so each candidate is eligibility-checked once
+per request rather than once for the count and again for the page; only a cursor
+past the last page runs a separate count.
 No additional validation-only whole-library/history pass or validity cache is used.
 
 Detail is keyed, including direct reads of known excluded tracks; active selection
 is a separate keyed identity/audio eligibility check. Unknown/ineligible selection
 is rejected. Detail retains the newest linked run even when it failed, strict
 common/tags/warnings parsing and preflights all selected stage sizes before loading
-payloads. There is no new metadata size validity cap. Responses are assembled
+payloads. Any selected-track run link whose run row is missing aborts detail,
+even when another valid run is also linked. There is no new metadata size validity
+cap. Responses are assembled
 completely before success; a malformed consumed row aborts the response, rather
 than being skipped or producing a successful partial page.
 
@@ -47,12 +53,19 @@ with a JSON object containing **only `error`**. Fixed reader categories include
 `Invalid stored metadata`, `Invalid stored stage`,
 `Oversized stored stage (16 MiB limit)`, `Unexpected analysis database rows` and
 `Analysis database error`; SQLite and stage exception details are not appended.
-Unknown selection/detail uses `Unknown explorer track`. Malformed integer or JSON
+Unknown selection/detail uses `Unknown explorer track`; for detail this rule is
+decided by the application use case (`find_track` returns no track), not by the
+SQLite adapter. Malformed integer or JSON
 request parsing uses `Invalid explorer request`. Unexpected ordinary read/selection
 failures are HTTP **500**, `{"error":"Explorer request failed"}`. These failures
 do not echo paths, SQL, malformed inputs or stored payloads. Existing explicit
-request validation messages remain bounded. This is not a redesign of the separate
-dynamic mood-selection or playlist-export validation APIs.
+request validation messages remain bounded and HTTP 400: candidate control policy
+messages (for example `control mode must be off, soft, or hard`), malformed control
+syntax (`Invalid explorer request`), projection artifact categories (for example
+`resource_limit_exceeded`) and a negative `Content-Length`
+(`Invalid explorer request`, without reading the body). This is not a redesign of
+the separate candidate, dynamic mood-selection, projection or playlist-export
+validation APIs.
 
 ## Old, external or restored databases and D3
 

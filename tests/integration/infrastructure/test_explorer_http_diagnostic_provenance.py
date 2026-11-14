@@ -155,8 +155,10 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
         self.assertEqual(sql_report['version'], sqlite3.sqlite_version)
         self.assertEqual(sorted(sql_report['indexes'], key=lambda item: item['name']),
                          observed['indexes'])
+        # The summary count is part of the single-pass summary_page statement;
+        # summary_count is only a separate fallback past the last page.
         required = {
-            'summary_count', 'summary_page', 'selected_track',
+            'summary_page', 'selected_track',
             'selected_locations', 'selected_latest_run',
         }
         plans = sql_report['plans']
@@ -174,19 +176,18 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
         # Labels alone must not allow an unrelated validation SELECT to masquerade
         # as the requested summary or selected lookup plan.
         expected_fragments = {
-            'summary_count': ('SELECT count(*) FROM (', 'FROM summary'),
-            'summary_page': ('FROM summary', 'ORDER BY', 'LIMIT ?'),
+            'summary_page': ('FROM summary', 'count(*) OVER ()', 'ORDER BY', 'LIMIT ?'),
             'selected_track': ('SELECT id,sha256,size FROM tracks WHERE id=?',),
             'selected_locations': ('FROM locations WHERE track_id=?', 'available=1'),
             'selected_latest_run': ('FROM run_tracks t LEFT JOIN runs r ON r.id=t.run_id',
-                                    'WHERE t.track_id=?', 'ORDER BY r.rowid DESC LIMIT 1'),
+                                    'WHERE t.track_id=?', 'r.rowid DESC LIMIT 1'),
         }
         for operation, fragments in expected_fragments.items():
             compact = ' '.join(by_operation[operation]['sql'].split())
             for fragment in fragments:
                 self.assertIn(fragment, compact)
         # A count/page plan with literalized/omitted bound filters is insufficient.
-        for operation in ('summary_count', 'summary_page'):
+        for operation in ('summary_page',):
             self.assertIn('_explorer_summary_', by_operation[operation]['sql'])
             self.assertIn('?', by_operation[operation]['sql'])
             self.assertTrue(by_operation[operation]['parameters'])

@@ -22,6 +22,10 @@ def _operation(sql):
         return 'summary_count'
     if compact.startswith('WITH first_location AS (') and 'FROM summary' in compact:
         return 'summary_page'
+    # Single-pass page: whole-match window count plus cursor page.
+    if (compact.startswith('SELECT * FROM (SELECT matched.*, count(*) OVER () AS match_count')
+            and 'FROM summary' in compact):
+        return 'summary_page'
     if compact == 'SELECT id,sha256,size FROM tracks WHERE id=?':
         return 'selected_track'
     if compact in {
@@ -34,6 +38,8 @@ def _operation(sql):
          'ON t.run_id=r.id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1'),
         ('SELECT t.run_id,r.status,r.detail,r.id FROM run_tracks t LEFT JOIN runs r '
          'ON r.id=t.run_id WHERE t.track_id=? ORDER BY r.rowid DESC LIMIT 1'),
+        ('SELECT t.run_id,r.status,r.detail,r.id FROM run_tracks t LEFT JOIN runs r '
+         'ON r.id=t.run_id WHERE t.track_id=? ORDER BY r.id IS NULL DESC, r.rowid DESC LIMIT 1'),
     }:
         return 'selected_latest_run'
     if (compact.startswith('SELECT stage,') and

@@ -64,11 +64,14 @@ class FakeExplorerRepository:
         next_cursor = 'after-first' if len(records) > limit else None
         return self.metadata(), len(records), summaries, next_cursor
 
-    def read_track(self, track_id):
+    def find_track(self, track_id):
         for record in self.records:
             if record.track_id == track_id:
                 return record
-        raise ValueError('Unknown explorer track')
+        return None
+
+    def read_track(self, track_id):  # pragma: no cover - detail uses find_track
+        raise AssertionError('unexpected track lookup')
 
 
 class ExplorerUseCaseTests(unittest.TestCase):

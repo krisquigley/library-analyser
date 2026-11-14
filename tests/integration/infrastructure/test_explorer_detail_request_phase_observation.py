@@ -108,7 +108,7 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
         observed = {}
         original = {name: getattr(ReadOnlyExplorerSQLiteRepository, name) for name in
                     ('_connection', '_transaction', '_validate', '_validate_rows',
-                     '_validate_graph_rows', '_validate_graph_feature_rows', 'track_ids', 'contains_active_track', 'read_track')}
+                     '_validate_graph_rows', '_validate_graph_feature_rows', 'track_ids', 'contains_active_track', 'read_track', 'find_track')}
 
         @contextmanager
         def corrupt_fixture(**options):
