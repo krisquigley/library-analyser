@@ -15,7 +15,7 @@ from music_explorer.application.use_cases.candidates import SelectExplorerCandid
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
 from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http, to_indexed_mood_axis_graph_http
-from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection
+from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection, ProjectionArtifactError
 from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
 from music_analyzer.application.dto.analysis import AnalysisError as AnalyzerAnalysisError
 
@@ -58,11 +58,24 @@ _REQUEST_ERRORS = frozenset({
 })
 
 
+# Endpoints whose existing validation messages are fixed policy text authored in
+# the application/domain (candidate controls, mood selection, playlist export).
+# R1 keeps their 400 contract rather than redesigning those validation APIs.
+_POLICY_VALIDATION_PATHS = frozenset({'/api/candidates', '/api/mood-axis-graph', '/api/playlists/m3u'})
+
+
 def _request_integer(value):
     try:
         return int(value)
     except (TypeError, ValueError):
         raise ValueError('Invalid explorer request') from None
+
+
+def _request_length(value):
+    length = _request_integer(value)
+    if length < 0:
+        raise ValueError('Invalid explorer request')
+    return length
 
 
 class RequestTooLarge(Exception):
@@ -175,12 +188,13 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
             if isinstance(error, (json.JSONDecodeError, UnicodeDecodeError)):
                 return self._json({'error': 'Invalid explorer request'}, HTTPStatus.BAD_REQUEST)
+            if isinstance(error, ProjectionArtifactError):
+                # Fixed projection categories (stale, resource limit, shape).
+                return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
             if isinstance(error, ValueError):
                 if message in _REQUEST_ERRORS:
                     return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
-                # Preserve the existing dynamic mood/export validation API. R1
-                # does not redesign these endpoints or their policy messages.
-                if urlparse(self.path).path in {'/api/mood-axis-graph', '/api/playlists/m3u'}:
+                if urlparse(self.path).path in _POLICY_VALIDATION_PATHS:
                     return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
             return self._json({'error': 'Explorer request failed'}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
@@ -282,7 +296,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             return self._json(snapshot)
 
         def _body(self):
-            length = _request_integer(self.headers.get('Content-Length', '0') or '0')
+            length = _request_length(self.headers.get('Content-Length', '0') or '0')
             if length > MAX_BODY:
                 raise RequestTooLarge('Request too large')
             raw = self.rfile.read(length) if length else b'{}'
@@ -357,8 +371,12 @@ def _parse_controls(values):
         return DEFAULT_CONTROLS
     controls = []
     for value in values:
-        name, mode, weight, *rest = value.split(':')
-        controls.append(SelectionControlDto(name, mode, float(weight or 0), _params(name, rest)))
+        try:
+            name, mode, weight, *rest = value.split(':')
+            weight = float(weight or 0)
+        except ValueError:
+            raise ValueError('Invalid explorer request') from None
+        controls.append(SelectionControlDto(name, mode, weight, _params(name, rest)))
     return tuple(controls)
 
 

@@ -106,6 +106,45 @@ class ExplorerServerTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 400)
         self.assertEqual(json.loads(raised.exception.read()), {'error': 'Invalid explorer request'})
 
+    def assert_bad_request(self, path, expected_error):
+        with self.assertRaises(HTTPError) as raised:
+            self.get_json(path)
+        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(json.loads(raised.exception.read()), {'error': expected_error})
+
+    def test_candidate_control_validation_failures_remain_bad_requests(self):
+        self.post_current(self.first)
+        for path, error in (
+            ('/api/candidates?control=tempo:bogus:1', 'control mode must be off, soft, or hard'),
+            ('/api/candidates?control=tempo:soft:11', 'control weight must be finite in [0, 10]'),
+        ):
+            with self.subTest(path=path):
+                self.assert_bad_request(path, error)
+
+    def test_malformed_candidate_control_syntax_is_bounded_bad_request(self):
+        self.post_current(self.first)
+        for control in ('tempo', 'tempo:soft:private-input-marker'):
+            with self.subTest(control=control):
+                self.assert_bad_request('/api/candidates?control=' + control, 'Invalid explorer request')
+
+    def test_projection_artifact_failure_category_remains_bad_request(self):
+        from music_explorer.application.use_cases.projection_artifacts import ProjectionArtifactError
+        with patch.object(standalone_server.BuildLiveProjection, 'execute',
+                          side_effect=ProjectionArtifactError('resource_limit_exceeded')):
+            self.assert_bad_request('/api/projection', 'resource_limit_exceeded')
+
+    def test_negative_content_length_is_rejected_without_reading_body(self):
+        import http.client
+        connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+        self.addCleanup(connection.close)
+        connection.putrequest('POST', '/api/current')
+        connection.putheader('Content-Type', 'application/json')
+        connection.putheader('Content-Length', '-1')
+        connection.endheaders()
+        response = connection.getresponse()
+        self.assertEqual(response.status, 400)
+        self.assertEqual(json.loads(response.read()), {'error': 'Invalid explorer request'})
+
     def test_track_summaries_endpoint_is_paginated_and_compact(self):
         page = self.get_json('/api/tracks/summary?limit=1&order=id')
 
