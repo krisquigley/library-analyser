@@ -108,9 +108,10 @@ class IntegrityD1SnapshotEncodingControls(unittest.TestCase):
                 self.assertFalse(any(f.severity == 'corruption' for f in limited.findings))
 
     def test_dedicated_schema_literals_and_fixed_budget_defaults_equal_contract(self):
-        from music_analyzer.infrastructure.persistence import integrity, integrity_schema, explorer_readonly
-        for name in vars(integrity_schema):
-            if name.startswith('_EXPECTED_'):
-                self.assertEqual(getattr(integrity_schema, name), getattr(explorer_readonly, name))
+        # D3 owns the only reader-side schema literals since issue88 removed
+        # the Explorer readers' FULL validator (and its duplicate copy).
+        from music_analyzer.infrastructure.persistence import integrity, integrity_schema
+        self.assertTrue(all(getattr(integrity_schema, name) for name in vars(integrity_schema)
+                            if name.startswith('_EXPECTED_')))
         self.assertEqual((integrity.MAX_ROWS, integrity.MAX_UTF8_BYTES, integrity.MAX_VALUE_BYTES, integrity.MAX_GROUPS),
                          (1_000_000, 1 << 30, 32 << 20, 100))

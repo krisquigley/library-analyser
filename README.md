@@ -26,11 +26,11 @@ not writer parity, an authenticity/trust token, automatic Explorer trust, or P8
 eligibility. See [the integrity contract and safety guide](docs/integrity.md) for
 the finite checklist, snapshot/WAL caveats, privacy, work limits and exit meanings.
 
-Ordinary Explorer metadata/list/detail/selection reads use the intentional
-[R1 scoped read policy](docs/explorer-read-policy.md), not an automatic full audit.
-They validate consumed rows within a pinned read-only snapshot; graph/candidate/
-projection/export paths temporarily retain FULL validation for R2. This partial
-rollout does not complete issue88 or authenticate external/restored databases.
+Explorer reads (metadata/list/detail/selection and graph/candidate/projection/export)
+use the intentional [scoped read policy](docs/explorer-read-policy.md), not an
+automatic full audit. They validate consumed rows within a pinned read-only
+snapshot and do not authenticate external/restored databases; run
+`music-analyzer integrity` for an explicit full audit.
 
 ## Install and run
 

@@ -161,149 +161,6 @@ def _stage_result_size_expression(column='result'):
     return f'length(CAST({column} AS BLOB))'
 
 
-_EXPECTED_SCHEMA = {
-    'runs': {
-        'columns': ((('id', 'TEXT', False, 1), ('location', 'TEXT', True, 0), ('status', 'TEXT', True, 0),
-                     ('detail', 'TEXT', True, 0), ('created_at', 'TEXT', True, 0)),
-                    (('id', 'TEXT', False, 1), ('location', 'TEXT', False, 0), ('status', 'TEXT', False, 0),
-                     ('detail', 'TEXT', False, 0), ('created_at', 'TEXT', False, 0))),
-        'foreign_keys': ((),),
-        'unique_indexes': (),
-        'checks': (("CHECK(status IN ('running','completed','failed','interrupted'))",), ()),
-    },
-    'stages': {
-        'columns': ((('run_id', 'TEXT', True, 1), ('stage', 'TEXT', True, 2), ('result', 'TEXT', True, 0)),
-                    (('run_id', 'TEXT', False, 1), ('stage', 'TEXT', False, 2), ('result', 'TEXT', False, 0))),
-        'foreign_keys': ((('runs', ('run_id',), ('id',)),), ()),
-        'unique_indexes': (),
-        'checks': ((),),
-    },
-    'tracks': {
-        'columns': ((('id', 'TEXT', False, 1), ('sha256', 'TEXT', True, 0), ('size', 'INTEGER', True, 0)),),
-        'foreign_keys': ((),),
-        'unique_indexes': (('sha256',),),
-        'checks': ((),),
-    },
-    'locations': {
-        'columns': ((('path', 'TEXT', False, 1), ('track_id', 'TEXT', True, 0), ('mtime_ns', 'INTEGER', True, 0),
-                     ('format', 'TEXT', True, 0), ('available', 'INTEGER', True, 0)),),
-        'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
-        'unique_indexes': (),
-        'checks': (('CHECK(available IN (0,1))',),),
-    },
-    'scan_roots': {
-        'columns': ((('root', 'TEXT', True, 1), ('path', 'TEXT', True, 2)),),
-        'foreign_keys': ((('locations', ('path',), ('path',)),),),
-        'unique_indexes': (),
-        'checks': ((),),
-    },
-    'batch_jobs': {
-        'columns': ((('track_id', 'TEXT', False, 1), ('fingerprint', 'TEXT', True, 0), ('state', 'TEXT', True, 0),
-                     ('attempts', 'INTEGER', True, 0), ('run_id', 'TEXT', False, 0), ('detail', 'TEXT', True, 0)),),
-        'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
-        'unique_indexes': (),
-        'checks': (("CHECK(state IN ('pending','running','completed','failed'))", 'CHECK(attempts >= 0)'),),
-    },
-    'run_tracks': {
-        'columns': ((('run_id', 'TEXT', False, 1), ('track_id', 'TEXT', True, 0)),),
-        'foreign_keys': ((('runs', ('run_id',), ('id',)), ('tracks', ('track_id',), ('id',))),),
-        'unique_indexes': (),
-        'checks': ((),),
-    },
-    'overrides': {
-        'columns': ((('track_id', 'TEXT', True, 1), ('field', 'TEXT', True, 2), ('value', 'TEXT', True, 0)),),
-        'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
-        'unique_indexes': (),
-        'checks': ((),),
-    },
-    'track_metadata': {
-        'columns': ((('track_id', 'TEXT', False, 1), ('common_json', 'TEXT', True, 0), ('tags_json', 'TEXT', True, 0), ('warnings_json', 'TEXT', True, 0)),),
-        'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
-        'unique_indexes': (),
-        'checks': ((),),
-    },
-    'track_audio': {
-        'columns': ((('track_id', 'TEXT', False, 1), ('duration_seconds', 'REAL', False, 0), ('duration_source', 'TEXT', True, 0), ('status', 'TEXT', True, 0), ('reason', 'TEXT', True, 0)),),
-        'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
-        'unique_indexes': (),
-        'checks': (("CHECK(status IN ('eligible','excluded','unknown'))",),),
-    },
-}
-_EXPECTED_GRAPH_SCHEMA = {
-    'graph_edges': {
-        'columns': ((('source_track_id', 'TEXT', True, 1), ('target_track_id', 'TEXT', True, 2), ('score', 'REAL', True, 0),
-                     ('distance', 'REAL', True, 0), ('supported_group_count', 'INTEGER', True, 0),
-                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
-                     ('built_at', 'TEXT', True, 0)),),
-        'foreign_keys': ((('tracks', ('source_track_id',), ('id',)), ('tracks', ('target_track_id',), ('id',))),),
-        'unique_indexes': (),
-        'checks': (('CHECK(source_track_id < target_track_id)', 'CHECK(score >= 0.0 AND score <= 1.0)', 'CHECK(distance >= 0.0 AND distance <= 1.0)'),),
-    },
-    'graph_builds': {
-        'columns': ((('id', 'TEXT', False, 1), ('status', 'TEXT', True, 0), ('detail', 'TEXT', True, 0),
-                     ('edge_count', 'INTEGER', True, 0), ('sparse_k', 'INTEGER', True, 0), ('source_fingerprint', 'TEXT', True, 0),
-                     ('source_revision', 'TEXT', True, 0), ('attempt_revision', 'TEXT', True, 0),
-                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
-                     ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0), ('completed_at', 'TEXT', False, 0)),),
-        'foreign_keys': ((),),
-        'unique_indexes': (),
-        'checks': (("CHECK(status IN ('building','completed','failed','interrupted'))", 'CHECK(edge_count >= 0)', 'CHECK(sparse_k >= 0)', 'CHECK(is_current IN (0,1))', "CHECK(status = 'completed' OR is_current = 0)"),),
-    },
-    'graph_build_edges': {
-        'columns': ((('build_id', 'TEXT', True, 1), ('source_track_id', 'TEXT', True, 2), ('target_track_id', 'TEXT', True, 3), ('score', 'REAL', True, 0),
-                     ('distance', 'REAL', True, 0), ('supported_group_count', 'INTEGER', True, 0),
-                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
-                     ('built_at', 'TEXT', True, 0)),),
-        'foreign_keys': ((('graph_builds', ('build_id',), ('id',)), ('tracks', ('source_track_id',), ('id',)), ('tracks', ('target_track_id',), ('id',))),),
-        'unique_indexes': (),
-        'checks': (('CHECK(source_track_id < target_track_id)', 'CHECK(score >= 0.0 AND score <= 1.0)', 'CHECK(distance >= 0.0 AND distance <= 1.0)'),),
-    },
-}
-_EXPECTED_GRAPH_SCHEMA_LEGACY = {
-    **_EXPECTED_GRAPH_SCHEMA,
-    'graph_builds': {
-        **_EXPECTED_GRAPH_SCHEMA['graph_builds'],
-        'columns': ((('id', 'TEXT', False, 1), ('status', 'TEXT', True, 0), ('detail', 'TEXT', True, 0),
-                     ('edge_count', 'INTEGER', True, 0), ('sparse_k', 'INTEGER', True, 0), ('source_fingerprint', 'TEXT', True, 0),
-                     ('distance_policy_version', 'TEXT', True, 0), ('neighbour_policy_version', 'TEXT', True, 0),
-                     ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0), ('completed_at', 'TEXT', True, 0)),),
-        'checks': (("CHECK(status IN ('completed','failed'))", 'CHECK(edge_count >= 0)', 'CHECK(sparse_k >= 0)', 'CHECK(is_current IN (0,1))', "CHECK(status = 'completed' OR is_current = 0)"),),
-    },
-}
-
-_EXPECTED_POSITIONED_GRAPH_SCHEMA = {
-    'graph_positioned_edges': _EXPECTED_GRAPH_SCHEMA['graph_edges'],
-    'graph_build_positioned_edges': _EXPECTED_GRAPH_SCHEMA['graph_build_edges'],
-    'graph_build_positioned_snapshots': {
-        'columns': ((('build_id', 'TEXT', False, 1), ('edge_count', 'INTEGER', True, 0), ('built_at', 'TEXT', True, 0)),),
-        'foreign_keys': ((('graph_builds', ('build_id',), ('id',)),),),
-        'unique_indexes': (),
-        'checks': (('CHECK(edge_count >= 0)',),),
-    },
-}
-_EXPECTED_GRAPH_INDEXES = {('idx_graph_edges_source_track_id', 'index'), ('idx_graph_edges_target_track_id', 'index'), ('idx_graph_build_edges_build_id', 'index'), ('idx_graph_build_edges_source_track_id', 'index'), ('idx_graph_build_edges_target_track_id', 'index'), ('idx_graph_builds_one_current', 'index')}
-_EXPECTED_POSITIONED_GRAPH_INDEXES = {('idx_graph_positioned_edges_source_track_id', 'index'), ('idx_graph_positioned_edges_target_track_id', 'index'), ('idx_graph_build_positioned_edges_build_id', 'index'), ('idx_graph_build_positioned_edges_source_track_id', 'index'), ('idx_graph_build_positioned_edges_target_track_id', 'index')}
-_EXPECTED_GRAPH_FEATURE_SCHEMA = {
-    'graph_feature_evidence': {
-        'columns': ((('track_id', 'TEXT', True, 1), ('run_id', 'TEXT', True, 2), ('fingerprint', 'TEXT', True, 0),
-                     ('evidence_json', 'TEXT', True, 0), ('is_current', 'INTEGER', True, 0), ('created_at', 'TEXT', True, 0)),),
-        'foreign_keys': ((('runs', ('run_id',), ('id',)), ('tracks', ('track_id',), ('id',))),),
-        'unique_indexes': (),
-        'checks': (('CHECK(is_current IN (0,1))',),),
-    },
-}
-_EXPECTED_GRAPH_FEATURE_INDEXES = {('idx_graph_feature_evidence_one_current_per_track', 'index'), ('idx_graph_feature_evidence_run_id', 'index')}
-
-_EXPECTED_VIEWS = {
-    'active_tracks': (
-        ('id', 'sha256', 'size'),
-        "CREATE VIEW active_tracks AS SELECT t.id,t.sha256,t.size FROM tracks t JOIN track_audio a ON a.track_id=t.id WHERE a.status='eligible'",
-    ),
-    'active_locations': (
-        ('path', 'track_id', 'mtime_ns', 'format', 'available'),
-        "CREATE VIEW active_locations AS SELECT l.path,l.track_id,l.mtime_ns,l.format,l.available FROM locations l JOIN track_audio a ON a.track_id=l.track_id WHERE l.available=1 AND a.status='eligible'",
-    ),
-}
 
 
 class ReadOnlyExplorerSQLiteRepository:
@@ -312,11 +169,11 @@ class ReadOnlyExplorerSQLiteRepository:
         self._check_path()
 
     def metadata(self):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             return self._metadata(db)
 
     def list_tracks(self, limit: int, after: str | None = None):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             metadata = self._metadata(db)
             where = '' if after is None else 'AND t.id > ?'
             params = () if after is None else (after,)
@@ -330,7 +187,7 @@ class ReadOnlyExplorerSQLiteRepository:
 
 
     def list_track_summaries(self, limit: int, cursor: str | None = None, query: str = '', order: str = 'title'):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             metadata = self._metadata(db)
             where = []
             params = []
@@ -400,7 +257,7 @@ class ReadOnlyExplorerSQLiteRepository:
             return metadata, track_count, summaries, next_cursor
 
     def candidate_snapshot(self):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             metadata = self._metadata(db)
             ids = tuple(row[0] for row in db.execute(f'SELECT t.id {_ACTIVE_CANDIDATES_FROM} ORDER BY t.id'))
             return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
@@ -408,7 +265,7 @@ class ReadOnlyExplorerSQLiteRepository:
     def mood_axis_graph_snapshot(self, mood: str | None = None, sparse_k: int = 10):
         # Selected scope: active tracks, their current evidence and the current
         # build/snapshots/mirrors are validated as consumed; history is not.
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             metadata = self._metadata(db)
             if int(metadata.get('schema_version', 0)) < 8:
                 return None
@@ -422,19 +279,19 @@ class ReadOnlyExplorerSQLiteRepository:
                            unpositioned=tuple(sorted(graph.unpositioned, key=lambda node: node.track_id)))
 
     def current_graph_edges(self, sparse_k: int | None = None):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             return self._current_graph_edges(db, sparse_k)
 
     def current_positioned_graph_edges(self, sparse_k: int | None = None):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             return self._current_positioned_graph_edges(db, sparse_k)
 
     def track_ids(self):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             return tuple(row[0] for row in db.execute(f'SELECT t.id {_ACTIVE_CANDIDATES_FROM} ORDER BY t.id'))
 
     def contains_active_track(self, track_id: str):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             row = db.execute(f'SELECT {_ACTIVE_CANDIDATE_PREDICATE} {_ACTIVE_CANDIDATE_JOIN} WHERE t.id=?',
                              (track_id,)).fetchone()
             return bool(row is not None and row[0])
@@ -460,7 +317,7 @@ class ReadOnlyExplorerSQLiteRepository:
         return status == 'eligible'
 
     def available_audio_paths(self):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             paths = tuple(row[0] for row in db.execute(
                 f'SELECT l.path FROM locations l JOIN tracks t ON t.id=l.track_id '
                 f'LEFT JOIN track_audio a ON a.track_id=t.id '
@@ -510,11 +367,11 @@ class ReadOnlyExplorerSQLiteRepository:
             return tuple(candidates)
 
     def read_track(self, track_id: str):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             return self._read_track(db, track_id)
 
     def find_track(self, track_id: str):
-        with self._transaction(full_validation=False) as db:
+        with self._transaction() as db:
             if db.execute('SELECT 1 FROM tracks WHERE id=?', (track_id,)).fetchone() is None:
                 return None
             return self._read_track(db, track_id)
@@ -835,17 +692,6 @@ class ReadOnlyExplorerSQLiteRepository:
         if loaded_identities != set(fingerprints_by_identity):
             raise AnalysisError('Unexpected analysis database rows')
 
-    def _load_graph_feature_evidence_payload(self, db, track_id, run_id, size):
-        if size is None:
-            raise AnalysisError('Invalid stored graph feature evidence')
-        if int(size) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
-            raise AnalysisError('Oversized stored graph feature evidence (16 MiB limit)')
-        payloads = self._load_graph_feature_evidence_payloads(db, ((track_id, run_id),))
-        try:
-            return payloads[(track_id, run_id)]
-        except KeyError as error:
-            raise AnalysisError('Invalid stored graph feature evidence') from error
-
     def _load_graph_feature_evidence_payloads(self, db, identities):
         payloads = {}
         for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(db, identities, current_only=True):
@@ -1115,14 +961,11 @@ class ReadOnlyExplorerSQLiteRepository:
                 db.close()
 
     @contextmanager
-    def _transaction(self, *, validate_evidence=True, full_validation=False):
-        # Scoped by default (issue88); FULL is opt-in and unused by reads.
+    def _transaction(self):
+        # Compatibility guard only; each read validates what it consumes (issue88).
         with self._connection() as db:
             db.execute('BEGIN')
-            if full_validation:
-                self._validate(db, validate_evidence=validate_evidence)
-            else:
-                self._validate_compatibility(db)
+            self._validate_compatibility(db)
             yield db
             db.execute('COMMIT')
 
@@ -1133,218 +976,3 @@ class ReadOnlyExplorerSQLiteRepository:
         if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
             raise AnalysisError('Not a supported music-analyzer analysis database')
 
-    def _validate(self, db, *, validate_evidence=True):
-        version = _database_schema_version(db)
-        self._validate_compatibility(db, version)
-        objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','index')"))
-        schema = dict(_EXPECTED_SCHEMA)
-        expected_objects = {(name, 'table') for name in schema} | {(name, 'view') for name in _EXPECTED_VIEWS}
-        if version >= 7:
-            graph_schema = _EXPECTED_GRAPH_SCHEMA if version >= 10 else _EXPECTED_GRAPH_SCHEMA_LEGACY
-            schema.update(graph_schema)
-            expected_objects |= {(name, 'table') for name in graph_schema} | _EXPECTED_GRAPH_INDEXES
-        if version >= 8:
-            schema.update(_EXPECTED_POSITIONED_GRAPH_SCHEMA)
-            expected_objects |= {(name, 'table') for name in _EXPECTED_POSITIONED_GRAPH_SCHEMA} | _EXPECTED_POSITIONED_GRAPH_INDEXES
-        if version >= 9:
-            schema.update(_EXPECTED_GRAPH_FEATURE_SCHEMA)
-            expected_objects |= {(name, 'table') for name in _EXPECTED_GRAPH_FEATURE_SCHEMA} | _EXPECTED_GRAPH_FEATURE_INDEXES
-        if objects != expected_objects:
-            raise AnalysisError('Unexpected analysis database schema')
-        for view, (columns, expected_sql) in _EXPECTED_VIEWS.items():
-            actual_columns = tuple(row[1] for row in db.execute(f'PRAGMA table_info({view})'))
-            actual_sql = db.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name=?", (view,)).fetchone()[0]
-            normalize = lambda sql: ' '.join(sql.rstrip(';').split())
-            if actual_columns != columns or normalize(actual_sql) != normalize(expected_sql):
-                raise AnalysisError('Unexpected analysis database schema')
-        for table, expected in schema.items():
-            sql = db.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
-            ).fetchone()[0]
-            actual_columns = tuple(
-                (row[1], row[2].upper(), bool(row[3]), row[5])
-                for row in db.execute(f'PRAGMA table_info({table})')
-            )
-            if actual_columns not in expected['columns']:
-                raise AnalysisError('Unexpected analysis database schema')
-            if self._foreign_keys(db, table) not in expected['foreign_keys']:
-                raise AnalysisError('Unexpected analysis database schema')
-            if self._unique_indexes(db, table) != expected['unique_indexes']:
-                raise AnalysisError('Unexpected analysis database schema')
-            compact_sql = ' '.join(sql.split())
-            if not any(all(check in compact_sql for check in checks) for checks in expected['checks']):
-                raise AnalysisError('Unexpected analysis database schema')
-        self._validate_rows(db)
-        if version >= 7:
-            self._validate_graph_rows(db)
-        if version >= 9 and validate_evidence:
-            self._validate_graph_feature_rows(db)
-
-    def _validate_core(self, db):
-        version = _database_schema_version(db)
-        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10):
-            raise AnalysisError('Not a supported music-analyzer analysis database')
-
-    def _validate_rows(self, db):
-        for track_id, sha256, size in db.execute('SELECT id,sha256,size FROM tracks'):
-            if (not isinstance(track_id, str) or not _TRACK_ID_RE.fullmatch(track_id)
-                    or not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256)
-                    or track_id != f'sha256:{sha256}'
-                    or not isinstance(size, int) or size < 0):
-                raise AnalysisError('Unexpected analysis database rows')
-        missing_audio = db.execute('SELECT 1 FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.id WHERE a.track_id IS NULL LIMIT 1').fetchone()
-        orphan_audio = db.execute('SELECT 1 FROM track_audio a LEFT JOIN tracks t ON t.id=a.track_id WHERE t.id IS NULL LIMIT 1').fetchone()
-        if missing_audio or orphan_audio:
-            raise AnalysisError('Unexpected analysis database rows')
-        for duration, source, status, reason in db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio'):
-            if isinstance(duration, (int, float)) and not isinstance(duration, bool) and not isfinite(duration):
-                raise AnalysisError('Unexpected analysis database rows')
-            if status != _expected_audio_status(duration, source) or reason != _duration_warning(duration, source):
-                raise AnalysisError('Unexpected analysis database rows')
-
-    def _validate_graph_rows(self, db):
-        current_count = db.execute('SELECT count(*) FROM graph_builds WHERE is_current=1').fetchone()[0]
-        if current_count > 1:
-            raise AnalysisError('Unexpected analysis database rows')
-        current_build = db.execute('SELECT id FROM graph_builds WHERE is_current=1').fetchone()
-        allowed_build_statuses = {'completed', 'failed'} if db.execute('PRAGMA user_version').fetchone()[0] < 10 else {'building', 'completed', 'failed', 'interrupted'}
-        for build_id, status, edge_count, sparse_k, distance_policy, neighbour_policy, is_current in db.execute(
-                'SELECT id,status,edge_count,sparse_k,distance_policy_version,neighbour_policy_version,is_current FROM graph_builds'):
-            historical_edges = db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (build_id,)).fetchone()[0]
-            if (status not in allowed_build_statuses or not isinstance(edge_count, int) or edge_count < 0
-                    or not isinstance(sparse_k, int) or sparse_k < 0
-                    or not isinstance(distance_policy, str) or not distance_policy
-                    or not isinstance(neighbour_policy, str) or not neighbour_policy
-                    or is_current not in (0, 1) or (status != 'completed' and is_current)
-                    or (status == 'completed' and edge_count != historical_edges)
-                    or (status == 'failed' and historical_edges != 0)):
-                raise AnalysisError('Unexpected analysis database rows')
-        version = _database_schema_version(db)
-        if current_build is None and db.execute('SELECT 1 FROM graph_edges LIMIT 1').fetchone():
-            raise AnalysisError('Unexpected analysis database rows')
-        if (current_build is None and version >= 8
-                and db.execute('SELECT 1 FROM graph_positioned_edges LIMIT 1').fetchone()):
-            raise AnalysisError('Unexpected analysis database rows')
-        if version >= 8:
-            for build_id, edge_count in db.execute('SELECT build_id,edge_count FROM graph_build_positioned_snapshots'):
-                actual_positioned_count = db.execute('SELECT count(*) FROM graph_build_positioned_edges WHERE build_id=?', (build_id,)).fetchone()[0]
-                if not isinstance(edge_count, int) or edge_count < 0 or edge_count != actual_positioned_count:
-                    raise AnalysisError('Unexpected analysis database rows')
-        if current_build is not None:
-            current_edges = tuple(db.execute('''
-                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
-                       distance_policy_version,neighbour_policy_version
-                FROM graph_edges ORDER BY source_track_id,target_track_id'''))
-            historical_current_edges = tuple(db.execute('''
-                SELECT source_track_id,target_track_id,score,distance,supported_group_count,
-                       distance_policy_version,neighbour_policy_version
-                FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
-            if current_edges != historical_current_edges:
-                raise AnalysisError('Unexpected analysis database rows')
-            if version >= 8:
-                current_positioned_edges = tuple(db.execute('''
-                    SELECT source_track_id,target_track_id,score,distance,supported_group_count,
-                           distance_policy_version,neighbour_policy_version
-                    FROM graph_positioned_edges ORDER BY source_track_id,target_track_id'''))
-                historical_current_positioned_edges = tuple(db.execute('''
-                    SELECT source_track_id,target_track_id,score,distance,supported_group_count,
-                           distance_policy_version,neighbour_policy_version
-                    FROM graph_build_positioned_edges WHERE build_id=? ORDER BY source_track_id,target_track_id''', current_build))
-                if current_positioned_edges != historical_current_positioned_edges:
-                    raise AnalysisError('Unexpected analysis database rows')
-        edge_sources_sql = '''
-                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_edges
-                UNION ALL
-                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_edges'''
-        if version >= 8:
-            edge_sources_sql += '''
-                UNION ALL
-                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_positioned_edges
-                UNION ALL
-                SELECT source_track_id,target_track_id,score,distance,supported_group_count,distance_policy_version,neighbour_policy_version FROM graph_build_positioned_edges'''
-        for source, target, score, distance, count, distance_policy, neighbour_policy in db.execute(edge_sources_sql):
-            if (not isinstance(source, str) or not isinstance(target, str) or source >= target
-                    or not isinstance(score, (int, float)) or not 0.0 <= float(score) <= 1.0
-                    or not isinstance(distance, (int, float)) or not 0.0 <= float(distance) <= 1.0
-                    or round(1.0 - float(distance), 6) != round(float(score), 6)
-                    or not isinstance(count, int) or count <= 0
-                    or not isinstance(distance_policy, str) or not distance_policy
-                    or not isinstance(neighbour_policy, str) or not neighbour_policy):
-                raise AnalysisError('Unexpected analysis database rows')
-
-    def _validate_graph_feature_rows(self, db):
-        for _track_id, _run_id, _payload in self._iter_validated_graph_feature_rows(db):
-            del _payload
-
-    def _iter_validated_graph_feature_rows(self, db):
-        evidence_size_expression = _graph_feature_evidence_size_expression('g.evidence_json')
-        rows = tuple(db.execute(f'''
-            WITH latest_run AS (
-                SELECT track_id, run_id, status FROM (
-                    SELECT rt.track_id, r.id AS run_id, r.status AS status,
-                           row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
-                    FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
-                ) WHERE rn=1
-            )
-            SELECT g.track_id,g.run_id,g.fingerprint,{evidence_size_expression},g.is_current,
-                   r.status, linked.run_id, latest_run.run_id, latest_run.status
-            FROM graph_feature_evidence g
-            LEFT JOIN runs r ON r.id=g.run_id
-            LEFT JOIN run_tracks linked ON linked.run_id=g.run_id AND linked.track_id=g.track_id
-            LEFT JOIN latest_run ON latest_run.track_id=g.track_id
-            ORDER BY g.track_id,g.run_id
-        '''))
-        for track_id, run_id, fingerprint, evidence_json_size, is_current, status, linked_run_id, latest_run_id, latest_status in rows:
-            if (not isinstance(track_id, str) or not _TRACK_ID_RE.fullmatch(track_id)
-                    or not isinstance(run_id, str) or not run_id
-                    or not isinstance(fingerprint, str) or not _SHA256_RE.fullmatch(fingerprint)
-                    or is_current not in (0, 1)):
-                raise AnalysisError('Unexpected analysis database rows')
-            if status != 'completed' or linked_run_id is None:
-                raise AnalysisError('Unexpected analysis database rows')
-            if is_current and (latest_run_id != run_id or latest_status != 'completed'):
-                raise AnalysisError('Unexpected analysis database rows')
-            if int(evidence_json_size) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
-                raise AnalysisError('Oversized stored graph feature evidence (16 MiB limit)')
-        fingerprints_by_identity = {
-            (track_id, run_id): fingerprint
-            for track_id, run_id, fingerprint, _evidence_json_size, _is_current, *_rest in rows
-        }
-        loaded_identities = set()
-        for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
-                db, tuple(fingerprints_by_identity), current_only=False):
-            for track_id, run_id, evidence_json in payload_chunk:
-                identity = (track_id, run_id)
-                if identity in loaded_identities:
-                    raise AnalysisError('Unexpected analysis database rows')
-                loaded_identities.add(identity)
-                try:
-                    payload = json.loads(evidence_json)
-                except (TypeError, ValueError, json.JSONDecodeError) as error:
-                    raise AnalysisError('Unexpected analysis database rows') from error
-                try:
-                    validate_graph_feature_evidence_payload(track_id, run_id, fingerprints_by_identity[(track_id, run_id)], payload)
-                except (KeyError, ValueError) as error:
-                    raise AnalysisError('Unexpected analysis database rows') from error
-                yield track_id, run_id, payload
-                # Do not keep the previous raw/decoded row while advancing the cursor.
-                del payload, evidence_json
-        if loaded_identities != set(fingerprints_by_identity):
-            raise AnalysisError('Unexpected analysis database rows')
-
-    def _foreign_keys(self, db, table):
-        keys = {}
-        for row in db.execute(f'PRAGMA foreign_key_list({table})'):
-            keys.setdefault(row[0], [row[2], [], []])
-            keys[row[0]][1].append(row[3])
-            keys[row[0]][2].append(row[4])
-        return tuple(sorted((target, tuple(from_columns), tuple(to_columns))
-                            for target, from_columns, to_columns in keys.values()))
-
-    def _unique_indexes(self, db, table):
-        indexes = []
-        for row in db.execute(f'PRAGMA index_list({table})'):
-            if row[2] and row[3] == 'u':
-                columns = tuple(info[2] for info in db.execute(f'PRAGMA index_info({row[1]})'))
-                indexes.append(columns)
-        return tuple(sorted(indexes))
