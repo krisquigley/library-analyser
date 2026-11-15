@@ -17,6 +17,7 @@ from music_analyzer.application.use_cases.graph_feature_evidence import validate
 from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, MoodAxisEdge, ScoreSummary, StageResult, TrackMetadata
 from music_explorer.application.dto.playlists import PlayableTrackCandidate
 from music_explorer.application.use_cases.explorer import _build_mood_axis_graph
+from music_explorer.domain.analysis import finite
 from music_explorer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 
 APPLICATION_ID = 0x4D414E41
@@ -31,7 +32,8 @@ class AnalysisError(Exception):
 
 
 def _finite_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+    # Domain policy: finite AS A FLOAT (no OverflowError for huge integers).
+    return finite(value)
 
 
 def _duration_warning(duration_seconds, source):

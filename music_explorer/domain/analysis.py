@@ -1,9 +1,20 @@
 """Provisional score summaries, not probabilities or selected tags."""
 from dataclasses import dataclass
+from math import isfinite
 
 
 def finite(value: float) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and -float('inf') < value < float('inf')
+    """A real, non-boolean number that is finite AS A FLOAT.
+
+    Integers beyond the float range compare finite but overflow float()
+    downstream (projection, candidate selection), so they are not finite here.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return isfinite(value)
+    except OverflowError:
+        return False
 
 
 @dataclass(frozen=True)
