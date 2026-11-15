@@ -18,7 +18,8 @@ This is **experimental** software, delivered in small tested increments.
 - Everything runs **locally**. Your music, paths and results are not uploaded.
   Only the explicit `models download` command uses the network.
 - It never edits audio files or their tags. It writes only its own analysis
-  database, model bundles, an embedding cache and export files you name.
+  database, model bundles, an embedding cache, temporary decode snapshots
+  (removed after use) and the export/projection files you name.
 - There is **no Mixxx integration** yet, and it must never be pointed at a Mixxx database.
 - Model scores are **not calibrated** probabilities or confirmed tags. Real
   inference has only been validated on one pinned runtime in a
@@ -45,11 +46,12 @@ depends only on the database the analyzer produces, so the flow is:
 
 ```sh
 python -m venv .venv
-.venv/bin/python -m pip install .
-.venv/bin/music-analyzer doctor        # what is available on this machine
+. .venv/bin/activate                   # later commands assume the venv is active
+python -m pip install .
+music-analyzer doctor                  # what is available on this machine
 ```
 
-The only default runtime dependency is `mutagen` (duration metadata). Cataloguing,
+The only default runtime dependency is `mutagen` (duration and embedded tag metadata). Cataloguing,
 review, export, graph building and the explorer need nothing else. **Audio
 analysis** additionally needs FFmpeg on `PATH` plus an Essentia TensorFlow
 runtime that is *not* installed by default. The tested combination and its caveats
@@ -70,8 +72,8 @@ DB=/path/to/existing/dir/analysis.sqlite
 music-analyzer models download
 music-analyzer models verify
 
-# 2. Inventory an explicitly selected folder. This only records files, sizes,
-#    hashes and durations; it does NOT analyze anything.
+# 2. Inventory an explicitly selected folder. This records files, sizes, mtimes,
+#    content hashes, durations and embedded tags; it does NOT analyze audio.
 music-analyzer scan /path/to/selected/music --database "$DB" --json
 
 # 3. Analyze. Batch mode works through eligible catalogue tracks with one worker;
@@ -125,7 +127,8 @@ music-analyzer integrity --database "$DB" --json
 
 ## Contributing
 
-Issues and pull requests are welcome at the GitHub repository. Please read
+Issues and pull requests are welcome at
+<https://github.com/krisquigley/library-analyser>. Please read
 [AGENTS.md](AGENTS.md), which holds the project rules for humans and coding agents alike.
 
 **Architecture.** Both packages follow Clean Architecture. Source dependencies point inward:
@@ -155,14 +158,20 @@ titles, databases or audio.
 ```sh
 python -m unittest discover -s tests/unit -v              # fast unit tests
 python -m unittest tests.architecture.test_import_boundaries -v
-python -m unittest discover -v                            # full suite (as CI)
-RUN_PACKAGING_TESTS=0 python -m unittest discover          # skip installed-wheel controls offline
+RUN_FFMPEG_TESTS=0 RUN_PACKAGING_TESTS=0 python -m unittest discover -v   # full suite, as CI
 RUN_FFMPEG_TESTS=1 python -m unittest tests.integration.infrastructure.test_audio_decode -v
 ```
 
-Packaging acceptance tests build a wheel and need `setuptools>=77` from your package index.
-FFmpeg and Playwright/Chromium browser tests are opt-in. CI (`.github/workflows/ci.yml`)
-runs the unit, architecture and full suites on Linux with Python 3.14.
+Two packaging tests need extra setup:
+- `tests.acceptance.test_music_explorer_packaging_and_compat` always builds a wheel
+  with `pip wheel`, which fetches `setuptools>=77` from your package index.
+- `tests.acceptance.test_integrity_d1_installed` installs offline from a
+  `setuptools>=77` wheel in `/usr/share/python-wheels` (Debian/Ubuntu layout).
+  `RUN_PACKAGING_TESTS=0` skips it.
+
+FFmpeg decode (`RUN_FFMPEG_TESTS=1`) and Playwright/Chromium browser tests
+(`RUN_BROWSER_SMOKE=1`) are opt-in. CI (`.github/workflows/ci.yml`) runs on
+ubuntu-24.04 with Python 3.14.8.
 
 **Proposing changes.** Open an issue describing the problem and the expected
 behavior. Branch from `main`, keep pull requests focused, say which tests you ran,

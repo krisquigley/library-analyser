@@ -7,7 +7,7 @@ labels refer to the project's incremental delivery history.
 ## Install and run
 
 Python **3.11+** is required for this CLI, not a promise of Essentia compatibility.
-The foundation tests and installation were exercised with Python 3.14.7 on Linux;
+The foundation tests and installation were exercised with Python 3.14 on Linux (the pilot host used 3.14.7, CI uses 3.14.8);
 the optional tested Linux Python 3.14 inference pins and limitations are in
 [the real-pilot report](real-pilot.md), not default package requirements.
 
@@ -24,6 +24,9 @@ Installation may obtain setuptools from your configured package index. Doctor
 itself uses no network, downloads nothing, does not install dependencies, and
 writes no music, models, databases, configuration, or Mixxx data. Missing tools
 produce suggested next steps; the user must choose and perform any installation.
+
+`doctor` reports Python/platform information, runs `ffmpeg -version` (five-second
+timeout) and locates the top-level Essentia module **without importing it**.
 
 ### Output and exit status
 
@@ -181,17 +184,21 @@ opens music or Mixxx data or the configured analysis database.
 .venv/bin/python -m unittest tests.architecture.test_import_boundaries -v
 # Optional real decode tests; existing FFmpeg required (otherwise skipped):
 RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest tests.integration.infrastructure.test_audio_decode -v
-# Build/install acceptance tests need setuptools>=77 (from your package index)
-# and venv/pip; RUN_PACKAGING_TESTS=0 skips the installed-wheel controls:
+# Wheel-metadata test: always builds a wheel, fetching setuptools>=77 from your index:
 .venv/bin/python -m unittest tests.acceptance.test_music_explorer_packaging_and_compat -v
+# Installed-wheel controls: offline install from a setuptools>=77 wheel in
+# /usr/share/python-wheels (Debian/Ubuntu); RUN_PACKAGING_TESTS=0 skips them:
+.venv/bin/python -m unittest tests.acceptance.test_integrity_d1_installed -v
 # Opt-in Playwright/Chromium browser checks (see docs/explorer-browser-diagnostic.md):
 RUN_BROWSER_SMOKE=1 .venv/bin/python -m unittest tests.acceptance.test_explorer_browser_smoke -v
 ```
 
 Tests use the standard-library `unittest` runner. Default discovery skips real
 FFmpeg decode and opt-in browser tests unless explicitly enabled above.
-GitHub Actions separates unit/boundary, adapter/CLI, build/install, and real decode
-checks; the Linux Python 3.11–3.14 matrix does not certify Essentia compatibility. Application tests use fake
+GitHub Actions (ubuntu-24.04, Python 3.14.8) runs unit/boundary tests, a dedicated
+real-SQLite empirical check and the adapter/CLI suite (`RUN_FFMPEG_TESTS=0`,
+`RUN_PACKAGING_TESTS=0`); real FFmpeg decode is a manually dispatched job. CI does
+not certify Essentia compatibility. Application tests use fake
 probes, with no external tools or heavy inference imports. Infrastructure tests
 mock process execution and module discovery. CLI acceptance tests launch the
 actual module and perform read-only local discovery (FFmpeg may run if present);
