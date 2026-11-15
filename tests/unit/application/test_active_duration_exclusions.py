@@ -40,6 +40,9 @@ class ExplorerRepo:
     def read_track(self, track_id):
         return next(r for r in self.records if r.track_id == track_id)
 
+    def find_track(self, track_id):
+        return next((r for r in self.records if r.track_id == track_id), None)
+
 
 class BatchQueue:
     def __init__(self):

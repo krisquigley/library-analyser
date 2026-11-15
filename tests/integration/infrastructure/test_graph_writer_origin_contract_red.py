@@ -170,6 +170,28 @@ class GraphWriterOriginContractTests(unittest.TestCase):
             self.writer.finish_graph_build_attempt(attempt_id, 'failed', 'late failure')
         self.assertEqual(self._database_bytes(), completed)
 
+    def test_final_positioned_fk_failure_rolls_back_and_same_attempt_retries(self):
+        """P7 characterization: late positioned INSERT cannot partially publish."""
+        attempt_id = self.writer.begin_graph_build(2, self.revision)
+        self.assertIsNotNone(attempt_id)
+        before = self._database_bytes()
+        missing = 'sha256:' + 'f' * 64
+        invalid_last = ProjectionEdge(self.full[0].a, missing, 0.5, 2)
+        with self.assertRaisesRegex(AnalysisError, 'FOREIGN KEY constraint failed'):
+            self.writer.replace_graph_snapshot(
+                self.replacement_full, 2, 'late-positioned-fk',
+                positioned_edges=(*self.positioned, invalid_last),
+                source_revision=self.revision, attempt_id=attempt_id,
+            )
+        self.assertEqual(self._database_bytes(), before)
+        self._assert_previous_current()
+        self.assertEqual(self._replace('corrected-positioned-retry', attempt_id), attempt_id)
+        self.assertEqual(self.peer.current_graph_snapshot(2, self.revision)['build_id'], attempt_id)
+        completed = self._database_bytes()
+        with self.assertRaises(AnalysisError):
+            self._replace('late-repromotion', attempt_id)
+        self.assertEqual(self._database_bytes(), completed)
+
     def test_failure_record_rejects_empty_fingerprint_without_changing_current_or_attempt(self):
         attempt_id = self.writer.begin_graph_build(2, self.revision)
         self.assertIsNotNone(attempt_id)

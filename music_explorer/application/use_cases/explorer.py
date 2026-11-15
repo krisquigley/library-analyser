@@ -62,9 +62,10 @@ class GetExplorerTrackDetail:
         self.repository = repository
 
     def execute(self, handle):
-        if handle not in self.repository.track_ids():
+        stored = self.repository.find_track(handle)
+        if stored is None:
             raise ValueError('Unknown explorer track')
-        return _map_track(self.repository.read_track(handle))
+        return _map_track(stored)
 
 
 class ExploreCatalogue:

@@ -79,6 +79,72 @@ class ExplorerServerTests(unittest.TestCase):
             body['selection_client_id'] = selection_client_id
         return self.post_json('/api/current', body)
 
+    def test_unexpected_read_failure_is_private_error_only_and_retry_succeeds(self):
+        private = 'private-path-query-payload-marker'
+        for error in (RuntimeError(private), ValueError(private)):
+            with self.subTest(error=type(error).__name__):
+                with patch.object(standalone_server.ListExplorerTrackSummaries, 'execute', side_effect=error):
+                    with self.assertRaises(HTTPError) as raised:
+                        self.get_json('/api/track-summaries')
+                    self.assertEqual(raised.exception.code, 500)
+                    self.assertEqual(json.loads(raised.exception.read()), {'error': 'Explorer request failed'})
+                self.assertEqual(len(self.get_json('/api/track-summaries')['tracks']), 2)
+
+    def test_unexpected_selection_failure_is_private_and_does_not_change_state(self):
+        before = self.get_json('/api/state')
+        with patch.object(standalone_server.ExplorerState, 'set_current', side_effect=RuntimeError('private-selection-marker')):
+            with self.assertRaises(HTTPError) as raised:
+                self.post_current(self.first)
+            self.assertEqual(raised.exception.code, 500)
+            self.assertEqual(json.loads(raised.exception.read()), {'error': 'Explorer request failed'})
+        self.assertEqual(self.get_json('/api/state'), before)
+        self.assertEqual(self.post_current(self.first)['current_track_id'], self.first)
+
+    def test_malformed_summary_integer_is_bounded_error_only(self):
+        with self.assertRaises(HTTPError) as raised:
+            self.get_json('/api/track-summaries?limit=private-input-marker')
+        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(json.loads(raised.exception.read()), {'error': 'Invalid explorer request'})
+
+    def assert_bad_request(self, path, expected_error):
+        with self.assertRaises(HTTPError) as raised:
+            self.get_json(path)
+        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(json.loads(raised.exception.read()), {'error': expected_error})
+
+    def test_candidate_control_validation_failures_remain_bad_requests(self):
+        self.post_current(self.first)
+        for path, error in (
+            ('/api/candidates?control=tempo:bogus:1', 'control mode must be off, soft, or hard'),
+            ('/api/candidates?control=tempo:soft:11', 'control weight must be finite in [0, 10]'),
+        ):
+            with self.subTest(path=path):
+                self.assert_bad_request(path, error)
+
+    def test_malformed_candidate_control_syntax_is_bounded_bad_request(self):
+        self.post_current(self.first)
+        for control in ('tempo', 'tempo:soft:private-input-marker'):
+            with self.subTest(control=control):
+                self.assert_bad_request('/api/candidates?control=' + control, 'Invalid explorer request')
+
+    def test_projection_artifact_failure_category_remains_bad_request(self):
+        from music_explorer.application.use_cases.projection_artifacts import ProjectionArtifactError
+        with patch.object(standalone_server.BuildLiveProjection, 'execute',
+                          side_effect=ProjectionArtifactError('resource_limit_exceeded')):
+            self.assert_bad_request('/api/projection', 'resource_limit_exceeded')
+
+    def test_negative_content_length_is_rejected_without_reading_body(self):
+        import http.client
+        connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+        self.addCleanup(connection.close)
+        connection.putrequest('POST', '/api/current')
+        connection.putheader('Content-Type', 'application/json')
+        connection.putheader('Content-Length', '-1')
+        connection.endheaders()
+        response = connection.getresponse()
+        self.assertEqual(response.status, 400)
+        self.assertEqual(json.loads(response.read()), {'error': 'Invalid explorer request'})
+
     def test_track_summaries_endpoint_is_paginated_and_compact(self):
         page = self.get_json('/api/tracks/summary?limit=1&order=id')
 

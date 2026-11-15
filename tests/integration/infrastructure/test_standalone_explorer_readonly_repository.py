@@ -454,10 +454,10 @@ class _FakeOversizedReadTrackDb:
         self.queries.append(compact)
         if compact.startswith('SELECT id,sha256,size FROM tracks'):
             return _FakeReadTrackCursor((('sha256:' + '8' * 64, '8' * 64, 1),))
-        if compact.startswith('SELECT path FROM locations'):
-            return _FakeReadTrackCursor((('/music/Oversized.flac',),))
-        if compact.startswith('SELECT r.id,r.status,r.detail FROM runs'):
-            return _FakeReadTrackCursor((('run-oversized', 'completed', ''),))
+        if compact.startswith('SELECT path,mtime_ns,format FROM locations'):
+            return _FakeReadTrackCursor((('/music/Oversized.flac', 1, 'flac'),))
+        if compact.startswith('SELECT t.run_id,r.status,r.detail,r.id FROM run_tracks'):
+            return _FakeReadTrackCursor((('run-oversized', 'completed', '', 'run-oversized'),))
         if self.expected_size_expression is None and (
             compact.startswith('SELECT stage,octet_length(result) FROM stages')
             or compact.startswith('SELECT stage,length(CAST(result AS BLOB)) FROM stages')

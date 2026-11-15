@@ -52,7 +52,7 @@ class BuiltinPublicHTTPProxyTests(unittest.TestCase):
             self.assertEqual((request['status'], request['outcome']), (200, 'ok'))
             self.assertGreater(request['response_bytes'], 0)
         self.assertEqual(report['samples'][0]['outcome'], 'ok')
-        required = {'summary_count', 'summary_page', 'selected_track',
+        required = {'summary_page', 'selected_track',
                     'selected_locations', 'selected_latest_run'}
         self.assertTrue(required.issubset(
             {plan['operation'] for plan in report['sqlite']['plans']}))

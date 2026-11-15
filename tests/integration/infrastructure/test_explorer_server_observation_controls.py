@@ -7,6 +7,29 @@ from tools.explorer_http_server_observation import ServerObservation
 
 
 class ServerObservationControls(unittest.TestCase):
+    def _diagnostic_with_full_graph(self, **options):
+        from tools.explorer_http_diagnostic import _request, _sample
+        graph_outcomes = []
+
+        def sample_then_graph(base, timeout, requests, intervals, token):
+            sample = _sample(base, timeout, requests, intervals, token)
+            self.assertEqual(sample['outcome'], 'ok')
+            # Observe retained FULL history validation explicitly, not as an
+            # accidental side effect of ordinary summary/selection/detail.
+            _, outcome = _request(base, '/api/mood-axis-graph?contract=v3', 'GET',
+                                  timeout, requests, intervals, 'get_graph')
+            graph_outcomes.append(outcome)
+            return sample
+
+        with patch('tools.explorer_http_diagnostic._sample', side_effect=sample_then_graph):
+            report = run_public_http_diagnostic(**options)
+        ordinary = [span for span in report['server_observation']['spans']
+                    if span['route'] != '/api/mood-axis-graph']
+        self.assertTrue(ordinary)
+        self.assertFalse(any(span['phase'].startswith('validation_evidence') for span in ordinary))
+        self.assertEqual(report['profiles']['warm']['succeeded'], 1)
+        return report, graph_outcomes
+
     def test_observer_off_runs_actual_http_without_installing_wrappers(self):
         with patch.object(ServerObservation, 'installed', side_effect=AssertionError('off installed observer')):
             report = run_public_http_diagnostic(observer_mode='observer_off')
@@ -30,7 +53,8 @@ class ServerObservationControls(unittest.TestCase):
         original_json = reader.json
         original_payload = reader.validate_graph_feature_evidence_payload
         original_iterator = reader.ReadOnlyExplorerSQLiteRepository._iter_validated_graph_feature_rows
-        report = run_public_http_diagnostic()
+        report, graph_outcomes = self._diagnostic_with_full_graph()
+        self.assertEqual(graph_outcomes, ['ok'])
         self.assertIs(reader.json, original_json)
         self.assertIs(reader.validate_graph_feature_evidence_payload, original_payload)
         self.assertIs(reader.ReadOnlyExplorerSQLiteRepository._iter_validated_graph_feature_rows, original_iterator)
@@ -41,10 +65,15 @@ class ServerObservationControls(unittest.TestCase):
         decoded = [span for span in spans if span['phase'] == 'validation_evidence_decode']
         validated = [span for span in spans if span['phase'] == 'validation_evidence_payload']
         self.assertEqual(len(decoded), len(validated))
-        # The fixture has 12 tracks x 2 historical runs plus current rows;
-        # all four validation transactions (summary, POST, GET twice) retain history.
-        self.assertGreater(len(decoded), 12 * 4)
+        # One retained FULL graph transaction validates every physical evidence
+        # row: 11 eligible tracks x 2 runs (current plus historical), not four
+        # ordinary-read global audits. Use the fixture's actual row inventory.
+        counts = report['fixture_manifest']['counts']
+        expected = counts['current_graph_feature_evidence'] + counts['historical_graph_feature_evidence']
+        self.assertEqual(expected, 22)
+        self.assertEqual(len(decoded), expected)
         self.assertFalse(any(span['status'] == 'failed' for span in spans))
+        self.assertTrue(report['readonly']['unchanged'])
         self.assertNotIn('Uninstrumented', report['phases']['validation']['reason'])
 
     def test_evidence_observers_restore_after_payload_validation_failure(self):
@@ -63,11 +92,12 @@ class ServerObservationControls(unittest.TestCase):
                                'WHERE rowid=(SELECT max(rowid) FROM graph_feature_evidence '
                                'WHERE is_current=0)', ('0' * 64,))
                 yield fixture
-        report = run_public_http_diagnostic(fixture_factory=corrupt_fixture)
+        report, graph_outcomes = self._diagnostic_with_full_graph(fixture_factory=corrupt_fixture)
+        self.assertEqual(graph_outcomes, ['http_error'])
         self.assertIs(reader.validate_graph_feature_evidence_payload, original_validator)
         self.assertIs(reader.json, original_json)
         self.assertIs(reader.ReadOnlyExplorerSQLiteRepository._iter_validated_graph_feature_rows, original_iterator)
-        self.assertEqual(report['profiles']['warm']['succeeded'], 0)
+        self.assertEqual(report['profiles']['warm']['succeeded'], 1)
         self.assertTrue(any(span['phase'] == 'validation_evidence_payload'
                             and span['status'] == 'failed'
                             for span in report['server_observation']['spans']))
