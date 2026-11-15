@@ -14,6 +14,7 @@ from music_analyzer.application.use_cases.stage_result_mapping import stage_from
 from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
 
 STAGE_BYTES = 16 << 20
+FRAGMENT_BYTES = 4096
 CODES = ('metadata_json_invalid', 'metadata_contract_invalid', 'metadata_delivery_invalid',
          'stage_json_invalid', 'stage_contract_invalid', 'stage_identity_invalid',
          'stage_payload_oversized', 'stage_delivery_invalid')
@@ -30,40 +31,42 @@ def _decoded_size(delivery, table, column, identity, kind, storage, stage):
     """Exact decoded UTF8 sizing without whole delivery; preserve split units/NUL."""
     if kind == 'text' and delivery.encoding == 'UTF-8':
         return storage, None
+    reader = delivery.fragments(
+        table, column, identity if type(identity) is int else None,
+        f'SELECT substr(CAST({column} AS BLOB),?,4096) FROM {table} WHERE rowid=?', (identity,))
+    try:
+        return _decoded_value_size(delivery, reader, kind, storage, stage)
+    except (sqlite3.Error, OSError, UnicodeError, MemoryError):
+        delivery.observe_error()
+        raise
+    finally:
+        reader.close()
+
+
+def _decoded_value_size(delivery, reader, kind, storage, stage):
     decoder = None
     total = 0
-    for offset in range(1, storage + 1, 4096):
-        cursor = delivery.execute(
-            f'SELECT substr(CAST({column} AS BLOB),?,4096) FROM {table} WHERE rowid=?',
-            (offset, identity))
+    for offset in range(0, storage, FRAGMENT_BYTES):
+        fragment = reader.read(offset, FRAGMENT_BYTES)
+        if not isinstance(fragment, bytes) or len(fragment) != min(FRAGMENT_BYTES, storage - offset):
+            return None, 'delivery'
+        if decoder is None:
+            codec = (json.detect_encoding(fragment) if kind == 'blob' else
+                     {'UTF-16le': 'utf-16-le', 'UTF-16be': 'utf-16-be'}[delivery.encoding])
+            decoder = codecs.getincrementaldecoder(codec)(errors='surrogatepass' if kind == 'blob' else 'strict')
         try:
-            row = delivery.one(cursor)
-            if (row is None or len(row) != 1 or not isinstance(row[0], bytes)
-                    or len(row[0]) != min(4096, storage - offset + 1)):
-                return None, 'delivery'
-            fragment = row[0]
-            if decoder is None:
-                codec = (json.detect_encoding(fragment) if kind == 'blob' else
-                         {'UTF-16le': 'utf-16-le', 'UTF-16be': 'utf-16-be'}[delivery.encoding])
-                decoder = codecs.getincrementaldecoder(codec)(errors='surrogatepass' if kind == 'blob' else 'strict')
-            try:
-                text = decoder.decode(fragment, final=offset + len(fragment) > storage)
-            except UnicodeError:
-                if kind == 'blob':
-                    return None, 'json'
-                raise
-            # A raw decoded surrogate cannot be strictly UTF8-sized: operational
-            # read failure, unlike a JSON escape which remains ordinary input.
-            size = len(text.encode('utf-8'))
-            _charge(delivery, size)
-            total += size
-            if stage and total > STAGE_BYTES:
-                return total, None
-        except (sqlite3.Error, OSError, UnicodeError, MemoryError):
-            delivery.observe_error()
+            text = decoder.decode(fragment, final=offset + len(fragment) >= storage)
+        except UnicodeError:
+            if kind == 'blob':
+                return None, 'json'
             raise
-        finally:
-            delivery.close_all(cursor)
+        # A raw decoded surrogate cannot be strictly UTF8-sized: operational
+        # read failure, unlike a JSON escape which remains ordinary input.
+        size = len(text.encode('utf-8'))
+        _charge(delivery, size)
+        total += size
+        if stage and total > STAGE_BYTES:
+            return total, None
     return total, None
 
 

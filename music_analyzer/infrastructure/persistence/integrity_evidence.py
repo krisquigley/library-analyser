@@ -9,6 +9,7 @@ from music_analyzer.application.use_cases.integrity_evidence import (
 )
 
 DOMAIN_BYTES = 16 << 20
+FRAGMENT_BYTES = 4096
 
 
 def _charge(delivery, text):
@@ -24,42 +25,47 @@ def _document_size(delivery, track, run, storage, kind):
     """Count decoded document UTF8 with bounded fragments, including actual NUL."""
     if kind == 'text' and delivery.encoding == 'UTF-8':
         return storage, None
+    row = delivery.optional_row(
+        'SELECT rowid FROM graph_feature_evidence WHERE track_id=? AND run_id=?', (track, run))
+    rowid = row[0] if row is not None and len(row) == 1 and type(row[0]) is int else None
+    reader = delivery.fragments(
+        'graph_feature_evidence', 'evidence_json', rowid,
+        'SELECT substr(CAST(evidence_json AS BLOB),?,4096) '
+        'FROM graph_feature_evidence WHERE track_id=? AND run_id=?', (track, run))
+    try:
+        return _decoded_document_size(delivery, reader, storage, kind)
+    except (sqlite3.Error, OSError, UnicodeError):
+        delivery.observe_error()
+        raise
+    finally:
+        reader.close()
+
+
+def _decoded_document_size(delivery, reader, storage, kind):
     decoder = None
     total = 0
-    for offset in range(1, storage + 1, 4096):
-        cursor = delivery.execute(
-            'SELECT substr(CAST(evidence_json AS BLOB),?,4096) '
-            'FROM graph_feature_evidence WHERE track_id=? AND run_id=?',
-            (offset, track, run))
+    for offset in range(0, storage, FRAGMENT_BYTES):
+        fragment = reader.read(offset, FRAGMENT_BYTES)
+        if not isinstance(fragment, bytes) or len(fragment) != min(FRAGMENT_BYTES, storage - offset):
+            return None, EvidenceCode.DELIVERY_INVALID
+        if decoder is None:
+            codec = (json.detect_encoding(fragment) if kind == 'blob'
+                     else {'UTF-16le': 'utf-16-le', 'UTF-16be': 'utf-16-be'}[delivery.encoding])
+            decoder = codecs.getincrementaldecoder(codec)(errors='surrogatepass' if kind == 'blob' else 'strict')
         try:
-            row = delivery.one(cursor)
-            if (row is None or not isinstance(row[0], bytes)
-                    or len(row[0]) != min(4096, storage - offset + 1)):
-                return None, EvidenceCode.DELIVERY_INVALID
-            fragment = row[0]
-            if decoder is None:
-                codec = (json.detect_encoding(fragment) if kind == 'blob'
-                         else {'UTF-16le': 'utf-16-le', 'UTF-16be': 'utf-16-be'}[delivery.encoding])
-                decoder = codecs.getincrementaldecoder(codec)(errors='surrogatepass' if kind == 'blob' else 'strict')
-            try:
-                decoded = decoder.decode(fragment, final=offset + len(fragment) > storage)
-            except UnicodeError:
-                if kind == 'blob':
-                    return None, EvidenceCode.JSON_INVALID
-                raise
-            try:
-                total += _charge(delivery, decoded)
-            except UnicodeEncodeError:
-                if kind == 'blob':
-                    return None, EvidenceCode.FINGERPRINT_INVALID
-                raise
-            if total > DOMAIN_BYTES:
-                return total, None
-        except (sqlite3.Error, OSError, UnicodeError):
-            delivery.observe_error()
+            decoded = decoder.decode(fragment, final=offset + len(fragment) >= storage)
+        except UnicodeError:
+            if kind == 'blob':
+                return None, EvidenceCode.JSON_INVALID
             raise
-        finally:
-            delivery.close_all(cursor)
+        try:
+            total += _charge(delivery, decoded)
+        except UnicodeEncodeError:
+            if kind == 'blob':
+                return None, EvidenceCode.FINGERPRINT_INVALID
+            raise
+        if total > DOMAIN_BYTES:
+            return total, None
     return total, None
 
 
