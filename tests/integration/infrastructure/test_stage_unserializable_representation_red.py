@@ -41,8 +41,10 @@ class StageUnserializableRepresentationTests(StageWriterContractFixture):
 
     def test_unexpected_encoder_failures_are_not_normalized(self):
         with patch('music_analyzer.infrastructure.persistence.analysis.json.dumps',
-                   side_effect=RuntimeError('unexpected programmer error')):
-            with self.assertRaises(RuntimeError):
+                   side_effect=TypeError('unexpected programmer error')):
+            # Validated leaves are str/int/float, so only the encoder's
+            # ValueError is a known representation failure; others propagate.
+            with self.assertRaisesRegex(TypeError, 'unexpected programmer error'):
                 self.writer.save_stage(self.run_id, self._valid_scores())
 
     def test_analyze_track_finalizes_failed_run_for_unserializable_stage(self):

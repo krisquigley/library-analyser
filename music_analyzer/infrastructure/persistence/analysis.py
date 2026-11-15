@@ -1095,9 +1095,10 @@ class SQLiteAnalysisRepository:
             validate_stage_result(result)
         except ValueError as error:
             raise AnalysisError('Invalid stage result: ' + str(error)) from error
+        mapping = asdict(result)
         try:
-            payload = json.dumps(asdict(result), allow_nan=False, ensure_ascii=False)
-        except (ValueError, TypeError, RecursionError) as error:
+            payload = json.dumps(mapping, allow_nan=False, ensure_ascii=False)
+        except ValueError as error:
             # Known JSON representation failures (e.g. an integer beyond the
             # str conversion limit) at this storage boundary; nothing written.
             raise AnalysisError('Invalid stage result: value is not serializable as stored JSON') from error
