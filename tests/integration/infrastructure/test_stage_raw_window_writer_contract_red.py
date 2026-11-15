@@ -22,7 +22,8 @@ from music_analyzer.infrastructure.persistence.stage_mapping import stage_from_m
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
 
-class StageRawWindowWriterContractRedTests(unittest.TestCase):
+class StageWriterContractFixture(unittest.TestCase):
+    """Public two-track catalogue with current and historical warm graphs."""
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -110,6 +111,8 @@ class StageRawWindowWriterContractRedTests(unittest.TestCase):
         self.assertEqual(self.writer.current_graph_snapshot(10, self.revision)['build_id'], self.build_id)
         self._valid_same_run_stage_retry()
 
+
+class StageRawWindowWriterContractRedTests(StageWriterContractFixture):
     def test_save_rejects_nonnumeric_raw_score_before_transaction_and_same_stage_retries(self):
         self._assert_origin_rejection_and_retry(
             StageResult('mood', (), '', raw_predictions=((('not-a-score',),),)),
