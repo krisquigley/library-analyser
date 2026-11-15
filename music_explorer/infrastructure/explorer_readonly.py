@@ -96,6 +96,28 @@ _ACTIVE_CANDIDATE_JOIN = 'FROM tracks t LEFT JOIN track_audio a ON a.track_id=t.
 _ACTIVE_CANDIDATE_PREDICATE = ('_explorer_active_candidate(t.id,t.sha256,t.size,'
                                'a.duration_seconds,a.duration_source,a.status,a.reason)')
 _ACTIVE_CANDIDATES_FROM = f'{_ACTIVE_CANDIDATE_JOIN} WHERE {_ACTIVE_CANDIDATE_PREDICATE}'
+_EDGE_COLUMNS = ('source_track_id,target_track_id,score,distance,supported_group_count,'
+                 'distance_policy_version,neighbour_policy_version')
+
+
+def _non_negative_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _build_statuses(version):
+    return {'completed', 'failed'} if version < 10 else {'building', 'completed', 'failed', 'interrupted'}
+
+
+def _validate_edge_row(row):
+    source, target, score, distance, count, distance_policy, neighbour_policy = row
+    if (not isinstance(source, str) or not isinstance(target, str) or source >= target
+            or not isinstance(score, (int, float)) or not 0.0 <= float(score) <= 1.0
+            or not isinstance(distance, (int, float)) or not 0.0 <= float(distance) <= 1.0
+            or round(1.0 - float(distance), 6) != round(float(score), 6)
+            or not isinstance(count, int) or count <= 0
+            or not isinstance(distance_policy, str) or not distance_policy
+            or not isinstance(neighbour_policy, str) or not neighbour_policy):
+        raise AnalysisError('Unexpected analysis database rows')
 _SQLITE_OCTET_LENGTH_VERSION = (3, 43, 0)
 _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT = 16 * 1024 * 1024
 
@@ -376,15 +398,15 @@ class ReadOnlyExplorerSQLiteRepository:
             return metadata, track_count, summaries, next_cursor
 
     def candidate_snapshot(self):
-        with self._transaction() as db:
+        with self._transaction(full_validation=False) as db:
             metadata = self._metadata(db)
-            ids = tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
+            ids = tuple(row[0] for row in db.execute(f'SELECT t.id {_ACTIVE_CANDIDATES_FROM} ORDER BY t.id'))
             return metadata, tuple(self._read_track(db, track_id) for track_id in ids)
 
     def mood_axis_graph_snapshot(self, mood: str | None = None, sparse_k: int = 10):
-        # Feature validation is deferred, not omitted: the record iterator drains
-        # all current/historical evidence before the application returns a graph.
-        with self._transaction(validate_evidence=False) as db:
+        # Selected scope: active tracks, their current evidence and the current
+        # build/snapshots/mirrors are validated as consumed; history is not.
+        with self._transaction(full_validation=False) as db:
             metadata = self._metadata(db)
             if int(metadata.get('schema_version', 0)) < 8:
                 return None
@@ -398,16 +420,16 @@ class ReadOnlyExplorerSQLiteRepository:
                            unpositioned=tuple(sorted(graph.unpositioned, key=lambda node: node.track_id)))
 
     def current_graph_edges(self, sparse_k: int | None = None):
-        with self._transaction() as db:
+        with self._transaction(full_validation=False) as db:
             return self._current_graph_edges(db, sparse_k)
 
     def current_positioned_graph_edges(self, sparse_k: int | None = None):
-        with self._transaction() as db:
+        with self._transaction(full_validation=False) as db:
             return self._current_positioned_graph_edges(db, sparse_k)
 
     def track_ids(self):
-        with self._transaction() as db:
-            return tuple(row[0] for row in db.execute('SELECT id FROM active_tracks ORDER BY id'))
+        with self._transaction(full_validation=False) as db:
+            return tuple(row[0] for row in db.execute(f'SELECT t.id {_ACTIVE_CANDIDATES_FROM} ORDER BY t.id'))
 
     def contains_active_track(self, track_id: str):
         with self._transaction(full_validation=False) as db:
@@ -436,33 +458,42 @@ class ReadOnlyExplorerSQLiteRepository:
         return status == 'eligible'
 
     def available_audio_paths(self):
-        with self._transaction() as db:
-            return tuple(row[0] for row in db.execute('SELECT path FROM active_locations ORDER BY path'))
+        with self._transaction(full_validation=False) as db:
+            paths = tuple(row[0] for row in db.execute(
+                f'SELECT l.path FROM locations l JOIN tracks t ON t.id=l.track_id '
+                f'LEFT JOIN track_audio a ON a.track_id=t.id '
+                f'WHERE l.available=1 AND {_ACTIVE_CANDIDATE_PREDICATE} ORDER BY l.path'))
+            if any(not isinstance(path, str) or not path for path in paths):
+                raise AnalysisError('Unexpected analysis database rows')
+            return paths
 
     def playlist_export_tracks(self):
         with self._connection() as db:
             db.execute('BEGIN')
-            self._validate_core(db)
-            self._validate_graph_rows(db)
-            rows = db.execute('''
+            self._validate_compatibility(db)
+            rows = db.execute(f'''
                 WITH latest_run AS (
                     SELECT track_id, run_id FROM (
                         SELECT rt.track_id, r.id AS run_id,
                                row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
                         FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
-                        JOIN active_tracks at ON at.id=rt.track_id
                         WHERE r.status='completed'
                     ) WHERE rn=1
                 )
                 SELECT al.track_id, s.result, al.path
-                FROM active_locations al
+                FROM locations al
+                JOIN tracks t ON t.id=al.track_id
+                LEFT JOIN track_audio a ON a.track_id=t.id
                 JOIN latest_run lr ON lr.track_id=al.track_id
                 JOIN stages s ON s.run_id=lr.run_id AND s.stage='bpm'
+                WHERE al.available=1 AND {_ACTIVE_CANDIDATE_PREDICATE}
                 ORDER BY al.track_id, al.path
             ''').fetchall()
             candidates = []
             selected_track_ids = set()
             for track_id, bpm_payload, path in rows:
+                if not isinstance(path, str) or not path:
+                    raise AnalysisError('Unexpected analysis database rows')
                 if track_id in selected_track_ids:
                     continue
                 bpm = _bpm_from_stage_payload(bpm_payload)
@@ -490,13 +521,17 @@ class ReadOnlyExplorerSQLiteRepository:
         version = _database_schema_version(db)
         if version < 7:
             return None, ()
-        current = db.execute("""
-            SELECT id,edge_count,sparse_k,distance_policy_version,neighbour_policy_version
-            FROM graph_builds WHERE is_current=1 AND status='completed'
-        """).fetchone()
+        current = self._current_build(db, version)
         action = 'Run music-analyzer graph build --database DB before loading the mood-axis graph.'
         if current is None:
             latest = db.execute('SELECT status,detail FROM graph_builds ORDER BY created_at DESC,rowid DESC LIMIT 1').fetchone()
+            if latest is not None and latest[0] not in _build_statuses(version):
+                raise AnalysisError('Unexpected analysis database rows')
+            # The current-graph mirrors exist only alongside a current build;
+            # leftovers contradict the pointer this read consults (O(1) probes).
+            if db.execute('SELECT 1 FROM graph_edges LIMIT 1').fetchone() or (
+                    version >= 8 and db.execute('SELECT 1 FROM graph_positioned_edges LIMIT 1').fetchone()):
+                raise AnalysisError('Unexpected analysis database rows')
             if latest is None:
                 return {'state': 'build_needed', 'source': 'graph_build_edges', 'reason': 'no completed warm graph snapshot', 'action': action}, ()
             if latest[0] == 'failed':
@@ -509,11 +544,9 @@ class ReadOnlyExplorerSQLiteRepository:
             return {'state': 'stale', 'source': 'graph_build_edges', 'reason': 'warm graph snapshot policy version is stale', 'action': action, 'build_id': build_id, 'distance_policy': distance_policy, 'edge_policy': neighbour_policy}, ()
         if requested_sparse_k is not None and int(sparse_k) != int(requested_sparse_k):
             return {'state': 'stale', 'source': 'graph_build_edges', 'reason': 'warm graph snapshot sparse_k does not match requested graph sparsity', 'action': action, 'build_id': build_id, 'stored_sparse_k': int(sparse_k), 'requested_sparse_k': int(requested_sparse_k)}, ()
-        rows = db.execute('''
-            SELECT source_track_id,target_track_id,score,supported_group_count,
-                   distance_policy_version,neighbour_policy_version
-            FROM graph_build_edges WHERE build_id=? ORDER BY source_track_id,target_track_id
-        ''', (build_id,)).fetchall()
+        rows = self._validated_edge_rows(db, 'graph_build_edges', build_id)
+        if len(rows) != edge_count or self._mirror_edge_rows(db, 'graph_edges') != rows:
+            raise AnalysisError('Unexpected analysis database rows')
         status = {
             'state': 'ready',
             'source': 'graph_build_edges',
@@ -532,9 +565,42 @@ class ReadOnlyExplorerSQLiteRepository:
                 {'policy': edge_distance_policy, 'neighbour_policy': edge_neighbour_policy, 'source': 'graph_build_edges'},
                 int(supported_count),
             )
-            for source, target, score, supported_count, edge_distance_policy, edge_neighbour_policy in rows
+            for source, target, score, _distance, supported_count, edge_distance_policy, edge_neighbour_policy in rows
         )
         return status, edges
+
+    def _current_build(self, db, version):
+        """The one current build descriptor (bounded ambiguity check), or None."""
+        current = db.execute('''
+            SELECT id,status,edge_count,sparse_k,distance_policy_version,neighbour_policy_version
+            FROM graph_builds WHERE is_current=1 LIMIT 2
+        ''').fetchall()
+        if not current:
+            return None
+        if len(current) > 1:
+            raise AnalysisError('Unexpected analysis database rows')
+        build_id, status, edge_count, sparse_k, distance_policy, neighbour_policy = current[0]
+        if (status != 'completed' or not isinstance(build_id, str) or not build_id
+                or not _non_negative_int(edge_count) or not _non_negative_int(sparse_k)
+                or not isinstance(distance_policy, str) or not distance_policy
+                or not isinstance(neighbour_policy, str) or not neighbour_policy):
+            raise AnalysisError('Unexpected analysis database rows')
+        return build_id, edge_count, sparse_k, distance_policy, neighbour_policy
+
+    def _validated_edge_rows(self, db, table, build_id):
+        if table not in ('graph_build_edges', 'graph_build_positioned_edges'):
+            raise ValueError('Unsupported graph edge table')
+        rows = tuple(db.execute(f'''
+            SELECT {_EDGE_COLUMNS} FROM {table} WHERE build_id=? ORDER BY source_track_id,target_track_id
+        ''', (build_id,)))
+        for row in rows:
+            _validate_edge_row(row)
+        return rows
+
+    def _mirror_edge_rows(self, db, table):
+        if table not in ('graph_edges', 'graph_positioned_edges'):
+            raise ValueError('Unsupported graph mirror table')
+        return tuple(db.execute(f'SELECT {_EDGE_COLUMNS} FROM {table} ORDER BY source_track_id,target_track_id'))
 
     def _current_positioned_graph_edges(self, db, requested_sparse_k=None):
         version = _database_schema_version(db)
@@ -548,13 +614,15 @@ class ReadOnlyExplorerSQLiteRepository:
             return status, ()
         build_id = status['build_id']
         snapshot = db.execute('SELECT edge_count FROM graph_build_positioned_snapshots WHERE build_id=?', (build_id,)).fetchone()
+        if snapshot is not None and not _non_negative_int(snapshot[0]):
+            raise AnalysisError('Unexpected analysis database rows')
         if snapshot is None:
+            if db.execute('SELECT 1 FROM graph_positioned_edges LIMIT 1').fetchone():
+                raise AnalysisError('Unexpected analysis database rows')
             return {'state': 'build_needed', 'source': 'graph_build_positioned_edges', 'reason': 'exact positioned warm graph snapshot is not available for current build', 'action': action, 'build_id': build_id}, ()
-        rows = db.execute('''
-            SELECT source_track_id,target_track_id,score,supported_group_count,
-                   distance_policy_version,neighbour_policy_version
-            FROM graph_build_positioned_edges WHERE build_id=? ORDER BY source_track_id,target_track_id
-        ''', (build_id,)).fetchall()
+        rows = self._validated_edge_rows(db, 'graph_build_positioned_edges', build_id)
+        if len(rows) != snapshot[0] or self._mirror_edge_rows(db, 'graph_positioned_edges') != rows:
+            raise AnalysisError('Unexpected analysis database rows')
         status = {**status, 'source': 'graph_build_positioned_edges', 'edge_count': len(rows)}
         edges = tuple(
             MoodAxisEdge(
@@ -565,7 +633,7 @@ class ReadOnlyExplorerSQLiteRepository:
                 {'policy': edge_distance_policy, 'neighbour_policy': edge_neighbour_policy, 'source': 'graph_build_positioned_edges'},
                 int(supported_count),
             )
-            for source, target, score, supported_count, edge_distance_policy, edge_neighbour_policy in rows
+            for source, target, score, _distance, supported_count, edge_distance_policy, edge_neighbour_policy in rows
         )
         return status, edges
 
@@ -575,6 +643,31 @@ class ReadOnlyExplorerSQLiteRepository:
             'schema_version': db.execute('PRAGMA user_version').fetchone()[0],
             'read_policy': 'bounded_read_transaction',
         }
+
+    def _validate_latest_runs(self, db, version, latest_runs):
+        """Validate the newest-run state that decides graph projection.
+
+        latest_runs yields (track_id, run_id, status) for selected tracks. A run
+        status must be supported, and (schema >= 9) a track's single current
+        evidence row must belong to its newest run, which must be completed.
+        Identity-only probes: no evidence payload is loaded here.
+        """
+        latest = {}
+        for track_id, run_id, status in latest_runs:
+            if run_id is not None and status not in ('running', 'completed', 'failed', 'interrupted'):
+                raise AnalysisError('Unexpected analysis database rows')
+            latest[track_id] = (run_id, status)
+        if version < 9:
+            return
+        seen = set()
+        for track_chunk in _chunked(tuple(latest), 500):
+            placeholders = ','.join('?' for _track in track_chunk)
+            for track_id, run_id in db.execute(
+                    f'SELECT track_id,run_id FROM graph_feature_evidence '
+                    f'WHERE is_current=1 AND track_id IN ({placeholders})', track_chunk):
+                if track_id in seen or latest.get(track_id) != (run_id, 'completed'):
+                    raise AnalysisError('Unexpected analysis database rows')
+                seen.add(track_id)
 
     def _compact_graph_tracks(self, db):
         version = _database_schema_version(db)
@@ -587,13 +680,13 @@ class ReadOnlyExplorerSQLiteRepository:
         rows = db.execute(f"""
             WITH first_location AS (
                 SELECT track_id, min(path) AS path, count(*) AS available_locations
-                FROM active_locations GROUP BY track_id
+                FROM locations WHERE available=1 GROUP BY track_id
             ), latest_run AS (
                 SELECT track_id, run_id, status, detail FROM (
                     SELECT rt.track_id, r.id AS run_id, r.status AS status, r.detail AS detail,
                            row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
                     FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
-                    JOIN active_tracks at ON at.id=rt.track_id
+                    JOIN track_audio at ON at.track_id=rt.track_id AND at.status='eligible'
                 ) WHERE rn=1
             )
             SELECT t.id, t.sha256, t.size,
@@ -603,14 +696,16 @@ class ReadOnlyExplorerSQLiteRepository:
                    COALESCE(tm.common_json, '[]'), COALESCE(tm.tags_json, '[]'), COALESCE(tm.warnings_json, '[]'),
                    a.duration_seconds, a.duration_source,
                    {evidence_columns}
-            FROM active_tracks t
+            FROM tracks t
+            LEFT JOIN track_audio a ON a.track_id=t.id
             LEFT JOIN first_location ON first_location.track_id=t.id
             LEFT JOIN latest_run ON latest_run.track_id=t.id
             {evidence_join}
             LEFT JOIN track_metadata tm ON tm.track_id=t.id
-            LEFT JOIN track_audio a ON a.track_id=t.id
+            WHERE {_ACTIVE_CANDIDATE_PREDICATE}
             ORDER BY t.id
         """).fetchall()
+        self._validate_latest_runs(db, version, ((row[0], row[5], row[6]) for row in rows))
         # Preserve the legacy raw-stage fallback; compact evidence never enters
         # this cache and is projected one validated row at a time below.
         stages_by_run = {}
@@ -636,7 +731,7 @@ class ReadOnlyExplorerSQLiteRepository:
                         SELECT rt.track_id, r.id AS run_id,
                                row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
                         FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
-                        JOIN active_tracks at ON at.id=rt.track_id
+                        JOIN track_audio at ON at.track_id=rt.track_id AND at.status='eligible'
                     ) WHERE rn=1
                 )
                 SELECT s.run_id, s.stage, {size_expression}
@@ -654,15 +749,19 @@ class ReadOnlyExplorerSQLiteRepository:
         overrides_by_track = {}
         for track_id, field, value in db.execute("""
             SELECT o.track_id,o.field,o.value FROM overrides o
-            JOIN active_tracks at ON at.id=o.track_id
+            JOIN track_audio at ON at.track_id=o.track_id AND at.status='eligible'
             ORDER BY o.track_id,o.field
         """):
+            if not isinstance(field, str) or not isinstance(value, str):
+                raise AnalysisError('Unexpected analysis database rows')
             overrides_by_track.setdefault(track_id, []).append((field, value))
         compact_evidence_rows = tuple(
             (row[0], row[5], row[13], row[14]) for row in rows
             if row[5] is not None and row[6] == 'completed' and row[13] is not None
         )
         for _track_id, _run_id, _fingerprint, evidence_json_size in compact_evidence_rows:
+            if not isinstance(_fingerprint, str) or not _SHA256_RE.fullmatch(_fingerprint):
+                raise AnalysisError('Unexpected analysis database rows')
             if evidence_json_size is None:
                 raise AnalysisError('Invalid stored graph feature evidence')
             if int(evidence_json_size) > _GRAPH_FEATURE_EVIDENCE_JSON_LIMIT:
@@ -678,6 +777,9 @@ class ReadOnlyExplorerSQLiteRepository:
             (track_id, sha256, size, first_path, available_locations, run_id, status, detail,
              common_json, tags_json, warnings_json, duration_seconds, duration_source,
              evidence_fingerprint, evidence_json_size) = row
+            if (not isinstance(first_path, str) or not isinstance(available_locations, int)
+                    or available_locations < 0 or (run_id is not None and not isinstance(detail, (str, type(None))))):
+                raise AnalysisError('Unexpected analysis database rows')
             try:
                 metadata = self._metadata_from_json(common_json, tags_json, warnings_json, (duration_seconds, duration_source))
             except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -697,7 +799,7 @@ class ReadOnlyExplorerSQLiteRepository:
             )
 
         if version >= 9:
-            for track_id, run_id, payload in self._iter_validated_graph_feature_rows(db):
+            for track_id, run_id, payload in self._iter_current_graph_feature_rows(db, compact_evidence_by_identity):
                 row = rows_by_identity.pop((track_id, run_id), None)
                 if row is not None:
                     # The application consumes and projects this temporary record
@@ -709,6 +811,27 @@ class ReadOnlyExplorerSQLiteRepository:
         for row in rows:
             if (row[0], row[5]) not in compact_evidence_by_identity:
                 yield record_from_row(row, tuple(stages_by_run.get(row[5], ())))
+
+    def _iter_current_graph_feature_rows(self, db, fingerprints_by_identity):
+        """Validate and yield only the selected current evidence rows."""
+        loaded_identities = set()
+        for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(
+                db, tuple(fingerprints_by_identity), current_only=True):
+            for track_id, run_id, evidence_json in payload_chunk:
+                identity = (track_id, run_id)
+                if identity in loaded_identities or identity not in fingerprints_by_identity:
+                    raise AnalysisError('Unexpected analysis database rows')
+                loaded_identities.add(identity)
+                try:
+                    payload = json.loads(evidence_json)
+                    validate_graph_feature_evidence_payload(track_id, run_id, fingerprints_by_identity[identity], payload)
+                except (TypeError, KeyError, ValueError, RecursionError) as error:
+                    raise AnalysisError('Unexpected analysis database rows') from error
+                yield track_id, run_id, payload
+                # Do not keep the previous raw/decoded row while advancing the cursor.
+                del payload, evidence_json
+        if loaded_identities != set(fingerprints_by_identity):
+            raise AnalysisError('Unexpected analysis database rows')
 
     def _load_graph_feature_evidence_payload(self, db, track_id, run_id, size):
         if size is None:
@@ -990,7 +1113,8 @@ class ReadOnlyExplorerSQLiteRepository:
                 db.close()
 
     @contextmanager
-    def _transaction(self, *, validate_evidence=True, full_validation=True):
+    def _transaction(self, *, validate_evidence=True, full_validation=False):
+        # Scoped by default (issue88); FULL is opt-in and unused by reads.
         with self._connection() as db:
             db.execute('BEGIN')
             if full_validation:

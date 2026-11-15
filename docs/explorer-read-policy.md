@@ -1,4 +1,4 @@
-# Explorer read policy — R1 partial rollout
+# Explorer read policy — scoped reads (issue88 R1 + R2)
 
 Ordinary reads in both the analyzer and standalone Explorer now use scoped
 validation: metadata, paginated lists/summaries, keyed detail and active-selection
@@ -30,17 +30,41 @@ cap. Responses are assembled
 completely before success; a malformed consumed row aborts the response, rather
 than being skipped or producing a successful partial page.
 
-## What remains FULL
+## Graph, candidate, projection and export reads (R2)
 
-**R1 does not complete issue88.** Graph/candidate/projection, genuine `track_ids`
-enumeration and standalone playlist-export paths retain their previous FULL
-validation temporarily for R2. Graph topology, readiness, current evidence,
-automatic loading and lifecycle are unchanged. Analyzer source projections and
-standalone export keep their existing capabilities. No browser behavior, page size
-(default/maximum summary100), epochs, per-client selection tokens, reset/undo or
-independent detail/focus/graph ownership changes are part of this rollout.
-Analyzer phrase search and standalone whitespace-token matching are intentionally
-not harmonized here.
+R2 extends the same scoped policy to the mood-axis graph, current full/positioned
+graph edges, candidate snapshots, `track_ids` enumeration, available audio paths,
+analyzer graph source projections and standalone playlist export. Active
+membership applies the canonical eligibility predicate (identity, audio status and
+reason) to the `tracks`/`track_audio`/`locations` base tables inside the query.
+It does not trust or certify the `active_tracks`/`active_locations` view text.
+
+What these reads consume, and therefore keep fail-closed:
+
+- the **single current graph build** (ambiguity probe, completed status, counts,
+  sparse_k/policy fields), and the status of the newest build when none is current;
+- its `graph_build_edges` rows (per-row rules, `edge_count` equality) and the
+  `graph_edges` mirror (exact equality); a populated `graph_edges` or
+  `graph_positioned_edges` mirror with **no** current build is rejected;
+- the current positioned snapshot (count) and `graph_positioned_edges` mirror; a
+  populated positioned mirror without a current positioned snapshot is rejected;
+- each selected track's newest run status (a supported value) and, from schema 9,
+  that its single current evidence row belongs to that newest, completed run
+  (an identity-only probe; no payload);
+- the **current** evidence of each selected active track (one row per identity,
+  fingerprint syntax, JSON decode, full semantic/canonical payload validation),
+  loaded in bounded chunks once per request;
+- overrides, locations and audio rows of selected tracks.
+
+They do **not** load or validate historical (non-current) evidence payloads,
+non-current graph builds/edges/positioned snapshots, or schema topology
+(`sqlite_master`, `PRAGMA table_info/index_list/foreign_key_*`). Damage there is
+reported by explicit D3 (below), not by a graph or export request. Graph topology,
+readiness states, automatic loading, lifecycle and the HTTP contract are unchanged.
+No browser behavior, page size (default/maximum summary100), epochs, per-client
+selection tokens, reset/undo or independent detail/focus/graph ownership changes
+are part of this rollout. Analyzer phrase search and standalone whitespace-token
+matching are intentionally not harmonized here.
 
 Keyed selection admission is one read snapshot, not an atomic promise against a
 writer committing later or against changes between HTTP requests. There is no new

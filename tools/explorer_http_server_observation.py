@@ -138,35 +138,14 @@ class ServerObservation:
             yield self
 
     def _install_evidence(self, patches, repository):
-        original_rows = repository._iter_validated_graph_feature_rows
+        # Issue88 R2: graph reads validate consumed current evidence in
+        # _iter_current_graph_feature_rows; the full-history iterator remains
+        # for the retained FULL validator. Observe both identically.
+        for name in ('_iter_current_graph_feature_rows', '_iter_validated_graph_feature_rows'):
+            patches.enter_context(_replace(repository, name, self._evidence_rows(getattr(repository, name))))
         original_chunks = repository._iter_graph_feature_evidence_payload_chunks
         original_json = reader.json
         observer = self
-
-        def evidence_rows(*args, **kwargs):
-            iterator = original_rows(*args, **kwargs)
-            first = True
-            try:
-                while True:
-                    self.local.evidence_active = True
-                    if first:
-                        first = False
-                        preflight = self.span('validation_evidence_preflight')
-                        preflight.__enter__()
-                        self.local.evidence_preflight = preflight
-                    try:
-                        row = next(iterator)
-                    except StopIteration:
-                        return
-                    except BaseException as error:
-                        self._finish_evidence_preflight(type(error), error, error.__traceback__)
-                        raise
-                    finally:
-                        self._finish_evidence_preflight()
-                        self.local.evidence_active = False
-                    yield row
-            finally:
-                iterator.close()
 
         def chunks(*args, **kwargs):
             iterator = original_chunks(*args, **kwargs)
@@ -200,10 +179,37 @@ class ServerObservation:
                   if getattr(self.local, 'evidence_active', False) else _no_span()):
                 return original_payload(*args, **kwargs)
 
-        patches.enter_context(_replace(repository, '_iter_validated_graph_feature_rows', evidence_rows))
         patches.enter_context(_replace(repository, '_iter_graph_feature_evidence_payload_chunks', chunks))
         patches.enter_context(_replace(reader, 'json', ReaderJSON()))
         patches.enter_context(_replace(reader, 'validate_graph_feature_evidence_payload', payload))
+
+    def _evidence_rows(self, original_rows):
+        @wraps(original_rows)
+        def evidence_rows(*args, **kwargs):
+            iterator = original_rows(*args, **kwargs)
+            first = True
+            try:
+                while True:
+                    self.local.evidence_active = True
+                    if first:
+                        first = False
+                        preflight = self.span('validation_evidence_preflight')
+                        preflight.__enter__()
+                        self.local.evidence_preflight = preflight
+                    try:
+                        row = next(iterator)
+                    except StopIteration:
+                        return
+                    except BaseException as error:
+                        self._finish_evidence_preflight(type(error), error, error.__traceback__)
+                        raise
+                    finally:
+                        self._finish_evidence_preflight()
+                        self.local.evidence_active = False
+                    yield row
+            finally:
+                iterator.close()
+        return evidence_rows
 
     def _finish_evidence_preflight(self, *error):
         preflight = getattr(self.local, 'evidence_preflight', None)

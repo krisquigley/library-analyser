@@ -48,16 +48,16 @@ class ServerObservationControls(unittest.TestCase):
         self.assertEqual(requests[0]['server_spans'], [{'span_id': 'a'}])
         self.assertEqual(requests[1]['server_spans'], [{'span_id': 'b'}])
 
-    def test_all_historical_evidence_subphases_are_observed_and_restored(self):
+    def test_all_consumed_evidence_subphases_are_observed_and_restored(self):
         from music_explorer.infrastructure import explorer_readonly as reader
         original_json = reader.json
         original_payload = reader.validate_graph_feature_evidence_payload
-        original_iterator = reader.ReadOnlyExplorerSQLiteRepository._iter_validated_graph_feature_rows
+        original_iterator = reader.ReadOnlyExplorerSQLiteRepository._iter_current_graph_feature_rows
         report, graph_outcomes = self._diagnostic_with_full_graph()
         self.assertEqual(graph_outcomes, ['ok'])
         self.assertIs(reader.json, original_json)
         self.assertIs(reader.validate_graph_feature_evidence_payload, original_payload)
-        self.assertIs(reader.ReadOnlyExplorerSQLiteRepository._iter_validated_graph_feature_rows, original_iterator)
+        self.assertIs(reader.ReadOnlyExplorerSQLiteRepository._iter_current_graph_feature_rows, original_iterator)
         spans = report['server_observation']['spans']
         phases = {span['phase'] for span in spans}
         self.assertTrue({'validation_evidence_preflight', 'validation_evidence_fetch',
@@ -65,12 +65,12 @@ class ServerObservationControls(unittest.TestCase):
         decoded = [span for span in spans if span['phase'] == 'validation_evidence_decode']
         validated = [span for span in spans if span['phase'] == 'validation_evidence_payload']
         self.assertEqual(len(decoded), len(validated))
-        # One retained FULL graph transaction validates every physical evidence
-        # row: 11 eligible tracks x 2 runs (current plus historical), not four
-        # ordinary-read global audits. Use the fixture's actual row inventory.
+        # Issue88 R2: one graph transaction validates the consumed CURRENT
+        # evidence row of each of the 11 eligible tracks; historical rows are
+        # not loaded. Use the fixture's actual row inventory.
         counts = report['fixture_manifest']['counts']
-        expected = counts['current_graph_feature_evidence'] + counts['historical_graph_feature_evidence']
-        self.assertEqual(expected, 22)
+        expected = counts['current_graph_feature_evidence']
+        self.assertEqual((expected, counts['historical_graph_feature_evidence']), (11, 11))
         self.assertEqual(len(decoded), expected)
         self.assertFalse(any(span['status'] == 'failed' for span in spans))
         self.assertTrue(report['readonly']['unchanged'])
@@ -79,7 +79,7 @@ class ServerObservationControls(unittest.TestCase):
     def test_evidence_observers_restore_after_payload_validation_failure(self):
         from music_explorer.infrastructure import explorer_readonly as reader
         original_json = reader.json
-        original_iterator = reader.ReadOnlyExplorerSQLiteRepository._iter_validated_graph_feature_rows
+        original_iterator = reader.ReadOnlyExplorerSQLiteRepository._iter_current_graph_feature_rows
         from contextlib import contextmanager, closing
         import sqlite3
         from tools.explorer_synthetic_fixture import public_synthetic_fixture
@@ -90,13 +90,13 @@ class ServerObservationControls(unittest.TestCase):
                 with closing(sqlite3.connect(fixture['db_path'])) as db, db:
                     db.execute('UPDATE graph_feature_evidence SET fingerprint=? '
                                'WHERE rowid=(SELECT max(rowid) FROM graph_feature_evidence '
-                               'WHERE is_current=0)', ('0' * 64,))
+                               'WHERE is_current=1)', ('0' * 64,))
                 yield fixture
         report, graph_outcomes = self._diagnostic_with_full_graph(fixture_factory=corrupt_fixture)
         self.assertEqual(graph_outcomes, ['http_error'])
         self.assertIs(reader.validate_graph_feature_evidence_payload, original_validator)
         self.assertIs(reader.json, original_json)
-        self.assertIs(reader.ReadOnlyExplorerSQLiteRepository._iter_validated_graph_feature_rows, original_iterator)
+        self.assertIs(reader.ReadOnlyExplorerSQLiteRepository._iter_current_graph_feature_rows, original_iterator)
         self.assertEqual(report['profiles']['warm']['succeeded'], 1)
         self.assertTrue(any(span['phase'] == 'validation_evidence_payload'
                             and span['status'] == 'failed'

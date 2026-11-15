@@ -7,6 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from music_analyzer.domain.library_duration_policy import (
+    ACTIVE_LIBRARY_MAX_DURATION_SECONDS, DurationVerification, active_library_duration_policy,
+)
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 
@@ -94,7 +97,11 @@ CREATE INDEX idx_graph_build_edges_target_track_id ON graph_build_edges(build_id
         db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', (f'run-{index}', str(playable_paths[track_id]), 'completed', ''))
         db.execute('INSERT INTO run_tracks VALUES(?,?)', (f'run-{index}', track_id))
         db.execute('INSERT INTO stages VALUES(?,?,?)', (f'run-{index}', 'bpm', _stage('bpm', bpm)))
-        db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (track_id, 120.0, 'mutagen', status, '' if status == 'eligible' else 'excluded by fixture'))
+        # Writer-valid audio rows: an excluded track has an over-limit duration
+        # and its canonical reason (the reader validates consumed audio rows).
+        duration = 120.0 if status == 'eligible' else ACTIVE_LIBRARY_MAX_DURATION_SECONDS + 1
+        db.execute('INSERT INTO track_audio VALUES(?,?,?,?,?)', (track_id, duration, 'mutagen', status,
+                   active_library_duration_policy(DurationVerification(duration, 'mutagen')).warning or ''))
     db.execute('''INSERT INTO graph_builds(
         id,status,detail,edge_count,sparse_k,source_fingerprint,
         distance_policy_version,neighbour_policy_version,is_current,created_at,completed_at)
@@ -212,7 +219,7 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
             track_ids = tuple(f'sha256:{index}' + str(index) * 63 for index in range(1, len(track_paths) + 1))
             _create_playlist_fixture_db(db_path, dict(zip(track_ids[:4], track_paths[:4], strict=True)))
             with sqlite3.connect(db_path) as db:
-                db.execute('UPDATE track_audio SET status=\'eligible\', reason=\'\'')
+                db.execute('UPDATE track_audio SET duration_seconds=120.0, status=\'eligible\', reason=\'\'')
                 db.execute('UPDATE locations SET available=1')
                 for index, (track_id, path) in enumerate(zip(track_ids[4:], track_paths[4:], strict=True), start=5):
                     db.execute('INSERT INTO tracks VALUES(?,?,?)', (track_id, track_id.split(':')[1], 10))

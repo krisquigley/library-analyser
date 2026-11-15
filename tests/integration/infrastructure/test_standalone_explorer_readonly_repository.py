@@ -52,7 +52,9 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
-    def test_rejects_orphan_track_audio_row_inserted_with_foreign_keys_disabled_before_showing_results(self):
+    def test_orphan_track_audio_row_is_not_consumed_by_selected_reads(self):
+        # Issue88 R2: an orphan audio row is unrelated to every selected track;
+        # explicit D3 integrity reports it.
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             db = create_db(path)
@@ -66,8 +68,7 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             )
             db.commit(); db.close()
 
-            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
-                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), (good_tid,))
 
     def test_accepts_normalized_trusted_nonfinite_duration_as_unknown(self):
         with tempfile.TemporaryDirectory() as td:
@@ -107,15 +108,21 @@ class StandaloneReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
                     ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
-    def test_rejects_v6_schema_with_loose_active_view_definition(self):
+    def test_loose_active_view_definition_does_not_change_selected_membership(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             db = create_db(path)
             db.execute('DROP VIEW active_tracks')
             db.execute('CREATE VIEW active_tracks AS SELECT id,sha256,size FROM tracks')
+            excluded = 'sha256:' + '6' * 64
+            db.execute('PRAGMA foreign_keys=OFF')
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (excluded, '6' * 64, 10))
+            db.execute('INSERT OR REPLACE INTO track_audio VALUES(?,?,?,?,?)', (excluded, None, 'mutagen', 'unknown',
+                       'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata'))
             db.commit(); db.close()
-            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
-                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+            # Issue88 R2: membership uses the canonical predicate on base tables,
+            # so the loose view neither widens nor blocks it (D3 reports the view).
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), ())
 
     def test_rejects_malformed_stage_summary_with_empty_labels_and_zero_coverage(self):
         with tempfile.TemporaryDirectory() as td:

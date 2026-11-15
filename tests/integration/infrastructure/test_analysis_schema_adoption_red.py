@@ -3,7 +3,7 @@
 Adoption fixtures use the public writer; compatibility fixtures use literal
 historical DDL. Two synthetic tracks and sequential connections.
 The externally changed file differs solely in active_tracks' eligibility predicate.
-These tests deliberately retain the readers' existing FULL validation contract.
+Readers use scoped (R2) validation; the writer and explicit D3 audit reject the view.
 """
 from contextlib import closing
 from pathlib import Path
@@ -18,6 +18,7 @@ from music_analyzer.infrastructure.persistence.analysis import (
     APPLICATION_ID,
     SQLiteAnalysisRepository,
 )
+from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner
 from music_analyzer.infrastructure.persistence.explorer_readonly import (
     ReadOnlyExplorerSQLiteRepository,
 )
@@ -121,16 +122,21 @@ class AnalysisSchemaAdoptionRedTests(unittest.TestCase):
 
         self.assertEqual(self._logical_snapshot(), before)
 
-    def test_reader_rejects_same_columns_with_wrong_active_tracks_predicate(self):
+    def test_reader_membership_comes_from_base_tables_not_a_changed_view(self):
+        # Issue88 R2: ordinary reads apply the canonical eligibility predicate
+        # to base tables, so an externally changed view neither alters nor
+        # blocks membership. The writer refuses adoption (below) and explicit
+        # D3 `music-analyzer integrity` reports the view.
         before = self._replace_active_tracks_predicate()
 
         for reader in READERS:
             with self.subTest(reader=reader.__module__):
                 try:
-                    with self.assertRaisesRegex(READERS[reader], '(?i)schema|view'):
-                        reader(str(self.path)).track_ids()
+                    self.assertEqual(reader(str(self.path)).track_ids(), self.track_ids)
                 finally:
                     self.assertEqual(self._logical_snapshot(), before)
+        scan = SQLiteIntegrityScanner().scan(str(self.path))
+        self.assertIn(('schema', 'schema_view_mismatch'), [(f.check_id, f.code) for f in scan.findings])
 
     def test_writer_constructor_rejects_wrong_view_before_changing_database(self):
         before = self._replace_active_tracks_predicate()

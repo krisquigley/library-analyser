@@ -1,4 +1,8 @@
-"""PR B work contract: each warm request fully validates every identity once.
+"""Warm graph work contract: each request validates every SELECTED identity once.
+
+Issue88 R2 narrowed the original PR B contract (every current AND historical
+identity per request): only current evidence consumed by the graph is loaded and
+fully validated; historical evidence is audited by explicit D3 integrity only.
 
 Public synthetic schema10 only. Constructor work is excluded; requests reuse a
 repository but never counters or validation results. Spies retain identities,
@@ -139,7 +143,7 @@ class WarmGraphReadWorkBudgetTests(unittest.TestCase):
             current = {(track, run) for track, run, flag in identities if flag}
             historical = {(track, run) for track, run, flag in identities if not flag}
             self.assertEqual((len(current), len(historical)), (2, 1))
-            expected = Counter({(track, run): 1 for track, run, _flag in identities})
+            expected = Counter({key: 1 for key in current})
             repo = module.ReadOnlyExplorerSQLiteRepository(str(path))
             before = path.read_bytes()
             # A fresh observation for each request on the SAME reader prevents
@@ -152,19 +156,19 @@ class WarmGraphReadWorkBudgetTests(unittest.TestCase):
                     self.assertEqual(graph.metadata['graph_status']['state'], 'ready')
                     self.assertEqual(path.read_bytes(), before)
                     self.assertEqual({key: raw_rows[key] for key in historical},
-                                     {key: 1 for key in historical})
+                                     {key: 0 for key in historical})
                     self.assertEqual({key: validations[key] for key in historical},
-                                     {key: 1 for key in historical})
+                                     {key: 0 for key in historical})
                     self.assertEqual(
                         (validations, raw_rows), (expected, expected),
-                        'Each current AND historical identity must be yielded and fully '
-                        'semantically/canonically validated once per warm request; '
-                        'the baseline repeats only selected current identities')
+                        'Each selected current identity must be yielded and fully '
+                        'semantically/canonically validated exactly once per warm request; '
+                        'historical identities are not loaded (issue88 R2)')
 
-    def test_analyzer_each_evidence_identity_is_loaded_and_fully_validated_once_per_warm_request(self):
+    def test_analyzer_each_current_evidence_identity_is_loaded_and_fully_validated_once_per_warm_request(self):
         self._assert_once_per_request(analyzer_reader, AnalyzerGraph)
 
-    def test_standalone_each_evidence_identity_is_loaded_and_fully_validated_once_per_warm_request(self):
+    def test_standalone_each_current_evidence_identity_is_loaded_and_fully_validated_once_per_warm_request(self):
         self._assert_once_per_request(standalone_reader, StandaloneGraph)
 
 
@@ -207,11 +211,19 @@ class WarmGraphReadSafetyControls(unittest.TestCase):
                         with patch.object(repo, '_iter_graph_feature_evidence_payload_chunks', target_last), \
                                 observe_real_evidence(repo, module) as (raw_rows, validations):
                             status, length, body = fetch_graph(port)
-                        self.assertEqual(status, 400, 'No HTTP200/partial success for last-row corruption')
                         self.assertEqual(int(length), len(body))
-                        self.assertIn('error', json.loads(body))
-                        self.assertEqual(set(raw_rows), {(track, run) for track, run, _flag in identities})
-                        self.assertEqual(validations, Counter({key: 1 for key in raw_rows}))
+                        current = {(track, run) for track, run, flag in identities if flag}
+                        if historical:
+                            # Issue88 R2: unrelated historical evidence is not consumed,
+                            # so it neither blocks nor is loaded by the graph request.
+                            self.assertEqual(status, 200)
+                            self.assertNotIn(target, raw_rows)
+                            self.assertNotIn(target, validations)
+                        else:
+                            self.assertEqual(status, 400, 'No HTTP200/partial success for last-row corruption')
+                            self.assertIn('error', json.loads(body))
+                            self.assertEqual(set(raw_rows), current)
+                            self.assertEqual(validations, Counter({key: 1 for key in raw_rows}))
                         self.assertEqual(path.read_bytes(), before)
 
     def test_missing_identity_and_duplicate_replacement_fail_closed(self):
