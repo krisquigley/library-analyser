@@ -111,7 +111,9 @@ class IntegrityD1SnapshotEncodingControls(unittest.TestCase):
         # D3 owns the only reader-side schema literals since issue88 removed
         # the Explorer readers' FULL validator (and its duplicate copy).
         from music_analyzer.infrastructure.persistence import integrity, integrity_schema
-        self.assertTrue(all(getattr(integrity_schema, name) for name in vars(integrity_schema)
-                            if name.startswith('_EXPECTED_')))
+        for name in ('_EXPECTED_SCHEMA', '_EXPECTED_VIEWS', '_EXPECTED_GRAPH_SCHEMA',
+                     '_EXPECTED_GRAPH_SCHEMA_LEGACY', '_EXPECTED_GRAPH_FEATURE_SCHEMA'):
+            with self.subTest(literal=name):
+                self.assertTrue(getattr(integrity_schema, name))
         self.assertEqual((integrity.MAX_ROWS, integrity.MAX_UTF8_BYTES, integrity.MAX_VALUE_BYTES, integrity.MAX_GROUPS),
                          (1_000_000, 1 << 30, 32 << 20, 100))

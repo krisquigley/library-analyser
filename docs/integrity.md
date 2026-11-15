@@ -79,7 +79,7 @@ final resource cleanup must also complete exactly.
 
 ## Graph ownership and counts
 
-On v7+, current_graph checks the current pointer, current descriptors, current edges and their mirror relation. historical_graph checks all full builds (including current backing history), full-history edges and, on v8+, all positioned snapshots and edges. Established lifecycle/count/pointer/mirror/edge rules are diagnosed without changing FULL-reader tolerance, topology, eligibility, schema or package policy.
+On v7+, current_graph checks the current pointer, current descriptors, current edges and their mirror relation. historical_graph checks all full builds (including current backing history), full-history edges and, on v8+, all positioned snapshots and edges. Established lifecycle/count/pointer/mirror/edge rules are diagnosed without changing the established legacy tolerance, topology, eligibility, schema or package policy.
 
 Both owners accept corruption codes `graph_lifecycle_invalid`, `graph_counts_invalid`, `graph_pointer_invalid`, `graph_mirror_invalid`, `graph_edge_invalid`. Occurrences are per invalid build for lifecycle; per invalid full-build/positioned descriptor for counts; per unequal full/positioned relation for mirror; and one OR-ed occurrence per bad edge row, even when several edge predicates fail.
 
@@ -95,7 +95,7 @@ The fixed ordered corruption codes accepted for either owner are:
 
 | Code | Established predicate |
 |---|---|
-|evidence_envelope_invalid|Canonical FULL track identity, nonempty run identity, numeric flag membership0/1; one OR-ed occurrence per row|
+|evidence_envelope_invalid|Canonical track identity, nonempty run identity, numeric flag membership0/1; one OR-ed occurrence per row|
 |evidence_link_invalid|Completed referenced run, exact run_tracks pair, and current equals newest linked run by runs.rowid descending, even if newest run failed; duplicate-current exception is one occurrence per violating track|
 |evidence_json_invalid|JSON decoding/parsing failure, parse recursion, or unsupported delivered scalar type|
 |evidence_contract_invalid|Exact top-level object/keyset/version and identities equal row|

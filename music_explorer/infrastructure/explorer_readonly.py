@@ -692,13 +692,6 @@ class ReadOnlyExplorerSQLiteRepository:
         if loaded_identities != set(fingerprints_by_identity):
             raise AnalysisError('Unexpected analysis database rows')
 
-    def _load_graph_feature_evidence_payloads(self, db, identities):
-        payloads = {}
-        for payload_chunk in self._iter_graph_feature_evidence_payload_chunks(db, identities, current_only=True):
-            for track_id, run_id, evidence_json in payload_chunk:
-                payloads[(track_id, run_id)] = evidence_json
-        return payloads
-
     def _iter_graph_feature_evidence_payload_chunks(self, db, identities, *, current_only):
         current_clause = 'is_current=1 AND ' if current_only else ''
         for identity_chunk in _chunked(tuple(identities), 450):
