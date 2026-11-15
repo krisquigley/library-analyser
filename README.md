@@ -170,7 +170,9 @@ Two packaging tests need extra setup:
   `RUN_PACKAGING_TESTS=0` skips it.
 
 FFmpeg decode (`RUN_FFMPEG_TESTS=1`) and Playwright/Chromium browser tests
-(`RUN_BROWSER_SMOKE=1`) are opt-in. CI (`.github/workflows/ci.yml`) runs on
+(`RUN_BROWSER_SMOKE=1`) are opt-in. The formal browser gate runs every browser
+module against the installed wheel under a Podman supervisor; see
+[Explorer browser gate](docs/explorer-browser-gate.md). CI (`.github/workflows/ci.yml`) runs on
 ubuntu-24.04 with Python 3.14.8.
 
 **Proposing changes.** Open an issue describing the problem and the expected
