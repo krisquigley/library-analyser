@@ -109,9 +109,11 @@
       observedControls.add(controls);
       controls.addEventListener('start',()=>{
         // An adapter may discard the event argument before invoking cancellation.
-        // Correlate only an actual cancellation in this synchronous event tick;
-        // never label an idle start, completion, or arbitrary cancellation orbit.
-        if(pendingUnclassified&&pendingUnclassified.at_ms===now()&&cameraFocusFrame==null){
+        // Correlate only an actual cancellation in this synchronous dispatch
+        // (pendingUnclassified is cleared at the next microtask). Do not compare
+        // clocks: performance.now() can tick between listeners of one dispatch.
+        // Never label an idle start, completion, or arbitrary cancellation orbit.
+        if(pendingUnclassified&&cameraFocusFrame==null){
           pendingUnclassified.reason='user-orbit';
         }
       });

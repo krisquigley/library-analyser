@@ -40,6 +40,10 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     page.get_by_role('searchbox', name='Search tracks by title or artist').fill('Alpha')
                     page.get_by_role('button', name='Alpha').click()
                     page.get_by_role('heading', name='Current Track').wait_for()
+                    # The accepted selection owns one timed focus motion; a programmatic
+                    # pose set during it is overwritten by the next frame. Compare the
+                    # mood change against a settled camera, not that motion.
+                    page.wait_for_function('pendingCameraSelection===null && cameraFocusFrame===null')
                     before = page.evaluate("""() => {
                         forceGraph.cameraPosition({x:99,y:88,z:777},{x:20,y:30,z:40},0);
                         return {ids:graphModel.nodes.map(n=>n.id), positions:graphModel.nodes.map(n=>[n.x,n.y,n.z]),

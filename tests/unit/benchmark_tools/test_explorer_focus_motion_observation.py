@@ -79,6 +79,18 @@ class FocusMotionObservationTests(unittest.TestCase):
         self.assertEqual(observed['focus']['motion']['cancellations'], [
             {'reason': 'user-orbit', 'at_ms': 20, 'clock': 'browser-performance'}])
 
+    def test_discarding_adapter_orbit_is_labelled_when_clock_ticks_within_one_dispatch(self):
+        # The packaged UI cancels from a 'start' listener that drops the event.
+        # performance.now() can cross a quantization tick between that listener
+        # and the probe's own listener in the same synchronous dispatch.
+        observed = motion_case("tick=10;c.animateCameraFocus();tick=20;"
+                               'const adapter=listeners.start[0];'
+                               'listeners.start[0]=event=>{adapter(event);tick+=0.2;};'
+                               "for(const cb of listeners.start)cb({type:'start'});",
+                               preexisting_discarding_adapter=True)
+        self.assertEqual(observed['focus']['motion']['cancellations'], [
+            {'reason': 'user-orbit', 'at_ms': 20, 'clock': 'browser-performance'}])
+
     def test_idle_selection_does_not_invent_cancellation(self):
         observed = motion_case('tick=10;c.setCurrent();')
         self.assertIn('focus', observed)
