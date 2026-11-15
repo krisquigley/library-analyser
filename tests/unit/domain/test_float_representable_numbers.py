@@ -12,8 +12,8 @@ from music_analyzer.application.dto.analysis import StageResult
 from music_analyzer.domain.analysis import finite
 from music_explorer.domain.analysis import finite as standalone_finite
 
-TOO_LARGE = (10 ** 4000, -(10 ** 4000), 2 ** 1024)
-REPRESENTABLE = (0, 1, -7, 10 ** 300, int(sys.float_info.max), 1.5, sys.float_info.max)
+TOO_LARGE = (10 ** 4000, -(10 ** 4000), 2 ** 1024, 2 ** 1024 - 2 ** 970)  # last: first int that rounds to overflow
+REPRESENTABLE = (0, 1, -7, 10 ** 300, int(sys.float_info.max), 2 ** 1024 - 2 ** 970 - 1, 1.5, sys.float_info.max)
 
 
 class FloatRepresentableFinitePolicyTests(unittest.TestCase):
