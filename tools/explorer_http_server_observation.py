@@ -72,43 +72,14 @@ class ServerObservation:
     def installed(self):
         repository = reader.ReadOnlyExplorerSQLiteRepository
         with ExitStack() as patches:
+            # Issue88: reads validate consumed rows inline; there is no FULL
+            # schema/history 'validation' pass left to observe. Graph evidence
+            # validation is observed below as validation_evidence_* spans.
             for name, phase in [('track_ids', 'membership'), ('contains_active_track', 'membership'),
                                 ('read_track', 'selected_read'), ('find_track', 'selected_read'),
-                                ('_validate_rows', 'validation_rows'),
-                                ('_validate_graph_rows', 'validation_graph'),
-                                ('_validate_graph_feature_rows', 'validation_evidence'),
                                 ('_stage_from_payload', 'stage_decode')]:
                 original = getattr(repository, name)
-                wrapped = self._wrapper(original, phase)
-                if name == '_validate_rows':
-                    # Schema checks precede the first row-validation call in _validate.
-                    row_wrapper = wrapped
-                    def wrapped(*args, **kwargs):
-                        schema = getattr(self.local, 'schema', None)
-                        if schema is not None:
-                            self.local.schema = None
-                            schema.__exit__(None, None, None)
-                        return row_wrapper(*args, **kwargs)
-                patches.enter_context(_replace(repository, name, wrapped))
-            original_validate = repository._validate
-            @wraps(original_validate)
-            def validate(*args, **kwargs):
-                with self.span('validation'):
-                    schema = self.span('validation_schema')
-                    schema.__enter__()
-                    self.local.schema = schema
-                    try:
-                        return original_validate(*args, **kwargs)
-                    except BaseException as error:
-                        if self.local.schema is schema:
-                            self.local.schema = None
-                            schema.__exit__(type(error), error, error.__traceback__)
-                        raise
-                    finally:
-                        if self.local.schema is schema:
-                            self.local.schema = None
-                            schema.__exit__(None, None, None)
-            patches.enter_context(_replace(repository, '_validate', validate))
+                patches.enter_context(_replace(repository, name, self._wrapper(original, phase)))
             original_read = repository._read_track
             @wraps(original_read)
             def read_track(repo, db, *args, **kwargs):
@@ -138,11 +109,9 @@ class ServerObservation:
             yield self
 
     def _install_evidence(self, patches, repository):
-        # Issue88 R2: graph reads validate consumed current evidence in
-        # _iter_current_graph_feature_rows; the full-history iterator remains
-        # for the retained FULL validator. Observe both identically.
-        for name in ('_iter_current_graph_feature_rows', '_iter_validated_graph_feature_rows'):
-            patches.enter_context(_replace(repository, name, self._evidence_rows(getattr(repository, name))))
+        # Graph reads validate consumed current evidence in this iterator.
+        patches.enter_context(_replace(repository, '_iter_current_graph_feature_rows',
+                                       self._evidence_rows(repository._iter_current_graph_feature_rows)))
         original_chunks = repository._iter_graph_feature_evidence_payload_chunks
         original_json = reader.json
         observer = self

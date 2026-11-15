@@ -10,14 +10,14 @@ A database path must be supplied explicitly. Repeated root/subcommand `--databas
 
 ## What D3 covers — and does not certify
 
-D3 recognizes the existing application ID and true schema versions **6–10**, checks the exact existing FULL-reader schema contract (including its existing legacy tolerances), and examines every core track identity/digest/size and audio-policy row, including missing/orphan audio relationships. D3 retains this full audit contract.
-Ordinary Explorer reads now use the intentional [R1 scoped read policy](explorer-read-policy.md);
-graph/candidate/projection/export paths temporarily retain FULL validation for R2.
+D3 recognizes the existing application ID and true schema versions **6–10**, checks the exact schema contract formerly enforced by the Explorer FULL reader (including its legacy tolerances; D3 now holds the only copy), and examines every core track identity/digest/size and audio-policy row, including missing/orphan audio relationships. D3 retains this full audit contract.
+All Explorer reads, including graph/candidate/projection/export (R1 + R2), use the
+intentional [scoped read policy](explorer-read-policy.md); readers no longer contain a FULL validator.
 D3 is explicit and is not run as a hidden prerequisite for ordinary reads.
 
 Every report exposes the finite twelve-check checklist: compatibility, schema, core_rows, metadata, retained_stages, current_graph, historical_graph, current_evidence, historical_evidence, sqlite_physical, sqlite_foreign_keys, resource_access. D3 includes metadata and retained stage payload checks, SQLite physical and foreign-key checks, both graph checks and both compact evidence checks. Graph checks are genuinely not applicable in v6, and evidence checks in v6–8, only after trustworthy application/version recognition. Missing applicable coverage is never labeled not applicable. Schema drift can block dependent core checks.
 
-A supported database returns `status=clean`, `complete=true`, `stop_reason=completed`, **exit0** only when all twelve applicable checks have completed with exact counts, genuine legacy N/A is justified, and final connection cleanup and the deadline check succeed. Fully completed diagnostics with corruption findings return `status=corrupt`, `complete=true`, **exit1**. Missing/blocked coverage, read errors, resource stops, cleanup failure and deadline expiry return `status=incomplete`, `complete=false`, **exit4**; late cancellation takes priority with **exit130**. `implemented_scope_complete` records completion of the implemented diagnostic scope, not the absence of corruption. Complete does not mean writer parity, authenticity, a trust token, or automatic Explorer/P8 eligibility. #85's six-second case remains unresolved; no latency guarantee is made. #96 is separate. Explorer R1 is a partial scoped-read rollout, not completion of P8/issue88 or exhaustive writer certification.
+A supported database returns `status=clean`, `complete=true`, `stop_reason=completed`, **exit0** only when all twelve applicable checks have completed with exact counts, genuine legacy N/A is justified, and final connection cleanup and the deadline check succeed. Fully completed diagnostics with corruption findings return `status=corrupt`, `complete=true`, **exit1**. Missing/blocked coverage, read errors, resource stops, cleanup failure and deadline expiry return `status=incomplete`, `complete=false`, **exit4**; late cancellation takes priority with **exit130**. `implemented_scope_complete` records completion of the implemented diagnostic scope, not the absence of corruption. Complete does not mean writer parity, authenticity, a trust token, or automatic Explorer/P8 eligibility. #85's six-second case remains unresolved; no latency guarantee is made. #96 is separate. Explorer scoped reads (R1 + R2) are not exhaustive writer certification.
 
 Wire shape is `report_version=1`, capability is `coverage_revision=D3`, and the finite promised checklist is `required_scope_revision=P7-1`. These fields do not change the package version or database schema version. Findings use fixed predicate codes and grouped occurrence counts, not distinct corrupt-track totals. Several findings can overlap on the same row; do not sum them as corrupt tracks. Completed counts are exact; interrupted counts/findings are lower bounds; blocked/unimplemented/N/A counts are unavailable, not fabricated zeroes.
 
@@ -79,7 +79,7 @@ final resource cleanup must also complete exactly.
 
 ## Graph ownership and counts
 
-On v7+, current_graph checks the current pointer, current descriptors, current edges and their mirror relation. historical_graph checks all full builds (including current backing history), full-history edges and, on v8+, all positioned snapshots and edges. Established lifecycle/count/pointer/mirror/edge rules are diagnosed without changing FULL-reader tolerance, topology, eligibility, schema or package policy.
+On v7+, current_graph checks the current pointer, current descriptors, current edges and their mirror relation. historical_graph checks all full builds (including current backing history), full-history edges and, on v8+, all positioned snapshots and edges. Established lifecycle/count/pointer/mirror/edge rules are diagnosed without changing the established legacy tolerance, topology, eligibility, schema or package policy.
 
 Both owners accept corruption codes `graph_lifecycle_invalid`, `graph_counts_invalid`, `graph_pointer_invalid`, `graph_mirror_invalid`, `graph_edge_invalid`. Occurrences are per invalid build for lifecycle; per invalid full-build/positioned descriptor for counts; per unequal full/positioned relation for mirror; and one OR-ed occurrence per bad edge row, even when several edge predicates fail.
 
@@ -95,7 +95,7 @@ The fixed ordered corruption codes accepted for either owner are:
 
 | Code | Established predicate |
 |---|---|
-|evidence_envelope_invalid|Canonical FULL track identity, nonempty run identity, numeric flag membership0/1; one OR-ed occurrence per row|
+|evidence_envelope_invalid|Canonical track identity, nonempty run identity, numeric flag membership0/1; one OR-ed occurrence per row|
 |evidence_link_invalid|Completed referenced run, exact run_tracks pair, and current equals newest linked run by runs.rowid descending, even if newest run failed; duplicate-current exception is one occurrence per violating track|
 |evidence_json_invalid|JSON decoding/parsing failure, parse recursion, or unsupported delivered scalar type|
 |evidence_contract_invalid|Exact top-level object/keyset/version and identities equal row|

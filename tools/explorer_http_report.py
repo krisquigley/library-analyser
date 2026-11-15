@@ -102,6 +102,7 @@ def publish_http_report(*, attempts, intervals=(), requests=()):
 
 
 _SERVER_PHASES = frozenset((
+    # Old FULL-validation labels stay accepted for archived reports.
     'request', 'validation', 'validation_schema', 'validation_rows', 'validation_graph',
     'validation_evidence', 'validation_evidence_preflight',
     'validation_evidence_fetch', 'validation_evidence_decode',

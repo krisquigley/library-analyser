@@ -6,6 +6,9 @@ import sqlite3
 import tempfile
 import unittest
 
+from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner
+from tests.integration.infrastructure.test_explorer_scoped_read_policy import observe_sql
+
 from music_analyzer.application.dto.analysis import AnalysisError, AudioSource, StageResult
 from music_analyzer.application.dto.catalogue import Inventory, ScannedFile, TrackMetadata
 from music_analyzer.domain.analysis import ScoreSummary
@@ -375,11 +378,11 @@ class GraphFeatureEvidenceValidationPerformanceTests(unittest.TestCase):
             for index, suffix in enumerate('0123456789ab'):
                 identity = _register_track(repository, suffix, f'/music/{index}.flac')
                 _complete_graph_relevant_run(repository, identity, f'/music/{index}.flac')
-            readonly = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
-            statements = []
-            with closing(sqlite3.connect(path)) as db:
-                db.set_trace_callback(statements.append)
-                readonly._validate_graph_feature_rows(db)
+            # Issue88: the graph read consumes current evidence; latest-run
+            # checks stay set-based (no per-track latest-run SELECTs).
+            readonly = ReadOnlyExplorerSQLiteRepository(str(path))
+            with observe_sql(readonly) as statements:
+                readonly.mood_axis_graph_snapshot()
 
             per_track_latest_selects = tuple(
                 statement for statement in statements
@@ -394,9 +397,7 @@ class GraphFeatureEvidenceValidationPerformanceTests(unittest.TestCase):
             identity = _register_track(repository, 'a', '/music/a.flac')
             _complete_graph_relevant_run(repository, identity, '/music/a.flac')
             _complete_graph_relevant_run(repository, identity, '/music/a.flac')
-            readonly = ReadOnlyExplorerSQLiteRepository.__new__(ReadOnlyExplorerSQLiteRepository)
-            with closing(sqlite3.connect(path)) as db:
-                readonly._validate_graph_feature_rows(db)
+            ReadOnlyExplorerSQLiteRepository(str(path)).mood_axis_graph_snapshot()
 
             for status in ('failed', 'running'):
                 invalid_path = Path(td) / f'{status}.sqlite'
@@ -412,9 +413,10 @@ class GraphFeatureEvidenceValidationPerformanceTests(unittest.TestCase):
                 with closing(sqlite3.connect(invalid_path)) as db, db:
                     db.execute('INSERT INTO runs(id,location,status,detail) VALUES(?,?,?,?)', (f'latest-{status}', '/music/a.flac', status, ''))
                     db.execute('INSERT INTO run_tracks VALUES(?,?)', (f'latest-{status}', identity.track_id))
-                with closing(sqlite3.connect(invalid_path)) as db:
-                    with self.assertRaises(AnalysisError):
-                        readonly._validate_graph_feature_rows(db)
+                # Current evidence on an older run than the newest (failed or
+                # running) run is consumed by the graph and fails closed.
+                with self.assertRaises(AnalysisError):
+                    ReadOnlyExplorerSQLiteRepository(str(invalid_path)).mood_axis_graph_snapshot()
 
             broken_link_path = Path(td) / 'broken-link.sqlite'
             source = sqlite3.connect(path)
@@ -429,6 +431,8 @@ class GraphFeatureEvidenceValidationPerformanceTests(unittest.TestCase):
             with closing(sqlite3.connect(broken_link_path)) as db, db:
                 other = 'sha256:' + 'b' * 64
                 db.execute('INSERT INTO tracks VALUES(?,?,?)', (other, 'b' * 64, 10))
+                # Writer-valid audio row: the only damage is the evidence link.
+                db.execute('INSERT OR REPLACE INTO track_audio VALUES(?,?,?,?,?)', (other, 180.0, 'mutagen', 'eligible', ''))
                 run_id, fingerprint, payload = db.execute(
                     'SELECT run_id,fingerprint,evidence_json FROM graph_feature_evidence WHERE is_current=1 LIMIT 1'
                 ).fetchone()
@@ -436,6 +440,8 @@ class GraphFeatureEvidenceValidationPerformanceTests(unittest.TestCase):
                     'INSERT INTO graph_feature_evidence(track_id,run_id,fingerprint,evidence_json,is_current) VALUES(?,?,?,?,0)',
                     (other, run_id, fingerprint, payload),
                 )
-            with closing(sqlite3.connect(broken_link_path)) as db:
-                with self.assertRaises(AnalysisError):
-                    readonly._validate_graph_feature_rows(db)
+            # Historical evidence with a broken run link is not consumed by
+            # reads (issue88); explicit D3 integrity reports it.
+            ReadOnlyExplorerSQLiteRepository(str(broken_link_path)).mood_axis_graph_snapshot()
+            findings = SQLiteIntegrityScanner().scan(str(broken_link_path)).findings
+            self.assertTrue(any(f.check_id == 'historical_evidence' for f in findings), findings)

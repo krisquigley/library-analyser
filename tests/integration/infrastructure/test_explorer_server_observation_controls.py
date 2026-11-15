@@ -118,7 +118,7 @@ class ServerObservationControls(unittest.TestCase):
                 pass
         from music_explorer.infrastructure import explorer_readonly as reader
         original_json = reader.json
-        original_validate = reader.ReadOnlyExplorerSQLiteRepository._validate
+        original_stage_decode = reader.ReadOnlyExplorerSQLiteRepository._stage_from_payload
         observer = ServerObservation()
         server = observer.instrument_server(SimpleNamespace(RequestHandlerClass=Handler))
         observer.local.context = dict(request_id='owned', spans=[], stack=[])
@@ -126,7 +126,7 @@ class ServerObservationControls(unittest.TestCase):
             with self.assertRaises(OSError):
                 server.RequestHandlerClass()._json({'public': True})
         self.assertIs(reader.json, original_json)
-        self.assertIs(reader.ReadOnlyExplorerSQLiteRepository._validate, original_validate)
+        self.assertIs(reader.ReadOnlyExplorerSQLiteRepository._stage_from_payload, original_stage_decode)
         spans = observer.local.context['spans']
         write = next(span for span in spans if span['phase'] == 'socket_write')
         self.assertEqual(write['status'], 'failed')
