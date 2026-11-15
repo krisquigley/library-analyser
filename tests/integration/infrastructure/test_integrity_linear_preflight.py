@@ -135,6 +135,30 @@ class PreflightTableShapeFallbackTests(unittest.TestCase):
         self.assertEqual(result, (None, EvidenceCode.DELIVERY_INVALID))
         self.assertIsNone(delivery.first_error)
 
+    def test_blob_fragment_read_failure_is_observed_and_raised(self):
+        # GREEN control: the linear path keeps read-failure observation.
+        track, run = 'sha256:' + 'a' * 64, OLD_RUNS[0]
+
+        class FailingValue:
+            def seek(self, offset):
+                pass
+            def read(self, size):
+                raise sqlite3.OperationalError('disk I/O error')
+            def close(self):
+                pass
+
+        class FailingDelivery(Delivery):
+            def open_value(self, table, column, rowid):
+                return FailingValue()
+
+        with closing(sqlite3.connect(':memory:')) as db:
+            db.execute('CREATE TABLE graph_feature_evidence (track_id TEXT, run_id TEXT, evidence_json BLOB)')
+            db.execute('INSERT INTO graph_feature_evidence VALUES (?,?,?)', (track, run, '{}'.encode('utf-32')))
+            delivery = FailingDelivery(db, deadline=monotonic() + 60)
+            with self.assertRaises(sqlite3.OperationalError):
+                evidence_adapter._document_size(delivery, track, run, 12, 'blob')
+        self.assertIsNotNone(delivery.first_error)
+
 
 if __name__ == '__main__':
     unittest.main()
