@@ -7,6 +7,7 @@ from contextlib import closing
 from pathlib import Path
 import codecs
 import hashlib
+import io
 import json
 import os
 import sqlite3
@@ -640,9 +641,28 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
 
     def test_deadline_during_tiny_preflight_precedes_raw_admission(self):
         # Positive clock control, not empirical proof of the raw value limit.
-        # Real SQLite executes a tiny slice; time expires before its delivery.
+        # Real SQLite reads a tiny fragment; time expires before its delivery.
         now = [0.0]
         statements = []
+        fragment_reads = []
+
+        class ExpiringValue:
+            def __init__(self, value):
+                self.value = value
+            def seek(self, offset):
+                self.value.seek(offset)
+            def read(self, size):
+                fragment_reads.append(size)
+                data = self.value.read(size)
+                now[0] = 1.0
+                return data
+            def close(self):
+                self.value.close()
+
+        class ClockedDelivery(Delivery):
+            def open_value(self, table, column, rowid):
+                return ExpiringValue(super().open_value(table, column, rowid))
+
         track, run = 'sha256:' + 'a' * 64, OLD_RUNS[0]
         raw = '{}'.encode('utf-32')
         with closing(sqlite3.connect(':memory:')) as db:
@@ -650,12 +670,8 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
                        '(track_id TEXT, run_id TEXT, evidence_json BLOB)')
             db.execute('INSERT INTO graph_feature_evidence VALUES (?,?,?)',
                        (track, run, raw))
-            def trace(sql):
-                statements.append(sql)
-                if sql.startswith('SELECT substr(CAST(evidence_json AS BLOB)'):
-                    now[0] = 1.0
-            db.set_trace_callback(trace)
-            delivery = Delivery(db, deadline=1.0)
+            db.set_trace_callback(statements.append)
+            delivery = ClockedDelivery(db, deadline=1.0)
             with patch('music_analyzer.infrastructure.persistence.integrity.monotonic',
                        side_effect=lambda: now[0]):
                 with self.assertRaises(AdmissionStop) as caught:
@@ -667,7 +683,7 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
             self.assertEqual(caught.exception.reason, 'deadline')
             self.assertEqual(delivery.interrupted, 'deadline')
             self.assertEqual(delivery.utf8_bytes, 0)
-            self.assertTrue(any(sql.startswith('SELECT substr(') for sql in statements))
+            self.assertEqual(fragment_reads, [4096])
             self.assertFalse(any(sql.startswith('SELECT track_id,run_id,evidence_json')
                                  for sql in statements))
 
@@ -690,16 +706,23 @@ class IntegrityD2EvidenceAdmission(AdmissionCase):
                 self.slices = self.full_requests = 0
             def execute(self, sql, params=()):
                 self.guard()
-                if sql.startswith('SELECT substr(CAST(evidence_json AS BLOB),?,4096)'):
-                    self.slices += 1
-                    offset, track, run = params
-                    if (track, run) != (self.track, self.run):
+                if sql.startswith('SELECT rowid FROM graph_feature_evidence WHERE track_id=? AND run_id=?'):
+                    if tuple(params) != (self.track, self.run):
                         raise AssertionError('Wrong preflight identity')
-                    return Cursor([(self.raw[offset-1:offset-1+4096],)])
+                    return Cursor([(1,)])
                 if sql.startswith('SELECT track_id,run_id,evidence_json'):
                     self.full_requests += 1
                     return Cursor([(self.track, self.run, self.raw)])
                 raise AssertionError('Unexpected SQL in controlled delivery')
+            def open_value(self, table, column, rowid):
+                if (table, column, rowid) != ('graph_feature_evidence', 'evidence_json', 1):
+                    raise AssertionError('Wrong preflight value')
+                return io.BytesIO(self.raw)
+            def fragment(self, value, offset, size):
+                if size != 4096:
+                    raise AssertionError('Preflight fragments are fixed 4096-byte storage slices')
+                self.slices += 1
+                return super().fragment(value, offset, size)
 
         track, run = 'sha256:' + 'a' * 64, OLD_RUNS[0]
         for size in (4096, 8 << 20, 9 << 20):
