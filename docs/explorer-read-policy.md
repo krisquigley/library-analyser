@@ -46,7 +46,11 @@ What these reads consume, and therefore keep fail-closed:
 - its `graph_build_edges` rows (per-row rules, `edge_count` equality) and the
   `graph_edges` mirror (exact equality); a populated `graph_edges` or
   `graph_positioned_edges` mirror with **no** current build is rejected;
-- the current positioned snapshot (count) and `graph_positioned_edges` mirror;
+- the current positioned snapshot (count) and `graph_positioned_edges` mirror; a
+  populated positioned mirror without a current positioned snapshot is rejected;
+- each selected track's newest run status (a supported value) and, from schema 9,
+  that its single current evidence row belongs to that newest, completed run
+  (an identity-only probe; no payload);
 - the **current** evidence of each selected active track (one row per identity,
   fingerprint syntax, JSON decode, full semantic/canonical payload validation),
   loaded in bounded chunks once per request;

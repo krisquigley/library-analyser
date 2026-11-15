@@ -88,6 +88,20 @@ CONSUMED = {
     'ambiguous_current_build': (
         ('DROP INDEX idx_graph_builds_one_current', ()),
         ('UPDATE graph_builds SET is_current=1 WHERE id=?', (OLD_BUILD,)),),
+    # The newest run decides whether current evidence is projected.
+    'latest_run_status_invalid': (
+        ('UPDATE runs SET status=? WHERE id=?', ('bogus', 'public-run-1')),),
+    'current_evidence_on_failed_latest_run': (
+        ('UPDATE runs SET status=? WHERE id=?', ('failed', 'public-run-1')),),
+    'stale_current_evidence_pointer': (
+        ('INSERT INTO runs(rowid,id,location,status,detail,created_at) '
+         "SELECT 1000,'public-newer-run',location,'completed','',created_at FROM runs WHERE id=?", ('public-run-1',)),
+        ("INSERT INTO run_tracks(run_id,track_id) SELECT 'public-newer-run',track_id FROM run_tracks WHERE run_id=?",
+         ('public-run-1',)),),
+    # A positioned mirror exists only alongside a current positioned snapshot.
+    'positioned_mirror_without_snapshot': (
+        ('DELETE FROM graph_build_positioned_edges WHERE build_id=?', (CURRENT_BUILD,)),
+        ('DELETE FROM graph_build_positioned_snapshots WHERE build_id=?', (CURRENT_BUILD,)),),
 }
 
 
@@ -116,7 +130,10 @@ CONSUMERS = {
     'current_positioned_snapshot_count': {'mood_axis_graph', 'current_positioned_graph_edges'},
     'current_full_mirror': {'mood_axis_graph', 'current_graph_edges', 'current_positioned_graph_edges'},
     'current_positioned_mirror': {'mood_axis_graph', 'current_positioned_graph_edges'},
-    'ambiguous_current_build': {'mood_axis_graph', 'current_graph_edges', 'current_positioned_graph_edges'},
+    'ambiguous_current_build': {'mood_axis_graph', 'current_graph_edges', 'current_positioned_graph_edges'},    'latest_run_status_invalid': {'mood_axis_graph', 'graph_source_tracks'},
+    'current_evidence_on_failed_latest_run': {'mood_axis_graph', 'graph_source_tracks'},
+    'stale_current_evidence_pointer': {'mood_axis_graph', 'graph_source_tracks'},
+    'positioned_mirror_without_snapshot': {'mood_axis_graph', 'current_positioned_graph_edges'},
 }
 
 

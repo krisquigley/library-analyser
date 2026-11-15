@@ -617,6 +617,8 @@ class ReadOnlyExplorerSQLiteRepository:
         if snapshot is not None and not _non_negative_int(snapshot[0]):
             raise AnalysisError('Unexpected analysis database rows')
         if snapshot is None:
+            if db.execute('SELECT 1 FROM graph_positioned_edges LIMIT 1').fetchone():
+                raise AnalysisError('Unexpected analysis database rows')
             return {'state': 'build_needed', 'source': 'graph_build_positioned_edges', 'reason': 'exact positioned warm graph snapshot is not available for current build', 'action': action, 'build_id': build_id}, ()
         rows = self._validated_edge_rows(db, 'graph_build_positioned_edges', build_id)
         if len(rows) != snapshot[0] or self._mirror_edge_rows(db, 'graph_positioned_edges') != rows:
@@ -641,6 +643,31 @@ class ReadOnlyExplorerSQLiteRepository:
             'schema_version': db.execute('PRAGMA user_version').fetchone()[0],
             'read_policy': 'bounded_read_transaction',
         }
+
+    def _validate_latest_runs(self, db, version, latest_runs):
+        """Validate the newest-run state that decides graph projection.
+
+        latest_runs yields (track_id, run_id, status) for selected tracks. A run
+        status must be supported, and (schema >= 9) a track's single current
+        evidence row must belong to its newest run, which must be completed.
+        Identity-only probes: no evidence payload is loaded here.
+        """
+        latest = {}
+        for track_id, run_id, status in latest_runs:
+            if run_id is not None and status not in ('running', 'completed', 'failed', 'interrupted'):
+                raise AnalysisError('Unexpected analysis database rows')
+            latest[track_id] = (run_id, status)
+        if version < 9:
+            return
+        seen = set()
+        for track_chunk in _chunked(tuple(latest), 500):
+            placeholders = ','.join('?' for _track in track_chunk)
+            for track_id, run_id in db.execute(
+                    f'SELECT track_id,run_id FROM graph_feature_evidence '
+                    f'WHERE is_current=1 AND track_id IN ({placeholders})', track_chunk):
+                if track_id in seen or latest.get(track_id) != (run_id, 'completed'):
+                    raise AnalysisError('Unexpected analysis database rows')
+                seen.add(track_id)
 
     def _compact_graph_tracks(self, db):
         version = _database_schema_version(db)
@@ -678,6 +705,7 @@ class ReadOnlyExplorerSQLiteRepository:
             WHERE {_ACTIVE_CANDIDATE_PREDICATE}
             ORDER BY t.id
         """).fetchall()
+        self._validate_latest_runs(db, version, ((row[0], row[5], row[6]) for row in rows))
         # Preserve the legacy raw-stage fallback; compact evidence never enters
         # this cache and is projected one validated row at a time below.
         stages_by_run = {}
@@ -1085,7 +1113,8 @@ class ReadOnlyExplorerSQLiteRepository:
                 db.close()
 
     @contextmanager
-    def _transaction(self, *, validate_evidence=True, full_validation=True):
+    def _transaction(self, *, validate_evidence=True, full_validation=False):
+        # Scoped by default (issue88); FULL is opt-in and unused by reads.
         with self._connection() as db:
             db.execute('BEGIN')
             if full_validation:
