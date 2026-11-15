@@ -27,6 +27,36 @@ class DeliveryMismatch(sqlite3.DatabaseError):
     """Observed unexpected delivery, distinct from a driver/read exception."""
 
 
+class _BlobFragments:
+    def __init__(self, delivery, value):
+        self.delivery, self.value = delivery, value
+
+    def read(self, offset, size):
+        return self.delivery.fragment(self.value, offset, size)
+
+    def close(self):
+        self.delivery.close_all(self.value)
+
+
+class _SqlFragments:
+    """Established SQL slicing; quadratic, kept for shapes BLOB I/O cannot open."""
+    def __init__(self, delivery, sql, params):
+        self.delivery, self.sql, self.params = delivery, sql, tuple(params)
+
+    def read(self, offset, size):
+        cursor = self.delivery.execute(self.sql, (offset + 1, *self.params))
+        try:
+            row = self.delivery.one(cursor)
+        finally:
+            self.delivery.close_all(cursor)
+        if row is None or len(row) != 1 or not isinstance(row[0], bytes):
+            return None
+        return row[0]
+
+    def close(self):
+        pass
+
+
 class Delivery:
     """Preflight scalar sizes before delivering any input-sized Python value."""
     def __init__(self, connection, deadline):
@@ -119,19 +149,55 @@ class Delivery:
             self.observe_error()
             raise
 
+    def optional_row(self, sql, params=()):
+        """Fixed capability lookup: an unsupported table shape is not a read failure.
+
+        Prepare-time OperationalError (for example ``rowid`` on a WITHOUT ROWID
+        table) returns None without recording a first error; genuine read
+        failures resurface through the fallback path that follows.
+        """
+        first_error = self.first_error
+        try:
+            cursor = self.execute(sql, params)
+        except sqlite3.OperationalError:
+            self.first_error = first_error
+            return None
+        try:
+            return self.one(cursor)
+        finally:
+            self.close_all(cursor)
+
     def open_value(self, table, column, rowid):
-        """Open one stored TEXT/BLOB value read-only in the pinned snapshot.
+        """Open one stored TEXT/BLOB value read-only in the pinned snapshot, or None.
 
         Incremental BLOB I/O reads only the requested storage bytes. SQL slicing
         (substr(CAST(value AS BLOB), ...)) materializes the whole stored value
         for every fragment, which made exact preflight quadratic in value size.
+        SQLite refuses some accepted shapes (generated columns, WITHOUT ROWID)
+        and missing/non-text values; those use SQL slicing, which keeps the
+        established delivery_invalid semantics.
         """
         self.guard()
+        if rowid is None:
+            return None
         try:
             return self.connection.blobopen(table, column, rowid, readonly=True)
-        except (sqlite3.Error, OSError, MemoryError):
+        except sqlite3.Error:
+            return None
+        except (OSError, MemoryError):
             self.observe_error()
             raise
+
+    def fragments(self, table, column, rowid, slice_sql, slice_params):
+        """Reader of fixed storage fragments: linear BLOB I/O, else SQL slicing.
+
+        ``slice_sql`` takes the 1-based offset first, then ``slice_params``.
+        Every fragment is one delivered row for the shared row budget.
+        """
+        value = self.open_value(table, column, rowid)
+        if value is not None:
+            return _BlobFragments(self, value)
+        return _SqlFragments(self, slice_sql, slice_params)
 
     def fragment(self, value, offset, size):
         """Deliver one fixed storage fragment; it charges the shared row budget."""

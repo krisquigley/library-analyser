@@ -31,21 +31,23 @@ def _decoded_size(delivery, table, column, identity, kind, storage, stage):
     """Exact decoded UTF8 sizing without whole delivery; preserve split units/NUL."""
     if kind == 'text' and delivery.encoding == 'UTF-8':
         return storage, None
-    value = delivery.open_value(table, column, identity)
+    reader = delivery.fragments(
+        table, column, identity if type(identity) is int else None,
+        f'SELECT substr(CAST({column} AS BLOB),?,4096) FROM {table} WHERE rowid=?', (identity,))
     try:
-        return _decoded_value_size(delivery, value, kind, storage, stage)
+        return _decoded_value_size(delivery, reader, kind, storage, stage)
     except (sqlite3.Error, OSError, UnicodeError, MemoryError):
         delivery.observe_error()
         raise
     finally:
-        delivery.close_all(value)
+        reader.close()
 
 
-def _decoded_value_size(delivery, value, kind, storage, stage):
+def _decoded_value_size(delivery, reader, kind, storage, stage):
     decoder = None
     total = 0
     for offset in range(0, storage, FRAGMENT_BYTES):
-        fragment = delivery.fragment(value, offset, FRAGMENT_BYTES)
+        fragment = reader.read(offset, FRAGMENT_BYTES)
         if not isinstance(fragment, bytes) or len(fragment) != min(FRAGMENT_BYTES, storage - offset):
             return None, 'delivery'
         if decoder is None:

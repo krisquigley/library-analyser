@@ -25,29 +25,27 @@ def _document_size(delivery, track, run, storage, kind):
     """Count decoded document UTF8 with bounded fragments, including actual NUL."""
     if kind == 'text' and delivery.encoding == 'UTF-8':
         return storage, None
-    cursor = delivery.execute(
+    row = delivery.optional_row(
         'SELECT rowid FROM graph_feature_evidence WHERE track_id=? AND run_id=?', (track, run))
+    rowid = row[0] if row is not None and len(row) == 1 and type(row[0]) is int else None
+    reader = delivery.fragments(
+        'graph_feature_evidence', 'evidence_json', rowid,
+        'SELECT substr(CAST(evidence_json AS BLOB),?,4096) '
+        'FROM graph_feature_evidence WHERE track_id=? AND run_id=?', (track, run))
     try:
-        row = delivery.one(cursor)
-    finally:
-        delivery.close_all(cursor)
-    if row is None or len(row) != 1 or type(row[0]) is not int:
-        return None, EvidenceCode.DELIVERY_INVALID
-    value = delivery.open_value('graph_feature_evidence', 'evidence_json', row[0])
-    try:
-        return _decoded_document_size(delivery, value, storage, kind)
+        return _decoded_document_size(delivery, reader, storage, kind)
     except (sqlite3.Error, OSError, UnicodeError):
         delivery.observe_error()
         raise
     finally:
-        delivery.close_all(value)
+        reader.close()
 
 
-def _decoded_document_size(delivery, value, storage, kind):
+def _decoded_document_size(delivery, reader, storage, kind):
     decoder = None
     total = 0
     for offset in range(0, storage, FRAGMENT_BYTES):
-        fragment = delivery.fragment(value, offset, FRAGMENT_BYTES)
+        fragment = reader.read(offset, FRAGMENT_BYTES)
         if not isinstance(fragment, bytes) or len(fragment) != min(FRAGMENT_BYTES, storage - offset):
             return None, EvidenceCode.DELIVERY_INVALID
         if decoder is None:
