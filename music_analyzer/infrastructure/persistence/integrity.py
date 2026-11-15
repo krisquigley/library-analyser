@@ -119,6 +119,35 @@ class Delivery:
             self.observe_error()
             raise
 
+    def open_value(self, table, column, rowid):
+        """Open one stored TEXT/BLOB value read-only in the pinned snapshot.
+
+        Incremental BLOB I/O reads only the requested storage bytes. SQL slicing
+        (substr(CAST(value AS BLOB), ...)) materializes the whole stored value
+        for every fragment, which made exact preflight quadratic in value size.
+        """
+        self.guard()
+        try:
+            return self.connection.blobopen(table, column, rowid, readonly=True)
+        except (sqlite3.Error, OSError, MemoryError):
+            self.observe_error()
+            raise
+
+    def fragment(self, value, offset, size):
+        """Deliver one fixed storage fragment; it charges the shared row budget."""
+        self.guard()
+        if self.count >= MAX_ROWS:
+            raise AdmissionStop('row_limit')
+        try:
+            value.seek(offset)
+            data = value.read(size)
+        except (sqlite3.Error, OSError, MemoryError):
+            self.observe_error()
+            raise
+        self.count += 1
+        self.guard()
+        return data
+
     def one(self, cursor, *, expected_eof=False, projection_eof=False):
         self.guard()
         # Cardinality-proved EOF and fixed bounded projection EOF probes never
