@@ -138,7 +138,8 @@ class WarmGraphStreamingRegressions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'public.sqlite'
             identities = extend_batch_fixture(path)
-            expected = Counter({(track, run): 1 for track, run, _ in identities})
+            # Issue88 R2: only current (selected) evidence is delivered/validated.
+            expected = Counter({(track, run): 1 for track, run, current in identities if current})
             before = path.read_bytes()
             for module, builder in MIRRORS:
                 with self.subTest(reader=module.__name__):
@@ -169,42 +170,43 @@ class WarmGraphStreamingRegressions(unittest.TestCase):
                     graph = builder(module.ReadOnlyExplorerSQLiteRepository(str(path))).execute('relaxing')
                     self.assertEqual(tuple(node.track_id for node in graph.positioned), tracks)
 
-    def test_last_historical_corruption_aborts_after_current_projection_and_closes_delivery(self):
+    def test_last_current_corruption_aborts_after_preceding_projection_and_closes_delivery(self):
+        # Issue88 R2: historical evidence is no longer consumed, so the
+        # streaming abort is pinned on the last CURRENT identity instead.
         for (module, builder), projection in zip(MIRRORS, (analyzer_projection, standalone_projection)):
             with self.subTest(reader=module.__name__), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / 'public.sqlite'
                 _tracks, identities = create_public_warm_fixture(path)
-                historical = next((track, run) for track, run, flag in identities if not flag)
+                target = max((track, run) for track, run, flag in identities if flag)
                 repo = module.ReadOnlyExplorerSQLiteRepository(str(path))
                 with closing(sqlite3.connect(path)) as db, db:
                     text = db.execute('SELECT evidence_json FROM graph_feature_evidence '
-                                      'WHERE track_id=? AND run_id=?', historical).fetchone()[0]
+                                      'WHERE track_id=? AND run_id=?', target).fetchone()[0]
                     payload = json.loads(text)
                     payload['features']['mood']['summary']['coverage'] = 1.25
-                    store_evidence(db, historical, payload)
+                    store_evidence(db, target, payload)
                 original_chunks = repo._iter_graph_feature_evidence_payload_chunks
                 original_add = projection._WarmMoodAxisProjection.add
                 projected, closed = set(), []
                 def add(accumulator, record):
                     projected.add(record.track_id)
                     return original_add(accumulator, record)
-                def historical_last(*args, **kwargs):
+                def target_last(*args, **kwargs):
                     try:
                         for chunk in original_chunks(*args, **kwargs):
-                            # Three public rows only; this ordering fixture is not a lifetime spy.
-                            yield iter(sorted(chunk, key=lambda row: row[:2] == historical))
+                            # Two public rows only; this ordering fixture is not a lifetime spy.
+                            yield iter(sorted(chunk, key=lambda row: row[:2] == target))
                     finally:
                         closed.append(True)
-                with patch.object(repo, '_iter_graph_feature_evidence_payload_chunks', historical_last), \
+                with patch.object(repo, '_iter_graph_feature_evidence_payload_chunks', target_last), \
                         patch.object(projection._WarmMoodAxisProjection, 'add', add), \
                         graph_http_endpoint(repo, builder) as port:
                     status, length, body = fetch_graph(port)
                 self.assertEqual(status, 400)
                 self.assertEqual(int(length), len(body))
                 self.assertIn('error', json.loads(body))
-                self.assertEqual(len(projected), 2, 'Last historical failure must follow both current projections')
+                self.assertEqual(len(projected), 1, 'Last current failure must follow the preceding projection')
                 self.assertEqual(closed, [True])
-
 
 if __name__ == '__main__':
     unittest.main()

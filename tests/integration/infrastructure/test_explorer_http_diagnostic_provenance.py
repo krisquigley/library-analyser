@@ -235,7 +235,7 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
                     # relabel whole-request elapsed time as SQL/validation time.
                     self.assertTrue(phase['source'].strip())
 
-    def test_corrupt_historical_evidence_remains_rejected_without_readonly_changes(self):
+    def test_corrupt_current_evidence_is_rejected_without_readonly_changes(self):
         tool = self.tool()
         observed = {}
 
@@ -244,11 +244,11 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
             with public_synthetic_fixture(**options) as fixture:
                 path = Path(fixture['db_path'])
                 with closing(sqlite3.connect(path)) as db, db:
-                    # Ordinary reads do not consume this historical row. D3
-                    # and the retained FULL graph path still reject it.
+                    # Ordinary reads do not consume evidence; the graph consumes
+                    # current evidence and rejects it (issue88 R2).
                     db.execute("UPDATE graph_feature_evidence SET fingerprint=? "
                                "WHERE rowid=(SELECT max(rowid) FROM graph_feature_evidence "
-                               "WHERE is_current=0)", ('0' * 64,))
+                               "WHERE is_current=1)", ('0' * 64,))
                 observed['before'] = fingerprint_sqlite_files(path)
                 yield fixture
                 observed['after'] = fingerprint_sqlite_files(path)
@@ -264,7 +264,7 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
             self.assertEqual(outcome, 'http_error')
             return dict(ordinary, outcome=outcome)
 
-        # Explicit D3 retains the same fingerprint predicate; see
+        # Historical rows are owned by explicit D3; see
         # IntegrityD2EvidencePayload.test_fingerprint_syntax_and_canonical_mismatch_or_once.
         with patch('tools.explorer_http_diagnostic._sample', side_effect=ordinary_then_graph):
             report = self.run_tool(tool, fixture_factory=corrupt_fixture)

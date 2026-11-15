@@ -53,10 +53,11 @@ class PositionedGraphValidatorParityTests(unittest.TestCase):
             with sqlite3.connect(path) as db:
                 db.executescript(tamper_sql)
 
+            # The positioned consumer validates the current build it serves.
             with self.assertRaisesRegex(AnalyzerAnalysisError, 'Unexpected analysis database rows'):
-                AnalyzerReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+                AnalyzerReadOnlyExplorerSQLiteRepository(str(path)).current_positioned_graph_edges()
             with self.assertRaisesRegex(StandaloneAnalysisError, 'Unexpected analysis database rows'):
-                StandaloneReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+                StandaloneReadOnlyExplorerSQLiteRepository(str(path)).current_positioned_graph_edges()
 
     def _create_positioned_graph_database(self, path):
         repository = SQLiteAnalysisRepository(str(path))

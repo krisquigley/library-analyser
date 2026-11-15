@@ -241,10 +241,13 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
 
         with self.assertRaises(AnalysisError):
             SQLiteAnalysisRepository(str(self.path))
+        # Issue88 R2: current evidence is validated by the readers that consume it.
         with self.assertRaises(AnalysisError):
-            ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+            ReadOnlyExplorerSQLiteRepository(str(self.path)).mood_axis_graph_snapshot()
+        with self.assertRaises(AnalysisError):
+            tuple(ReadOnlyExplorerSQLiteRepository(str(self.path)).graph_source_tracks())
         with self.assertRaises(StandaloneAnalysisError):
-            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).mood_axis_graph_snapshot()
 
     def test_writer_and_readonly_reject_v9_feature_evidence_with_malformed_nested_features(self):
         repository = SQLiteAnalysisRepository(str(self.path))
@@ -264,10 +267,13 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
 
         with self.assertRaises(AnalysisError):
             SQLiteAnalysisRepository(str(self.path))
+        # Issue88 R2: current evidence is validated by the readers that consume it.
         with self.assertRaises(AnalysisError):
-            ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+            ReadOnlyExplorerSQLiteRepository(str(self.path)).mood_axis_graph_snapshot()
+        with self.assertRaises(AnalysisError):
+            tuple(ReadOnlyExplorerSQLiteRepository(str(self.path)).graph_source_tracks())
         with self.assertRaises(StandaloneAnalysisError):
-            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).mood_axis_graph_snapshot()
 
     def test_writer_and_readonly_reject_v9_feature_evidence_with_invalid_nested_summary(self):
         repository = SQLiteAnalysisRepository(str(self.path))
@@ -286,10 +292,13 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
 
         with self.assertRaises(AnalysisError):
             SQLiteAnalysisRepository(str(self.path))
+        # Issue88 R2: current evidence is validated by the readers that consume it.
         with self.assertRaises(AnalysisError):
-            ReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+            ReadOnlyExplorerSQLiteRepository(str(self.path)).mood_axis_graph_snapshot()
+        with self.assertRaises(AnalysisError):
+            tuple(ReadOnlyExplorerSQLiteRepository(str(self.path)).graph_source_tracks())
         with self.assertRaises(StandaloneAnalysisError):
-            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).track_ids()
+            StandaloneReadOnlyExplorerSQLiteRepository(str(self.path)).mood_axis_graph_snapshot()
 
     def test_readonly_adapters_accept_valid_partial_missing_and_uncertain_feature_evidence(self):
         repository = SQLiteAnalysisRepository(str(self.path))

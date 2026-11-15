@@ -210,7 +210,7 @@ class GraphReadWorkCharacterizationTests(unittest.TestCase):
         self.assertEqual(len(graph.positioned), 2)
         return raw_rows, validations
 
-    def test_real_readers_revalidate_all_identities_on_each_request_at_n_plus_h(self):
+    def test_real_readers_revalidate_selected_current_identities_on_each_request_at_n(self):
         self._characterize(require_report=False)
 
     def test_observed_per_identity_work_report_preserves_streaming_counts(self):
@@ -225,8 +225,10 @@ class GraphReadWorkCharacterizationTests(unittest.TestCase):
             add_positioned_track(writer, 'b')
             with closing(sqlite3.connect(path)) as db, db:
                 identities = tuple(db.execute('SELECT track_id,run_id,is_current FROM graph_feature_evidence'))
-            expected = Counter({(track, run): 1 for track, run, _current in identities})
-            self.assertEqual(sum(expected.values()), 2 + 1)
+            # Issue88 R2: n selected current identities per request; the h
+            # historical identities are audited by explicit D3 integrity only.
+            expected = Counter({(track, run): 1 for track, run, current in identities if current})
+            self.assertEqual((len(identities), sum(expected.values())), (2 + 1, 2))
             for module, builder in ((analyzer_reader, AnalyzerGraph), (standalone_reader, StandaloneGraph)):
                 for request in range(2):
                     with self.subTest(reader=module.__name__, request=request):
@@ -238,8 +240,8 @@ class GraphReadWorkCharacterizationTests(unittest.TestCase):
                         report = _call('summarize_work', raw_rows=raw_rows, validations=validations)
                         self.assertEqual(report['raw_rows'], dict(expected))
                         self.assertEqual(report['validations'], dict(expected))
-                        self.assertEqual(report['raw_row_total'], 3)
-                        self.assertEqual(report['validation_total'], 3)
+                        self.assertEqual(report['raw_row_total'], 2)
+                        self.assertEqual(report['validation_total'], 2)
 
 
 if __name__ == '__main__':

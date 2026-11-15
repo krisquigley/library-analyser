@@ -173,7 +173,7 @@ class DetailSQLitePhaseObservationRedTests(unittest.TestCase):
             for row in rows:
                 self.assertNotIn(row[0], json.dumps(sql_report), 'cursor payload must not publish')
 
-        # Restore and fail-closed historical validation are independent controls.
+        # Restore and fail-closed consumed-evidence validation are independent controls.
         historical = {}
 
         @contextmanager
@@ -182,7 +182,7 @@ class DetailSQLitePhaseObservationRedTests(unittest.TestCase):
                 path = Path(fixture['db_path'])
                 with closing(sqlite3.connect(path)) as db, db:
                     db.execute('UPDATE graph_feature_evidence SET fingerprint=? WHERE rowid='
-                               '(SELECT max(rowid) FROM graph_feature_evidence WHERE is_current=0)',
+                               '(SELECT max(rowid) FROM graph_feature_evidence WHERE is_current=1)',
                                ('0' * 64,))
                 historical['before'] = fingerprint_sqlite_files(path)
                 yield fixture
@@ -198,8 +198,8 @@ class DetailSQLitePhaseObservationRedTests(unittest.TestCase):
             self.assertEqual(outcome, 'http_error')
             return dict(ordinary, outcome=outcome)
 
-        # D3 historical fingerprint rejection is retained by
-        # IntegrityD2EvidencePayload.test_fingerprint_syntax_and_canonical_mismatch_or_once.
+        # Issue88 R2: the graph consumes current evidence; historical fingerprint
+        # rejection is owned by explicit D3 integrity.
         with patch('tools.explorer_http_diagnostic._sample', side_effect=ordinary_then_graph):
             rejected = run_public_http_diagnostic(sample_count=1, timeout_seconds=5,
                                                   fixture_factory=corrupt_fixture)

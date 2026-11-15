@@ -204,18 +204,25 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
                 db.execute(f'PRAGMA application_id={APP_ID}')
                 db.execute('PRAGMA user_version=6')
                 db.execute('INSERT INTO tracks VALUES(?,?,?)', ('not-a-sha-id', 'not-sha', 'not-int'))
-            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
+            # Issue88 R2: untyped tables still fail closed on consumed reads.
+            with self.assertRaises(AnalysisError):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
-    def test_rejects_v6_schema_with_loose_active_view_definition(self):
+    def test_loose_active_view_definition_does_not_change_selected_membership(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             db = create_db(path)
             db.execute('DROP VIEW active_tracks')
             db.execute('CREATE VIEW active_tracks AS SELECT id,sha256,size FROM tracks')
+            excluded = 'sha256:' + '6' * 64
+            db.execute('PRAGMA foreign_keys=OFF')
+            db.execute('INSERT INTO tracks VALUES(?,?,?)', (excluded, '6' * 64, 10))
+            db.execute('INSERT OR REPLACE INTO track_audio VALUES(?,?,?,?,?)', (excluded, None, 'mutagen', 'unknown',
+                       'duration unverified; excluded from active library until mutagen/ffprobe verifies duration; rescan audio metadata'))
             db.commit(); db.close()
-            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database schema'):
-                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+            # Issue88 R2: membership uses the canonical predicate on base tables,
+            # so the loose view neither widens nor blocks it (D3 reports the view).
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), ())
 
     def test_rejects_v5_schema_with_invalid_track_identity_and_size_values(self):
         with tempfile.TemporaryDirectory() as td:
@@ -237,7 +244,9 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
                 ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
 
-    def test_rejects_orphan_track_audio_row_inserted_with_foreign_keys_disabled_before_showing_results(self):
+    def test_orphan_track_audio_row_is_not_consumed_by_selected_reads(self):
+        # Issue88 R2: an orphan audio row is unrelated to every selected track;
+        # explicit D3 integrity reports it.
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'analysis.sqlite'
             db = create_db(path)
@@ -249,8 +258,7 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
                 ('sha256:' + '9' * 64, 120.0, 'mutagen', 'eligible', ''),
             )
             db.commit(); db.close()
-            with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
-                ReadOnlyExplorerSQLiteRepository(str(path)).track_ids()
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).track_ids(), (good_tid,))
 
     def test_accepts_normalized_trusted_nonfinite_duration_as_unknown(self):
         with tempfile.TemporaryDirectory() as td:
@@ -382,7 +390,7 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
                 self.assertIn('policy', status['reason'])
                 self.assertEqual(edges, ())
 
-    def test_rejects_tampered_v7_graph_build_rows(self):
+    def test_tampered_non_current_v7_graph_build_rows_are_scoped(self):
         cases = (
             ('status', {'status': 'running'}, True),
             ('edge_count', {'edge_count': -1}, True),
@@ -422,8 +430,14 @@ class ReadOnlyExplorerSQLiteRepositoryTests(unittest.TestCase):
                 repo = ReadOnlyExplorerSQLiteRepository(str(path))
                 # Ordinary metadata does not consume unrelated graph descriptors.
                 self.assertEqual(repo.metadata()['schema_version'], 7)
-                # R1 retains FULL validation for graph endpoints pending R2.
-                with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                if name == 'status':
+                    # The newest non-current descriptor gates readiness, so its
+                    # status is consumed and must be a supported value.
+                    with self.assertRaisesRegex(AnalysisError, 'Unexpected analysis database rows'):
+                        repo.current_graph_edges()
+                else:
+                    # Issue88 R2: counts of a non-current build are not consumed
+                    # by graph reads; explicit D3 integrity audits them.
                     repo.current_graph_edges()
 
     def test_accepts_legacy_v1_schema_migrated_to_v6(self):

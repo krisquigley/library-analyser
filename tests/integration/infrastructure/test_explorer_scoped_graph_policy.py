@@ -102,13 +102,15 @@ def graph_reads(repo):
     }
     if hasattr(repo, 'playlist_export_tracks'):
         reads['playlist_export_tracks'] = repo.playlist_export_tracks
+    if hasattr(repo, 'graph_source_tracks'):
+        reads['graph_source_tracks'] = lambda: tuple(repo.graph_source_tracks())
     return reads
 
 
 # Which consumed damage each read must reject (others do not consume it).
 CONSUMERS = {
-    'current_evidence_json': {'mood_axis_graph'},
-    'current_evidence_fingerprint': {'mood_axis_graph'},
+    'current_evidence_json': {'mood_axis_graph', 'graph_source_tracks'},
+    'current_evidence_fingerprint': {'mood_axis_graph', 'graph_source_tracks'},
     'current_build_edge_count': {'mood_axis_graph', 'current_graph_edges', 'current_positioned_graph_edges'},
     'current_build_edge_row': {'mood_axis_graph', 'current_graph_edges', 'current_positioned_graph_edges'},
     'current_positioned_snapshot_count': {'mood_axis_graph', 'current_positioned_graph_edges'},

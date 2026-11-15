@@ -104,7 +104,7 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
         self.assertEqual(write['scope'], 'server_socket_write_not_client_receipt')
         self.assertNotIn('browser_paint_ms', detail)
 
-    def test_historical_failure_retains_partial_validation_and_restores_observer_on_exception(self):
+    def test_consumed_evidence_failure_retains_partial_validation_and_restores_observer_on_exception(self):
         observed = {}
         original = {name: getattr(ReadOnlyExplorerSQLiteRepository, name) for name in
                     ('_connection', '_transaction', '_validate', '_validate_rows',
@@ -117,7 +117,7 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
                 with closing(sqlite3.connect(path)) as db, db:
                     db.execute('UPDATE graph_feature_evidence SET fingerprint=? '
                                'WHERE rowid=(SELECT max(rowid) FROM graph_feature_evidence '
-                               'WHERE is_current=0)', ('0' * 64,))
+                               'WHERE is_current=1)', ('0' * 64,))
                 observed['before'] = fingerprint_sqlite_files(path)
                 yield fixture
                 observed['after'] = fingerprint_sqlite_files(path)
@@ -133,8 +133,8 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
             self.assertEqual(outcome, 'http_error')
             return dict(ordinary, outcome=outcome)
 
-        # Same historical fingerprint predicate remains owned by explicit D3:
-        # IntegrityD2EvidencePayload.test_fingerprint_syntax_and_canonical_mismatch_or_once.
+        # Issue88 R2: the graph consumes current evidence, so a corrupt current
+        # fingerprint fails the request; historical rows are owned by explicit D3.
         with patch('tools.explorer_http_diagnostic._sample', side_effect=ordinary_then_graph):
             report = self.run_tool(fixture_factory=corrupt_fixture)
         self.assertEqual(observed['before'], observed['after'])
@@ -157,8 +157,9 @@ class DetailRequestPhaseObservationTests(unittest.TestCase):
         graph_spans = [s for r in requests if r['route'] == '/api/mood-axis-graph' for s in r['spans']]
         self.assertFalse(any(s['phase'].startswith('validation_evidence') for s in ordinary_spans))
         failed = [s for s in graph_spans if s['phase'] == 'validation_evidence_payload' and s['status'] == 'failed']
-        self.assertTrue(failed, 'retained FULL graph must reject corrupt historical evidence')
-        self.assertTrue(any(s['phase'] == 'validation_rows' and s['status'] == 'ok' for s in spans),
+        self.assertTrue(failed, 'graph must reject corrupt consumed current evidence')
+        self.assertTrue(any(s['phase'].startswith('validation_evidence') and s['status'] == 'ok'
+                            for s in graph_spans),
                         'completed earlier subphases survive the failed validation')
         self.assertFalse(any(s['phase'] == 'selected_read' for s in graph_spans))
         self.assert_response_scopes(requests)

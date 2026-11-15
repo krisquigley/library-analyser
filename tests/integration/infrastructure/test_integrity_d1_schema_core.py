@@ -157,9 +157,8 @@ class IntegrityD1Schema(unittest.TestCase):
 
 
 class IntegrityD1SchemaFixtureControls(unittest.TestCase):
-    def test_legitimate_unique_drift_is_readable_and_full_rejects_exact_predicate(self):
+    def test_legitimate_unique_drift_is_readable_and_reported_by_explicit_diagnostic(self):
         from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
-        from music_analyzer.application.dto.analysis import AnalysisError
 
         class ObservedFullReader(ReadOnlyExplorerSQLiteRepository):
             unique_checks = []
@@ -204,11 +203,10 @@ class IntegrityD1SchemaFixtureControls(unittest.TestCase):
             # Ordinary compatibility recognition does not certify schema topology.
             self.assertEqual(reader.metadata()['schema_version'], 6)
             self.assertEqual(reader.unique_checks, [])
-            with self.assertRaises(AnalysisError) as failure:
-                reader.current_graph_edges()
-            self.assertEqual(str(failure.exception), 'Unexpected analysis database schema')
-            self.assertEqual(reader.unique_checks[-1], ('tracks', ()))
-            self.assertEqual([table for table, indexes in reader.unique_checks], ['runs', 'stages', 'tracks'])
+            # Issue88 R2: graph reads do not certify topology either; the
+            # explicit D3 diagnostic below owns this finding.
+            reader.current_graph_edges()
+            self.assertEqual(reader.unique_checks, [])
             findings = SQLiteIntegrityScanner().scan(str(path)).findings
             self.assertTrue(any(f.check_id == 'schema' and f.code == 'schema_unique_indexes_mismatch'
                                 for f in findings), findings)
