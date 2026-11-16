@@ -131,7 +131,7 @@ async function api(path, options){const r=await fetch(path, options); if(!r.ok) 
 function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
 function updateSelectedTrackVisuals(){
   if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===state.current_track_id?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
-  if(forceGraph){forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,visibleGraph); focusPendingCameraSelection();}
+  if(forceGraph){wakeGraphRendering(); forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,visibleGraph); focusPendingCameraSelection();}
   else if(visibleGraph.nodes.length) renderCanvasFallback(visibleGraph);
   renderMoodStrip(visibleGraph);
 }
@@ -454,7 +454,7 @@ function applyMoodGraphFilters(model, filters){const nodes=model.nodes.filter(n=
 function buildMoodStrip(data, selectedId){return data.nodes.filter(n=>n.moodScore!=null).map(n=>({id:n.id,label:n.label,score:n.moodScore.raw,position:n.moodScore.raw,selected:n.id===selectedId,description:`${n.label}: ${n.moodScore.label} ${displayNumber(n.moodScore.raw)} / 1 (raw sigmoid mean score)`})).sort((a,b)=>a.score-b.score || (a.id<b.id?-1:a.id>b.id?1:0));}
 function passesGraphFilters(n,filters){if(filters.bpmMin!=null && (n.bpm==null || n.bpm<filters.bpmMin)) return false; if(filters.bpmMax!=null && (n.bpm==null || n.bpm>filters.bpmMax)) return false; const genres=filters.genres||[]; if(genres.length){const scores=Object.fromEntries(n.genres); const threshold=n.genreThresholdApplies&&Number.isFinite(n.genreThreshold)?n.genreThreshold:0.1; if(!genres.some(g=>Number.isFinite(scores[g]) && scores[g]>threshold)) return false;} return true;}
 function graphDimensions(elem){const parent=elem&&elem.parentElement; const style=parent&&typeof getComputedStyle==='function'?getComputedStyle(parent):null; const trim=style?['paddingLeft','paddingRight','borderLeftWidth','borderRightWidth'].reduce((sum,name)=>sum+(parseFloat(style[name])||0),0):0; const width=Math.max(1,Math.floor(((parent&&parent.clientWidth)||elem.clientWidth||900)-trim)); const height=Math.max(1,Math.floor(elem.clientHeight||1040)); return {width,height};}
-function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); return size;}
+function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); wakeGraphRendering(); return size;}
 function observeGraphResize(elem){if(graphResizeObserver||!elem) return; const resize=()=>updateGraphSize(elem,forceGraph); if(typeof ResizeObserver!=='undefined'){graphResizeObserver=new ResizeObserver(resize); graphResizeObserver.observe(elem); if(elem.parentElement) graphResizeObserver.observe(elem.parentElement);} if(typeof window!=='undefined') window.addEventListener('resize',resize);}
 // Frame display coordinates only: musical-axis values and fixed node positions stay intact.
 function graphCameraFrame(nodes, size, fov){
@@ -615,8 +615,46 @@ function placeGraphAxisLabels(graph){
     label.style.display=Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.x>=0&&p.y>=0&&p.x<elem.clientWidth&&p.y<elem.clientHeight?'':'none';
   }
 }
-function animateGraphAxes(){
-  if(forceGraph){syncGraphAxes(forceGraph,pendingGraphAxisSpec,document.getElementById('graph3d'));placeGraphAxisLabels(forceGraph);syncSelectedNodeHalo(forceGraph,visibleGraph);}
+// Render on demand. The bundled loop redraws WebGL every frame even when the view
+// is still, which under software rendering starves the main thread (#86). Keep it
+// running only while the view can change; input, a moved pose, new data, a
+// selection or a resize wakes it, and it pauses once quiet for graphRenderIdleMs.
+const graphRenderIdleMs=500;
+let graphRenderLoop={paused:false,pose:null,quietSince:null};
+function graphViewPose(graph){
+  const camera=graph.camera?.(), controls=graph.controls?.();
+  const v=p=>p?[p.x,p.y,p.z,p.w]:null;
+  return JSON.stringify([v(camera?.position),v(camera?.quaternion),v(camera?.up),v(controls?.target)]);
+}
+// resumeAnimation draws synchronously. Outside a frame callback, defer it to the
+// next frame boundary so an input, fetch or selection handler is not delayed.
+function wakeGraphRendering(inFrame=false){
+  graphRenderLoop.quietSince=null;
+  if(!graphRenderLoop.paused||!forceGraph) return;
+  graphRenderLoop.paused=false;
+  const graph=forceGraph;
+  const resume=()=>{if(!graphRenderLoop.paused&&graph===forceGraph&&typeof graph.resumeAnimation==='function') graph.resumeAnimation();};
+  if(inFrame) resume(); else requestAnimationFrame(resume);
+}
+function settleGraphRendering(graph,now){
+  if(graphRenderLoop.quietSince===null){graphRenderLoop.quietSince=now; return;}
+  if(now-graphRenderLoop.quietSince<graphRenderIdleMs||typeof graph.pauseAnimation!=='function') return;
+  graph.pauseAnimation(); graphRenderLoop.paused=true;
+}
+function observeGraphInput(elem){
+  if(!elem||typeof elem.addEventListener!=='function') return;
+  // Controls and hover picking update only inside the vendor loop.
+  for(const type of ['pointerdown','pointermove','wheel']) elem.addEventListener(type,()=>wakeGraphRendering(),{capture:true,passive:true});
+}
+function animateGraphAxes(timestamp){
+  if(forceGraph){
+    const pose=graphViewPose(forceGraph);
+    if(pose!==graphRenderLoop.pose){graphRenderLoop.pose=pose; wakeGraphRendering(true);}
+    if(!graphRenderLoop.paused){
+      syncGraphAxes(forceGraph,pendingGraphAxisSpec,document.getElementById('graph3d'));placeGraphAxisLabels(forceGraph);syncSelectedNodeHalo(forceGraph,visibleGraph);
+      settleGraphRendering(forceGraph,Number.isFinite(timestamp)?timestamp:performance.now());
+    }
+  }
   requestAnimationFrame(animateGraphAxes);
 }
 // View ownership outlives a POST or a deferred layout, independently of the RAF timeline.
@@ -844,7 +882,7 @@ function renderMoodStrip(data){
   picker.oninput=show; show();
   canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
 }
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true);} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); observeGraphInput(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true); wakeGraphRendering();} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
