@@ -116,6 +116,22 @@ class WriterObserverTests(unittest.TestCase):
         self.assertEqual(sample['detail_bridge']['selections'], [])
         self.assertNotIn('private setup details', str(sample))
 
+    def test_graph_settled_selects_only_after_graph_ready_and_camera_idle(self):
+        # #86 measures detail readiness with graph startup outside the timing.
+        from tools.explorer_browser_diagnostic import SCENARIOS, WRITER_SCENARIOS
+        self.assertIn('graph-settled', WRITER_SCENARIOS)
+        self.assertNotIn('graph-settled', SCENARIOS)  # needs the real writer-backed server
+        page = Mock()
+        page.evaluate.return_value = self.raw()
+        observer.observe_writer_attempt(page, 'http://127.0.0.1:1', 'graph-settled', 'verified',
+                                        {'manifest': {}})
+        calls = [str(c) for c in page.mock_calls]
+        settled = next(i for i, c in enumerate(calls) if 'wait_for_function' in c
+                       and "graphLoadState.status==='ready'" in c and 'cameraFocusFrame===null' in c)
+        typed = next(i for i, c in enumerate(calls) if ".fill('Synthetic')" in c)
+        self.assertLess(settled, typed)
+        page.route.assert_not_called()
+
     def test_writer_fault_scenarios_install_single_explicit_route_fault(self):
         for scenario in ('rejected-post', 'detail-timeout'):
             page = Mock()

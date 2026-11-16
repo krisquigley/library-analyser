@@ -19,7 +19,7 @@ from tools.explorer_browser_routes import public_routes
 
 SCENARIOS = ('pending-then-ready', 'graph-failure-retry', 'search-failure', 'latest-selection', 'during-consumption')
 WRITER_SCENARIOS = ('pending-then-ready', 'graph-failure-retry', 'search-failure',
-                    'latest-selection', 'rejected-post', 'detail-timeout')
+                    'latest-selection', 'rejected-post', 'detail-timeout', 'graph-settled')
 PROBE = Path(__file__).with_name('explorer_browser_probe.js')
 
 
