@@ -161,7 +161,7 @@ def _select(page, index):
 def observe_writer_attempt(page, url, scenario, observer_mode, fixture, wait_timeout_ms=10000):
     """Drive trusted search-row input on real assets; retain failures and partials."""
     supported = ('pending-then-ready', 'latest-selection', 'graph-failure-retry',
-                 'search-failure', 'rejected-post', 'detail-timeout')
+                 'search-failure', 'rejected-post', 'detail-timeout', 'graph-settled')
     if (scenario not in supported or observer_mode != 'verified'
             or type(wait_timeout_ms) is not int or not 10000 <= wait_timeout_ms <= 120000):
         return {'profile': 'process-cold', 'clock': 'browser-performance',
@@ -195,6 +195,9 @@ def observe_writer_attempt(page, url, scenario, observer_mode, fixture, wait_tim
         page.wait_for_function("state.selection_epoch!=null && typeof renderDetail==='function'")
         page.evaluate("window.__dbBridge.initial_summary_requests=window.__dbBridge.requests.filter(r=>r.route==='/api/tracks/summary').length")
         page.evaluate(WRAP_DETAIL)
+        if scenario == 'graph-settled':
+            # Keep graph startup and its framing motion outside the selection timing.
+            page.wait_for_function("graphLoadState.status==='ready' && forceGraph && cameraFocusFrame===null")
         page.locator('#track-search').fill('Synthetic')
         if scenario == 'search-failure':
             page.wait_for_function("trackSummaryStatus==='error'")

@@ -422,6 +422,14 @@ speed evidence. The route callback invocation must be observed; choosing a
 scenario alone never proves fault injection. Neither probe is counted as a
 successful detail-latency sample.
 
+`--scenario graph-settled` (writer-only, no fault) waits until the automatic
+graph is ready and its framing motion is idle (`graphLoadState.status==='ready'`
+and `cameraFocusFrame===null`) before the search and the selection. Detail
+readiness is then measured with graph startup outside the timing (#86). In
+`pending-then-ready`, by contrast, the selection overlaps graph startup: the
+server's graph build and the browser's scene construction compete with the
+selection, as they do in the search-first startup flow.
+
 Writer `--wait-timeout-ms` defaults to 10,000 and is explicitly bounded to
 10,000–120,000 milliseconds. It is a browser operation/warmup safety wait,
 reported as `safety_wait_timeout_ms`, not a performance target or permission to
