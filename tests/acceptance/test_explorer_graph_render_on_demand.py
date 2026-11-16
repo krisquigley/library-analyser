@@ -78,6 +78,8 @@ render(); idle();
 for(const type of ['pointerdown','pointermove','wheel']) {
   loop.length=0;
   elements.graph3d.dispatch(type);
+  assert.equal(loop.running,false,type+' must not draw inside the input handler');
+  frame();
   assert.equal(loop.running,true,type+' must redraw: controls and hover update only in the vendor loop');
   idle();
   assert.deepEqual([...loop],['resume','pause'],type+' wake settles again');
@@ -89,7 +91,7 @@ for(const type of ['pointerdown','pointermove','wheel']) {
 render(); idle(); loop.length=0;
 // Same layout, so no reframing moves the camera: only the data changed.
 const linked=model(); linked.links=[{source:'a',target:'b',score:0.5}];
-render(linked); assert.equal(loop.running,true,'new graph data is redrawn');
+render(linked); frame(); assert.equal(loop.running,true,'new graph data is redrawn');
 idle(); loop.length=0;
 await select('b'); frame();
 assert.equal(loop.running,true,'a selection (node size, halo, focus) is redrawn');
@@ -107,7 +109,7 @@ idle(); assert.equal(loop.running,false,'and the settled pose stops redrawing');
         self.run_scenario(r'''
 render(); idle(); loop.length=0;
 for(const callback of resizeCallbacks) callback();
-assert.equal(loop.running,true,'a resized canvas is redrawn');
+frame(); assert.equal(loop.running,true,'a resized canvas is redrawn');
 ''')
 
 

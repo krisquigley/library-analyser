@@ -626,11 +626,15 @@ function graphViewPose(graph){
   const v=p=>p?[p.x,p.y,p.z,p.w]:null;
   return JSON.stringify([v(camera?.position),v(camera?.quaternion),v(camera?.up),v(controls?.target)]);
 }
-function wakeGraphRendering(){
+// resumeAnimation draws synchronously. Outside a frame callback, defer it to the
+// next frame boundary so an input, fetch or selection handler is not delayed.
+function wakeGraphRendering(inFrame=false){
   graphRenderLoop.quietSince=null;
   if(!graphRenderLoop.paused||!forceGraph) return;
   graphRenderLoop.paused=false;
-  if(typeof forceGraph.resumeAnimation==='function') forceGraph.resumeAnimation();
+  const graph=forceGraph;
+  const resume=()=>{if(!graphRenderLoop.paused&&graph===forceGraph&&typeof graph.resumeAnimation==='function') graph.resumeAnimation();};
+  if(inFrame) resume(); else requestAnimationFrame(resume);
 }
 function settleGraphRendering(graph,now){
   if(graphRenderLoop.quietSince===null){graphRenderLoop.quietSince=now; return;}
@@ -640,12 +644,12 @@ function settleGraphRendering(graph,now){
 function observeGraphInput(elem){
   if(!elem||typeof elem.addEventListener!=='function') return;
   // Controls and hover picking update only inside the vendor loop.
-  for(const type of ['pointerdown','pointermove','wheel']) elem.addEventListener(type,wakeGraphRendering,{capture:true,passive:true});
+  for(const type of ['pointerdown','pointermove','wheel']) elem.addEventListener(type,()=>wakeGraphRendering(),{capture:true,passive:true});
 }
 function animateGraphAxes(timestamp){
   if(forceGraph){
     const pose=graphViewPose(forceGraph);
-    if(pose!==graphRenderLoop.pose){graphRenderLoop.pose=pose; wakeGraphRendering();}
+    if(pose!==graphRenderLoop.pose){graphRenderLoop.pose=pose; wakeGraphRendering(true);}
     if(!graphRenderLoop.paused){
       syncGraphAxes(forceGraph,pendingGraphAxisSpec,document.getElementById('graph3d'));placeGraphAxisLabels(forceGraph);syncSelectedNodeHalo(forceGraph,visibleGraph);
       settleGraphRendering(forceGraph,Number.isFinite(timestamp)?timestamp:performance.now());
