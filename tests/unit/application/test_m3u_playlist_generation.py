@@ -17,6 +17,9 @@ class _PlayableTrack:
     artist: str = ''
     manual_overrides: tuple[str, ...] = ()
     duration_seconds: float | None = 180.0
+    key: str | None = None
+    scale: str | None = None
+    key_strength: float | None = None
 
 
 class _FakePlaylistRepository:
@@ -148,6 +151,44 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         result = _generate(repo, start='start', bpm_min=100, bpm_max=130, length=2)
 
         self.assertEqual(('start', 'other'), _track_ids(result))
+
+    def _harmonic_repo(self, *, b_strength=0.9, b_overrides=()):
+        # b relates more strongly to a, but only c is key-compatible (C major -> G major).
+        return _FakePlaylistRepository(
+            tracks=(_PlayableTrack('a', 120, '/library/a.flac', key='C', scale='major', key_strength=0.9),
+                    _PlayableTrack('b', 120, '/library/b.flac', key='D', scale='major', key_strength=b_strength,
+                                   manual_overrides=b_overrides),
+                    _PlayableTrack('c', 120, '/library/c.flac', key='G', scale='major', key_strength=0.9)),
+            edges=(_edge('a', 'b', 0.88), _edge('a', 'c', 0.82)))
+
+    def _second_track(self, repo, **options):
+        result = _load_use_case_class()(repo).execute(start_track_id='a', bpm_min=100, bpm_max=130, length=2, **options)
+        return result.track_ids[1]
+
+    def test_harmonic_mixing_is_on_by_default_and_prefers_a_compatible_key(self):
+        self.assertEqual('c', self._second_track(self._harmonic_repo()))
+
+    def test_harmonic_mixing_can_be_turned_off(self):
+        self.assertEqual('b', self._second_track(self._harmonic_repo(), harmonic_mixing=None))
+
+    def test_a_key_weaker_than_the_minimum_strength_is_neutral(self):
+        from music_explorer.domain.harmonic_mixing import HarmonicMixing
+
+        repo = self._harmonic_repo(b_strength=0.4)
+
+        self.assertEqual('b', self._second_track(repo, harmonic_mixing=HarmonicMixing(minimum_key_strength=0.5)))
+        self.assertEqual('c', self._second_track(repo, harmonic_mixing=HarmonicMixing(minimum_key_strength=0.3)))
+
+    def test_a_manual_key_override_makes_the_detected_key_unknown(self):
+        self.assertEqual('b', self._second_track(self._harmonic_repo(b_overrides=('key',))))
+
+    def test_harmonic_mixing_prefers_a_smooth_bpm_step(self):
+        repo = _FakePlaylistRepository(
+            tracks=(_PlayableTrack('a', 120, '/library/a.flac'), _PlayableTrack('b', 130, '/library/b.flac'),
+                    _PlayableTrack('c', 122, '/library/c.flac')),
+            edges=(_edge('a', 'b', 0.86), _edge('a', 'c', 0.83)))
+
+        self.assertEqual('c', self._second_track(repo))
 
     def test_target_duration_instead_of_a_track_count(self):
         repo = _FakePlaylistRepository(

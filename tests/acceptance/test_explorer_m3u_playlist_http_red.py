@@ -279,6 +279,29 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 400)
         self.assertRegex(json.loads(raised.exception.read().decode('utf-8'))['error'], 'duration')
 
+    def _playlist_query(self, **options):
+        return urlencode({'start_track_id': self.first, 'bpm_min': '119', 'bpm_max': '125', 'length': '2', **options})
+
+    def test_download_m3u_endpoint_accepts_harmonic_mixing_options(self):
+        # Issue #122: harmonic mixing is on by default; it can be turned off or given a minimum key strength.
+        for options in ({}, {'harmonic': 'off'}, {'harmonic': 'on', 'min_key_strength': '0.0'},
+                        {'min_key_strength': '1'}, {'min_key_strength': '0.65'}):
+            with self.subTest(options):
+                with self._get('/api/playlists/m3u?' + self._playlist_query(**options)) as response:
+                    self.assertEqual(response.read().decode('utf-8'), f'#EXTM3U\n{self.first_path}\n{self.second_path}\n')
+
+    def test_download_m3u_endpoint_rejects_invalid_harmonic_options_as_json_400(self):
+        cases = [({'min_key_strength': '1.5'}, 'between 0.0 and 1.0'), ({'min_key_strength': '-0.1'}, 'between 0.0 and 1.0'),
+                 ({'min_key_strength': 'strong'}, 'between 0.0 and 1.0'), ({'min_key_strength': 'nan'}, 'between 0.0 and 1.0'),
+                 ({'harmonic': 'maybe'}, 'on or off')]
+        for options, message in cases:
+            with self.subTest(options):
+                with self.assertRaises(HTTPError) as raised:
+                    self._get('/api/playlists/m3u?' + self._playlist_query(**options))
+
+                self.assertEqual(raised.exception.code, 400)
+                self.assertIn(message, json.loads(raised.exception.read().decode('utf-8'))['error'])
+
 
 if __name__ == '__main__':
     unittest.main()

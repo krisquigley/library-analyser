@@ -14,6 +14,9 @@ class PlayableTrackCandidate:
     artist: str = ''
     manual_overrides: tuple[str, ...] = ()
     duration_seconds: float | None = None
+    key: str | None = None
+    scale: str | None = None
+    key_strength: float | None = None
 
 
 @dataclass(frozen=True)

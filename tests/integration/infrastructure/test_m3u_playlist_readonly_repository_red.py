@@ -284,6 +284,29 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
             self.assertEqual([(c.artist, c.duration_seconds) for c in candidates],
                              [('Synthetic Artist', 241.5), ('', 120.0)])
 
+    def test_playlist_export_carries_the_detected_key_for_harmonic_mixing(self):
+        # Issue #122: key, scale and strength come from the latest completed key stage.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / 'analysis.sqlite'
+            track_ids = tuple('sha256:' + digit * 64 for digit in ('1', '2', '3', '4'))
+            playable_paths = {track_id: root / f'{index}.flac' for index, track_id in enumerate(track_ids, start=1)}
+            for path in playable_paths.values():
+                path.write_bytes(b'not audio; existence sentinel only')
+            _create_playlist_fixture_db(db_path, playable_paths)
+            with sqlite3.connect(db_path) as db:
+                run_id = db.execute('SELECT run_id FROM run_tracks WHERE track_id=?', (track_ids[0],)).fetchone()[0]
+                db.execute('INSERT INTO stages VALUES(?,?,?)', (run_id, 'key', json.dumps({
+                    'stage': 'key', 'provenance': [['fixture', 'red-test']], 'uncertainty': '',
+                    'values': [['key', 'F#'], ['scale', 'minor'], ['strength', 0.72], ['coverage', 1.0]]})))
+            before = db_path.read_bytes()
+
+            candidates = ReadOnlyExplorerSQLiteRepository(str(db_path)).playlist_export_tracks()
+
+            self.assertEqual(db_path.read_bytes(), before)
+            self.assertEqual([(c.key, c.scale, c.key_strength) for c in candidates],
+                             [('F#', 'minor', 0.72), (None, None, None)])
+
 
 if __name__ == '__main__':
     unittest.main()
