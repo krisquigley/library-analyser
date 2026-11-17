@@ -66,6 +66,18 @@ def _bpm_from_stage_payload(payload):
     return None
 
 
+def _key_from_stage_payload(payload):
+    """Detected key evidence for harmonic mixing; anything malformed is simply unknown."""
+    try:
+        values = dict(json.loads(payload).get('values', ())) if payload is not None else {}
+    except (TypeError, ValueError, AttributeError, json.JSONDecodeError):
+        values = {}
+    key, scale, strength = values.get('key'), values.get('scale'), values.get('strength')
+    return {'key': key if isinstance(key, str) else None,
+            'scale': scale if isinstance(scale, str) else None,
+            'key_strength': float(strength) if _finite_number(strength) else None}
+
+
 def stage_from_mapping(data):
     summary = data.get('summary')
     if summary is not None:
@@ -344,13 +356,14 @@ class ReadOnlyExplorerSQLiteRepository:
                     ) WHERE rn=1
                 )
                 SELECT al.track_id, s.result, al.path, a.duration_seconds,
-                       COALESCE(tm.common_json, '[]'), COALESCE(tm.tags_json, '[]')
+                       COALESCE(tm.common_json, '[]'), COALESCE(tm.tags_json, '[]'), k.result
                 FROM locations al
                 JOIN tracks t ON t.id=al.track_id
                 LEFT JOIN track_audio a ON a.track_id=t.id
                 LEFT JOIN track_metadata tm ON tm.track_id=t.id
                 JOIN latest_run lr ON lr.track_id=al.track_id
                 JOIN stages s ON s.run_id=lr.run_id AND s.stage='bpm'
+                LEFT JOIN stages k ON k.run_id=lr.run_id AND k.stage='key'
                 WHERE al.available=1 AND {_ACTIVE_CANDIDATE_PREDICATE}
                 ORDER BY al.track_id, al.path
             ''').fetchall()
@@ -359,7 +372,7 @@ class ReadOnlyExplorerSQLiteRepository:
                 overridden.setdefault(track_id, []).append(field)
             candidates = []
             selected_track_ids = set()
-            for track_id, bpm_payload, path, duration, common_json, tags_json in rows:
+            for track_id, bpm_payload, path, duration, common_json, tags_json, key_payload in rows:
                 if not isinstance(path, str) or not path:
                     raise AnalysisError('Unexpected analysis database rows')
                 if track_id in selected_track_ids:
@@ -375,7 +388,8 @@ class ReadOnlyExplorerSQLiteRepository:
                 candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, exists, True, True,
                                                          artist=artist,
                                                          manual_overrides=tuple(overridden.get(track_id, ())),
-                                                         duration_seconds=_playlist_duration(duration)))
+                                                         duration_seconds=_playlist_duration(duration),
+                                                         **_key_from_stage_payload(key_payload)))
                 selected_track_ids.add(track_id)
             return tuple(candidates)
 

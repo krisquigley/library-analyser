@@ -94,6 +94,27 @@ class PlaylistWalkTests(unittest.TestCase):
         self.assertFalse(walk.complete)
         self.assertEqual(12, len(walk.track_ids), 'root-to-leaf, the longest walk in the tree')
 
+    def test_a_transition_ranking_reorders_the_choices(self):
+        # #122: the walk follows the best-ranked transition, not just the strongest relation.
+        def prefer_c(from_track, to_track, relation_score):
+            return relation_score + (0.5 if to_track.track_id == 'c' else 0.0)
+
+        walk = walk_playlist('a', tracks('a', 'b', 'c'), related(('a', 'b', 0.9), ('a', 'c', 0.6)),
+                             TrackCountGoal(2), rank_transition=prefer_c)
+
+        self.assertEqual(('a', 'c'), walk.track_ids)
+
+    def test_the_ranking_sees_the_tracks_on_both_sides_of_the_transition(self):
+        seen = []
+
+        def record(from_track, to_track, relation_score):
+            seen.append((from_track.track_id, to_track.track_id, relation_score))
+            return relation_score
+
+        walk_playlist('a', tracks('a', 'b'), related(('a', 'b', 0.9)), TrackCountGoal(2), rank_transition=record)
+
+        self.assertIn(('a', 'b', 0.9), seen)
+
     def test_same_inputs_give_the_same_walk(self):
         ids = [f't{i}' for i in range(20)]
         edges = [(ids[i], ids[j], 0.5) for i in range(20) for j in range(i + 1, 20) if (i * j) % 3]

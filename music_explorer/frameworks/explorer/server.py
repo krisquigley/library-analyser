@@ -14,6 +14,7 @@ from music_explorer.application.dto.candidates import CandidateQuery, SelectionC
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
 from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
+from music_explorer.domain.harmonic_mixing import DEFAULT_MINIMUM_KEY_STRENGTH, HarmonicMixing
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http, to_indexed_mood_axis_graph_http
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection, ProjectionArtifactError
 from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
@@ -250,6 +251,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                     bpm_max=query.get('bpm_max', [None])[0],
                     length=length,
                     duration_minutes=duration_minutes,
+                    harmonic_mixing=_harmonic_mixing(query),
                 )
                 return self._m3u(result.content, result.warning)
             if path == '/api/mood-axis-graph':
@@ -347,6 +349,21 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             return
 
     return ThreadingHTTPServer((host, port), Handler)
+
+
+def _harmonic_mixing(query):
+    """Harmonic mixing (#122) is on unless `harmonic=off`; `min_key_strength` is 0.0-1.0."""
+    switch = query.get('harmonic', ['on'])[0]
+    if switch not in ('on', 'off'):
+        raise ValueError('Harmonic mixing must be on or off')
+    if switch == 'off':
+        return None
+    raw_strength = query.get('min_key_strength', [None])[0]
+    try:
+        strength = DEFAULT_MINIMUM_KEY_STRENGTH if raw_strength is None else float(raw_strength)
+    except ValueError:
+        raise ValueError('Minimum key strength must be between 0.0 and 1.0')
+    return HarmonicMixing(minimum_key_strength=strength)
 
 
 def _safe_playlist_warning(warning):

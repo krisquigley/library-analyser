@@ -3,7 +3,9 @@ from collections import defaultdict
 from math import isfinite
 
 from music_explorer.application.dto.playlists import M3UPlaylist
-from music_explorer.domain.playlist_walk import DurationGoal, TrackCountGoal, WalkTrack, walk_playlist
+from music_explorer.domain.harmonic_mixing import HarmonicMixing, usable_key
+from music_explorer.domain.playlist_walk import (
+    DurationGoal, TrackCountGoal, WalkTrack, by_relation_score, walk_playlist)
 
 MAX_PLAYLIST_TRACKS = 1000
 MAX_PLAYLIST_MINUTES = 1440
@@ -15,7 +17,8 @@ class GenerateBpmGraphM3UPlaylist:
     def __init__(self, repository):
         self.repository = repository
 
-    def execute(self, *, start_track_id: str, bpm_min, bpm_max, length=None, duration_minutes=None):
+    def execute(self, *, start_track_id: str, bpm_min, bpm_max, length=None, duration_minutes=None,
+                harmonic_mixing: HarmonicMixing | None = HarmonicMixing()):
         start_track_id = str(start_track_id or '')
         bpm_min = _finite_bound(bpm_min, 'BPM minimum')
         bpm_max = _finite_bound(bpm_max, 'BPM maximum')
@@ -38,7 +41,7 @@ class GenerateBpmGraphM3UPlaylist:
                 if not _bpm_in_range(start.bpm, bpm_min, bpm_max):
                     raise ValueError('start track BPM is outside requested range')
             raise ValueError('start track is not playable or available')
-        walk_tracks = {track_id: _walk_track(track) for track_id, track in candidates.items()}
+        walk_tracks = {track_id: _walk_track(track, harmonic_mixing) for track_id, track in candidates.items()}
         if not goal.admits(walk_tracks[start_track_id]):
             raise ValueError('start track has no verified duration for a duration playlist')
 
@@ -51,7 +54,8 @@ class GenerateBpmGraphM3UPlaylist:
                 related[edge.a].append((edge.b, float(edge.score)))
                 related[edge.b].append((edge.a, float(edge.score)))
 
-        walk = walk_playlist(start_track_id, walk_tracks, related, goal)
+        walk = walk_playlist(start_track_id, walk_tracks, related, goal,
+                             rank_transition=_harmonic_ranking(harmonic_mixing))
         warning = None if walk.complete else _shortfall(goal)
         content = '#EXTM3U\n' + ''.join(candidates[track_id].path + '\n' for track_id in walk.track_ids)
         return M3UPlaylist(content, walk.track_ids, warning)
@@ -86,8 +90,26 @@ def _shortfall(goal):
     return 'Playlist is shorter than requested because traversal reached a dead end in the connected graph'
 
 
-def _walk_track(track):
-    return WalkTrack(track.track_id, getattr(track, 'artist', '') or '', getattr(track, 'duration_seconds', None))
+def _walk_track(track, harmonic_mixing):
+    return WalkTrack(track.track_id, getattr(track, 'artist', '') or '', getattr(track, 'duration_seconds', None),
+                     bpm=track.bpm, key=_key(track, harmonic_mixing))
+
+
+# A manual key annotation wins over detection, so the detected key is not used (as for BPM, #120).
+def _key(track, harmonic_mixing):
+    if harmonic_mixing is None or 'key' in getattr(track, 'manual_overrides', ()):
+        return None
+    return usable_key(getattr(track, 'key', None), getattr(track, 'scale', None), getattr(track, 'key_strength', None),
+                      minimum_strength=harmonic_mixing.minimum_key_strength)
+
+
+def _harmonic_ranking(harmonic_mixing):
+    if harmonic_mixing is None:
+        return by_relation_score
+
+    def rank(from_track, to_track, relation_score):
+        return harmonic_mixing.transition_score(relation_score, from_track.key, to_track.key, from_track.bpm, to_track.bpm)
+    return rank
 
 
 def _finite_bound(value, name):

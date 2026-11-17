@@ -72,7 +72,7 @@ CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), com
 M3U_DOWNLOAD_INTERACTION = """  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10';
   await button.onclick();
   const playlistRequests = requests.filter(path => path.includes('m3u'));
-  assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');"""
+  assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');"""
 M3U_DOWNLOAD_SCRIPT = r"""
 const assert = require('assert');
 const app = require(process.argv[1]);
@@ -149,7 +149,7 @@ global.fetch = async path => {
   bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10';
   await button.onclick();
   const playlistRequests = requests.filter(path => path.includes('m3u'));
-  assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');
+  assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
 
@@ -2092,7 +2092,31 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
   bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10'; duration.value = '45';
   await button.onclick();
   assert.deepStrictEqual(requests.filter(path => path.includes('m3u')),
-    ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&duration_minutes=45']);""")
+    ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&duration_minutes=45&min_key_strength=0.5']);""")
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                run_node_script(self, script, app)
+
+    def test_m3u_download_offers_harmonic_mixing_with_a_minimum_key_strength_in_its_valid_range(self):
+        # Issue #122: on by default; the minimum key strength shows its valid range, 0.0-1.0.
+        script = M3U_DOWNLOAD_SCRIPT.replace(M3U_DOWNLOAD_INTERACTION, """  const controls = elements['graph-load-status'];
+  const harmonic = controls.querySelector('#m3u-harmonic');
+  const strength = controls.querySelector('#m3u-min-key-strength');
+  assert(harmonic && strength, 'M3U controls must expose harmonic mixing and its minimum key strength');
+  assert.strictEqual(harmonic.type, 'checkbox');
+  assert.strictEqual(harmonic.checked, true, 'harmonic mixing is on by default');
+  assert.deepStrictEqual([strength.type, strength.min, strength.max, strength.step, strength.value], ['number', '0', '1', '0.05', '0.5']);
+  const fieldsetText = node => String(node.textContent || '') + ' ' + (node.children || []).map(fieldsetText).join(' ');
+  assert(fieldsetText(controls).includes('Min key strength (0.0–1.0)'), 'the valid range is shown next to the setting');
+  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10'; strength.value = '0.7';
+  await button.onclick();
+  harmonic.checked = false;
+  harmonic.onchange();
+  assert.strictEqual(strength.disabled, true, 'the strength setting is disabled while harmonic mixing is off');
+  await button.onclick();
+  assert.deepStrictEqual(requests.filter(path => path.includes('m3u')), [
+    '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.7',
+    '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&harmonic=off']);""")
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
                 run_node_script(self, script, app)
