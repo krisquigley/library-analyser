@@ -252,6 +252,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                     length=length,
                     duration_minutes=duration_minutes,
                     harmonic_mixing=_harmonic_mixing(query),
+                    energy_arc=_energy_arc(query),
+                    mood_hold=query.get('mood', [''])[0] or None,
                 )
                 return self._m3u(result.content, result.warning)
             if path == '/api/mood-axis-graph':
@@ -364,6 +366,12 @@ def _harmonic_mixing(query):
     except ValueError:
         raise ValueError('Minimum key strength must be between 0.0 and 1.0')
     return HarmonicMixing(minimum_key_strength=strength)
+
+
+def _energy_arc(query):
+    """No energy arc (#123) unless `arc` names a shape; `none` is the default."""
+    arc = query.get('arc', ['none'])[0]
+    return None if arc in ('', 'none') else arc
 
 
 def _safe_playlist_warning(warning):

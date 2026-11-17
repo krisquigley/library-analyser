@@ -330,6 +330,77 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
 
             self.assertEqual(repo.related_track_edges(1), repo.current_positioned_graph_edges(1))
             self.assertEqual(db_path.read_bytes(), before)
+    def test_mood_evidence_matches_the_graph_axes_and_selected_mood(self):
+        # Issue #123: arousal and a selected mood's score, as the mood-axis graph reads them.
+        from tests.support.explorer_synthetic_fixture_contract import public_fixture
+        with public_fixture(self) as fixture:
+            repo = ReadOnlyExplorerSQLiteRepository(str(fixture['db_path']))
+            mood = repo.mood_axis_graph_snapshot(sparse_k=10).available_moods[0]
+            graph = repo.mood_axis_graph_snapshot(mood=mood, sparse_k=10)
+
+            evidence = repo.playlist_mood_evidence(mood)
+
+            self.assertTrue(graph.positioned)
+            for node in graph.positioned:
+                with self.subTest(node.track_id):
+                    self.assertEqual(node.y.raw, evidence[node.track_id].arousal)
+                    self.assertEqual(node.mood_score.raw if node.mood_score else None, evidence[node.track_id].mood_score)
+            for track in graph.unpositioned:
+                self.assertIsNone(evidence.get(track.track_id) and evidence[track.track_id].arousal)
+
+    def test_mood_evidence_uses_only_compatible_models(self):
+        from contextlib import closing
+        from music_analyzer.application.dto.analysis import StageResult
+        from music_analyzer.application.use_cases.graph_feature_evidence import build_graph_feature_evidence
+        from music_analyzer.domain.analysis import ScoreSummary
+        from tests.integration.infrastructure.integrity_d1_public_fixture import create_public_core_database
+
+        def stages(energy_model, mood_model):
+            return (StageResult('bpm', (), '', (('bpm', 120.0),)),
+                    StageResult('key', (), '', (('key', 'C'),)),
+                    StageResult('genres', (), '', (('genre', 'house'),)),
+                    StageResult('mood', (('model', mood_model),), '',
+                                summary=ScoreSummary(('calm', 'dark'), (0.8, 0.1), (0.7, 0.0), (0.9, 0.2), 1.0)),
+                    StageResult('energy', (('model', energy_model),), '',
+                                summary=ScoreSummary(('valence', 'arousal'), (4.5, 6.25), (4.0, 6.0), (5.0, 7.0), 1.0)))
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'public.sqlite'
+            compatible, other = create_public_core_database(db_path, 10)
+            with closing(sqlite3.connect(db_path)) as db, db:
+                for index, (track_id, energy_model, mood_model) in enumerate((
+                        (compatible, 'emomusic-msd-musicnn-2', 'mtg_jamendo_moodtheme-discogs-effnet-1'),
+                        (other, 'another-energy-model', 'another-mood-model')), 1):
+                    db.execute('INSERT INTO runs(id,location,status,detail,created_at) VALUES(?,?,?,?,?)',
+                               (f'run-{index}', f'/public/{index}.flac', 'completed', '', '2026-01-01T00:00:00Z'))
+                    db.execute('INSERT INTO run_tracks(run_id,track_id) VALUES(?,?)', (f'run-{index}', track_id))
+                    evidence = build_graph_feature_evidence(track_id, f'run-{index}', stages(energy_model, mood_model))
+                    db.execute('INSERT INTO graph_feature_evidence(track_id,run_id,fingerprint,evidence_json,is_current,created_at) '
+                               'VALUES(?,?,?,?,?,?)', (track_id, f'run-{index}', evidence.fingerprint, evidence.payload_json(), 1,
+                                                       '2026-01-01T00:00:00Z'))
+
+            evidence = ReadOnlyExplorerSQLiteRepository(str(db_path)).playlist_mood_evidence('calm')
+
+            self.assertEqual((6.25, 0.8), (evidence[compatible].arousal, evidence[compatible].mood_score))
+            self.assertEqual((None, None), (evidence[other].arousal, evidence[other].mood_score))
+
+    def test_mood_evidence_without_a_mood_reads_only_arousal(self):
+        from tests.support.explorer_synthetic_fixture_contract import public_fixture
+        with public_fixture(self) as fixture:
+            evidence = ReadOnlyExplorerSQLiteRepository(str(fixture['db_path'])).playlist_mood_evidence(None)
+
+            self.assertTrue(evidence)
+            self.assertTrue(all(item.mood_score is None for item in evidence.values()))
+
+    def test_mood_evidence_needs_compact_graph_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / 'analysis.sqlite'
+            track_ids = tuple('sha256:' + digit * 64 for digit in ('1', '2', '3', '4'))
+            _create_playlist_fixture_db(db_path, {track_id: root / f'{n}.flac' for n, track_id in enumerate(track_ids, 1)})
+
+            self.assertEqual({}, ReadOnlyExplorerSQLiteRepository(str(db_path)).playlist_mood_evidence('calm'))
+
 
 if __name__ == '__main__':
     unittest.main()

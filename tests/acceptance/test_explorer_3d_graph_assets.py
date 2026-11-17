@@ -2121,6 +2121,30 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
             with self.subTest(app=app):
                 run_node_script(self, script, app)
 
+    def test_m3u_download_offers_an_energy_arc_and_a_mood_hold_from_the_graph_moods(self):
+        # Issue #123: no arc and no mood hold by default; the moods are the graph's own.
+        script = M3U_DOWNLOAD_SCRIPT.replace(M3U_DOWNLOAD_INTERACTION, """  const controls = elements['graph-load-status'];
+  const arc = controls.querySelector('#m3u-arc');
+  const mood = controls.querySelector('#m3u-mood');
+  assert(arc && mood, 'M3U controls must expose an energy arc and a mood hold');
+  assert.deepStrictEqual(arc.children.map(option => [option.value, option.textContent]), [
+    ['none', 'No energy arc'], ['steady', 'Steady energy'], ['rise', 'Rising energy'],
+    ['fall', 'Falling energy'], ['peak', 'Energy peak']]);
+  assert.deepStrictEqual(mood.children.map(option => [option.value, option.textContent]), [
+    ['', 'No mood hold'], ['relaxing', 'Hold mood: relaxing']]);
+  assert.strictEqual(arc.value, 'none');
+  assert.strictEqual(mood.value, '');
+  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10';
+  await button.onclick();
+  arc.value = 'peak'; mood.value = 'relaxing';
+  await button.onclick();
+  assert.deepStrictEqual(requests.filter(path => path.includes('m3u')), [
+    '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5',
+    '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5&arc=peak&mood=relaxing']);""")
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                run_node_script(self, script, app)
+
     def test_mirrored_browser_assets_advertise_explicit_m3u_download_without_startup_fetch(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):

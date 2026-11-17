@@ -3,6 +3,7 @@ from collections import defaultdict
 from math import isfinite
 
 from music_explorer.application.dto.playlists import M3UPlaylist
+from music_explorer.domain.energy_arc import EnergyArc, MoodHold, percentile_ranks
 from music_explorer.domain.harmonic_mixing import HarmonicMixing, usable_key
 from music_explorer.domain.playlist_walk import (
     DurationGoal, TrackCountGoal, WalkTrack, by_relation_score, walk_playlist)
@@ -20,7 +21,8 @@ class GenerateBpmGraphM3UPlaylist:
         self.repository = repository
 
     def execute(self, *, start_track_id: str, bpm_min, bpm_max, length=None, duration_minutes=None,
-                harmonic_mixing: HarmonicMixing | None = HarmonicMixing()):
+                harmonic_mixing: HarmonicMixing | None = HarmonicMixing(), energy_arc: str | None = None,
+                mood_hold: str | None = None):
         start_track_id = str(start_track_id or '')
         bpm_min = _finite_bound(bpm_min, 'BPM minimum')
         bpm_max = _finite_bound(bpm_max, 'BPM maximum')
@@ -52,12 +54,34 @@ class GenerateBpmGraphM3UPlaylist:
                 related[edge.a].append((edge.b, float(edge.score)))
                 related[edge.b].append((edge.a, float(edge.score)))
 
+        arc, hold = self._arc_and_hold(candidates, start_track_id, energy_arc, mood_hold)
         walk = walk_playlist(start_track_id, walk_tracks, related, goal,
-                             rank_transition=_harmonic_ranking(harmonic_mixing))
+                             rank_transition=_ranking(harmonic_mixing, arc, hold))
         warning = None if walk.complete else _shortfall(goal)
         content = '#EXTM3U\n' + ''.join(candidates[track_id].path + '\n' for track_id in walk.track_ids)
         return M3UPlaylist(content, walk.track_ids, warning)
 
+
+    def _arc_and_hold(self, candidates, start_track_id, energy_arc, mood_hold):
+        if energy_arc is None and not mood_hold:
+            return None, None
+        if energy_arc is not None:
+            EnergyArc(energy_arc, {}, start_track_id)  # rejects an unknown shape before any read
+        evidence = self.repository.playlist_mood_evidence(mood_hold or None)
+        arousal, mood = {}, {}
+        for track_id, track in candidates.items():
+            item = evidence.get(track_id)
+            overrides = getattr(track, 'manual_overrides', ())
+            # A manual energy or mood annotation wins over detection, so the detected value is unknown.
+            if item is not None and item.arousal is not None and 'energy' not in overrides:
+                arousal[track_id] = item.arousal
+            if item is not None and item.mood_score is not None and 'mood' not in overrides:
+                mood[track_id] = item.mood_score
+        if mood_hold and not mood:
+            raise ValueError(f"No eligible track has a score for the mood '{mood_hold}'")
+        arc = None if energy_arc is None else EnergyArc(energy_arc, percentile_ranks(arousal), start_track_id)
+        hold = MoodHold(percentile_ranks(mood)) if mood_hold else None
+        return arc, hold
 
     def _related_track_edges(self):
         # Only a ready graph build is current; a stale one would walk old relations.
@@ -107,12 +131,19 @@ def _key(track, harmonic_mixing):
                       minimum_strength=harmonic_mixing.minimum_key_strength)
 
 
-def _harmonic_ranking(harmonic_mixing):
-    if harmonic_mixing is None:
+def _ranking(harmonic_mixing, arc, hold):
+    if harmonic_mixing is None and arc is None and hold is None:
         return by_relation_score
 
-    def rank(from_track, to_track, relation_score):
-        return harmonic_mixing.transition_score(relation_score, from_track.key, to_track.key, from_track.bpm, to_track.bpm)
+    def rank(from_track, to_track, relation_score, position):
+        score = relation_score
+        if harmonic_mixing is not None:
+            score = harmonic_mixing.transition_score(score, from_track.key, to_track.key, from_track.bpm, to_track.bpm)
+        if arc is not None:
+            score += arc.adjustment(to_track.track_id, position)
+        if hold is not None:
+            score += hold.adjustment(to_track.track_id)
+        return score
     return rank
 
 

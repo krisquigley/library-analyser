@@ -96,7 +96,7 @@ class PlaylistWalkTests(unittest.TestCase):
 
     def test_a_transition_ranking_reorders_the_choices(self):
         # #122: the walk follows the best-ranked transition, not just the strongest relation.
-        def prefer_c(from_track, to_track, relation_score):
+        def prefer_c(from_track, to_track, relation_score, position):
             return relation_score + (0.5 if to_track.track_id == 'c' else 0.0)
 
         walk = walk_playlist('a', tracks('a', 'b', 'c'), related(('a', 'b', 0.9), ('a', 'c', 0.6)),
@@ -107,13 +107,55 @@ class PlaylistWalkTests(unittest.TestCase):
     def test_the_ranking_sees_the_tracks_on_both_sides_of_the_transition(self):
         seen = []
 
-        def record(from_track, to_track, relation_score):
+        def record(from_track, to_track, relation_score, position):
             seen.append((from_track.track_id, to_track.track_id, relation_score))
             return relation_score
 
         walk_playlist('a', tracks('a', 'b'), related(('a', 'b', 0.9)), TrackCountGoal(2), rank_transition=record)
 
         self.assertIn(('a', 'b', 0.9), seen)
+
+    def test_the_ranking_knows_where_in_the_playlist_the_next_track_falls(self):
+        # #123: an energy arc targets a level per position, 0 at the start and 1 at the end.
+        positions = {}
+
+        def record(from_track, to_track, relation_score, position):
+            if to_track.track_id != 'a':
+                positions.setdefault(to_track.track_id, position)
+            return relation_score
+
+        walk_playlist('a', tracks('a', 'b', 'c', 'd', 'e'),
+                      related(('a', 'b', 0.9), ('b', 'c', 0.9), ('c', 'd', 0.9), ('d', 'e', 0.9)),
+                      TrackCountGoal(5), rank_transition=record)
+
+        self.assertEqual({'b': 0.25, 'c': 0.5, 'd': 0.75, 'e': 1.0}, positions)
+
+    def test_a_position_dependent_ranking_can_change_the_choice_later_in_the_playlist(self):
+        def late_prefers_z(from_track, to_track, relation_score, position):
+            return relation_score + (1.0 if position == 1.0 and to_track.track_id == 'z' else 0.0)
+
+        walk = walk_playlist('a', tracks('a', 'b', 'y', 'z'),
+                             related(('a', 'b', 0.9), ('a', 'z', 0.1), ('b', 'y', 0.9), ('b', 'z', 0.5)),
+                             TrackCountGoal(3), rank_transition=late_prefers_z)
+
+        self.assertEqual(('a', 'b', 'z'), walk.track_ids)
+
+
+class GoalPositionTests(unittest.TestCase):
+    def test_track_count_position_runs_from_the_start_to_the_last_track(self):
+        goal = TrackCountGoal(3)
+        library = tracks('a', 'b', 'c')
+
+        self.assertEqual([0.5, 1.0], [goal.position([library['a']]), goal.position([library['a'], library['b']])])
+
+    def test_a_single_track_playlist_is_already_at_the_end(self):
+        self.assertEqual(1.0, TrackCountGoal(1).position([]))
+
+    def test_duration_position_is_the_elapsed_share_of_the_target(self):
+        library = tracks('a', 'b', durations={'a': 300.0, 'b': 900.0})
+        goal = DurationGoal(seconds=600.0, max_tracks=10)
+
+        self.assertEqual([0.5, 1.0], [goal.position([library['a']]), goal.position([library['a'], library['b']])])
 
     def test_same_inputs_give_the_same_walk(self):
         ids = [f't{i}' for i in range(20)]

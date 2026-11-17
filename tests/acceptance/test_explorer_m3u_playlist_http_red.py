@@ -302,6 +302,24 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, 400)
                 self.assertIn(message, json.loads(raised.exception.read().decode('utf-8'))['error'])
 
+    def test_download_m3u_endpoint_accepts_an_energy_arc(self):
+        # Issue #123: this fixture has no compact evidence, so every track's energy is unknown and neutral.
+        for arc in ('none', 'steady', 'rise', 'fall', 'peak'):
+            with self.subTest(arc):
+                with self._get('/api/playlists/m3u?' + self._playlist_query(arc=arc)) as response:
+                    self.assertEqual(response.read().decode('utf-8'), f'#EXTM3U\n{self.first_path}\n{self.second_path}\n')
+
+    def test_download_m3u_endpoint_rejects_an_unknown_arc_or_unscored_mood_as_json_400(self):
+        cases = [({'arc': 'wave'}, 'steady, rise, fall or peak'),
+                 ({'mood': 'calm'}, "No eligible track has a score for the mood 'calm'")]
+        for options, message in cases:
+            with self.subTest(options):
+                with self.assertRaises(HTTPError) as raised:
+                    self._get('/api/playlists/m3u?' + self._playlist_query(**options))
+
+                self.assertEqual(raised.exception.code, 400)
+                self.assertIn(message, json.loads(raised.exception.read().decode('utf-8'))['error'])
+
 
 if __name__ == '__main__':
     unittest.main()
