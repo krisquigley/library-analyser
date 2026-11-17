@@ -30,6 +30,8 @@ class GenerateBpmGraphM3UPlaylist:
             if start_track_id in all_tracks:
                 start = all_tracks[start_track_id]
                 _assert_playable(start, is_start=True)
+                if _bpm_overridden(start):
+                    raise ValueError('start track has a manual BPM override; its detected BPM is not used')
                 if not _bpm_in_range(start.bpm, bpm_min, bpm_max):
                     raise ValueError('start track BPM is outside requested range')
             raise ValueError('start track is not playable or available')
@@ -86,12 +88,18 @@ def _bpm_in_range(value, bpm_min, bpm_max):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and bpm_min <= float(value) <= bpm_max
 
 
+# A manual BPM annotation wins over detection, and is text, not a tempo:
+# the track has no usable BPM, exactly as in the mood-axis graph.
+def _bpm_overridden(track):
+    return 'bpm' in getattr(track, 'manual_overrides', ())
+
+
 def _eligible(track, bpm_min, bpm_max):
     try:
         _assert_playable(track)
     except ValueError:
         return False
-    return _bpm_in_range(track.bpm, bpm_min, bpm_max)
+    return not _bpm_overridden(track) and _bpm_in_range(track.bpm, bpm_min, bpm_max)
 
 
 def _assert_playable(track, *, is_start=False):

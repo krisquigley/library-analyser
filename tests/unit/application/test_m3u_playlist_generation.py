@@ -15,6 +15,7 @@ class _PlayableTrack:
     catalogued: bool = True
     title: str = ''
     artist: str = ''
+    manual_overrides: tuple[str, ...] = ()
 
 
 class _FakePlaylistRepository:
@@ -116,6 +117,30 @@ def _warning(result):
 
 
 class M3UPlaylistGenerationTests(unittest.TestCase):
+    def test_manual_bpm_override_makes_the_detected_bpm_unusable_as_in_the_graph(self):
+        # Issue #120: a spurious detected BPM is overridden; the playlist must not use it.
+        repo = _FakePlaylistRepository(
+            tracks=(
+                _PlayableTrack('start', 120, '/library/start.flac'),
+                _PlayableTrack('spurious', 121, '/library/spurious.flac', manual_overrides=('bpm',)),
+                _PlayableTrack('next', 122, '/library/next.flac'),
+            ),
+            edges=(_edge('start', 'spurious', 0.99), _edge('start', 'next', 0.5)),
+        )
+
+        result = _generate(repo, start='start', bpm_min=100, bpm_max=130, length=2)
+
+        self.assertEqual(('start', 'next'), _track_ids(result))
+
+    def test_rejects_start_with_manual_bpm_override(self):
+        repo = _FakePlaylistRepository(
+            tracks=(_PlayableTrack('start', 120, '/library/start.flac', manual_overrides=('bpm',)),),
+            edges=(),
+        )
+
+        with self.assertRaisesRegex(ValueError, 'start track.*manual BPM override'):
+            _generate(repo, start='start', bpm_min=100, bpm_max=130, length=1)
+
     def test_length_includes_start_and_bpm_bounds_are_inclusive(self):
         repo = _FakePlaylistRepository(
             tracks=(

@@ -348,6 +348,9 @@ class ReadOnlyExplorerSQLiteRepository:
                 WHERE al.available=1 AND {_ACTIVE_CANDIDATE_PREDICATE}
                 ORDER BY al.track_id, al.path
             ''').fetchall()
+            overridden = {}
+            for track_id, field in db.execute('SELECT track_id, field FROM overrides ORDER BY track_id, field'):
+                overridden.setdefault(track_id, []).append(field)
             candidates = []
             selected_track_ids = set()
             for track_id, bpm_payload, path in rows:
@@ -362,7 +365,8 @@ class ReadOnlyExplorerSQLiteRepository:
                 exists = Path(path).is_file()
                 if not exists:
                     continue
-                candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, exists, True, True))
+                candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, exists, True, True,
+                                                         manual_overrides=tuple(overridden.get(track_id, ()))))
                 selected_track_ids.add(track_id)
             return tuple(candidates)
 
