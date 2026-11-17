@@ -3,6 +3,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from tests.support.node_script import run_node_script
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_JS = REPO_ROOT / 'music_explorer' / 'frameworks' / 'explorer' / 'assets' / 'app.js'
 
@@ -47,9 +49,9 @@ app.loadGraph().then(async () => {
   assert.strictEqual(status.innerHTML, '', 'warning status must not be written with innerHTML');
   assert.deepStrictEqual(clicked, [{tag:'A', href:'blob:playlist', download:'warning.m3u'}]);
   assert.deepStrictEqual(revoked, ['blob:playlist']);
-}).catch(error => {console.error(error && error.stack || error); process.exit(1);});
+}).then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => {console.error(error && error.stack || error); process.exit(1);});
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
 if __name__ == '__main__':
