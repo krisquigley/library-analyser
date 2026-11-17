@@ -241,6 +241,27 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
                 'M3U export must require regular files: reject directories, FIFOs, sockets, and symlinks to nonregular targets',
             )
 
+    def test_playlist_export_reports_which_fields_have_manual_overrides(self):
+        # Issue #120: the eligibility rule lives in the use case; the repository maps the fact.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / 'analysis.sqlite'
+            track_ids = tuple('sha256:' + digit * 64 for digit in ('1', '2', '3', '4'))
+            playable_paths = {track_id: root / f'{index}.flac' for index, track_id in enumerate(track_ids, start=1)}
+            for path in playable_paths.values():
+                path.write_bytes(b'not audio; existence sentinel only')
+            _create_playlist_fixture_db(db_path, playable_paths)
+            with sqlite3.connect(db_path) as db:
+                db.execute('INSERT INTO overrides VALUES(?,?,?)', (track_ids[1], 'bpm', 'unknown: spurious detection'))
+                db.execute('INSERT INTO overrides VALUES(?,?,?)', (track_ids[1], 'key', 'A minor'))
+            before = db_path.read_bytes()
+
+            candidates = ReadOnlyExplorerSQLiteRepository(str(db_path)).playlist_export_tracks()
+
+            self.assertEqual(db_path.read_bytes(), before)
+            self.assertEqual([(c.track_id, c.manual_overrides) for c in candidates],
+                             [(track_ids[0], ()), (track_ids[1], ('bpm', 'key'))])
+
 
 if __name__ == '__main__':
     unittest.main()

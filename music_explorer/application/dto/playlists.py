@@ -12,6 +12,7 @@ class PlayableTrackCandidate:
     catalogued: bool = True
     title: str = ''
     artist: str = ''
+    manual_overrides: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
