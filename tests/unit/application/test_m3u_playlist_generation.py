@@ -23,11 +23,17 @@ class _PlayableTrack:
 
 
 class _FakePlaylistRepository:
-    def __init__(self, *, tracks, edges):
+    def __init__(self, *, tracks, edges, graph_state='ready'):
         self._tracks = tuple(tracks)
         self._edges = tuple(edges)
+        self._graph_state = graph_state
         self.graph_reads = 0
+        self.edge_reads = []
         self.track_reads = 0
+
+    def related_track_edges(self, sparse_k):
+        self.edge_reads.append(sparse_k)
+        return {'state': self._graph_state}, self._edges
 
     def mood_axis_graph_snapshot(self, mood=None, sparse_k=10):
         self.graph_reads += 1
@@ -392,8 +398,29 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         result = _generate(repo, start='track-000', bpm_min=100, bpm_max=130, length=5)
 
         self.assertEqual(tuple(f'track-{idx:03d}' for idx in range(5)), _track_ids(result))
-        self.assertEqual(1, repo.graph_reads)
         self.assertEqual(1, repo.track_reads)
+
+    def test_reads_only_the_related_track_edges_not_the_whole_mood_graph(self):
+        # Issue #129: building the mood-axis graph took ~5 s at ~3.4k tracks, for edges alone.
+        repo = _FakePlaylistRepository(tracks=(_PlayableTrack('a', 120, '/library/a.flac'),
+                                               _PlayableTrack('b', 120, '/library/b.flac')),
+                                       edges=(_edge('a', 'b', 0.9),))
+
+        result = _generate(repo, start='a', bpm_min=100, bpm_max=130, length=2)
+
+        self.assertEqual(('a', 'b'), _track_ids(result))
+        self.assertEqual(0, repo.graph_reads, 'the mood-axis graph is not built')
+        self.assertEqual([10], repo.edge_reads, 'the same sparse_k=10 edges the graph shows')
+
+    def test_edges_of_a_graph_that_is_not_ready_are_not_walked(self):
+        repo = _FakePlaylistRepository(tracks=(_PlayableTrack('a', 120, '/library/a.flac'),
+                                               _PlayableTrack('b', 120, '/library/b.flac')),
+                                       edges=(_edge('a', 'b', 0.9),), graph_state='stale')
+
+        result = _generate(repo, start='a', bpm_min=100, bpm_max=130, length=2)
+
+        self.assertEqual(('a',), _track_ids(result))
+        self.assertIsNotNone(result.warning)
 
 
 if __name__ == '__main__':

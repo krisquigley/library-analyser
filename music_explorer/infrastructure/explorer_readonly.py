@@ -298,6 +298,13 @@ class ReadOnlyExplorerSQLiteRepository:
         with self._transaction() as db:
             return self._current_graph_edges(db, sparse_k)
 
+    def related_track_edges(self, sparse_k: int):
+        """The edges the mood-axis graph shows, without building its nodes (#129)."""
+        with self._transaction() as db:
+            if int(self._metadata(db)['schema_version']) < 8:
+                return self._current_graph_edges(db, None)
+            return self._current_positioned_graph_edges(db, sparse_k)
+
     def current_positioned_graph_edges(self, sparse_k: int | None = None):
         with self._transaction() as db:
             return self._current_positioned_graph_edges(db, sparse_k)
