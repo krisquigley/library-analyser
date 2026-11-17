@@ -1,325 +1,159 @@
 # AGENTS.md
 
-## Container Runtime
+This file guides Claude Code and other coding agents, and humans, working in this repository. Its rules are mandatory.
 
-Use **Podman**, not Docker, for all container operations in this repository.
+## Project
 
-- Use `podman` commands for container inspection, execution, file copies, and cleanup.
-- Do not invoke the `docker` CLI or assume a Docker daemon/socket is available.
-- If tooling uses a Docker-compatible API or an adapter named `docker`, ensure it is configured to use Podman; the adapter name is not permission to use Docker.
-- If Podman is unavailable or misconfigured, report the blocker rather than falling back to Docker.
+Local Music Analyser: a local, privacy-preserving toolkit for understanding a personal music library. It catalogues audio files the user explicitly selects, analyses them (tempo, key, and provisional genre, mood, instrument and energy scores from pretrained Essentia models), keeps the evidence in a dedicated SQLite database, and lets the user review, annotate, export and explore it, including a 3D mood-axis graph and playlist generation. The architecture below is non-negotiable.
 
-## Development Philosophy
+### Decisions
 
-Agents working in this repository must practice disciplined, test-driven development and Clean Architecture.
+- **Python 3.11+**, standard-library `unittest`, one distribution with **two packages**:
+  - `music_analyzer` (`music-analyzer`) writes the analysis database: scan, analyze, review, override, export, graph build, integrity.
+  - `music_explorer` (`music-explorer`) is a read-only localhost web explorer of that database. It **never writes** it. The flow is always **analyzer writes → explorer reads**.
+- **The analysis database is the only store.** The analyzer validates data when it writes it. The Explorer reads in read-only SQLite mode and checks only the rows each request reads. Full audits belong to the offline `music-analyzer integrity` diagnostic, never to Explorer reads.
+- **Local and private.** Nothing is uploaded; only `models download` uses the network. Audio files and their tags are never edited. Never point anything at a Mixxx database.
+- **Evidence, not invented tags.** Model scores are uncalibrated and provisional. Keep raw scores, coverage, uncertainty and provenance, and let manual overrides win without discarding the automatic evidence.
+- **No private data in the repository, issues or PRs.** Use synthetic or generated fixtures only. Never commit or post library paths, titles, databases, audio, screenshots, HAR files or response bodies.
+- **Podman, never Docker.** Use `podman` for all container work. Never invoke the `docker` CLI or assume a Docker socket; an adapter named `docker` must be configured for Podman. If Podman is unavailable or misconfigured, report the blocker; never fall back to Docker.
+- **Owner decisions in force:**
+  - The Explorer track list shows 100 rows per page ("UI100"), and the graph starts loading automatically. Don't change either behaviour without the owner's approval.
+  - No read-side cache, full-text search or new index (#18, #19) unless measurements at scale justify it and the owner agrees.
+  - 5k/20k-track graph campaigns and optimisation (#44) are deferred until performance is a problem again.
+  - The analyzer's and the standalone Explorer's search behaviours differ on purpose; preserve that difference.
+  - Performance ceilings (#86): server selection path p95 ≤ 10 ms; 12-track settled detail-ready p95 ≤ 100 ms. A change counts as an improvement at ≥ 20% faster p50 with no p95 regression. **Never adjust a ceiling to make a change pass.**
+  - Performance is measured only under the Podman supervisor (`tools/explorer_browser_gate.py` limits) with modest public synthetic fixtures. Results are descriptive values (p50/p95/max, failures, SHAs), never budgets asserted in tests.
 
-Act as if guided by Robert C. Martin's Clean Architecture principles:
+## Architecture: Clean Architecture
 
-- Tests drive design.
-- Business rules are independent of frameworks.
-- Source code dependencies point inward.
-- Boundaries are explicit and visible in the folder structure.
-- Details depend on policies; policies do not depend on details.
-- The domain model must not know about databases, web frameworks, queues, CLIs, file systems, or external services.
+Write this code as Robert C. Martin ("Uncle Bob") would. Follow *Clean Architecture*, *Clean Code* and the SOLID principles strictly. When in doubt, ask: "Would Uncle Bob accept this in a code review?" Prefer simple, explicit, boring code over clever abstractions.
 
-Prefer simple, explicit, boring code over clever abstractions.
+**The directory structure is the architecture.** Every architectural boundary is a directory boundary, and every directory boundary is an architectural boundary. A reader should see the layers, and what the system does, from the file tree alone.
 
-## Required Workflow: TDD
+### The Dependency Rule
 
-For all production behavior changes, use test-driven development:
+Source code dependencies point **inward only**.
 
-1. **Red** — write a failing test that describes the desired behavior.
-2. **Green** — write the smallest production code needed to pass.
-3. **Refactor** — improve names, structure, boundaries, duplication, and design while keeping tests green.
-
-Do not write substantial production code before a failing test exists unless the task is purely mechanical, such as formatting, renaming, or moving files.
-
-When fixing a bug:
-
-1. Reproduce the bug with a failing test.
-2. Implement the fix.
-3. Keep the regression test.
-
-When adding features:
-
-1. Start with use-case or domain behavior tests.
-2. Add interface adapter and infrastructure tests only where needed.
-3. Avoid testing implementation details.
-
-## Clean Architecture Dependency Rule
-
-The dependency rule is mandatory:
-
-> Source code dependencies must point inward, from details toward policies.
-
-Outer layers may depend on inner layers. Inner layers must not depend on outer layers.
-
-Allowed direction:
-
-```text
-Frameworks & Drivers
-        ↓
-Interface Adapters
-        ↓
-Application Use Cases
-        ↓
-Enterprise / Domain Entities
+```
+frameworks  ──▶  infrastructure / interface_adapters  ──▶  application  ──▶  domain
+(outermost)                                                                   (innermost)
 ```
 
-Forbidden examples:
+- `domain/` imports nothing outside `domain/` (plus a small standard-library allowlist).
+- `application/` imports only `domain/` and itself.
+- `interface_adapters/` and `infrastructure/` import inward, never `frameworks/`.
+- `frameworks/` is the composition root: the only place that knows every layer and wires concrete implementations.
+- No name declared in an outer layer (SQLite row, HTTP request, CLI argument, framework object) may be mentioned in an inner layer.
+- When control must flow outward (a use case saving a run, reading tracks), the inner layer declares a port in `application/ports/` and an outer layer implements it.
+- `music_explorer`'s `domain/` and `application/` never import `music_analyzer`. The two packages stay independent; mirror an outward adapter with contract tests rather than share inner layers.
 
-- Domain importing database code.
-- Domain importing HTTP, CLI, UI, ORM, framework, or serialization libraries.
-- Use cases depending directly on concrete infrastructure.
-- Application services constructing concrete gateways, repositories, or external clients.
-- Tests forcing production code to expose internal details.
+The rule is enforced by AST import checks in `tests/architecture/` (`test_import_boundaries.py` for `music_analyzer`, `test_music_explorer_boundaries.py` for `music_explorer`). They fail closed: a new standard-library import in an inner layer needs a deliberate allowlist change and boundary review.
 
-## Folder Structure and Boundaries
+### Directory Structure
 
-Folder structure must make architectural boundaries obvious.
-
-Prefer this structure unless the language ecosystem strongly requires a variation:
-
-```text
-src/
-  domain/
-    entities/
-    value_objects/
-    services/
-    events/
-    errors/
-
-  application/
-    use_cases/
-    ports/
-    services/
-    dto/
-
-  interface_adapters/
-    controllers/
-    presenters/
-    gateways/
-    mappers/
-    view_models/
-
-  infrastructure/
-    persistence/
-    external_services/
-    config/
-    logging/
-    filesystem/
-    messaging/
-
-  frameworks/
-    web/
-    cli/
-    workers/
-    dependency_injection/
+```
+<package>/                     # music_analyzer/ and music_explorer/
+├── domain/                    # Business rules: entities, value objects, invariants. Pure, no I/O.
+├── application/
+│   ├── use_cases/             #   One module per use case, named for user intent (scan_library, build_graph, playlists)
+│   ├── ports/                 #   Interfaces the use cases need (repositories, audio, clock…)
+│   └── dto/                   #   Plain data crossing the boundary
+├── interface_adapters/        # Presenters, controllers, mappers: translate between use cases and the outside
+├── infrastructure/            # Details: SQLite persistence, FFmpeg, Essentia, filesystem, environment
+└── frameworks/                # CLI entry points, the Explorer web server and assets, composition root
+    ├── cli/
+    └── explorer/
 
 tests/
-  unit/
-    domain/
-    application/
-  integration/
-    interface_adapters/
-    infrastructure/
-  acceptance/
+├── unit/                      # Fast, framework-free: domain, application, adapters, tools
+├── integration/               # Real SQLite and other infrastructure at the boundary
+├── acceptance/                # CLI, HTTP and Explorer behaviour end to end (browser modules are opt-in)
+├── architecture/              # Dependency Rule checks
+└── support/                   # Shared synthetic fixtures
+tools/                         # Public-safe diagnostics, benchmarks and the browser gate; not shipped
+docs/                          # Reference and policy documents
+plans/                         # Longer-term plans
 ```
 
-### Boundary Responsibilities
+Rules for the structure:
 
-#### `domain/`
+- **Screaming Architecture.** Name modules and directories for the domain concept or user intent they serve (`analyze_batch`, `playlists`), never technical kinds (`services`, `helpers`, `utils`, `manager`).
+- **Use cases don't call each other.** Share policy through the domain or a port.
+- **Ports live with the inner layer that owns them.** Never put an interface next to its only implementation in an outer layer.
+- **Data crossing a boundary is a simple data structure** defined by the inner layer. Never pass SQLite rows, HTTP requests or JSON payloads inward, or entities outward.
+- **New boundary = new directory.** Code in a directory that doesn't respect its boundary is in the wrong place: move it.
+- **Frameworks are details.** SQLite, Essentia, FFmpeg, the HTTP server and the browser UI are plugins to the business rules.
+- **Both Explorer asset copies stay identical.** `music_explorer/frameworks/explorer/assets/` and `music_analyzer/frameworks/explorer/assets/` ship the same `app.js`; change both, and tests run against both.
 
-Contains enterprise business rules.
+### Code Standards (Clean Code)
 
-Allowed:
-- Entities
-- Value objects
-- Domain services
-- Domain events
-- Domain-specific errors
-- Pure business invariants
+- **SOLID** throughout, especially SRP (one reason to change), OCP (add new kinds of analysis or playlist rules without modifying existing ones) and DIP (depend on abstractions at every boundary).
+- **TDD.** Follow the three laws: write a failing test first, write only enough test to fail, write only enough code to pass. Red → Green → Refactor. A bug fix starts with a test that reproduces it, and the regression test stays. Mechanical changes (formatting, renames, moves) are the only exception.
+- **Test behaviour, not implementation details.** Domain and application tests use fakes, stubs or in-memory adapters for ports and run without a database, network, browser or framework. Slow infrastructure tests never replace them.
+- **Names reveal intent.** Use the listener's and DJ's language (`Track`, `Playlist`, `MoodAxis`, `BpmRange`), not generic names (`Manager`, `Helper`, `Util`, `Data`, `Info`).
+- **Small functions** that do one thing at one level of abstraction. Few arguments (ideally ≤ 2; no boolean flag arguments).
+- **No comments that explain bad code.** Refactor until the code explains itself. Comments are for *why*, never *what*.
+- **No side effects hidden in queries**; separate commands from queries. No global state, no hidden I/O.
+- **Boy Scout Rule:** leave every file cleaner than you found it.
 
-Forbidden:
-- Database access
-- HTTP clients
-- Framework annotations when avoidable
-- File system access
-- Environment variables
-- Logging frameworks
-- Serialization concerns
-- Dependency injection containers
+### Before Adding or Moving Code
 
-#### `application/`
+1. Identify the use case or business rule, and decide which layer the code belongs to (entity rule, use case, adapter or detail).
+2. Put it in that layer's directory, under the concept or use case it serves.
+3. Check every import against the Dependency Rule. If an inner file needs an outer thing, declare a port in the inner layer instead.
+4. Write or update the test first, then run the relevant tests and the architecture checks.
 
-Contains application-specific business rules and orchestration.
+If requirements are unclear, ask before inventing architecture. Don't introduce frameworks, databases, queues or external services unless the task requires them or the project already uses them.
 
-Allowed:
-- Use cases / interactors
-- Input and output boundaries
-- Ports / interfaces
-- Application DTOs
-- Transaction boundary abstractions
+### Choosing What to Work On
 
-Forbidden:
-- Concrete database implementations
-- Concrete HTTP clients
-- Framework controllers
-- ORM models leaking inward
-- CLI parsing
-- Web request or response objects
+**Bugs before features.** Fix known bugs before starting feature work. Bugs include:
 
-#### `interface_adapters/`
+- open bug tickets;
+- failing or flaky tests;
+- a bug found along the way.
 
-Converts between the outside world and application/domain models.
+Pick up a feature only when no known bug is waiting. A bug found while building a feature gets a ticket straight away, ahead of the next feature.
 
-Allowed:
-- Controllers
-- Presenters
-- Gateways implementing application ports
-- Mappers
-- View models
-- Request/response translation
+### Before Picking Up a Ticket
 
-Forbidden:
-- Business rules that belong in domain or use cases
-- Framework bootstrapping
-- Direct policy decisions that should be in application code
+A ticket describes a problem as it stood when it was written; the code may have moved on.
 
-#### `infrastructure/`
+1. Check it against main first, writing no code: what's already done (the docs, the tests, later comments), whether the files and names it gives still exist, and which changes came after it.
+2. Comment on the ticket what's done, what's left and where it lives now ("Checked against main at `<sha>`: …").
+3. Its suggested locations and approach are hints. This file's architecture wins: where they clash, follow the architecture and say so in the PR.
+4. Where what's left needs an owner decision rather than code, ask on the ticket and move on to the next item; never guess.
 
-Contains details.
+## Commands
 
-Allowed:
-- Database implementations
-- External API clients
-- File system implementations
-- Message brokers
-- Logging adapters
-- Configuration loading
-- Concrete implementations of application ports
+Run from the repository root with the project's virtualenv active (`python -m pip install .`).
 
-Forbidden:
-- Domain policy
-- Use-case orchestration
-- Business decisions
+```bash
+python -m unittest discover -s tests/unit -v                     # fast unit tests
+python -m unittest tests.architecture.test_import_boundaries tests.architecture.test_music_explorer_boundaries -v   # Dependency Rule
+RUN_FFMPEG_TESTS=0 RUN_PACKAGING_TESTS=0 python -m unittest discover -v   # full suite, as CI runs it: before every PR
+RUN_FFMPEG_TESTS=1 python -m unittest tests.integration.infrastructure.test_audio_decode -v   # opt-in real FFmpeg decode
+python -m tools.explorer_browser_gate prepare --wheelhouse <dir>   # build the offline wheelhouse for the browser gate
+python -m tools.explorer_browser_gate run --wheelhouse <dir> --evidence <dir>   # every Chromium module, installed wheel, under Podman
+python -m tools.explorer_browser_diagnostic --real-browser ...     # descriptive browser timings; see docs/explorer-browser-diagnostic.md
+music-analyzer --database "$DB" <command>    # scan, analyze, list, show, override, export, graph build, integrity…
+music-explorer --database "$DB" --port 8765  # the read-only Explorer at http://127.0.0.1:8765/
+```
 
-#### `frameworks/`
+Opt-in test switches: `RUN_FFMPEG_TESTS=1` for real decode, `RUN_BROWSER_SMOKE=1` and the other `RUN_EXPLORER_*` variables for Playwright/Chromium modules. Run browser modules through the gate, not ad hoc. `test_integrity_d1_installed` needs a `setuptools>=77` wheel in `/usr/share/python-wheels`; without it, it errors locally for that reason alone.
 
-Contains framework and delivery mechanisms.
+CI: `.github/workflows/ci.yml` runs the unit and architecture tests, a dedicated real-SQLite check, then the full suite with real decode and packaging disabled, on Python 3.14.8. FFmpeg integration runs only on a manual dispatch. CI is not installed-wheel or real-browser evidence: for Explorer UI changes, also run the browser gate and report its result.
 
-Allowed:
-- Web server setup
-- CLI entrypoints
-- Worker process setup
-- Dependency injection composition root
-- Routing
-- Framework-specific configuration
+Pull requests: branch from main, keep each PR small and reviewable, report what changed and which tests ran (including SKIP and BLOCKED results, never hidden), and document any architectural trade-off in the PR. Merge only with CI green.
 
-Forbidden:
-- Business rules
-- Domain decisions
-- Use-case logic beyond invoking the appropriate application boundary
-
-## Dependency Injection
-
-Use dependency inversion.
-
-- Define ports/interfaces in `application/ports/`.
-- Implement those ports in `infrastructure/` or `interface_adapters/`.
-- Wire concrete implementations only at the composition root, usually in `frameworks/`.
-
-Application and domain code must receive dependencies through constructors, function parameters, or explicit interfaces. They must not instantiate concrete infrastructure directly.
-
-## Testing Expectations
-
-### Domain Tests
-
-Domain tests should be fast, isolated, and framework-free.
-
-They should verify:
-- Business invariants
-- Entity behavior
-- Value object validation
-- Domain services
-- Domain events
-
-### Application Tests
-
-Application tests should verify use-case behavior through ports.
-
-Use fakes, stubs, spies, or in-memory adapters for boundaries.
-
-They should verify:
-- Use-case orchestration
-- Business decisions
-- Calls to output ports
-- Error handling
-- Transactional behavior where applicable
-
-### Adapter and Infrastructure Tests
-
-Adapter tests may use integration-style tests.
-
-They should verify:
-- Mapping correctness
-- Persistence behavior
-- External service adapter behavior
-- Framework integration at the boundary
-
-Do not let slow infrastructure tests replace fast domain and application tests.
-
-## Design Rules
-
-- Keep domain objects persistence-ignorant.
-- Keep use cases small and focused.
-- Name use cases after user/business intent.
-- Avoid anemic pass-through layers, but do not collapse architectural boundaries for convenience.
-- Prefer explicit mappers at boundaries.
-- Do not leak ORM models, HTTP requests, JSON payloads, or framework objects into the domain or application layers.
-- Keep validation close to the rule it protects.
-- Treat external systems as plugins.
-- Make dependencies visible.
-- Avoid global state.
-- Avoid hidden I/O.
-- Avoid temporal coupling where possible.
-
-## Refactoring Rules
-
-Refactor only with tests passing unless intentionally performing a red-green-refactor step.
-
-When moving code across boundaries:
-
-1. Add or update tests around the intended behavior.
-2. Move policy inward.
-3. Move details outward.
-4. Introduce ports where inward code needs outward behavior.
-5. Verify dependency direction after the move.
-
-## Agent Behavior
-
-Before implementing:
-
-1. Identify the use case or business rule.
-2. Identify the architectural layer where the change belongs.
-3. Write or update tests first.
-4. Keep folder boundaries explicit.
-5. Run the relevant tests.
-6. Report what changed and which tests were run.
-
-If requirements are unclear, ask for clarification before inventing architecture.
-
-Do not introduce frameworks, databases, queues, or external services unless the task explicitly requires them or the existing project already uses them.
-
-When creating new folders, choose names that reveal architectural intent, not technical convenience.
+`tools/` holds public-safe diagnostics, benchmarks and the browser gate. They sit outside the layers: the packages never import them, and their tests live in `tests/unit/benchmark_tools/`.
 
 ## Definition of Done
 
 A change is done only when:
 
-- The behavior is covered by tests.
-- Tests pass.
-- Dependencies point inward.
-- Folder placement reflects Clean Architecture boundaries.
-- Domain and application layers are free from framework and infrastructure details.
-- Any architectural tradeoff is documented in the final response.
+- its behaviour is covered by tests, written first;
+- the tests and the architecture checks pass;
+- dependencies point inward and folder placement reflects the boundaries;
+- domain and application layers are free of framework and infrastructure details;
+- any architectural trade-off is documented in the PR and the final report.
