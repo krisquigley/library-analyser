@@ -67,6 +67,93 @@ CREATE TABLE track_metadata(track_id TEXT PRIMARY KEY REFERENCES tracks(id), com
     return ids
 
 
+M3U_DOWNLOAD_INTERACTION = """  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10';
+  await button.onclick();
+  const playlistRequests = requests.filter(path => path.includes('m3u'));
+  assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');"""
+M3U_SCRIPT_COMPLETED = 'M3U_SCRIPT_COMPLETED'
+M3U_DOWNLOAD_SCRIPT = r"""
+const assert = require('assert');
+const app = require(process.argv[1]);
+const assetSource = require('fs').readFileSync(process.argv[1], 'utf8');
+assert(assetSource.includes('download-m3u'), 'browser asset must implement an explicit Download M3U control; current graph load behavior correctly avoids auto-fetch but offers no playlist action');
+function makeElement(tag){
+  const classes = new Set();
+  return {tagName: tag.toUpperCase(), children: [], parentElement: null, attributes: {}, dataset: {}, style: {}, id: '', hidden: false, value: '', selectedOptions: [], textContent: '', onclick: null, onchange: null, type: '', name: '', className: '', clientWidth: 900, clientHeight: 700, width: 0, height: 0,
+    classList: {add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c)},
+    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
+    replaceChildren(...nodes){this.children = []; this.append(...nodes);},
+    replaceWith(node){const parent = this.parentElement; if (parent) parent.children = parent.children.map(child => child === this ? node : child); if (node && typeof node === 'object') node.parentElement = parent;},
+    setAttribute(name, value){this.attributes[name] = String(value); if(name === 'id') this.id = String(value);},
+    removeAttribute(name){delete this.attributes[name];},
+    querySelector(selector){return find(this, selector);},
+    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}, stroke(){}, moveTo(){}, lineTo(){}, set fillStyle(_v){}, set strokeStyle(_v){}};}
+  };
+}
+function find(root, selector){
+  const wantedId = selector.startsWith('#') ? selector.slice(1) : null;
+  const wantedTag = wantedId ? null : selector.toUpperCase();
+  const stack = [...(root.children || [])];
+  while(stack.length){
+    const node = stack.shift();
+    if(!node || typeof node !== 'object') continue;
+    if((wantedId && node.id === wantedId) || (wantedTag && node.tagName === wantedTag)) return node;
+    stack.unshift(...(node.children || []));
+  }
+  return null;
+}
+function response(payload){return {ok:true, json:async()=>payload, text:async()=>JSON.stringify(payload)};}
+const elements = {};
+for (const id of ['library-loading','loading-status','loading-error','loading-retry','tracks','detail','map','controls','graph-load-status','track-search','selected-mood','genre-filter','mood-strip','mood-strip-picker','mood-strip-value']) { elements[id] = makeElement(id === 'map' || id === 'mood-strip' ? 'canvas' : id === 'track-search' ? 'input' : 'div'); elements[id].id = id; }
+elements.map.parentElement = makeElement('div');
+global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
+const frames = [];
+global.requestAnimationFrame = cb => frames.push(cb);
+function runFrames(){while(frames.length) frames.shift()();}
+const graph = {dto_version:'mood-axis-graph-compact-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{graph_status:{state:'ready'}}, nodes:[
+  {id:'track-start', label:'Start Track', x:{raw:0.4, normalized:0.4, scale:'native'}, y:{raw:0.5, normalized:0.5, scale:'native'}, z:{label:'BPM', raw:124, normalized:6.2, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.8}, bpm:124, genres:[], reasons:[]},
+  {id:'track-neighbor', label:'Neighbor Track', x:{raw:0.5, normalized:0.5, scale:'native'}, y:{raw:0.6, normalized:0.6, scale:'native'}, z:{label:'BPM', raw:126, normalized:6.3, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.7}, bpm:126, genres:[], reasons:[]}
+], edges:[{a:'track-start', b:'track-neighbor', score:0.91, explanation:'synthetic'}], unpositioned:[]};
+const requests = [];
+global.fetch = async path => {
+  requests.push(String(path));
+  if (String(path).startsWith('/api/mood-axis-graph')) return response(graph);
+  if (String(path).startsWith('/api/playlists/m3u')) return {ok:true, text:async()=> '#EXTM3U\n/safe/track.flac\n', json:async()=>({})};
+  if (path === '/api/state') return response({current_track_id:'track-start', history:[]});
+  if (String(path).startsWith('/api/tracks/summary')) return response({tracks:[{handle:'track-start', title:'Start Track', artist:'Synthetic'}]});
+  if (path === '/api/tracks/track-start') return response({handle:'track-start', metadata:{common:[['title','Start Track']], tags:[]}, fields:{bpm:{effective:124}}});
+  throw new Error('unexpected fetch '+path);
+};
+(async () => {
+  app.setStateForTesting({current_track_id:'track-start'});
+  app.renderGraphLoadStatus();
+  assert(!requests.some(path => path.includes('m3u')), 'rendering graph controls must not auto-fetch a playlist');
+  // loadGraph awaits several frames; with nothing else pending, Node would
+  // otherwise exit 0 silently before any assertion below runs.
+  let loaded = false;
+  const loading = app.loadGraph().then(() => { loaded = true; });
+  for (let i = 0; i < 200 && !loaded; i++) { runFrames(); await new Promise(resolve => setImmediate(resolve)); }
+  assert(loaded, 'loadGraph must settle');
+  await loading;
+  assert(!requests.some(path => path.includes('m3u')), 'loading/rendering the graph must not auto-fetch a playlist');
+  function textOf(node){return String(node.textContent || '') + (node.children || []).map(textOf).join(' ');}
+  const panelText = textOf(elements['graph-load-status']);
+  const button = elements['graph-load-status'].querySelector('#download-m3u');
+  assert(button, 'Explorer graph controls must expose a Download M3U button after graph load; it must be explicit user-click only, not an automatic fetch');
+  assert(/Download\s+M3U/.test(panelText), 'the explicit playlist control must be labelled Download M3U');
+  const bpmMin = elements['graph-load-status'].querySelector('#m3u-bpm-min');
+  const bpmMax = elements['graph-load-status'].querySelector('#m3u-bpm-max');
+  const count = elements['graph-load-status'].querySelector('#m3u-count');
+  assert(bpmMin && bpmMax && count, 'M3U controls must expose bounded BPM and playlist length inputs');
+  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10';
+  await button.onclick();
+  const playlistRequests = requests.filter(path => path.includes('m3u'));
+  assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');
+  console.log('M3U_SCRIPT_COMPLETED');
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+
+
 class Explorer3DGraphAssetTests(unittest.TestCase):
     def test_projection_endpoint_exposes_all_library_tracks_for_unbounded_initial_graph(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1990,81 +2077,26 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for M3U download browser tests')
     def test_m3u_download_requires_explicit_click_and_sends_selected_start_bpm_and_count(self):
-        script = r"""
-const assert = require('assert');
-const app = require(process.argv[1]);
-const assetSource = require('fs').readFileSync(process.argv[1], 'utf8');
-assert(assetSource.includes('download-m3u'), 'browser asset must implement an explicit Download M3U control; current graph load behavior correctly avoids auto-fetch but offers no playlist action');
-function makeElement(tag){
-  const classes = new Set();
-  return {tagName: tag.toUpperCase(), children: [], parentElement: null, attributes: {}, dataset: {}, style: {}, id: '', hidden: false, value: '', selectedOptions: [], textContent: '', onclick: null, onchange: null, type: '', name: '', className: '', clientWidth: 900, clientHeight: 700, width: 0, height: 0,
-    classList: {add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c)},
-    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
-    replaceChildren(...nodes){this.children = []; this.append(...nodes);},
-    setAttribute(name, value){this.attributes[name] = String(value); if(name === 'id') this.id = String(value);},
-    removeAttribute(name){delete this.attributes[name];},
-    querySelector(selector){return find(this, selector);},
-    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}, stroke(){}, moveTo(){}, lineTo(){}, set fillStyle(_v){}, set strokeStyle(_v){}};}
-  };
-}
-function find(root, selector){
-  const wantedId = selector.startsWith('#') ? selector.slice(1) : null;
-  const wantedTag = wantedId ? null : selector.toUpperCase();
-  const stack = [...(root.children || [])];
-  while(stack.length){
-    const node = stack.shift();
-    if(!node || typeof node !== 'object') continue;
-    if((wantedId && node.id === wantedId) || (wantedTag && node.tagName === wantedTag)) return node;
-    stack.unshift(...(node.children || []));
-  }
-  return null;
-}
-function response(payload){return {ok:true, json:async()=>payload, text:async()=>JSON.stringify(payload)};}
-const elements = {};
-for (const id of ['library-loading','loading-status','loading-error','loading-retry','tracks','detail','map','controls','graph-load-status','track-search','selected-mood','genre-filter','mood-strip','mood-strip-picker','mood-strip-value']) { elements[id] = makeElement(id === 'map' || id === 'mood-strip' ? 'canvas' : id === 'track-search' ? 'input' : 'div'); elements[id].id = id; }
-elements.map.parentElement = makeElement('div');
-global.document = {createElement: makeElement, createTextNode: text => ({textContent: String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
-const frames = [];
-global.requestAnimationFrame = cb => frames.push(cb);
-function runFrames(){while(frames.length) frames.shift()();}
-const graph = {dto_version:'mood-axis-graph-compact-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{graph_status:{state:'ready'}}, nodes:[
-  {id:'track-start', label:'Start Track', x:{raw:0.4, normalized:0.4, scale:'native'}, y:{raw:0.5, normalized:0.5, scale:'native'}, z:{label:'BPM', raw:124, normalized:6.2, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.8}, bpm:124, genres:[], reasons:[]},
-  {id:'track-neighbor', label:'Neighbor Track', x:{raw:0.5, normalized:0.5, scale:'native'}, y:{raw:0.6, normalized:0.6, scale:'native'}, z:{label:'BPM', raw:126, normalized:6.3, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.7}, bpm:126, genres:[], reasons:[]}
-], edges:[{a:'track-start', b:'track-neighbor', score:0.91, explanation:'synthetic'}], unpositioned:[]};
-const requests = [];
-global.fetch = async path => {
-  requests.push(String(path));
-  if (String(path).startsWith('/api/mood-axis-graph')) return response(graph);
-  if (String(path).startsWith('/api/playlists/m3u')) return {ok:true, text:async()=> '#EXTM3U\n/safe/track.flac\n', json:async()=>({})};
-  if (path === '/api/state') return response({current_track_id:'track-start', history:[]});
-  if (String(path).startsWith('/api/tracks/summary')) return response({tracks:[{handle:'track-start', title:'Start Track', artist:'Synthetic'}]});
-  if (path === '/api/tracks/track-start') return response({handle:'track-start', metadata:{common:[['title','Start Track']], tags:[]}, fields:{bpm:{effective:124}}});
-  throw new Error('unexpected fetch '+path);
-};
-(async () => {
-  app.setStateForTesting({current_track_id:'track-start'});
-  app.renderGraphLoadStatus();
-  assert(!requests.some(path => path.includes('m3u')), 'rendering graph controls must not auto-fetch a playlist');
-  const loading = app.loadGraph();
-  runFrames();
-  await loading;
-  assert(!requests.some(path => path.includes('m3u')), 'loading/rendering the graph must not auto-fetch a playlist');
-  function textOf(node){return String(node.textContent || '') + (node.children || []).map(textOf).join(' ');}
-  const panelText = textOf(elements['graph-load-status']);
-  const button = elements['graph-load-status'].querySelector('#download-m3u');
-  assert(button, 'Explorer graph controls must expose a Download M3U button after graph load; it must be explicit user-click only, not an automatic fetch');
-  assert(/Download\s+M3U/.test(panelText), 'the explicit playlist control must be labelled Download M3U');
-  const bpmMin = elements['graph-load-status'].querySelector('#m3u-bpm-min');
-  const bpmMax = elements['graph-load-status'].querySelector('#m3u-bpm-max');
-  const count = elements['graph-load-status'].querySelector('#m3u-count');
-  assert(bpmMin && bpmMax && count, 'M3U controls must expose bounded BPM and playlist length inputs');
-  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10';
+        result = subprocess.run(['node', '-e', M3U_DOWNLOAD_SCRIPT, str(APP_JS)], cwd=REPO_ROOT,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn(M3U_SCRIPT_COMPLETED, result.stdout, 'the script must reach its assertions: ' + result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for the M3U controls test')
+    def test_m3u_download_sends_a_target_duration_instead_of_the_count(self):
+        # Issue #121: a duration replaces the count; the server caps the track number.
+        script = M3U_DOWNLOAD_SCRIPT.replace(M3U_DOWNLOAD_INTERACTION, """  const duration = elements['graph-load-status'].querySelector('#m3u-duration');
+  assert(duration, 'M3U controls must expose an optional target duration in minutes');
+  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10'; duration.value = '45';
   await button.onclick();
-  const playlistRequests = requests.filter(path => path.includes('m3u'));
-  assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');
-})().catch(error => { console.error(error); process.exit(1); });
-"""
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+  assert.deepStrictEqual(requests.filter(path => path.includes('m3u')),
+    ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&duration_minutes=45']);""")
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                result = subprocess.run(['node', '-e', script, str(app)], cwd=REPO_ROOT,
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertIn(M3U_SCRIPT_COMPLETED, result.stdout, 'the script must reach its assertions: ' + result.stderr)
 
     def test_mirrored_browser_assets_advertise_explicit_m3u_download_without_startup_fetch(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):

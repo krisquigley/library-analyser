@@ -16,6 +16,7 @@ class _PlayableTrack:
     title: str = ''
     artist: str = ''
     manual_overrides: tuple[str, ...] = ()
+    duration_seconds: float | None = 180.0
 
 
 class _FakePlaylistRepository:
@@ -117,6 +118,78 @@ def _warning(result):
 
 
 class M3UPlaylistGenerationTests(unittest.TestCase):
+    def test_walks_past_a_dead_end_instead_of_stopping_short(self):
+        # Issue #121: greedy took 'dead-end' and stopped at two tracks.
+        repo = _FakePlaylistRepository(
+            tracks=(
+                _PlayableTrack('start', 120, '/library/start.flac'),
+                _PlayableTrack('dead-end', 121, '/library/dead.flac'),
+                _PlayableTrack('via', 122, '/library/via.flac'),
+                _PlayableTrack('onward', 123, '/library/onward.flac'),
+            ),
+            edges=(_edge('start', 'dead-end', 0.9), _edge('start', 'via', 0.5), _edge('via', 'onward', 0.5)),
+        )
+
+        result = _generate(repo, start='start', bpm_min=100, bpm_max=130, length=3)
+
+        self.assertEqual(('start', 'via', 'onward'), _track_ids(result))
+        self.assertIsNone(_warning(result))
+
+    def test_no_same_artist_back_to_back(self):
+        repo = _FakePlaylistRepository(
+            tracks=(
+                _PlayableTrack('start', 120, '/library/start.flac', artist='Boards of Canada'),
+                _PlayableTrack('same', 121, '/library/same.flac', artist='Boards of Canada'),
+                _PlayableTrack('other', 122, '/library/other.flac', artist='Autechre'),
+            ),
+            edges=(_edge('start', 'same', 0.9), _edge('start', 'other', 0.5)),
+        )
+
+        result = _generate(repo, start='start', bpm_min=100, bpm_max=130, length=2)
+
+        self.assertEqual(('start', 'other'), _track_ids(result))
+
+    def test_target_duration_instead_of_a_track_count(self):
+        repo = _FakePlaylistRepository(
+            tracks=tuple(_PlayableTrack(f't{i}', 120, f'/library/{i}.flac', duration_seconds=240.0) for i in range(6)),
+            edges=tuple(_edge(f't{i}', f't{i + 1}', 0.9) for i in range(5)),
+        )
+
+        result = _load_use_case_class()(repo).execute(
+            start_track_id='t0', bpm_min=100, bpm_max=130, duration_minutes=10)
+
+        self.assertEqual(('t0', 't1', 't2'), _track_ids(result), '3 x 4 min reaches 10 min')
+        self.assertIsNone(_warning(result))
+
+    def test_duration_shortfall_is_reported(self):
+        repo = _FakePlaylistRepository(
+            tracks=(_PlayableTrack('a', 120, '/library/a.flac', duration_seconds=240.0),
+                    _PlayableTrack('b', 120, '/library/b.flac', duration_seconds=240.0)),
+            edges=(_edge('a', 'b', 0.9),),
+        )
+
+        result = _load_use_case_class()(repo).execute(
+            start_track_id='a', bpm_min=100, bpm_max=130, duration_minutes=60)
+
+        self.assertEqual(('a', 'b'), _track_ids(result))
+        self.assertRegex(_warning(result) or '', 'shorter than the requested duration')
+
+    def test_duration_mode_rejects_a_start_without_a_duration_and_invalid_targets(self):
+        repo = _FakePlaylistRepository(
+            tracks=(_PlayableTrack('start', 120, '/library/start.flac', duration_seconds=None),),
+            edges=(),
+        )
+        use_case = _load_use_case_class()(repo)
+
+        with self.assertRaisesRegex(ValueError, 'start track.*duration'):
+            use_case.execute(start_track_id='start', bpm_min=100, bpm_max=130, duration_minutes=10)
+        for bad in (0, -1, float('nan'), 1441, 'ten'):
+            with self.subTest(duration_minutes=bad):
+                with self.assertRaisesRegex(ValueError, 'duration'):
+                    use_case.execute(start_track_id='start', bpm_min=100, bpm_max=130, duration_minutes=bad)
+        with self.assertRaisesRegex(ValueError, 'length|duration'):
+            use_case.execute(start_track_id='start', bpm_min=100, bpm_max=130)
+
     def test_manual_bpm_override_makes_the_detected_bpm_unusable_as_in_the_graph(self):
         # Issue #120: a spurious detected BPM is overridden; the playlist must not use it.
         repo = _FakePlaylistRepository(
