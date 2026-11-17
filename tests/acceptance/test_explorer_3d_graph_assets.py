@@ -11,6 +11,8 @@ from music_analyzer.frameworks.explorer.server import create_server
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 
 
+from tests.support.node_script import run_node_script
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_JS = REPO_ROOT / 'music_analyzer' / 'frameworks' / 'explorer' / 'assets' / 'app.js'
 
@@ -71,7 +73,6 @@ M3U_DOWNLOAD_INTERACTION = """  bpmMin.value = '120'; bpmMax.value = '128'; coun
   await button.onclick();
   const playlistRequests = requests.filter(path => path.includes('m3u'));
   assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');"""
-M3U_SCRIPT_COMPLETED = 'M3U_SCRIPT_COMPLETED'
 M3U_DOWNLOAD_SCRIPT = r"""
 const assert = require('assert');
 const app = require(process.argv[1]);
@@ -149,8 +150,7 @@ global.fetch = async path => {
   await button.onclick();
   const playlistRequests = requests.filter(path => path.includes('m3u'));
   assert.deepStrictEqual(playlistRequests, ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10'], 'Download M3U click must send selected start, BPM range, and requested count exactly once');
-  console.log('M3U_SCRIPT_COMPLETED');
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
 
 
@@ -234,7 +234,7 @@ assert.deepStrictEqual(bordered, {x:90, y:120});
         if shutil.which('node'):
             for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
                 with self.subTest(app=app):
-                    subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                    run_node_script(self, script, str(app))
         else:
             source = APP_JS.read_text(encoding='utf-8')
             self.assertIn('function buildGraphModel', source)
@@ -268,7 +268,7 @@ assert.deepStrictEqual(app.applyMoodGraphFilters(model, {genres:['rock']}).links
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for graph display spacing tests')
@@ -316,7 +316,7 @@ assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'fallback
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for raw graph axis labels tests')
@@ -350,7 +350,7 @@ assert.deepStrictEqual(axes.map(a => [a.key, a.start, a.end]), [
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for fallback graph canvas attachment tests')
     def test_canvas_fallback_draws_into_visible_graph_container_after_replacing_legacy_map(self):
@@ -392,7 +392,7 @@ assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'visible 
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     def test_graph_filter_source_separates_mood_tracker_control(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
@@ -466,7 +466,7 @@ assert.strictEqual(app.graphQueryFromControls(), '?mood=heavy');
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
 
 
@@ -526,11 +526,11 @@ global.ForceGraph3D = undefined;
   assert.strictEqual(graphRequests, 1, 'clearing graph filters must not reload graph');
   assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a','b']);
   assert.strictEqual(app.getGraphControlsForTesting().bpmMin, null);
-})().catch(error=>{console.error(error); process.exit(1);});
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     def test_load_graph_uses_api_graph_status_for_read_only_snapshot_copy(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
@@ -589,11 +589,11 @@ async function loadWithStatus(graphStatus){
     assert.match(text, /music-analyzer graph build --database DB/, `${state} response gives the explicit read-only rebuild command`);
     assert.doesNotMatch(text, /private\.sqlite|Users\/alice|hidden command/, `${state} response must not leak API paths or commands`);
   }
-})().catch(error=>{console.error(error); process.exit(1);});
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for mood tracker reload tests')
     def test_mood_tracker_change_reloads_ready_graph_but_not_before_initial_load(self):
@@ -652,11 +652,11 @@ global.fetch = async path => {
   assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v3','/api/mood-axis-graph?mood=relaxing&contract=v3'], 'changing the mood after the graph is ready reloads indexed graph data');
   assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'relaxing');
   assert.strictEqual(app.buildMoodStrip(app.getVisibleGraphForTesting(), null)[0].score, 0.1, 'strip uses the reloaded mood score');
-})().catch(error=>{console.error(error); process.exit(1);});
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for relatedness alpha tests')
     def test_relatedness_link_alpha_reflects_clamped_score_and_notes_explain_it(self):
@@ -672,7 +672,7 @@ assert.strictEqual(app.relatednessLinkAlpha({score:'not-a-number'}), 0.18);
 assert(app.relatednessLinkAlpha({score:0.9}) > app.relatednessLinkAlpha({score:0.2}));
 assert.strictEqual(app.graphRelatednessLegend(), 'Link alpha reflects axis-independent relatedness strength from existing stored summaries; higher-score links are more opaque.');
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for force graph configuration tests')
     def test_force_graph_receives_per_link_rgba_and_numeric_global_opacity(self):
@@ -713,7 +713,7 @@ assert.deepStrictEqual(data.links.map(alpha), [0.18,0.45,0.72,0.18]);
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 self.assertIn('graphRelatednessLegend', source)
-                subprocess.run(['node', '-e', script, str(app), str(app.parent / 'vendor/3d-force-graph/3d-force-graph.min.js')], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app), str(app.parent / 'vendor/3d-force-graph/3d-force-graph.min.js'))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selected node halo renderer tests')
@@ -762,7 +762,7 @@ function selectedNodeHalos(scene){return scene.children.filter(obj => obj.name =
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selected node halo material tests')
     def test_selected_node_halo_uses_translucent_non_pickable_shell_material(self):
@@ -810,7 +810,7 @@ function makeGraph(scene){let data = {nodes:[],links:[]}; const graph = {scene()
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selected node halo filter tests')
     def test_selected_node_halo_removed_when_filtered_node_not_visible(self):
@@ -847,7 +847,7 @@ function selectedNodeHalos(scene){return scene.children.filter(obj => obj.name =
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for tracks table tests')
@@ -921,9 +921,9 @@ async function flushSummarySearch(){for(let i=0;i<8;i++) await Promise.resolve()
   assert.strictEqual(tbody.children.length, 0, 'clearing search returns to empty idle sidebar');
   assert(tracks.innerText.includes('Search for tracks to begin'));
   assert(!requested.some(path => !new URL(path, 'http://example.test').searchParams.get('query')), 'clear never fetches unfiltered data');
-})().catch(error=>{console.error(error); process.exit(1);});
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     def test_track_summary_source_uses_next_cursor_and_load_more_without_unbounded_list(self):
         for package in ('music_analyzer', 'music_explorer'):
@@ -976,11 +976,11 @@ global.fetch = async path => {
   assert.strictEqual(tbody.children[1].children[0].children[0].getAttribute('aria-current'), 'true');
   assert(tracks.innerText.includes('Showing 3 of 102'));
   assert(!tracks.children.some(child => child.tagName === 'NAV'), 'load more navigation disappears at end');
-})().catch(error=>{console.error(error); process.exit(1);});
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for track pagination race tests')
     def test_summary_search_resets_cursor_and_stale_next_page_does_not_mix_results(self):
@@ -1023,11 +1023,11 @@ global.fetch = async path => {
   assert(!fetches.find(url => url.includes('query=needle') && url.includes('cursor=')), 'new search must reset cursor');
   assert(!tracks.innerText.includes('Stale Old Page'));
   assert(tracks.innerText.includes('Showing 1 of 1'));
-})().catch(error=>{console.error(error); process.exit(1);});
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     def test_static_html_does_not_instruct_manual_graph_loading_in_both_mirrored_assets(self):
         for package in ('music_analyzer', 'music_explorer'):
@@ -1048,7 +1048,7 @@ assert.strictEqual(app.renderTrackMetadata({}).children[0].textContent,'No embed
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     def test_detail_panel_source_removes_diagnostics_and_graph_key_from_current_track(self):
         source = APP_JS.read_text(encoding='utf-8')
@@ -1114,7 +1114,7 @@ assert(!text.includes('Missing: no mood'), text);
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for color behavior tests')
     def test_library_relative_color_legend_and_selection_survive_filters_and_mood_changes(self):
@@ -1186,7 +1186,7 @@ assert.strictEqual(info.textContent, '', 'removed graph status panel must not be
 vm.runInContext("selectedGraphControls={mood:'heavy',bpmMin:100,bpmMax:140,genres:['jazz']}",context);
 assert.strictEqual(context.graphQueryFromControls(),'?mood=heavy','fetch full mood library before local filtering');
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for camera behavior tests')
     def test_graph_camera_centers_bounds_fits_viewport_and_preserves_selection_view(self):
@@ -1243,7 +1243,7 @@ assert.strictEqual(calls.length,2,'filtering to different bounds reframes');
 context.renderMap({nodes:[{...nodes[0],x:950}],links:[],unpositioned:[]});
 assert.strictEqual(calls.length,3,'changed layout reframes');
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
 
@@ -1268,7 +1268,7 @@ context.renderMap({nodes:[node],links:[],unpositioned:[]});
 graph.stored = undefined; // 3d-force-graph can transiently report no data for the same layout.
 assert.doesNotThrow(() => context.renderMap({nodes:[{...node,moodScore:{label:'calm',raw:0.9}}],links:[],unpositioned:[]}));
 """;
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
 
@@ -1307,9 +1307,9 @@ await context.setCurrent('b');
 assert.strictEqual(bodies[1].selection_epoch, 8, 'reset response epoch is used by next click');
 assert.strictEqual(bodies[1].selection_token, 2, 'same tab keeps monotonically increasing tokens across reload-safe session state');
 assert.strictEqual(bodies[1].selection_client_id, bodies[0].selection_client_id, 'same tab keeps stable client id');
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """;
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selection rejection behavior tests')
@@ -1351,9 +1351,9 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'server-c
 assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
 assert(fetches.includes('/api/tracks/server-current'), 'detail fetch follows the accepted server snapshot after rejection');
 assert(detail.children.some(child => child.textContent.includes('Current Track')));
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """;
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selection rejection refresh tests')
@@ -1399,9 +1399,9 @@ assert(elements.detail.children.some(child => child.textContent.includes('Curren
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'refresh does not request removed candidate list');
 assert(!fetches.some(path => path.startsWith('/api/tracks/summary')), 'refresh preserves existing search rows');
 assert(fetches.includes('/api/current') && fetches.includes('/api/state'));
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selection detail regression tests')
@@ -1429,11 +1429,11 @@ await context.refreshSelectionDependent(0);
 assert(fetches.includes('/api/tracks/a'), 'selected detail is fetched');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'removed list endpoint is not requested');
 assert(detail.children.some(child => child.textContent.includes('Current Track')), 'detail renders even when candidates are unavailable');
-})().catch(error => {console.error(error); process.exit(1);});
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => {console.error(error); process.exit(1);});
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for selection behavior tests')
     def test_selection_only_fetches_detail_and_keeps_graph_data(self):
@@ -1484,9 +1484,9 @@ assert.deepStrictEqual(rows.map(r => r.className), ['', 'current']);
 assert(detail.children.some(child => child.textContent.includes('Current Track')), 'stale first detail must not overwrite latest selection');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'selection does not request removed candidate list');
 assert(graph.refreshed >= 2, 'selected node styling is refreshed locally');
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """;
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for refresh race tests')
     def test_stale_full_refresh_does_not_overwrite_newer_selection_refresh(self):
@@ -1537,13 +1537,15 @@ assert.deepStrictEqual(rendered, [], 'stale refresh must not render stale graph 
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'stale refresh detail must not overwrite latest selection detail');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'selection does not request removed candidate list');
 assert(!fetches.some(path => path.startsWith('/api/tracks/summary')), 'refresh never refills sidebar');
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """;
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for same-selection detail race tests')
-    def test_older_selection_detail_cannot_overwrite_newer_full_refresh_for_same_selection(self):
+    def test_overlapping_refreshes_for_the_same_selection_share_one_detail_request(self):
+        # Since f8003cb a refresh joins the in-flight detail of the same selection,
+        # so a delayed older detail can no longer race a newer one (#125).
         script = r"""
 const assert = require('assert');
 const fs = require('fs'), vm = require('vm');
@@ -1575,23 +1577,26 @@ function element(tag){return {tag, id:'', textContent:'', className:'', dataset:
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p')};
 context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 vm.runInContext("state={current_track_id:'a'}; selectionEpoch=1; graphModel={nodes:[{id:'a',moodScore:null}],links:[],unpositioned:[],selectedMood:'',colorRanges:{}}; visibleGraph={nodes:graphModel.nodes,links:[],unpositioned:[]};", context);
-const olderRefresh = context.refresh();
-await Promise.resolve();
-assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a', 'older refresh observed the selected track while detail is pending');
-const newerRefresh = context.refresh();
-await newerRefresh;
-assert(elements.detail.children.some(child => child.textContent.includes('Fresh detail')), 'newer full refresh renders current detail first');
-olderDetail.resolve({handle:'a', display_label:'Stale delayed detail', latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
-await olderRefresh;
+let settled = 0;
+const olderRefresh = context.refresh().then(() => { settled += 1; });
+for (let i = 0; i < 20 && trackDetailRequests === 0; i++) await new Promise(resolve => setImmediate(resolve));
+assert.strictEqual(trackDetailRequests, 1, 'the older refresh is awaiting its detail');
+const newerRefresh = context.refresh().then(() => { settled += 1; });
+for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+assert.strictEqual(trackDetailRequests, 1, 'the newer refresh joins the in-flight detail instead of racing it');
+assert.strictEqual(settled, 0, 'neither refresh completes before the shared detail arrives');
+olderDetail.resolve({handle:'a', display_label:'A', metadata:{common:[['title','Shared detail']], tags:[]}, latest_run_status:'completed', available_locations:1, reasons:[], fields:{}});
+await Promise.all([olderRefresh, newerRefresh]);
 assert.strictEqual(vm.runInContext('state.current_track_id', context), 'a');
-assert(elements.detail.children.some(child => child.textContent.includes('Fresh detail')), 'older delayed detail for same selected id must not overwrite newer refresh detail');
-assert.strictEqual(trackDetailRequests, 2);
+const textOf = node => String(node.textContent || '') + (node.children || []).map(textOf).join(' ');
+assert(textOf(elements.detail).includes('Shared detail'), 'the one shared detail is rendered');
+assert.strictEqual(trackDetailRequests, 1);
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'refreshes do not request removed candidate list');
 assert.strictEqual(fetches.filter(path => path === '/api/state').length, 2);
 assert(!fetches.includes('/api/current'), 'non-selection refreshes reproduce the same-selected-id detail race without a click');
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """;
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for click/refresh race tests')
     def test_refresh_after_click_before_post_resolves_preserves_latest_selection_intent(self):
@@ -1641,9 +1646,9 @@ assert(elements.detail.children.some(child => child.textContent.includes('Curren
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'click does not request removed candidate list');
 assert(!fetches.some(path => path.startsWith('/api/tracks/summary')), 'refresh preserves existing search rows');
 assert(fetches.includes('/api/state') && fetches.includes('/api/current'));
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """;
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for history race tests')
     def test_late_history_response_does_not_overwrite_later_click_selection(self):
@@ -1693,9 +1698,9 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), 'b', 'sta
 assert(elements.detail.children.some(child => child.textContent.includes('Current Track')), 'latest click detail remains rendered after stale reset response');
 assert(!fetches.some(path => path.startsWith('/api/candidates')), 'stale reset does not request removed candidate list');
 assert(fetches.includes('/api/reset') && fetches.includes('/api/current'));
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """;
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for reset race tests')
     def test_reset_invalidates_in_flight_click_post_continuation(self):
@@ -1738,9 +1743,9 @@ assert.strictEqual(vm.runInContext('state.current_track_id', context), null, 'st
 assert.deepStrictEqual(fetches.filter(path => path === '/api/tracks/b'), [], 'stale click continuation must not fetch stale track detail after reset');
 assert(!elements.detail.children.some(node => node.textContent === 'Bee stale'), 'stale click detail must not render after reset');
 assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     def test_undo_and_reset_still_force_complete_ui_refresh(self):
         app = APP_JS.read_text()
@@ -1774,7 +1779,7 @@ assert(legend.includes('0.1 to 1.9 native'), legend);
 assert(!legend.includes('undefined'), legend);
 """
         if shutil.which('node'):
-            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+            run_node_script(self, script, str(APP_JS))
         else:
             source = APP_JS.read_text(encoding='utf-8')
             self.assertIn('.min', source)
@@ -1805,7 +1810,7 @@ assert(!rendered.includes('Color relative to this library'), rendered);
         if shutil.which('node'):
             for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
                 with self.subTest(app=app):
-                    subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                    run_node_script(self, script, str(app))
         else:
             for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
                 source = app.read_text(encoding='utf-8')
@@ -1902,7 +1907,7 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 1374, clientHeight: 520
 assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520, parentElement: {clientWidth: 568, computedStyle: parentStyle}}), {width: 534, height: 520});
 """;
         if shutil.which('node'):
-            subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+            run_node_script(self, script, str(APP_JS))
         else:
             source = APP_JS.read_text(encoding='utf-8')
             self.assertIn('if(a.summary_values&&a.summary_values.length) return a.summary_values', source)
@@ -1980,9 +1985,9 @@ global.fetch = path => {
   assert.strictEqual(app.getStateForTesting().current_track_id, 'off-page');
   assert.deepStrictEqual(app.getStateForTesting().history, ['previous']);
   assert.strictEqual(elements['track-search'].oninput && typeof elements['track-search'].oninput, 'function', 'list search is usable without graph');
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for loading screen DOM tests')
@@ -2024,9 +2029,9 @@ global.fetch = async path => { calls.push(String(path)); return {ok:true, json: 
   await promise;
   assert(elements['library-loading'].classList.contains('done'));
   assert.strictEqual(elements['library-loading'].attributes['aria-busy'], 'false');
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for loading screen DOM tests')
     def test_stale_refresh_and_errors_do_not_clear_newer_loading_and_retry_is_accessible(self):
@@ -2070,17 +2075,14 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
   assert.match(elements['loading-status'].textContent, /Unable to load/);
   assert.strictEqual(elements['loading-retry'].hidden, false);
   assert.strictEqual(typeof elements['loading-retry'].onclick, 'function');
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for M3U download browser tests')
     def test_m3u_download_requires_explicit_click_and_sends_selected_start_bpm_and_count(self):
-        result = subprocess.run(['node', '-e', M3U_DOWNLOAD_SCRIPT, str(APP_JS)], cwd=REPO_ROOT,
-                                capture_output=True, text=True, timeout=30)
-        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn(M3U_SCRIPT_COMPLETED, result.stdout, 'the script must reach its assertions: ' + result.stderr)
+        run_node_script(self, M3U_DOWNLOAD_SCRIPT, APP_JS)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for the M3U controls test')
     def test_m3u_download_sends_a_target_duration_instead_of_the_count(self):
@@ -2093,10 +2095,7 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
     ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&duration_minutes=45']);""")
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                result = subprocess.run(['node', '-e', script, str(app)], cwd=REPO_ROOT,
-                                        capture_output=True, text=True, timeout=30)
-                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-                self.assertIn(M3U_SCRIPT_COMPLETED, result.stdout, 'the script must reach its assertions: ' + result.stderr)
+                run_node_script(self, script, app)
 
     def test_mirrored_browser_assets_advertise_explicit_m3u_download_without_startup_fetch(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
@@ -2166,7 +2165,7 @@ assert.throws(() => app.normalizeMoodAxisGraphDto({dto_version:'mood-axis-graph-
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for indexed graph request negotiation tests')
     def test_load_graph_fetches_indexed_v3_contract_and_preserves_single_in_flight_graph_request(self):
@@ -2203,11 +2202,11 @@ global.fetch = async path => {
   assert(requests.every(path => /(?:\?|&)mood=heavy(?:&|$)/.test(path)), 'indexed negotiation preserves selected mood query');
   assert(!requests.some(path => path === '/api/mood-axis-graph' || path === '/api/mood-axis-graph?mood=heavy'), 'browser must not fall back to the legacy verbose graph URL');
   assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a']);
-})().catch(error => { console.error(error); process.exit(1); });
+})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):
-                subprocess.run(['node', '-e', script, str(app)], check=True, cwd=REPO_ROOT)
+                run_node_script(self, script, str(app))
 
 
 if __name__ == '__main__':

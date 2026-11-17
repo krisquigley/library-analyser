@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 
 
+from tests.support.node_script import run_node_script
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_JS = REPO_ROOT / 'music_explorer' / 'frameworks' / 'explorer' / 'assets' / 'app.js'
 
@@ -38,7 +40,7 @@ assert.deepStrictEqual(fromCompact.unpositioned, fromVerbose.unpositioned);
 assert.strictEqual(app.nodeLabel(fromCompact.nodes[0]), app.nodeLabel(fromVerbose.nodes[0]));
 assert.deepStrictEqual(app.applyMoodGraphFilters(fromCompact, {bpmMin:119,bpmMax:121,genres:['rock']}).nodes.map(n=>n.id), ['a']);
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     def test_load_graph_explicitly_requests_indexed_contract_v3(self):
         if not shutil.which('node'):
@@ -62,9 +64,9 @@ app.loadGraph().then(() => {
   assert.match(requested[0], /^\/api\/mood-axis-graph\?/);
   assert(requested[0].includes('contract=v3'), 'browser must opt into indexed graph contract');
   assert(requested[0].includes('mood=relaxing'), 'mood negotiation must be preserved');
-}).catch(error => {console.error(error && error.stack || error); process.exit(1);});
+}).then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => {console.error(error && error.stack || error); process.exit(1);});
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     def test_m3u_download_click_creates_real_browser_download_instead_of_fetch_discard(self):
         if not shutil.which('node'):
@@ -94,9 +96,9 @@ app.loadGraph().then(async () => {
   await button.onclick();
   assert.deepStrictEqual(clicked, [{tag:'A', href:'blob:playlist', download:'journey.m3u'}], 'explicit click must trigger an anchor download, not fetch and discard the body');
   assert.deepStrictEqual(revoked, ['blob:playlist']);
-}).catch(error => {console.error(error && error.stack || error); process.exit(1);});
+}).then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => {console.error(error && error.stack || error); process.exit(1);});
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
     def test_m3u_download_click_failure_cleans_blob_url_and_anchor_and_reports_safe_status(self):
@@ -132,9 +134,9 @@ app.loadGraph().then(async () => {
   assert.match(status.textContent, /M3U download failed/);
   assert.match(status.textContent, /click failed/);
   assert.strictEqual(status.innerHTML, '', 'download errors must not be written with innerHTML');
-}).catch(error => {console.error(error && error.stack || error); process.exit(1);});
+}).then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => {console.error(error && error.stack || error); process.exit(1);});
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
     def test_m3u_download_failure_is_reported_as_safe_status_text(self):
         if not shutil.which('node'):
@@ -161,9 +163,9 @@ app.loadGraph().then(async () => {
   assert.match(status.textContent, /M3U download failed/);
   assert.match(status.textContent, /server refused/);
   assert.strictEqual(status.innerHTML, '', 'download errors must not be written with innerHTML');
-}).catch(error => {console.error(error && error.stack || error); process.exit(1);});
+}).then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => {console.error(error && error.stack || error); process.exit(1);});
 """
-        subprocess.run(['node', '-e', script, str(APP_JS)], check=True, cwd=REPO_ROOT)
+        run_node_script(self, script, str(APP_JS))
 
 
 if __name__ == '__main__':
