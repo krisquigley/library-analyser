@@ -307,6 +307,29 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
             self.assertEqual([(c.key, c.scale, c.key_strength) for c in candidates],
                              [('F#', 'minor', 0.72), (None, None, None)])
 
+    def test_related_track_edges_are_the_edges_the_graph_shows(self):
+        # Issue #129: on a writer-built library the playlist walks exactly the
+        # mood-axis graph's edges, read without building the graph's nodes.
+        from tests.support.explorer_synthetic_fixture_contract import public_fixture
+        with public_fixture(self) as fixture:
+            repo = ReadOnlyExplorerSQLiteRepository(str(fixture['db_path']))
+
+            status, edges = repo.related_track_edges(10)
+
+            self.assertEqual('ready', status['state'])
+            self.assertTrue(edges)
+            self.assertEqual(edges, repo.mood_axis_graph_snapshot(sparse_k=10).edges)
+
+    def test_related_track_edges_come_from_the_positioned_snapshot_from_schema_v8(self):
+        from tests.integration.infrastructure.integrity_d2_public_fixture import create_public_graph_database
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / 'public.sqlite'
+            create_public_graph_database(db_path)
+            repo = ReadOnlyExplorerSQLiteRepository(str(db_path))
+            before = db_path.read_bytes()
+
+            self.assertEqual(repo.related_track_edges(1), repo.current_positioned_graph_edges(1))
+            self.assertEqual(db_path.read_bytes(), before)
 
 if __name__ == '__main__':
     unittest.main()

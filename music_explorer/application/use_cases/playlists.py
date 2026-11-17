@@ -9,6 +9,8 @@ from music_explorer.domain.playlist_walk import (
 
 MAX_PLAYLIST_TRACKS = 1000
 MAX_PLAYLIST_MINUTES = 1440
+# The related-track edges the Explorer graph shows (its sparse_k).
+GRAPH_SPARSE_K = 10
 
 
 class GenerateBpmGraphM3UPlaylist:
@@ -28,7 +30,6 @@ class GenerateBpmGraphM3UPlaylist:
         if not start_track_id:
             raise ValueError('start track is required')
 
-        graph = self.repository.mood_axis_graph_snapshot(mood=None, sparse_k=10)
         tracks = tuple(self.repository.playlist_export_tracks())
         candidates = {track.track_id: track for track in tracks if _eligible(track, bpm_min, bpm_max)}
         if start_track_id not in candidates:
@@ -45,11 +46,8 @@ class GenerateBpmGraphM3UPlaylist:
         if not goal.admits(walk_tracks[start_track_id]):
             raise ValueError('start track has no verified duration for a duration playlist')
 
-        edges = getattr(graph, 'edges', None) if graph is not None else None
-        if edges is None:
-            _status, edges = self.repository.current_graph_edges(None)
         related = defaultdict(list)
-        for edge in edges or ():
+        for edge in self._related_track_edges():
             if edge.a in candidates and edge.b in candidates:
                 related[edge.a].append((edge.b, float(edge.score)))
                 related[edge.b].append((edge.a, float(edge.score)))
@@ -59,6 +57,12 @@ class GenerateBpmGraphM3UPlaylist:
         warning = None if walk.complete else _shortfall(goal)
         content = '#EXTM3U\n' + ''.join(candidates[track_id].path + '\n' for track_id in walk.track_ids)
         return M3UPlaylist(content, walk.track_ids, warning)
+
+
+    def _related_track_edges(self):
+        # Only a ready graph build is current; a stale one would walk old relations.
+        status, edges = self.repository.related_track_edges(GRAPH_SPARSE_K)
+        return edges if status is not None and status.get('state') == 'ready' else ()
 
 
 GenerateBpmGraphM3U = GenerateBpmGraphM3UPlaylist
