@@ -20,6 +20,8 @@ class _PlayableTrack:
     key: str | None = None
     scale: str | None = None
     key_strength: float | None = None
+    arousal: float | None = None
+    mood_scores: tuple[tuple[str, float], ...] = ()
 
 
 class _FakePlaylistRepository:
@@ -29,7 +31,14 @@ class _FakePlaylistRepository:
         self._graph_state = graph_state
         self.graph_reads = 0
         self.edge_reads = []
+        self.mood_evidence_reads = []
         self.track_reads = 0
+
+    def playlist_mood_evidence(self, mood):
+        from music_explorer.application.dto.playlists import PlaylistMoodEvidence
+        self.mood_evidence_reads.append(mood)
+        return {track.track_id: PlaylistMoodEvidence(track.arousal, dict(track.mood_scores).get(mood) if mood else None)
+                for track in self._tracks}
 
     def related_track_edges(self, sparse_k):
         self.edge_reads.append(sparse_k)
@@ -195,6 +204,62 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
             edges=(_edge('a', 'b', 0.86), _edge('a', 'c', 0.83)))
 
         self.assertEqual('c', self._second_track(repo))
+
+    def _energy_repo(self, *, a_b=0.9, a_c=0.85, b_overrides=()):
+        # Energy levels (percentiles): d 0, a 1/3, c 2/3, b 1.
+        return _FakePlaylistRepository(
+            tracks=(_PlayableTrack('a', 120, '/library/a.flac', arousal=5.0),
+                    _PlayableTrack('b', 120, '/library/b.flac', arousal=9.0, manual_overrides=b_overrides),
+                    _PlayableTrack('c', 120, '/library/c.flac', arousal=5.2),
+                    _PlayableTrack('d', 120, '/library/d.flac', arousal=1.0)),
+            edges=(_edge('a', 'b', a_b), _edge('a', 'c', a_c)))
+
+    def test_no_energy_arc_by_default_and_no_mood_evidence_is_read(self):
+        repo = self._energy_repo()
+
+        self.assertEqual('b', self._second_track(repo))
+        self.assertEqual([], repo.mood_evidence_reads)
+
+    def test_a_steady_arc_prefers_a_track_near_the_start_energy(self):
+        self.assertEqual('c', self._second_track(self._energy_repo(), energy_arc='steady'))
+
+    def test_a_rising_arc_prefers_higher_energy_towards_the_end(self):
+        repo = self._energy_repo(a_b=0.85, a_c=0.87)
+
+        self.assertEqual('c', self._second_track(repo))
+        self.assertEqual('b', self._second_track(repo, energy_arc='rise'))
+
+    def test_a_manual_energy_override_makes_the_arousal_unknown(self):
+        # Known, b (level 1) misses the steady target (a, level 1/3) by more than c does.
+        # Overridden, b costs only a quarter-range miss, while c (now level 1) misses a (now 1/2) by 1/2.
+        self.assertEqual('c', self._second_track(self._energy_repo(a_b=0.85, a_c=0.85), energy_arc='steady'))
+        self.assertEqual('b', self._second_track(self._energy_repo(a_b=0.85, a_c=0.85, b_overrides=('energy',)),
+                                                 energy_arc='steady'))
+
+    def test_an_unknown_arc_shape_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'steady, rise, fall or peak'):
+            self._second_track(self._energy_repo(), energy_arc='wave')
+
+    def _mood_repo(self, *, b_overrides=()):
+        return _FakePlaylistRepository(
+            tracks=(_PlayableTrack('a', 120, '/library/a.flac', mood_scores=(('calm', 0.5),)),
+                    _PlayableTrack('b', 120, '/library/b.flac', mood_scores=(('calm', 0.9),), manual_overrides=b_overrides),
+                    _PlayableTrack('c', 120, '/library/c.flac')),
+            edges=(_edge('a', 'b', 0.85), _edge('a', 'c', 0.87)))
+
+    def test_a_mood_hold_prefers_tracks_stronger_in_that_mood(self):
+        repo = self._mood_repo()
+
+        self.assertEqual('b', self._second_track(repo, mood_hold='calm'))
+        self.assertEqual(['calm'], repo.mood_evidence_reads)
+
+    def test_a_manual_mood_override_makes_the_mood_score_unknown(self):
+        # c has no mood score: neutral. Overridden, b is neutral too, so the stronger relation (c) wins.
+        self.assertEqual('c', self._second_track(self._mood_repo(b_overrides=('mood',)), mood_hold='calm'))
+
+    def test_a_mood_no_eligible_track_has_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "No eligible track has a score for the mood 'sunny'"):
+            self._second_track(self._mood_repo(), mood_hold='sunny')
 
     def test_target_duration_instead_of_a_track_count(self):
         repo = _FakePlaylistRepository(

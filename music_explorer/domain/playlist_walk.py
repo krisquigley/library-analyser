@@ -2,7 +2,9 @@
 
 A depth-first search that follows the best-ranked transitions first and
 backtracks out of dead ends. By default a transition ranks by its relation
-score; a ranking such as harmonic mixing (#122) can adjust that. Its first full playlist is therefore the greedy walk whenever
+score; a ranking such as harmonic mixing (#122) or an energy arc (#123) can
+adjust that, knowing the position the next track would take (0 at the start
+of the playlist, 1 at its end). Its first full playlist is therefore the greedy walk whenever
 greedy succeeds. Work is bounded: after `expansion_limit` steps it returns the
 longest walk found so far, marked incomplete.
 """
@@ -39,6 +41,9 @@ class TrackCountGoal:
     def reached(self, walk):
         return len(walk) >= self.count
 
+    def position(self, walk):
+        return min(len(walk) / (self.count - 1), 1.0) if self.count > 1 else 1.0
+
 
 @dataclass(frozen=True)
 class DurationGoal:
@@ -55,6 +60,9 @@ class DurationGoal:
     def reached(self, walk):
         return self.progress(walk) >= self.seconds
 
+    def position(self, walk):
+        return min(self.progress(walk) / self.seconds, 1.0)
+
 
 @dataclass(frozen=True)
 class PlaylistWalk:
@@ -62,7 +70,7 @@ class PlaylistWalk:
     complete: bool
 
 
-def by_relation_score(from_track, to_track, relation_score):
+def by_relation_score(from_track, to_track, relation_score, position):
     return relation_score
 
 
@@ -71,12 +79,14 @@ def walk_playlist(start: str, tracks: Mapping[str, WalkTrack],
                   rank_transition=by_relation_score,
                   expansion_limit: int = DEFAULT_EXPANSION_LIMIT) -> PlaylistWalk:
     """Walk from `start` through `related` tracks until `goal` is reached."""
-    strongest_first = {track_id: _best_first(tracks, track_id, neighbours, rank_transition)
-                       for track_id, neighbours in related.items() if track_id in tracks}
+    def best_first(walk):
+        neighbours = related.get(walk[-1].track_id, ())
+        return iter(_best_first(tracks, walk[-1], neighbours, rank_transition, goal.position(walk)))
+
     walk = [tracks[start]]
     on_walk = {start}
     longest = list(walk)
-    choices = [iter(strongest_first.get(start, ()))]
+    choices = [best_first(walk)]
     expansions = 0
     while choices:
         if goal.reached(walk):
@@ -94,12 +104,12 @@ def walk_playlist(start: str, tracks: Mapping[str, WalkTrack],
         expansions += 1
         walk.append(following)
         on_walk.add(following.track_id)
-        choices.append(iter(strongest_first.get(following.track_id, ())))
+        choices.append(best_first(walk))
     return PlaylistWalk(_ids(longest), False)
 
 
-def _best_first(tracks, track_id, neighbours, rank_transition):
-    ranked = [(-rank_transition(tracks[track_id], tracks[n], score), n) for n, score in neighbours if n in tracks]
+def _best_first(tracks, previous, neighbours, rank_transition, position):
+    ranked = [(-rank_transition(previous, tracks[n], score, position), n) for n, score in neighbours if n in tracks]
     return [n for _, n in sorted(ranked)]
 
 

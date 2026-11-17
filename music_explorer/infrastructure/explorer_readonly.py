@@ -15,10 +15,11 @@ import sqlite3
 
 from music_analyzer.application.use_cases.graph_feature_evidence import validate_graph_feature_evidence_payload
 from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, MoodAxisEdge, ScoreSummary, StageResult, TrackMetadata
-from music_explorer.application.dto.playlists import PlayableTrackCandidate
+from music_explorer.application.dto.playlists import PlayableTrackCandidate, PlaylistMoodEvidence
 from music_explorer.application.use_cases.explorer import _build_mood_axis_graph
 from music_explorer.domain.analysis import finite
 from music_explorer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
+from music_explorer.domain.mood_evidence import AROUSAL_VALENCE_MODEL, MOOD_THEME_MODEL, has_provenance_model, is_mood_score
 
 APPLICATION_ID = 0x4D414E41
 ACTIVE_LIBRARY_MAX_DURATION_SECONDS = 1200.0
@@ -64,6 +65,31 @@ def _bpm_from_stage_payload(payload):
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
     return None
+
+
+def _arousal(summary_values_json, provenance_json):
+    try:
+        if not has_provenance_model(_pairs(provenance_json), AROUSAL_VALENCE_MODEL):
+            return None
+        arousal = dict(_pairs(summary_values_json)).get('arousal')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return float(arousal) if _finite_number(arousal) and not isinstance(arousal, bool) else None
+
+
+def _mood_score(score, provenance_json):
+    try:
+        compatible = has_provenance_model(_pairs(provenance_json), MOOD_THEME_MODEL)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return float(score) if compatible and is_mood_score(score) else None
+
+
+def _pairs(pairs_json):
+    pairs = json.loads(pairs_json) if pairs_json is not None else []
+    if not isinstance(pairs, list) or not all(isinstance(pair, list) and len(pair) == 2 for pair in pairs):
+        raise ValueError('expected [key, value] pairs')
+    return [tuple(pair) for pair in pairs]
 
 
 def _key_from_stage_payload(payload):
@@ -297,6 +323,38 @@ class ReadOnlyExplorerSQLiteRepository:
     def current_graph_edges(self, sparse_k: int | None = None):
         with self._transaction() as db:
             return self._current_graph_edges(db, sparse_k)
+
+    def playlist_mood_evidence(self, mood: str | None):
+        """Arousal and a selected mood's score from compact graph evidence (#123).
+
+        Only the two summaries are extracted in SQL: full stage payloads carry
+        windows and raw predictions that would take seconds to parse.
+        """
+        with self._transaction() as db:
+            if _database_schema_version(db) < 9:
+                return {}
+            rows = db.execute('''
+                WITH latest_run AS (
+                    SELECT track_id, run_id FROM (
+                        SELECT rt.track_id, r.id AS run_id,
+                               row_number() OVER (PARTITION BY rt.track_id ORDER BY r.rowid DESC) AS rn
+                        FROM run_tracks rt JOIN runs r ON r.id=rt.run_id
+                    ) WHERE rn=1
+                )
+                SELECT g.track_id,
+                       json_extract(g.evidence_json, '$.features.energy.summary_values'),
+                       json_extract(g.evidence_json, '$.features.energy.provenance'),
+                       (SELECT json_extract(m.value, '$[1]')
+                          FROM json_each(g.evidence_json, '$.features.mood.summary_values') m
+                         WHERE json_extract(m.value, '$[0]')=?),
+                       json_extract(g.evidence_json, '$.features.mood.provenance')
+                FROM graph_feature_evidence g
+                JOIN latest_run lr ON lr.track_id=g.track_id AND lr.run_id=g.run_id
+                WHERE g.is_current=1
+            ''', (mood,)).fetchall()
+        return {track_id: PlaylistMoodEvidence(_arousal(energy_values, energy_provenance),
+                                               _mood_score(mood_score, mood_provenance) if mood else None)
+                for track_id, energy_values, energy_provenance, mood_score, mood_provenance in rows}
 
     def related_track_edges(self, sparse_k: int):
         """The edges the mood-axis graph shows, without building its nodes (#129)."""
