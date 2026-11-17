@@ -261,6 +261,24 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
                 payload = json.loads(raised.exception.read().decode('utf-8'))
                 self.assertEqual(payload, {'error': expected})
 
+    def test_download_m3u_endpoint_accepts_a_target_duration_instead_of_a_length(self):
+        # Issue #121: two 2-minute fixture tracks reach a 3-minute target.
+        query = urlencode({'start_track_id': self.first, 'bpm_min': '119', 'bpm_max': '125', 'duration_minutes': '3'})
+
+        with self._get('/api/playlists/m3u?' + query) as response:
+            body = response.read().decode('utf-8')
+            self.assertIsNone(response.headers.get('X-Music-Explorer-Playlist-Warning'))
+
+        self.assertEqual(body, f'#EXTM3U\n{self.first_path}\n{self.second_path}\n')
+
+    def test_download_m3u_endpoint_reports_invalid_duration_as_json_400(self):
+        query = urlencode({'start_track_id': self.first, 'bpm_min': '119', 'bpm_max': '125', 'duration_minutes': 'soon'})
+        with self.assertRaises(HTTPError) as raised:
+            self._get('/api/playlists/m3u?' + query)
+
+        self.assertEqual(raised.exception.code, 400)
+        self.assertRegex(json.loads(raised.exception.read().decode('utf-8'))['error'], 'duration')
+
 
 if __name__ == '__main__':
     unittest.main()

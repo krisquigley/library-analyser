@@ -262,6 +262,28 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
             self.assertEqual([(c.track_id, c.manual_overrides) for c in candidates],
                              [(track_ids[0], ()), (track_ids[1], ('bpm', 'key'))])
 
+    def test_playlist_export_carries_artist_and_verified_duration_for_the_walk(self):
+        # Issue #121: no same artist back-to-back, and target-duration playlists.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / 'analysis.sqlite'
+            track_ids = tuple('sha256:' + digit * 64 for digit in ('1', '2', '3', '4'))
+            playable_paths = {track_id: root / f'{index}.flac' for index, track_id in enumerate(track_ids, start=1)}
+            for path in playable_paths.values():
+                path.write_bytes(b'not audio; existence sentinel only')
+            _create_playlist_fixture_db(db_path, playable_paths)
+            with sqlite3.connect(db_path) as db:
+                db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)',
+                           (track_ids[0], json.dumps([['artist', 'Synthetic Artist']]), '[]', '[]'))
+                db.execute('UPDATE track_audio SET duration_seconds=241.5 WHERE track_id=?', (track_ids[0],))
+            before = db_path.read_bytes()
+
+            candidates = ReadOnlyExplorerSQLiteRepository(str(db_path)).playlist_export_tracks()
+
+            self.assertEqual(db_path.read_bytes(), before)
+            self.assertEqual([(c.artist, c.duration_seconds) for c in candidates],
+                             [('Synthetic Artist', 241.5), ('', 120.0)])
+
 
 if __name__ == '__main__':
     unittest.main()

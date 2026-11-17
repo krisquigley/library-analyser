@@ -3,22 +3,25 @@ from collections import defaultdict
 from math import isfinite
 
 from music_explorer.application.dto.playlists import M3UPlaylist
+from music_explorer.domain.playlist_walk import DurationGoal, TrackCountGoal, WalkTrack, walk_playlist
+
+MAX_PLAYLIST_TRACKS = 1000
+MAX_PLAYLIST_MINUTES = 1440
 
 
 class GenerateBpmGraphM3UPlaylist:
-    """Generate an M3U by greedily walking the related-track graph."""
+    """Generate an M3U by walking the related-track graph from a start track."""
 
     def __init__(self, repository):
         self.repository = repository
 
-    def execute(self, *, start_track_id: str, bpm_min, bpm_max, length: int):
+    def execute(self, *, start_track_id: str, bpm_min, bpm_max, length=None, duration_minutes=None):
         start_track_id = str(start_track_id or '')
         bpm_min = _finite_bound(bpm_min, 'BPM minimum')
         bpm_max = _finite_bound(bpm_max, 'BPM maximum')
         if bpm_min > bpm_max:
             raise ValueError('bpm bounds must be ordered')
-        if not isinstance(length, int) or isinstance(length, bool) or length < 1 or length > 1000:
-            raise ValueError('Playlist length must be positive and between 1 and 1000')
+        goal = _goal(length, duration_minutes)
         if not start_track_id:
             raise ValueError('start track is required')
 
@@ -35,41 +38,56 @@ class GenerateBpmGraphM3UPlaylist:
                 if not _bpm_in_range(start.bpm, bpm_min, bpm_max):
                     raise ValueError('start track BPM is outside requested range')
             raise ValueError('start track is not playable or available')
+        walk_tracks = {track_id: _walk_track(track) for track_id, track in candidates.items()}
+        if not goal.admits(walk_tracks[start_track_id]):
+            raise ValueError('start track has no verified duration for a duration playlist')
 
         edges = getattr(graph, 'edges', None) if graph is not None else None
         if edges is None:
             _status, edges = self.repository.current_graph_edges(None)
-        adjacency = defaultdict(list)
+        related = defaultdict(list)
         for edge in edges or ():
             if edge.a in candidates and edge.b in candidates:
-                adjacency[edge.a].append((edge.b, float(edge.score)))
-                adjacency[edge.b].append((edge.a, float(edge.score)))
-        for track_id in adjacency:
-            adjacency[track_id].sort(key=lambda item: (-item[1], item[0]))
+                related[edge.a].append((edge.b, float(edge.score)))
+                related[edge.b].append((edge.a, float(edge.score)))
 
-        selected = [start_track_id]
-        visited = {start_track_id}
-        current = start_track_id
-        while len(selected) < length:
-            next_track = None
-            for neighbour, _score in adjacency.get(current, ()):  # highest score, stable id tie
-                if neighbour not in visited:
-                    next_track = neighbour
-                    break
-            if next_track is None:
-                break
-            selected.append(next_track)
-            visited.add(next_track)
-            current = next_track
-
-        warning = None
-        if len(selected) < length:
-            warning = 'Playlist is shorter than requested because traversal reached a dead end in the connected graph'
-        content = '#EXTM3U\n' + ''.join(candidates[track_id].path + '\n' for track_id in selected)
-        return M3UPlaylist(content, tuple(selected), warning)
+        walk = walk_playlist(start_track_id, walk_tracks, related, goal)
+        warning = None if walk.complete else _shortfall(goal)
+        content = '#EXTM3U\n' + ''.join(candidates[track_id].path + '\n' for track_id in walk.track_ids)
+        return M3UPlaylist(content, walk.track_ids, warning)
 
 
 GenerateBpmGraphM3U = GenerateBpmGraphM3UPlaylist
+
+
+def _goal(length, duration_minutes):
+    if duration_minutes is not None:
+        try:
+            minutes = float(duration_minutes)
+        except (TypeError, ValueError):
+            raise ValueError('Playlist duration must be a number of minutes')
+        if not isfinite(minutes) or minutes <= 0 or minutes > MAX_PLAYLIST_MINUTES:
+            raise ValueError(f'Playlist duration must be positive and at most {MAX_PLAYLIST_MINUTES} minutes')
+        return DurationGoal(minutes * 60.0, _track_cap(MAX_PLAYLIST_TRACKS if length is None else length))
+    if length is None:
+        raise ValueError('Playlist length or duration is required')
+    return TrackCountGoal(_track_cap(length))
+
+
+def _track_cap(length):
+    if not isinstance(length, int) or isinstance(length, bool) or length < 1 or length > MAX_PLAYLIST_TRACKS:
+        raise ValueError(f'Playlist length must be positive and between 1 and {MAX_PLAYLIST_TRACKS}')
+    return length
+
+
+def _shortfall(goal):
+    if isinstance(goal, DurationGoal):
+        return 'Playlist is shorter than the requested duration: no longer walk was found through connected tracks'
+    return 'Playlist is shorter than requested because traversal reached a dead end in the connected graph'
+
+
+def _walk_track(track):
+    return WalkTrack(track.track_id, getattr(track, 'artist', '') or '', getattr(track, 'duration_seconds', None))
 
 
 def _finite_bound(value, name):

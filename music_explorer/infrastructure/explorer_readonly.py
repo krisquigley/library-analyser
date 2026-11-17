@@ -135,6 +135,10 @@ def _graph_feature_evidence_size_expression(column='evidence_json'):
     return f'length(CAST({column} AS BLOB))'
 
 
+def _playlist_duration(value):
+    return float(value) if _finite_number(value) and value > 0 else None
+
+
 def _database_schema_version(db, default=10):
     try:
         row = db.execute('PRAGMA user_version').fetchone()
@@ -339,10 +343,12 @@ class ReadOnlyExplorerSQLiteRepository:
                         WHERE r.status='completed'
                     ) WHERE rn=1
                 )
-                SELECT al.track_id, s.result, al.path
+                SELECT al.track_id, s.result, al.path, a.duration_seconds,
+                       COALESCE(tm.common_json, '[]'), COALESCE(tm.tags_json, '[]')
                 FROM locations al
                 JOIN tracks t ON t.id=al.track_id
                 LEFT JOIN track_audio a ON a.track_id=t.id
+                LEFT JOIN track_metadata tm ON tm.track_id=t.id
                 JOIN latest_run lr ON lr.track_id=al.track_id
                 JOIN stages s ON s.run_id=lr.run_id AND s.stage='bpm'
                 WHERE al.available=1 AND {_ACTIVE_CANDIDATE_PREDICATE}
@@ -353,7 +359,7 @@ class ReadOnlyExplorerSQLiteRepository:
                 overridden.setdefault(track_id, []).append(field)
             candidates = []
             selected_track_ids = set()
-            for track_id, bpm_payload, path in rows:
+            for track_id, bpm_payload, path, duration, common_json, tags_json in rows:
                 if not isinstance(path, str) or not path:
                     raise AnalysisError('Unexpected analysis database rows')
                 if track_id in selected_track_ids:
@@ -365,8 +371,11 @@ class ReadOnlyExplorerSQLiteRepository:
                 exists = Path(path).is_file()
                 if not exists:
                     continue
+                artist = self._metadata_value(self._summary_metadata(common_json, tags_json), 'artist') or ''
                 candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, exists, True, True,
-                                                         manual_overrides=tuple(overridden.get(track_id, ()))))
+                                                         artist=artist,
+                                                         manual_overrides=tuple(overridden.get(track_id, ())),
+                                                         duration_seconds=_playlist_duration(duration)))
                 selected_track_ids.add(track_id)
             return tuple(candidates)
 
