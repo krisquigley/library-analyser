@@ -14,8 +14,8 @@ from music_explorer.application.dto.candidates import CandidateQuery, SelectionC
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
 from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
-from music_explorer.domain.harmonic_mixing import DEFAULT_MINIMUM_KEY_STRENGTH, HarmonicMixing
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http, to_indexed_mood_axis_graph_http
+from music_explorer.interface_adapters.playlist_recipe_query import playlist_recipe_from_query
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection, ProjectionArtifactError
 from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
 from music_analyzer.application.dto.analysis import AnalysisError as AnalyzerAnalysisError
@@ -237,24 +237,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 projection = BuildLiveProjection(repository).execute()
                 return self._json(_to_json(projection))
             if path == '/api/playlists/m3u':
-                query = parse_qs(parsed.query)
-                duration_minutes = query.get('duration_minutes', [None])[0]
-                default_length = [None] if duration_minutes is not None else ['0']
-                raw_length = query.get('length', query.get('count', default_length))[0]
-                try:
-                    length = None if raw_length is None else int(raw_length)
-                except (TypeError, ValueError):
-                    raise ValueError('Playlist length must be positive and between 1 and 1000')
-                result = GenerateBpmGraphM3UPlaylist(repository).execute(
-                    start_track_id=query.get('start_track_id', query.get('start', ['']))[0],
-                    bpm_min=query.get('bpm_min', [None])[0],
-                    bpm_max=query.get('bpm_max', [None])[0],
-                    length=length,
-                    duration_minutes=duration_minutes,
-                    harmonic_mixing=_harmonic_mixing(query),
-                    energy_arc=_energy_arc(query),
-                    mood_hold=query.get('mood', [''])[0] or None,
-                )
+                recipe = playlist_recipe_from_query(parse_qs(parsed.query))
+                result = GenerateBpmGraphM3UPlaylist(repository).execute(recipe)
                 return self._m3u(result.content, result.warning)
             if path == '/api/mood-axis-graph':
                 query = parse_qs(parsed.query)
@@ -351,27 +335,6 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             return
 
     return ThreadingHTTPServer((host, port), Handler)
-
-
-def _harmonic_mixing(query):
-    """Harmonic mixing (#122) is on unless `harmonic=off`; `min_key_strength` is 0.0-1.0."""
-    switch = query.get('harmonic', ['on'])[0]
-    if switch not in ('on', 'off'):
-        raise ValueError('Harmonic mixing must be on or off')
-    if switch == 'off':
-        return None
-    raw_strength = query.get('min_key_strength', [None])[0]
-    try:
-        strength = DEFAULT_MINIMUM_KEY_STRENGTH if raw_strength is None else float(raw_strength)
-    except ValueError:
-        raise ValueError('Minimum key strength must be between 0.0 and 1.0')
-    return HarmonicMixing(minimum_key_strength=strength)
-
-
-def _energy_arc(query):
-    """No energy arc (#123) unless `arc` names a shape; `none` is the default."""
-    arc = query.get('arc', ['none'])[0]
-    return None if arc in ('', 'none') else arc
 
 
 def _safe_playlist_warning(warning):

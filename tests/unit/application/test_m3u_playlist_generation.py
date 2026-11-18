@@ -3,6 +3,7 @@ import importlib
 import unittest
 
 from music_explorer.application.dto.explorer import AxisValue, MoodAxisEdge, MoodAxisGraph, MoodAxisNode
+from music_explorer.application.dto.playlists import EnergyArcRequest, PlaylistRecipe
 
 
 @dataclass(frozen=True)
@@ -112,7 +113,7 @@ def _generate(repository, *, start='start', bpm_min=100, bpm_max=130, length=2):
             'or GenerateBpmGraphM3UPlaylist in the application use-case layer'
         )
     use_case = use_case_class(repository)
-    return use_case.execute(start_track_id=start, bpm_min=bpm_min, bpm_max=bpm_max, length=length)
+    return use_case.execute(PlaylistRecipe(start_track_id=start, bpm_min=bpm_min, bpm_max=bpm_max, length=length))
 
 
 def _content(result):
@@ -177,22 +178,20 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
             edges=(_edge('a', 'b', 0.88), _edge('a', 'c', 0.82)))
 
     def _second_track(self, repo, **options):
-        result = _load_use_case_class()(repo).execute(start_track_id='a', bpm_min=100, bpm_max=130, length=2, **options)
+        result = _load_use_case_class()(repo).execute(PlaylistRecipe(start_track_id='a', bpm_min=100, bpm_max=130, length=2, **options))
         return result.track_ids[1]
 
     def test_harmonic_mixing_is_on_by_default_and_prefers_a_compatible_key(self):
         self.assertEqual('c', self._second_track(self._harmonic_repo()))
 
     def test_harmonic_mixing_can_be_turned_off(self):
-        self.assertEqual('b', self._second_track(self._harmonic_repo(), harmonic_mixing=None))
+        self.assertEqual('b', self._second_track(self._harmonic_repo(), harmonic_mixing=False))
 
     def test_a_key_weaker_than_the_minimum_strength_is_neutral(self):
-        from music_explorer.domain.harmonic_mixing import HarmonicMixing
-
         repo = self._harmonic_repo(b_strength=0.4)
 
-        self.assertEqual('b', self._second_track(repo, harmonic_mixing=HarmonicMixing(minimum_key_strength=0.5)))
-        self.assertEqual('c', self._second_track(repo, harmonic_mixing=HarmonicMixing(minimum_key_strength=0.3)))
+        self.assertEqual('b', self._second_track(repo, minimum_key_strength=0.5))
+        self.assertEqual('c', self._second_track(repo, minimum_key_strength=0.3))
 
     def test_a_manual_key_override_makes_the_detected_key_unknown(self):
         self.assertEqual('b', self._second_track(self._harmonic_repo(b_overrides=('key',))))
@@ -221,24 +220,24 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         self.assertEqual([], repo.mood_evidence_reads)
 
     def test_a_steady_arc_prefers_a_track_near_the_start_energy(self):
-        self.assertEqual('c', self._second_track(self._energy_repo(), energy_arc='steady'))
+        self.assertEqual('c', self._second_track(self._energy_repo(), energy_plan=(EnergyArcRequest('steady'),)))
 
     def test_a_rising_arc_prefers_higher_energy_towards_the_end(self):
         repo = self._energy_repo(a_b=0.85, a_c=0.87)
 
         self.assertEqual('c', self._second_track(repo))
-        self.assertEqual('b', self._second_track(repo, energy_arc='rise'))
+        self.assertEqual('b', self._second_track(repo, energy_plan=(EnergyArcRequest('rise'),)))
 
     def test_a_manual_energy_override_makes_the_arousal_unknown(self):
         # Known, b (level 1) misses the steady target (a, level 1/3) by more than c does.
         # Overridden, b costs only a quarter-range miss, while c (now level 1) misses a (now 1/2) by 1/2.
-        self.assertEqual('c', self._second_track(self._energy_repo(a_b=0.85, a_c=0.85), energy_arc='steady'))
+        self.assertEqual('c', self._second_track(self._energy_repo(a_b=0.85, a_c=0.85), energy_plan=(EnergyArcRequest('steady'),)))
         self.assertEqual('b', self._second_track(self._energy_repo(a_b=0.85, a_c=0.85, b_overrides=('energy',)),
-                                                 energy_arc='steady'))
+                                                 energy_plan=(EnergyArcRequest('steady'),)))
 
     def test_an_unknown_arc_shape_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'steady, rise, fall or peak'):
-            self._second_track(self._energy_repo(), energy_arc='wave')
+            self._second_track(self._energy_repo(), energy_plan=(EnergyArcRequest('wave'),))
 
     def _mood_repo(self, *, b_overrides=()):
         return _FakePlaylistRepository(
@@ -267,8 +266,7 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
             edges=tuple(_edge(f't{i}', f't{i + 1}', 0.9) for i in range(5)),
         )
 
-        result = _load_use_case_class()(repo).execute(
-            start_track_id='t0', bpm_min=100, bpm_max=130, duration_minutes=10)
+        result = _load_use_case_class()(repo).execute(PlaylistRecipe(start_track_id='t0', bpm_min=100, bpm_max=130, duration_minutes=10))
 
         self.assertEqual(('t0', 't1', 't2'), _track_ids(result), '3 x 4 min reaches 10 min')
         self.assertIsNone(_warning(result))
@@ -280,8 +278,7 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
             edges=(_edge('a', 'b', 0.9),),
         )
 
-        result = _load_use_case_class()(repo).execute(
-            start_track_id='a', bpm_min=100, bpm_max=130, duration_minutes=60)
+        result = _load_use_case_class()(repo).execute(PlaylistRecipe(start_track_id='a', bpm_min=100, bpm_max=130, duration_minutes=60))
 
         self.assertEqual(('a', 'b'), _track_ids(result))
         self.assertRegex(_warning(result) or '', 'shorter than the requested duration')
@@ -294,13 +291,13 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         use_case = _load_use_case_class()(repo)
 
         with self.assertRaisesRegex(ValueError, 'start track.*duration'):
-            use_case.execute(start_track_id='start', bpm_min=100, bpm_max=130, duration_minutes=10)
+            use_case.execute(PlaylistRecipe(start_track_id='start', bpm_min=100, bpm_max=130, duration_minutes=10))
         for bad in (0, -1, float('nan'), 1441, 'ten'):
             with self.subTest(duration_minutes=bad):
                 with self.assertRaisesRegex(ValueError, 'duration'):
-                    use_case.execute(start_track_id='start', bpm_min=100, bpm_max=130, duration_minutes=bad)
+                    use_case.execute(PlaylistRecipe(start_track_id='start', bpm_min=100, bpm_max=130, duration_minutes=bad))
         with self.assertRaisesRegex(ValueError, 'length|duration'):
-            use_case.execute(start_track_id='start', bpm_min=100, bpm_max=130)
+            use_case.execute(PlaylistRecipe(start_track_id='start', bpm_min=100, bpm_max=130))
 
     def test_manual_bpm_override_makes_the_detected_bpm_unusable_as_in_the_graph(self):
         # Issue #120: a spurious detected BPM is overridden; the playlist must not use it.
