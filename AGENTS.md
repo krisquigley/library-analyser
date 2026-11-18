@@ -10,9 +10,11 @@ Local Music Analyser: a local, privacy-preserving toolkit for understanding a pe
 
 - **Python 3.11+**, standard-library `unittest`, one distribution with **two packages**:
   - `music_analyzer` (`music-analyzer`) writes the analysis database: scan, analyze, review, override, export, graph build, integrity.
-  - `music_explorer` (`music-explorer`) is a read-only localhost web explorer of that database. It **never writes** it. The flow is always **analyzer writes → explorer reads**.
+  - `music_explorer` (`music-explorer`) is a read-only localhost web explorer of that database. It **never writes** it; the one thing it may write is an audio file's tags, by an explicitly approved action (see below). The flow is always **analyzer writes → explorer reads**.
 - **The analysis database is the only store.** The analyzer validates data when it writes it. The Explorer reads in read-only SQLite mode and checks only the rows each request reads. Full audits belong to the offline `music-analyzer integrity` diagnostic, never to Explorer reads.
-- **Local and private.** Nothing is uploaded; only `models download` uses the network. Audio files and their tags are never edited. Never point anything at a Mixxx database.
+- **Local and private.** Nothing is uploaded; only `models download` uses the network.
+- **Audio is never edited; tags only with explicit approval.** Audio data is never written. Tags are written only from the Explorer GUI, after the listener has previewed and explicitly approved that particular action (#132). Approval never carries over to another action, and nothing writes tags automatically or in bulk. This is the only thing the Explorer writes; it still never writes the analysis database.
+- **Never point anything at an existing Mixxx database**: don't open, read or write one. Exporting to a *new* Mixxx-compatible database file is allowed (#133). The export refuses an output path that already exists.
 - **Evidence, not invented tags.** Model scores are uncalibrated and provisional. Keep raw scores, coverage, uncertainty and provenance, and let manual overrides win without discarding the automatic evidence.
 - **No private data in the repository, issues or PRs.** Use synthetic or generated fixtures only. Never commit or post library paths, titles, databases, audio, screenshots, HAR files or response bodies.
 - **Podman, never Docker.** Use `podman` for all container work. Never invoke the `docker` CLI or assume a Docker socket; an adapter named `docker` must be configured for Podman. If Podman is unavailable or misconfigured, report the blocker; never fall back to Docker.
