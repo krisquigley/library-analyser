@@ -96,7 +96,7 @@ class PlaylistWalkTests(unittest.TestCase):
 
     def test_a_transition_ranking_reorders_the_choices(self):
         # #122: the walk follows the best-ranked transition, not just the strongest relation.
-        def prefer_c(from_track, to_track, relation_score, position):
+        def prefer_c(walk, to_track, relation_score, position):
             return relation_score + (0.5 if to_track.track_id == 'c' else 0.0)
 
         walk = walk_playlist('a', tracks('a', 'b', 'c'), related(('a', 'b', 0.9), ('a', 'c', 0.6)),
@@ -107,19 +107,32 @@ class PlaylistWalkTests(unittest.TestCase):
     def test_the_ranking_sees_the_tracks_on_both_sides_of_the_transition(self):
         seen = []
 
-        def record(from_track, to_track, relation_score, position):
-            seen.append((from_track.track_id, to_track.track_id, relation_score))
+        def record(walk, to_track, relation_score, position):
+            seen.append((walk[-1].track_id, to_track.track_id, relation_score))
             return relation_score
 
         walk_playlist('a', tracks('a', 'b'), related(('a', 'b', 0.9)), TrackCountGoal(2), rank_transition=record)
 
         self.assertIn(('a', 'b', 0.9), seen)
 
+    def test_the_ranking_sees_the_whole_walk_so_far(self):
+        # #135: a chained energy arc anchors on the track that ended the previous arc.
+        walks = {}
+
+        def record(walk, to_track, relation_score, position):
+            walks.setdefault(to_track.track_id, tuple(track.track_id for track in walk))
+            return relation_score
+
+        walk_playlist('a', tracks('a', 'b', 'c'), related(('a', 'b', 0.9), ('b', 'c', 0.9)),
+                      TrackCountGoal(3), rank_transition=record)
+
+        self.assertEqual(('a', 'b'), walks['c'])
+
     def test_the_ranking_knows_where_in_the_playlist_the_next_track_falls(self):
         # #123: an energy arc targets a level per position, 0 at the start and 1 at the end.
         positions = {}
 
-        def record(from_track, to_track, relation_score, position):
+        def record(walk, to_track, relation_score, position):
             if to_track.track_id != 'a':
                 positions.setdefault(to_track.track_id, position)
             return relation_score
@@ -131,7 +144,7 @@ class PlaylistWalkTests(unittest.TestCase):
         self.assertEqual({'b': 0.25, 'c': 0.5, 'd': 0.75, 'e': 1.0}, positions)
 
     def test_a_position_dependent_ranking_can_change_the_choice_later_in_the_playlist(self):
-        def late_prefers_z(from_track, to_track, relation_score, position):
+        def late_prefers_z(walk, to_track, relation_score, position):
             return relation_score + (1.0 if position == 1.0 and to_track.track_id == 'z' else 0.0)
 
         walk = walk_playlist('a', tracks('a', 'b', 'y', 'z'),

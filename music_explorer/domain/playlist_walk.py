@@ -2,9 +2,9 @@
 
 A depth-first search that follows the best-ranked transitions first and
 backtracks out of dead ends. By default a transition ranks by its relation
-score; a ranking such as harmonic mixing (#122) or an energy arc (#123) can
-adjust that, knowing the position the next track would take (0 at the start
-of the playlist, 1 at its end). Its first full playlist is therefore the greedy walk whenever
+score; a ranking such as harmonic mixing (#122) or an energy plan (#123, #135)
+can adjust that, knowing the walk so far and the position the next track would
+take (0 at the start of the playlist, 1 at its end). Its first full playlist is therefore the greedy walk whenever
 greedy succeeds. Work is bounded: after `expansion_limit` steps it returns the
 longest walk found so far, marked incomplete.
 """
@@ -70,7 +70,7 @@ class PlaylistWalk:
     complete: bool
 
 
-def by_relation_score(from_track, to_track, relation_score, position):
+def by_relation_score(walk, to_track, relation_score, position):
     return relation_score
 
 
@@ -81,7 +81,7 @@ def walk_playlist(start: str, tracks: Mapping[str, WalkTrack],
     """Walk from `start` through `related` tracks until `goal` is reached."""
     def best_first(walk):
         neighbours = related.get(walk[-1].track_id, ())
-        return iter(_best_first(tracks, walk[-1], neighbours, rank_transition, goal.position(walk)))
+        return iter(_best_first(tracks, tuple(walk), neighbours, rank_transition, goal.position(walk)))
 
     walk = [tracks[start]]
     on_walk = {start}
@@ -108,8 +108,8 @@ def walk_playlist(start: str, tracks: Mapping[str, WalkTrack],
     return PlaylistWalk(_ids(longest), False)
 
 
-def _best_first(tracks, previous, neighbours, rank_transition, position):
-    ranked = [(-rank_transition(previous, tracks[n], score, position), n) for n, score in neighbours if n in tracks]
+def _best_first(tracks, walk, neighbours, rank_transition, position):
+    ranked = [(-rank_transition(walk, tracks[n], score, position), n) for n, score in neighbours if n in tracks]
     return [n for _, n in sorted(ranked)]
 
 
