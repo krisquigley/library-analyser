@@ -50,6 +50,24 @@ class PlaylistRecipeQueryTests(unittest.TestCase):
 
         self.assertEqual(((EnergyArcRequest('rise'),), 'calm'), (recipe.energy_plan, recipe.mood_hold))
 
+    def test_an_energy_range_for_the_arc(self):
+        recipe = _recipe(start='a', length='5', arc='rise', energy_low='0.2', energy_high='0.75')
+
+        self.assertEqual((EnergyArcRequest('rise', energy_low=0.2, energy_high=0.75),), recipe.energy_plan)
+
+    def test_a_blank_end_of_the_range_is_unset(self):
+        recipe = _recipe(start='a', length='5', arc='rise', energy_low='', energy_high='0.75')
+
+        self.assertEqual((EnergyArcRequest('rise', energy_high=0.75),), recipe.energy_plan)
+
+    def test_an_energy_range_that_is_not_a_number_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Energy low and high must be between 0.0 and 1.0'):
+            _recipe(start='a', length='5', arc='rise', energy_high='loud')
+
+    def test_an_energy_range_needs_an_energy_arc(self):
+        with self.assertRaisesRegex(ValueError, 'An energy range needs an energy arc'):
+            _recipe(start='a', length='5', energy_low='0.2')
+
     def test_no_arc_and_no_mood_by_default_or_when_blank(self):
         for query in ({}, {'arc': 'none', 'mood': ''}, {'arc': ''}):
             with self.subTest(query=query):

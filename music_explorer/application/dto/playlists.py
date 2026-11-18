@@ -37,8 +37,14 @@ class M3UPlaylist:
 
 @dataclass(frozen=True)
 class EnergyArcRequest:
-    """One arc of an energy plan, as the listener asked for it."""
+    """One arc of an energy plan, as the listener asked for it.
+
+    Energy low and high are levels on the 0-1 rank scale; None leaves that
+    end of the range unset.
+    """
     shape: str
+    energy_low: float | None = None
+    energy_high: float | None = None
 
 
 @dataclass(frozen=True)

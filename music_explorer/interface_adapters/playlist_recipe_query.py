@@ -60,6 +60,22 @@ def _minimum_key_strength(query):
 
 
 def _energy_plan(query):
-    """No energy arc (#123) unless `arc` names a shape; `none` is the default."""
+    """No energy arc (#123) unless `arc` names a shape; `none` is the default.
+
+    `energy_low` and `energy_high` (#136) set the arc's range; blank is unset.
+    """
     shape = _first(query, 'arc', 'none')
-    return () if shape in ('', 'none') else (EnergyArcRequest(shape),)
+    low, high = _energy_level(query, 'energy_low'), _energy_level(query, 'energy_high')
+    if shape in ('', 'none'):
+        if low is not None or high is not None:
+            raise ValueError('An energy range needs an energy arc')
+        return ()
+    return (EnergyArcRequest(shape, energy_low=low, energy_high=high),)
+
+
+def _energy_level(query, name):
+    raw = (_first(query, name) or '').strip()
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        raise ValueError('Energy low and high must be between 0.0 and 1.0')
