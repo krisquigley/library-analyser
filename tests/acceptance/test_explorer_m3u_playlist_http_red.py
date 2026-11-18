@@ -309,9 +309,18 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
                 with self._get('/api/playlists/m3u?' + self._playlist_query(arc=arc)) as response:
                     self.assertEqual(response.read().decode('utf-8'), f'#EXTM3U\n{self.first_path}\n{self.second_path}\n')
 
+    def test_download_m3u_endpoint_accepts_an_energy_range(self):
+        # Issue #136.
+        query = self._playlist_query(arc='rise', energy_low='0.2', energy_high='0.7')
+        with self._get('/api/playlists/m3u?' + query) as response:
+            self.assertEqual(response.read().decode('utf-8'), f'#EXTM3U\n{self.first_path}\n{self.second_path}\n')
+
     def test_download_m3u_endpoint_rejects_an_unknown_arc_or_unscored_mood_as_json_400(self):
         cases = [({'arc': 'wave'}, 'steady, rise, fall or peak'),
-                 ({'mood': 'calm'}, "No eligible track has a score for the mood 'calm'")]
+                 ({'mood': 'calm'}, "No eligible track has a score for the mood 'calm'"),
+                 ({'arc': 'rise', 'energy_high': '1.5'}, 'Energy low and high must be between 0.0 and 1.0'),
+                 ({'arc': 'rise', 'energy_low': '0.8', 'energy_high': '0.4'}, 'Energy low must be below energy high'),
+                 ({'energy_low': '0.2'}, 'An energy range needs an energy arc')]
         for options, message in cases:
             with self.subTest(options):
                 with self.assertRaises(HTTPError) as raised:

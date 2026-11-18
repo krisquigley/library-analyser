@@ -228,6 +228,19 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         self.assertEqual('c', self._second_track(repo))
         self.assertEqual('b', self._second_track(repo, energy_plan=(EnergyArcRequest('rise'),)))
 
+    def test_a_rising_arc_heads_for_the_high_of_its_energy_range(self):
+        # #136: a rises from 1/3; capped at 0.7, c (2/3) is closer than b (1).
+        repo = self._energy_repo(a_b=0.85, a_c=0.87)
+
+        self.assertEqual('c', self._second_track(repo, energy_plan=(EnergyArcRequest('rise', energy_high=0.7),)))
+
+    def test_an_invalid_energy_range_is_rejected_before_any_evidence_is_read(self):
+        repo = self._energy_repo()
+
+        with self.assertRaisesRegex(ValueError, 'Energy low must be below energy high'):
+            self._second_track(repo, energy_plan=(EnergyArcRequest('rise', energy_low=0.8, energy_high=0.4),))
+        self.assertEqual([], repo.mood_evidence_reads)
+
     def test_a_manual_energy_override_makes_the_arousal_unknown(self):
         # Known, b (level 1) misses the steady target (a, level 1/3) by more than c does.
         # Overridden, b costs only a quarter-range miss, while c (now level 1) misses a (now 1/2) by 1/2.

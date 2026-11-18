@@ -2145,6 +2145,41 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
             with self.subTest(app=app):
                 run_node_script(self, script, app)
 
+    def test_m3u_download_offers_an_energy_range_for_the_arc_in_its_valid_range(self):
+        # Issue #136: low and high on the 0-1 rank scale, blank (unset) by default, only with an arc.
+        script = M3U_DOWNLOAD_SCRIPT.replace(M3U_DOWNLOAD_INTERACTION, """  const controls = elements['graph-load-status'];
+  const arc = controls.querySelector('#m3u-arc');
+  const low = controls.querySelector('#m3u-energy-low');
+  const high = controls.querySelector('#m3u-energy-high');
+  assert(low && high, 'M3U controls must expose the energy range of the arc');
+  assert.deepStrictEqual([low.type, low.min, low.max, low.step, low.value, low.placeholder], ['number', '0', '1', '0.05', '', '0.1']);
+  assert.deepStrictEqual([high.type, high.min, high.max, high.step, high.value, high.placeholder], ['number', '0', '1', '0.05', '', '0.9']);
+  const fieldsetText = node => String(node.textContent || '') + ' ' + (node.children || []).map(fieldsetText).join(' ');
+  assert(fieldsetText(controls).includes('Energy low (0.0–1.0)'), 'the valid range is shown next to energy low');
+  assert(fieldsetText(controls).includes('Energy high (0.0–1.0)'), 'the valid range is shown next to energy high');
+  assert.strictEqual(low.disabled, true, 'the range is disabled while no arc is chosen');
+  assert.strictEqual(high.disabled, true, 'the range is disabled while no arc is chosen');
+  bpmMin.value = '120'; bpmMax.value = '128'; count.value = '10';
+  arc.value = 'rise';
+  arc.onchange();
+  assert.strictEqual(low.disabled, false, 'the range is enabled once an arc is chosen');
+  await button.onclick();
+  high.value = '0.7';
+  await button.onclick();
+  low.value = '0.2';
+  await button.onclick();
+  arc.value = 'none';
+  arc.onchange();
+  await button.onclick();
+  assert.deepStrictEqual(requests.filter(path => path.includes('m3u')), [
+    '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5&arc=rise',
+    '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5&arc=rise&energy_high=0.7',
+    '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5&arc=rise&energy_low=0.2&energy_high=0.7',
+    '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5']);""")
+        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            with self.subTest(app=app):
+                run_node_script(self, script, app)
+
     def test_mirrored_browser_assets_advertise_explicit_m3u_download_without_startup_fetch(self):
         for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
             with self.subTest(app=app):

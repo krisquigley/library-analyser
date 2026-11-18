@@ -3,7 +3,7 @@ from collections import defaultdict
 from math import isfinite
 
 from music_explorer.application.dto.playlists import M3UPlaylist, PlaylistRecipe
-from music_explorer.domain.energy_plan import ArcSegment, EnergyPlan
+from music_explorer.domain.energy_plan import ArcSegment, EnergyPlan, EnergyRange
 from music_explorer.domain.harmonic_mixing import HarmonicMixing, usable_key
 from music_explorer.domain.mood_hold import MoodHold
 from music_explorer.domain.percentile_rank import percentile_ranks
@@ -66,7 +66,7 @@ class GenerateBpmGraphM3UPlaylist:
         mood_hold = recipe.mood_hold
         if not recipe.energy_plan and not mood_hold:
             return None, None
-        segments = tuple(ArcSegment(arc.shape) for arc in recipe.energy_plan)  # rejects a bad shape before any read
+        segments = tuple(_arc_segment(arc) for arc in recipe.energy_plan)  # rejects a bad arc before any read
         evidence = self.repository.playlist_mood_evidence(mood_hold or None)
         arousal, mood = {}, {}
         for track_id, track in candidates.items():
@@ -129,6 +129,10 @@ def _key(track, harmonic_mixing):
         return None
     return usable_key(getattr(track, 'key', None), getattr(track, 'scale', None), getattr(track, 'key_strength', None),
                       minimum_strength=harmonic_mixing.minimum_key_strength)
+
+
+def _arc_segment(arc):
+    return ArcSegment(arc.shape, EnergyRange.of(low=arc.energy_low, high=arc.energy_high))
 
 
 def _harmonic_mixing(recipe):
