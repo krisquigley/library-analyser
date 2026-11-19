@@ -6,6 +6,10 @@ import {playlistControlsViewModel, presentPlaylistDownloadEvent, presentRejected
 import {browserPlaylistFile} from './app/frameworks/browser-playlist-file.js';
 import {createInMemoryEventBus} from './app/frameworks/in-memory-event-bus.js';
 import {playlistDownloadView} from './app/frameworks/views/playlist-download-view.js';
+import {displayNumber} from './app/domain/display-number.js';
+import {applyMoodGraphFilters, passesGraphFilters} from './app/domain/graph-filters.js';
+import {moodGraphModel, moodNodeColor} from './app/domain/mood-graph.js';
+import {isIndexedMoodAxisGraph, normalizeMoodAxisGraphDto} from './app/adapters/gateways/mood-axis-graph-dto.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -337,7 +341,6 @@ function fieldDisplay(f){const a=f.automatic||{}; if(a.values&&a.values.length) 
 const detailScoreModels={genres:'genre_discogs400-discogs-effnet-1',mood:'mtg_jamendo_moodtheme-discogs-effnet-1',instruments:'mtg_jamendo_instrument-discogs-effnet-1'};
 function detailProvenance(f){return Object.fromEntries(f.automatic?.provenance||[]);}
 // Only presentation is rounded; callers retain raw scores for sorting and geometry.
-function displayNumber(value){return typeof value==='number' && Number.isFinite(value)?(Math.sign(value)*Math.round((Math.abs(value)+Number.EPSILON)*10)/10).toFixed(1):String(value);}
 const detailDisplayCutoff=0.1;
 function detailEntries(f){return fieldDisplay(f);}
 function detailGauge(label,value){
@@ -396,77 +399,10 @@ function orbitCamera(c,dx,dy){c.yaw=(c.yaw||0)+dx*0.01; c.pitch=(c.pitch||0)+dy*
 function panCamera(c,dx,dy){c.panX=(c.panX||0)+dx; c.panY=(c.panY||0)+dy; return c;}
 function zoomCamera(c,delta){c.distance=(c.distance||0)+delta*0.01; return c;}
 function canvasPoint(e,rect,canvas){const cw=canvas.clientWidth||rect.width, ch=canvas.clientHeight||rect.height, bx=canvas.clientLeft||0, by=canvas.clientTop||0; return {x:(e.clientX-rect.left-bx)*(canvas.width/cw),y:(e.clientY-rect.top-by)*(canvas.height/ch)};}
-function graphScale(){return 180;}
-function axisRange(positioned,axis){let min=Infinity,max=-Infinity; for(const n of positioned){const value=n[axis].raw; if(Number.isFinite(value)){min=Math.min(min,value); max=Math.max(max,value);}} return min===Infinity?null:[min,max];}
-function relativeAxis(value,range){return range&&range[0]!==range[1]?(value-range[0])/(range[1]-range[0]):0.5;}
-// Relative color only: musical coordinates remain native and are never clipped to a universal scale.
-function moodNodeColor(valence,arousal){const hue=215-195*valence, saturation=48+32*arousal, lightness=27+33*arousal; return `hsl(${hue} ${saturation}% ${lightness}%)`;}
 function graphColorLegend(model){const r=model.colorRanges||{}; const endpoints=range=>Array.isArray(range)?range:(range&&Number.isFinite(range.min)&&Number.isFinite(range.max)?[range.min,range.max]:null); const display=range=>{const e=endpoints(range); return e?`${displayNumber(e[0])} to ${displayNumber(e[1])}`:'no positioned values';}; return `Color relative to this library: valence blue → orange/red (${display(r.valence)} native); arousal dark/dim → bright (${display(r.arousal)} native). Selected node is larger.`;}
-function compactValue(value, fallback){return value==null?fallback:value;}
-function normalizeMoodAxisGraphDto(graph){
-  if(!graph) return {positioned:[],edges:[],unpositioned:[],available_moods:[],selected_mood:'',metadata:{}};
-  if(graph.dto_version==null) return graph;
-  if(graph.dto_version==='mood-axis-graph-indexed-v1') return normalizeIndexedMoodAxisGraphDto(graph);
-  if(graph.dto_version!=='mood-axis-graph-compact-v1') throw new Error(`Unsupported mood-axis graph DTO version: ${graph.dto_version}`);
-  const normalized={selected_mood:graph.selected_mood||'',available_moods:graph.available_moods||[],metadata:graph.metadata||{},unpositioned:[],positioned:[],edges:[]};
-  normalized.unpositioned=(graph.unpositioned||[]).map(u=>({track_id:compactValue(u.track_id,u.id),display_label:compactValue(u.display_label,compactValue(u.label,u.id)),reasons:u.reasons||[]}));
-  normalized.positioned=(graph.nodes||[]).map(n=>{
-    const axis=n.axis||{};
-    const node={track_id:compactValue(n.track_id,n.id),display_label:compactValue(n.display_label,compactValue(n.label,n.id)),x:n.x||axis.x,y:n.y||axis.y,z:n.z||axis.z,mood_score:n.mood_score||null,bpm:n.bpm,genres:n.genres||[],reasons:n.reasons||[]};
-    if(n.genre_threshold!=null) node.genre_threshold=n.genre_threshold;
-    return node;
-  });
-  normalized.edges=(graph.links||[]).map(e=>{
-    const edge={a:compactValue(e.a,e.source),b:compactValue(e.b,e.target),score:e.score,explanation:e.explanation,provenance:e.provenance};
-    if(e.supported_group_count!=null) edge.supported_group_count=e.supported_group_count;
-    else if(e.supportedGroupCount!=null) edge.supported_group_count=e.supportedGroupCount;
-    return edge;
-  });
-  return normalized;
-}
-function indexedTableValue(table,index,label){
-  if(index==null) return undefined;
-  if(!Number.isInteger(index)||index<0||index>=table.length) throw new Error(`Invalid indexed graph ${label} reference: ${index}`);
-  return table[index];
-}
-function normalizeIndexedMoodAxisGraphDto(graph){
-  const axisByKey=Object.fromEntries((graph.axis||[]).map(a=>[a.key,a]));
-  const axis=(key,raw,normalized)=>({label:(axisByKey[key]&&axisByKey[key].label)||key,raw,normalized,scale:axisByKey[key]&&axisByKey[key].scale});
-  const genres=graph.genre_labels||[], reasons=graph.reason_text||[], explanations=graph.explanation_table||[], provenance=graph.provenance_table||[];
-  const normalized={selected_mood:graph.selected_mood||'',available_moods:graph.available_moods||[],metadata:graph.metadata||{},unpositioned:[],positioned:[],edges:[]};
-  normalized.positioned=(graph.nodes||[]).map((row,index)=>{
-    if(!Array.isArray(row)||row.length<12) throw new Error(`Invalid indexed graph node row at ${index}`);
-    const genreRows=Array.isArray(row[10])?row[10]:[];
-    const reasonRows=Array.isArray(row[11])?row[11]:[];
-    const legacyMoodPair=typeof row[8]==='number'&&row[8]>=0&&row[8]<=1&&typeof row[9]==='number'&&row[9]>=0&&row[9]<=1&&!(typeof row[6]==='number'&&row[6]>=0&&row[6]<=1);
-    const bpm=legacyMoodPair?row[6]:compactValue(row[8],row[6]);
-    const moodRaw=legacyMoodPair?row[8]:row[9];
-    const moodNormalized=row[9];
-    const node={track_id:row[0],display_label:row[1],x:axis('x',row[2],row[3]),y:axis('y',row[4],row[5]),z:axis('z',row[6],row[7]),mood_score:moodNormalized==null?null:{label:graph.selected_mood||'',raw:moodRaw,normalized:moodNormalized,scale:'sigmoid_mean_score_0_1'},bpm,genres:genreRows.map(([i,score])=>[indexedTableValue(genres,i,'genre'),score]),reasons:reasonRows.map(i=>indexedTableValue(reasons,i,'reason'))};
-    if(row[12]!=null) node.genre_threshold=row[12];
-    return node;
-  });
-  normalized.unpositioned=(graph.unpositioned||[]).map((row,index)=>{
-    if(!Array.isArray(row)||row.length<3) throw new Error(`Invalid indexed graph unpositioned row at ${index}`);
-    return {track_id:row[0],display_label:row[1],reasons:(Array.isArray(row[2])?row[2]:[]).map(i=>indexedTableValue(reasons,i,'reason'))};
-  });
-  normalized.edges=(graph.links||[]).map((row,index)=>{
-    if(!Array.isArray(row)||row.length<3) throw new Error(`Invalid indexed graph link row at ${index}`);
-    const source=row[0], target=row[1];
-    if(!Number.isInteger(source)||source<0||source>=normalized.positioned.length||!Number.isInteger(target)||target<0||target>=normalized.positioned.length) throw new Error(`Invalid indexed graph link endpoint at ${index}`);
-    const explanationIndex=row.length>4?row[4]:(graph.link_defaults||{}).explanation;
-    const provenanceIndex=row.length>5?row[5]:(graph.link_defaults||{}).provenance;
-    const edge={a:normalized.positioned[source].track_id,b:normalized.positioned[target].track_id,score:row[2],explanation:indexedTableValue(explanations,explanationIndex,'explanation'),provenance:indexedTableValue(provenance,provenanceIndex,'provenance')};
-    if(row[3]!=null) edge.supported_group_count=row[3];
-    return edge;
-  });
-  return normalized;
-}
-function buildMoodGraphModel(graph){const useGenreThreshold=graph&&graph.dto_version==='mood-axis-graph-indexed-v1'; graph=normalizeMoodAxisGraphDto(graph); const scale=graphScale(); const positioned=graph.positioned||[]; const colorRanges={valence:axisRange(positioned,'x'),arousal:axisRange(positioned,'y')}; const nodes=positioned.map(n=>({color:moodNodeColor(relativeAxis(n.x.raw,colorRanges.valence),relativeAxis(n.y.raw,colorRanges.arousal)),id:n.track_id,label:n.display_label||n.track_id,name:n.display_label||n.track_id,fx:n.x.normalized*scale*2,fy:n.y.normalized*scale*2,fz:n.z.normalized*scale*2,x:n.x.normalized*scale*2,y:n.y.normalized*scale*2,z:n.z.normalized*scale*2,axis:{x:n.x,y:n.y,z:n.z},moodScore:n.mood_score||null,bpm:n.bpm,genres:n.genres||[],genreThreshold:n.genre_threshold==null?0.1:n.genre_threshold,genreThresholdApplies:useGenreThreshold,reasons:n.reasons||[]})); const ids=new Set(nodes.map(n=>n.id)); const links=(graph.edges||[]).filter(e=>ids.has(e.a)&&ids.has(e.b)).map(e=>({source:e.a,target:e.b,name:`relatedness ${displayNumber(e.score)}: ${e.explanation||''}`,score:e.score,explanation:e.explanation,provenance:e.provenance,supportedGroupCount:e.supported_group_count})); const genreOptions=[...new Set(nodes.flatMap(n=>(n.genres||[]).filter(([,score])=>Number.isFinite(score)&&score>0.1).map(([label])=>label)))].sort(); return {nodes,links,colorRanges,unpositioned:graph.unpositioned||[],availableMoods:graph.available_moods||[],selectedMood:graph.selected_mood||'',metadata:graph.metadata||{},genreOptions};}
-function applyMoodGraphFilters(model, filters){const nodes=model.nodes.filter(n=>passesGraphFilters(n,filters||{})); const ids=new Set(nodes.map(n=>n.id)); return {nodes,links:model.links.filter(e=>ids.has(String((e.source&&e.source.id)||e.source))&&ids.has(String((e.target&&e.target.id)||e.target))),unpositioned:model.unpositioned};}
+function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
 // Raw selected-label means, never display-normalized z or camera coordinates.
 function buildMoodStrip(data, selectedId){return data.nodes.filter(n=>n.moodScore!=null).map(n=>({id:n.id,label:n.label,score:n.moodScore.raw,position:n.moodScore.raw,selected:n.id===selectedId,description:`${n.label}: ${n.moodScore.label} ${displayNumber(n.moodScore.raw)} / 1 (raw sigmoid mean score)`})).sort((a,b)=>a.score-b.score || (a.id<b.id?-1:a.id>b.id?1:0));}
-function passesGraphFilters(n,filters){if(filters.bpmMin!=null && (n.bpm==null || n.bpm<filters.bpmMin)) return false; if(filters.bpmMax!=null && (n.bpm==null || n.bpm>filters.bpmMax)) return false; const genres=filters.genres||[]; if(genres.length){const scores=Object.fromEntries(n.genres); const threshold=n.genreThresholdApplies&&Number.isFinite(n.genreThreshold)?n.genreThreshold:0.1; if(!genres.some(g=>Number.isFinite(scores[g]) && scores[g]>threshold)) return false;} return true;}
 function graphDimensions(elem){const parent=elem&&elem.parentElement; const style=parent&&typeof getComputedStyle==='function'?getComputedStyle(parent):null; const trim=style?['paddingLeft','paddingRight','borderLeftWidth','borderRightWidth'].reduce((sum,name)=>sum+(parseFloat(style[name])||0),0):0; const width=Math.max(1,Math.floor(((parent&&parent.clientWidth)||elem.clientWidth||900)-trim)); const height=Math.max(1,Math.floor(elem.clientHeight||1040)); return {width,height};}
 function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); wakeGraphRendering(); return size;}
 function observeGraphResize(elem){if(graphResizeObserver||!elem) return; const resize=()=>updateGraphSize(elem,forceGraph); if(typeof ResizeObserver!=='undefined'){graphResizeObserver=new ResizeObserver(resize); graphResizeObserver.observe(elem); if(elem.parentElement) graphResizeObserver.observe(elem.parentElement);} if(typeof window!=='undefined') window.addEventListener('resize',resize);}
