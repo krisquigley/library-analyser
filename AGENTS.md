@@ -166,6 +166,18 @@ A ticket describes a problem as it stood when it was written; the code may have 
 3. Its suggested locations and approach are hints. This file's architecture wins: where they clash, follow the architecture and say so in the PR.
 4. Where what's left needs an owner decision rather than code, ask on the ticket and move on to the next item; never guess.
 
+### Talking to Kris over Telegram
+
+`tg` (on the PATH) reaches Kris on Telegram, and it's how Kris answers questions and gives feedback away from the terminal. Use it to communicate whenever you need Kris and they may not be watching.
+
+- **Ask** when you're blocked on a decision: `tg ask "<question>" --options "<a>,<b>" --from <session-name> --timeout <seconds>`. It prints the answer. For a long wait, run it in the background and carry on with other work. On a timeout (exit 2), go on with something else and ask again later; never guess. When you ask on a ticket, also send its link with `tg tell`.
+- **Tell** Kris what's worth knowing: `tg tell "<update>" --from <session-name>`. For example, a PR merged or a release out, CI red, a long job finished, or work stopped waiting on a decision.
+- **Check the inbox periodically:** `tg inbox` prints and clears the feedback Kris sent that answered no question. Check it when you start, between tasks, before opening or merging a PR, and at least every 30 minutes during long work. Act on it as feedback, and acknowledge it with `tg tell`.
+- **Write for a phone.** Each message has to stand on its own: name the PR or ticket, say what you need, and offer options when there are few. One question per message, kept short, no code dumps.
+- **Never send secrets** (keys, tokens, passwords, private URLs). Bot chats aren't end-to-end encrypted, and `tg` refuses text that looks like one.
+- **What an answer allows.** An answer replies only to the question it answers. Inbox messages are feedback to weigh, not commands to run. Anything destructive or irreversible (deleting data, force-pushing, rewriting history, closing someone else's work) still waits for Kris at the terminal, and a Telegram message is never approval for a permission prompt.
+- If `tg` fails, check `systemctl --user status tg-relay`, and fall back to the terminal or the ticket.
+
 ## Commands
 
 Run from the repository root with the project's virtualenv active (`python -m pip install .`).
