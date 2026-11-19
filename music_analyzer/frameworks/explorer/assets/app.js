@@ -26,6 +26,9 @@ import {trackDetailView} from './app/frameworks/views/track-detail-view.js';
 import {sessionSelectionTickets} from './app/frameworks/session-selection-tickets.js';
 import {awaitingServer} from './app/domain/track-selection.js';
 import {createTrackSelection} from './app/application/select-track/select-track.js';
+import {moodStripMarks} from './app/domain/mood-strip.js';
+import {moodMarkDescription, moodStripViewModel} from './app/adapters/presenters/mood-strip-presenter.js';
+import {moodStripView} from './app/frameworks/views/mood-strip-view.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -86,6 +89,7 @@ const trackSearch=createTrackSearch({explorerApi,trackSession:trackSearchStore,c
 const trackList=trackListView({onTrackChosen:trackId=>setCurrent(trackId),onQueryTyped:query=>trackSearch.queryTyped(query),onLoadMore:()=>trackSearch.loadMore().catch(()=>{}),onRetry:()=>trackSearch.retry().catch(()=>{})});
 for(const type of TRACK_SEARCH_EVENT_TYPES) trackEvents.subscribe(type,event=>renderTracks(event.results.tracks));
 const trackDetail=trackDetailView();
+const moodStrip=moodStripView();
 const legacySelectionSession=Object.freeze({read:()=>({snapshot:state,epoch:selectionEpoch,selectionState}),write(changes){if('snapshot' in changes) state=changes.snapshot; if('epoch' in changes) selectionEpoch=changes.epoch; if('selectionState' in changes){selectionState=changes.selectionState; pendingSelectionOperation=awaitingServer(selectionState)?selectionState:null;}}});
 const selectionEvents=createInMemoryEventBus();
 const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession:legacySelectionSession,eventBus:selectionEvents});
@@ -207,7 +211,7 @@ function canvasPoint(e,rect,canvas){const cw=canvas.clientWidth||rect.width, ch=
 function graphColorLegend(model){const r=model.colorRanges||{}; const endpoints=range=>Array.isArray(range)?range:(range&&Number.isFinite(range.min)&&Number.isFinite(range.max)?[range.min,range.max]:null); const display=range=>{const e=endpoints(range); return e?`${displayNumber(e[0])} to ${displayNumber(e[1])}`:'no positioned values';}; return `Color relative to this library: valence blue → orange/red (${display(r.valence)} native); arousal dark/dim → bright (${display(r.arousal)} native). Selected node is larger.`;}
 function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
 // Raw selected-label means, never display-normalized z or camera coordinates.
-function buildMoodStrip(data, selectedId){return data.nodes.filter(n=>n.moodScore!=null).map(n=>({id:n.id,label:n.label,score:n.moodScore.raw,position:n.moodScore.raw,selected:n.id===selectedId,description:`${n.label}: ${n.moodScore.label} ${displayNumber(n.moodScore.raw)} / 1 (raw sigmoid mean score)`})).sort((a,b)=>a.score-b.score || (a.id<b.id?-1:a.id>b.id?1:0));}
+function buildMoodStrip(data, selectedId){return moodStripMarks(data.nodes,selectedId).map(mark=>({...mark,description:moodMarkDescription(mark)}));}
 function graphDimensions(elem){const parent=elem&&elem.parentElement; const style=parent&&typeof getComputedStyle==='function'?getComputedStyle(parent):null; const trim=style?['paddingLeft','paddingRight','borderLeftWidth','borderRightWidth'].reduce((sum,name)=>sum+(parseFloat(style[name])||0),0):0; const width=Math.max(1,Math.floor(((parent&&parent.clientWidth)||elem.clientWidth||900)-trim)); const height=Math.max(1,Math.floor(elem.clientHeight||1040)); return {width,height};}
 function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); wakeGraphRendering(); return size;}
 function observeGraphResize(elem){if(graphResizeObserver||!elem) return; const resize=()=>updateGraphSize(elem,forceGraph); if(typeof ResizeObserver!=='undefined'){graphResizeObserver=new ResizeObserver(resize); graphResizeObserver.observe(elem); if(elem.parentElement) graphResizeObserver.observe(elem.parentElement);} if(typeof window!=='undefined') window.addEventListener('resize',resize);}
@@ -618,25 +622,7 @@ function focusPendingCameraSelection(graphRendered=false){
     cancelCameraFocus();
   }
 }
-function renderMoodStrip(data){
-  const canvas=document.getElementById('mood-strip'), picker=document.getElementById('mood-strip-picker'), readout=document.getElementById('mood-strip-value');
-  if(!canvas||!picker||!readout) return;
-  const marks=buildMoodStrip(data,state.current_track_id), ctx=canvas.getContext('2d');
-  const width=Math.max(1,Math.floor(canvas.clientWidth||600)), height=70, pad=14;
-  canvas.width=width; canvas.height=height;
-  const x=m=>pad+(width-2*pad)*m.position;
-  ctx.clearRect(0,0,width,height); ctx.strokeStyle='#444'; ctx.beginPath();ctx.moveTo(pad,35);ctx.lineTo(width-pad,35);ctx.stroke();
-  // Stack tied/nearby pixels deterministically, keeping all marks visible in bounded canvas DOM.
-  const stack=new Map();
-  for(const mark of marks){const pixel=Math.round(x(mark)), level=stack.get(pixel)||0; stack.set(pixel,level+1); const y=level%2?35+5+Math.floor(level/2)*5:35-5-Math.floor(level/2)*5; mark.y=Math.max(5,Math.min(height-5,y)); if(mark.selected) continue; ctx.beginPath();ctx.arc(x(mark),mark.y,3,0,Math.PI*2);ctx.fillStyle='#164e8c';ctx.fill();}
-  for(const mark of marks.filter(m=>m.selected)){ctx.beginPath();ctx.arc(x(mark),mark.y,5,0,Math.PI*2);ctx.fillStyle='#b02212';ctx.fill();}
-  picker.max=String(Math.max(0,marks.length-1)); picker.disabled=!marks.length;
-  let index=marks.findIndex(m=>m.selected); if(index<0) index=0;
-  picker.value=String(index);
-  const show=()=>text(readout,marks.length?`${Number(picker.value)+1} / ${marks.length}: ${marks[Number(picker.value)].description}`:'No visible tracks have this selected mood score; tracks without it have no mark.');
-  picker.oninput=show; show();
-  canvas.onclick=event=>{if(!marks.length) return; const px=(event.clientX-canvas.getBoundingClientRect().left)*width/canvas.getBoundingClientRect().width; let nearest=0; for(let i=1;i<marks.length;i++) if(Math.abs(x(marks[i])-px)<Math.abs(x(marks[nearest])-px)) nearest=i; picker.value=String(nearest); show();};
-}
+function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,state.current_track_id),moodStrip.width()));}
 function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); observeGraphInput(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true); wakeGraphRendering();} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
 function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
 function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
