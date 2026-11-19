@@ -29,6 +29,8 @@ import {createTrackSelection} from './app/application/select-track/select-track.
 import {moodStripMarks} from './app/domain/mood-strip.js';
 import {moodMarkDescription, moodStripViewModel} from './app/adapters/presenters/mood-strip-presenter.js';
 import {moodStripView} from './app/frameworks/views/mood-strip-view.js';
+import {graphCameraFrame} from './app/domain/camera-frame.js';
+import {graphAxisSpec, graphColorLegend, graphRelatednessLegend, linkLabel, nodeLabel, relatednessLinkAlpha, relatednessLinkColor} from './app/adapters/presenters/graph-scene-presenter.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -197,9 +199,6 @@ function renderInitialDetail(model){const root=document.getElementById('detail')
 function fieldDisplay(field){return fieldValues(field);}
 function detailGauge(label,value){return trackDetail.gauge(scoreGaugeViewModel(label,value));}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}
-function graphRelatednessLegend(){return 'Link alpha reflects axis-independent relatedness strength from existing stored summaries; higher-score links are more opaque.';}
-function relatednessLinkAlpha(link){const score=Number(link&&link.score); const clamped=Number.isFinite(score)?Math.max(0,Math.min(1,score)):0; return Math.round((0.18+clamped*0.54)*100)/100;}
-function relatednessLinkColor(link){return `rgba(240,240,240,${relatednessLinkAlpha(link)})`;}
 function renderTrackMetadata(metadata){return trackDetail.metadata(trackMetadataViewModel(metadata));}
 function renderDetail(detail){trackDetail.show(trackDetailViewModel(detail));}
 function buildGraphModel(tracks, projection){return buildMoodGraphModel({positioned:tracks||[],edges:(projection&&projection.edges)||[],unpositioned:[],available_moods:[],selected_mood:'',metadata:{}});}
@@ -208,42 +207,12 @@ function orbitCamera(c,dx,dy){c.yaw=(c.yaw||0)+dx*0.01; c.pitch=(c.pitch||0)+dy*
 function panCamera(c,dx,dy){c.panX=(c.panX||0)+dx; c.panY=(c.panY||0)+dy; return c;}
 function zoomCamera(c,delta){c.distance=(c.distance||0)+delta*0.01; return c;}
 function canvasPoint(e,rect,canvas){const cw=canvas.clientWidth||rect.width, ch=canvas.clientHeight||rect.height, bx=canvas.clientLeft||0, by=canvas.clientTop||0; return {x:(e.clientX-rect.left-bx)*(canvas.width/cw),y:(e.clientY-rect.top-by)*(canvas.height/ch)};}
-function graphColorLegend(model){const r=model.colorRanges||{}; const endpoints=range=>Array.isArray(range)?range:(range&&Number.isFinite(range.min)&&Number.isFinite(range.max)?[range.min,range.max]:null); const display=range=>{const e=endpoints(range); return e?`${displayNumber(e[0])} to ${displayNumber(e[1])}`:'no positioned values';}; return `Color relative to this library: valence blue → orange/red (${display(r.valence)} native); arousal dark/dim → bright (${display(r.arousal)} native). Selected node is larger.`;}
 function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
 // Raw selected-label means, never display-normalized z or camera coordinates.
 function buildMoodStrip(data, selectedId){return moodStripMarks(data.nodes,selectedId).map(mark=>({...mark,description:moodMarkDescription(mark)}));}
 function graphDimensions(elem){const parent=elem&&elem.parentElement; const style=parent&&typeof getComputedStyle==='function'?getComputedStyle(parent):null; const trim=style?['paddingLeft','paddingRight','borderLeftWidth','borderRightWidth'].reduce((sum,name)=>sum+(parseFloat(style[name])||0),0):0; const width=Math.max(1,Math.floor(((parent&&parent.clientWidth)||elem.clientWidth||900)-trim)); const height=Math.max(1,Math.floor(elem.clientHeight||1040)); return {width,height};}
 function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); wakeGraphRendering(); return size;}
 function observeGraphResize(elem){if(graphResizeObserver||!elem) return; const resize=()=>updateGraphSize(elem,forceGraph); if(typeof ResizeObserver!=='undefined'){graphResizeObserver=new ResizeObserver(resize); graphResizeObserver.observe(elem); if(elem.parentElement) graphResizeObserver.observe(elem.parentElement);} if(typeof window!=='undefined') window.addEventListener('resize',resize);}
-// Frame display coordinates only: musical-axis values and fixed node positions stay intact.
-function graphCameraFrame(nodes, size, fov){
-  const positioned=nodes.filter(n=>[n.x,n.y,n.z].every(Number.isFinite));
-  if(!positioned.length) return {position:{x:0,y:0,z:650},target:{x:0,y:0,z:0}};
-  const min={x:Infinity,y:Infinity,z:Infinity}, max={x:-Infinity,y:-Infinity,z:-Infinity};
-  for(const n of positioned) for(const axis of ['x','y','z']){min[axis]=Math.min(min[axis],n[axis]); max[axis]=Math.max(max[axis],n[axis]);}
-  const target={}, half={};
-  for(const axis of ['x','y','z']){target[axis]=(min[axis]+max[axis])/2; half[axis]=(max[axis]-min[axis])/2;}
-  const aspect=size.width>0&&size.height>0?size.width/size.height:1;
-  const tanHalfFov=Math.tan((Number.isFinite(fov)&&fov>0&&fov<180?fov:50)*Math.PI/360);
-  const radius=4, padding=1.2;
-  const distance=Math.max(40,half.z+radius+padding*Math.max((half.y+radius)/tanHalfFov,(half.x+radius)/(tanHalfFov*aspect)));
-  return {position:{x:target.x,y:target.y,z:target.z+distance},target};
-}
-// Axis coordinates are in the same fixed display space as node fx/fy/fz.
-// The offsets leave the origin outside the occupied node volume; they are not data minima.
-function graphAxisSpec(nodes){
-  const valid=nodes.filter(n=>['x','y','z'].every(k=>Number.isFinite(n[k])));
-  if(!valid.length) return [];
-  const min={},max={};
-  for(const key of ['x','y','z']){min[key]=Math.min(...valid.map(n=>n[key]));max[key]=Math.max(...valid.map(n=>n[key]));}
-  const start={x:min.x-18,y:min.y-18,z:min.z-18};
-  return [['x','X valence (native)','#ff7777',360],['y','Y arousal (native)','#76dfa0',360],['z','Z BPM','#84b9ff',36]].map(([key,label,color,units])=>{
-    const end={...start,[key]:Math.max(max[key]+18,start[key]+36)};
-    const rawValues=valid.map(n=>n.axis&&n.axis[key]&&n.axis[key].raw).filter(Number.isFinite);
-    const references=rawValues.length?[Math.min(...rawValues),Math.max(...rawValues)]:[min[key]/units,max[key]/units];
-    return {key,label,color,start,end,references:references.map(displayNumber)};
-  });
-}
 function disposeGraphAxes(group){
   if(!group) return;
   group.parent.remove(group);
@@ -624,9 +593,6 @@ function focusPendingCameraSelection(graphRendered=false){
 }
 function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,state.current_track_id),moodStrip.width()));}
 function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); observeGraphInput(elem); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true); wakeGraphRendering();} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
-function nodeLabel(n){return `${escapeHtml(n.label)}<br>valence ${displayNumber(n.axis.x.raw)} (${escapeHtml(n.axis.x.scale)})<br>arousal ${displayNumber(n.axis.y.raw)} (${escapeHtml(n.axis.y.scale)})<br>${escapeHtml(n.axis.z.label)} ${displayNumber(n.axis.z.raw)} (${escapeHtml(n.axis.z.scale)})<br>${n.moodScore?`${escapeHtml(n.moodScore.label)} ${displayNumber(n.moodScore.raw)} / 1`:'Selected mood score unavailable'}`;}
-function linkLabel(l){return escapeHtml(`score ${displayNumber(l.score)}; ${l.explanation||''}; groups ${l.supportedGroupCount||0}`);}
-function escapeHtml(value){return String(value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
 function replaceCanvasWithGraphElement(){const old=document.getElementById('map'); const div=document.createElement('div'); div.id='graph3d'; if(old) old.replaceWith(div); return div;}
 function renderCanvasFallback(data,container){let canvas=document.getElementById('map'); if(!canvas&&container){canvas=(container.children||[]).find(child=>child.tagName==='CANVAS')||document.createElement('canvas'); canvas.id='map'; if(!canvas.parentElement){if(typeof container.replaceChildren==='function') container.replaceChildren(canvas); else if(typeof container.append==='function') container.append(canvas);}} if(!canvas) canvas=document.createElement('canvas'); const size=graphDimensions(canvas); canvas.width=size.width; canvas.height=size.height; const ctx=canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#fafafa'; ctx.fillRect(0,0,canvas.width,canvas.height); for(const n of data.nodes){ctx.beginPath(); ctx.arc(canvas.width/2+n.fx,canvas.height/2-n.fy,n.id===state.current_track_id?9:5,0,Math.PI*2); ctx.fillStyle=n.color; ctx.fill();}}
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
