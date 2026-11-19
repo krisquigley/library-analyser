@@ -71,7 +71,7 @@ class CameraVendorCancellationTests(unittest.TestCase):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node required; do not skip RED')
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 script = real_vendor_fixture() + scenario + (
                     '\n})().then(()=>console.log("SCENARIO_COMPLETED"))'
                     '.catch(error=>{console.error(error);process.exitCode=1;});')

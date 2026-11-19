@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import unittest
+from tests.support.explorer_app_bundle import explorer_app_script
 
 ROOT = Path(__file__).resolve().parents[2]
 NODE = os.environ.get('EXPLORER_TEST_NODE') or shutil.which('node')
@@ -116,7 +117,7 @@ class SelectionDetailFeedbackTests(unittest.TestCase):
         script = HARNESS + '\n(async()=>{\n' + scenario + '\n})().catch(e=>{console.error(e);process.exitCode=1;});'
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                app = ROOT / package / 'frameworks/explorer/assets/app.js'
+                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
                 result = subprocess.run([NODE, '-e', script, str(app)], cwd=ROOT,
                                         capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

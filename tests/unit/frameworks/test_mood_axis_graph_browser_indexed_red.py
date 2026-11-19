@@ -2,10 +2,11 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.support.explorer_app_bundle import explorer_app_script
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-APP_JS = REPO_ROOT / 'music_explorer' / 'frameworks' / 'explorer' / 'assets' / 'app.js'
+APP_JS = explorer_app_script(REPO_ROOT / 'music_explorer' / 'frameworks' / 'explorer' / 'assets' / 'app.js')
 
 
 class MoodAxisGraphBrowserIndexedRedTests(unittest.TestCase):

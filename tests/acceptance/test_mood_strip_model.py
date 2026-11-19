@@ -3,8 +3,9 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.support.explorer_app_bundle import explorer_app_script
 
-APP = Path(__file__).resolve().parents[2] / 'music_analyzer/frameworks/explorer/assets/app.js'
+APP = explorer_app_script(Path(__file__).resolve().parents[2] / 'music_analyzer/frameworks/explorer/assets/app.js')
 
 
 @unittest.skipUnless(shutil.which('node'), 'Node required for browser model tests')

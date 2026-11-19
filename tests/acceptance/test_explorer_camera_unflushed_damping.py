@@ -80,7 +80,7 @@ class CameraUnflushedDampingTests(unittest.TestCase):
         self.assertIsNotNone(node, 'Node required; do not skip regression')
         self.assertIsNotNone(shutil.which('timeout'), 'Hard SIGKILL timeout required')
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 script = trackball_fixture() + INPUTS + scenario + (
                     '\n})().then(()=>console.log("SCENARIO_COMPLETED"))'
                     '.catch(error=>{console.error(error);process.exitCode=1;});')

@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import unittest
+from tests.support.explorer_app_bundle import explorer_app_script
 
 ROOT = Path(__file__).resolve().parents[2]
 NODE = os.environ.get('EXPLORER_TEST_NODE') or shutil.which('node') or '/tmp/node-host-v24'
@@ -116,7 +117,7 @@ class ExplorerSearchRaceRedTests(unittest.TestCase):
             self.fail('Node is required; set EXPLORER_TEST_NODE (no skipped acceptance)')
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                asset = ROOT / package / 'frameworks/explorer/assets/app.js'
+                asset = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
                 result = subprocess.run([NODE, '-e', HARNESS.replace('SCENARIO', scenario), str(asset)],
                                         capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

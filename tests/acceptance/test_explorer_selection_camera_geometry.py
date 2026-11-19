@@ -9,11 +9,12 @@ the camera adapter boundary in test_explorer_selection_camera_integration.
 import subprocess
 import unittest
 from pathlib import Path
+from tests.support.explorer_app_bundle import explorer_app_script
 
 
 ROOT = Path(__file__).resolve().parents[2]
 APPS = tuple(
-    ROOT / package / 'frameworks/explorer/assets/app.js'
+    explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
     for package in ('music_explorer', 'music_analyzer')
 )
 
@@ -22,7 +23,7 @@ class SelectionCameraGeometryTests(unittest.TestCase):
     def run_geometry(self, script):
         # Missing Node is a failed prerequisite, not silently passing evidence.
         for app in APPS:
-            with self.subTest(app=str(app.relative_to(ROOT))):
+            with self.subTest(app=str(app)):
                 result = subprocess.run(
                     ['node', '-e', "const assert=require('node:assert/strict'); "
                      "const app=require(process.argv[1]);\n" + script, str(app)],

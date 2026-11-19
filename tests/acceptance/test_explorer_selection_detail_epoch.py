@@ -125,7 +125,7 @@ class SelectionDetailEpochTests(unittest.TestCase):
     def run_scenario(self, scenario):
         self.assertTrue(Path(NODE).is_file(), f'Node prerequisite unavailable: {NODE}')
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 script = (HARNESS + '\n(async()=>{\n' + scenario
                           + '\n})().catch(e=>{console.error(e);process.exitCode=1;});')
                 result = subprocess.run(

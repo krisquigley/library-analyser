@@ -67,7 +67,7 @@ class GraphClickImmediateTests(unittest.TestCase):
         script = (fixture + HELPERS + scenario +
                   '\n})().then(()=>console.log("SCENARIO_COMPLETED")).catch(error=>{console.error(error);process.exitCode=1;});')
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 with tempfile.TemporaryDirectory(prefix='issue84-click-') as scratch:
                     with (Path(scratch) / 'node.log').open('w+') as output:
                         process = subprocess.Popen([node, '-e', script, str(asset)], cwd=ROOT,

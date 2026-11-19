@@ -7,9 +7,10 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.support.explorer_app_bundle import explorer_app_script
 
 ROOT = Path(__file__).resolve().parents[2]
-ASSETS = tuple(ROOT / package / 'frameworks/explorer/assets/app.js'
+ASSETS = tuple(explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
                for package in ('music_explorer', 'music_analyzer'))
 
 # Explicit adapter boundary shared by immediate and elapsed-time camera fixtures.
@@ -166,7 +167,7 @@ class SelectionCameraIntegrationTests(unittest.TestCase):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node required: RED must not be accepted via skipped tests')
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 script = FIXTURE + scenario + '\n})().then(()=>console.log("SCENARIO_COMPLETED")).catch(error=>{console.error(error);process.exitCode=1;});'
                 result = subprocess.run([node, '-e', script, str(asset)], cwd=ROOT,
                                         capture_output=True, text=True, timeout=20)
