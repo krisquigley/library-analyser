@@ -1,6 +1,20 @@
-// Which tracks the graph filters keep (#146): a BPM range and any of the chosen genres.
+// The graph controls (#146): the tracked mood, and the filters on which tracks the graph shows,
+// a BPM range and any of the chosen genres.
 
 const DEFAULT_GENRE_FILTER_THRESHOLD = 0.1;
+
+export const EMPTY_GRAPH_CONTROLS = Object.freeze({mood: '', bpmMin: null, bpmMax: null, genres: Object.freeze([])});
+
+export function editGraphControls(controls, changes) {
+  const unknown = Object.keys(changes).find(control => !Object.hasOwn(EMPTY_GRAPH_CONTROLS, control));
+  if (unknown) throw new Error(`Unknown graph control: ${unknown}`);
+  const edited = {...controls, ...changes};
+  return Object.freeze({...edited, genres: Object.freeze([...edited.genres])});
+}
+
+export function clearedGraphFilters(controls) {
+  return editGraphControls(controls, {bpmMin: null, bpmMax: null, genres: []});
+}
 
 export function passesGraphFilters(node, filters) {
   if (filters.bpmMin != null && (node.bpm == null || node.bpm < filters.bpmMin)) return false;

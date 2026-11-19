@@ -8,6 +8,8 @@ const FIELD_CHECKS = Object.freeze({
   switch: (value, field) => typeof value === 'boolean' || `${field.label} must be on or off`,
   choice: (value, field) => field.choices.includes(value) || `${field.label} must be one of: ${field.choices.join(', ')}`,
   text: (value, field) => typeof value === 'string' || `${field.label} must be text`,
+  'text-list': (value, field) => (Array.isArray(value) && value.every(item => typeof item === 'string'))
+    || `${field.label} must be a list of text`,
 });
 
 export function validRequest(schema, request) {

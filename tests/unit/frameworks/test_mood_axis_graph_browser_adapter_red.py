@@ -46,9 +46,8 @@ assert.deepStrictEqual(app.applyMoodGraphFilters(fromCompact, {bpmMin:119,bpmMax
     def test_load_graph_explicitly_requests_indexed_contract_v3(self):
         if not shutil.which('node'):
             source = APP_JS.read_text(encoding='utf-8')
-            load_graph = source[source.index('async function loadGraph'):source.index('function graphStatusMessage')]
-            if 'contract=v3' not in load_graph or 'graphQueryFromControls' not in load_graph:
-                self.fail('loadGraph must request /api/mood-axis-graph with contract=v3 while preserving graphQueryFromControls mood negotiation')
+            if "const MOOD_GRAPH_CONTRACT = 'v3';" not in source or "params.set('mood', mood)" not in source:
+                self.fail('the graph gateway must request /api/mood-axis-graph with contract=v3 and the tracked mood')
             return
         script = r"""
 const assert = require('assert');

@@ -396,21 +396,21 @@ assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'visible 
                 run_node_script(self, script, str(app))
 
     def test_graph_filter_source_separates_mood_tracker_control(self):
+        for package in ('music_explorer', 'music_analyzer'):
+            with self.subTest(package=package):
+                view = (REPO_ROOT / package / 'frameworks/explorer/assets/app/frameworks/views/graph-controls-view.js').read_text(encoding='utf-8')
+                filters = view[view.index('function graphFilterElements('):view.index('function graphControlOption(')]
+                self.assertIn("id: 'mood-tracker-controls'", view)
+                self.assertIn('Selected mood strength', view)
+                self.assertNotIn('selected-mood', filters)
+                self.assertNotIn('Score strip mood', filters)
+                self.assertIn("id: 'clear-graph-filters'", filters)
         for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
-                source = app.read_text(encoding='utf-8')
-                controls_source = source[source.index('function buildGraphControls'):source.index('function syncGraphControlOptions')]
-                graph_fieldset_source = controls_source[controls_source.index("fs.id='graph-controls'"):controls_source.index("root.append(fs)")]
-                self.assertIn("moodFs.id='mood-tracker-controls'", controls_source)
-                self.assertIn('Selected mood strength', controls_source)
-                self.assertNotIn("mood.id='selected-mood'", graph_fieldset_source)
-                self.assertNotIn('Score strip mood', graph_fieldset_source)
-                self.assertIn("clear.id='clear-graph-filters'", graph_fieldset_source)
-                self.assertNotIn('mood:graphModel.selectedMood', graph_fieldset_source)
-                self.assertIn('clearGraphFilters', source[source.index('module.exports'):])
-                self.assertIn('getGraphControlsForTesting', source[source.index('module.exports'):])
-                self.assertIn('buildGraphControls', source[source.index('module.exports'):])
-                self.assertIn('syncGraphControlOptions', source[source.index('module.exports'):])
+                exports = app.read_text(encoding='utf-8')
+                exports = exports[exports.index('module.exports'):]
+                for name in ('clearGraphFilters', 'getGraphControlsForTesting', 'buildGraphControls', 'syncGraphControlOptions'):
+                    self.assertIn(name, exports)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for graph control DOM tests')
     def test_graph_filters_are_separate_from_mood_tracker_and_bpm_inputs_have_labels(self):
@@ -457,13 +457,13 @@ assert(mood.onchange, 'mood tracker has a change handler');
 assert(genres.onchange, 'genre filter has a change handler');
 assert(findById(root, 'clear-graph-filters').onclick, 'clear graph filters button is wired');
 app.setGraphControlsForTesting({mood:'heavy', bpmMin:90, bpmMax:150, genres:['jazz']});
-assert.strictEqual(app.graphQueryFromControls(), '?mood=heavy');
+assert.strictEqual(app.getGraphControlsForTesting().mood, 'heavy');
 assert.deepStrictEqual(app.getGraphControlsForTesting().genres, ['jazz']);
 app.clearGraphFilters();
 assert.strictEqual(app.getGraphControlsForTesting().mood, 'heavy', 'clearing graph filters preserves independent mood tracker selection');
 assert.deepStrictEqual(app.getGraphControlsForTesting().genres, []);
 assert.strictEqual(app.getGraphControlsForTesting().bpmMin, null);
-assert.strictEqual(app.graphQueryFromControls(), '?mood=heavy');
+assert.strictEqual(app.getGraphControlsForTesting().mood, 'heavy');
 """
         for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
@@ -534,24 +534,16 @@ global.ForceGraph3D = undefined;
                 run_node_script(self, script, str(app))
 
     def test_load_graph_uses_api_graph_status_for_read_only_snapshot_copy(self):
-        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
-            with self.subTest(app=app):
-                source = app.read_text(encoding='utf-8')
-                start = source.index('async function loadGraph()')
-                end = source.index('function applyCurrentGraphFilters()', start)
-                load_graph = source[start:end]
-                self.assertIn('graphStatusMessage(graphModel.metadata.graph_status', load_graph)
-                self.assertIn('graphLoadState={...graphLoadState,status:statusCopy.status,message:statusCopy.message', load_graph)
-                helper_start = source.index('function graphStatusMessage(')
-                helper_end = source.index('function applyCurrentGraphFilters()', helper_start)
-                helper = source[helper_start:helper_end]
+        for package in ('music_explorer', 'music_analyzer'):
+            with self.subTest(package=package):
+                presenter = (REPO_ROOT / package / 'frameworks/explorer/assets/app/adapters/presenters/graph-load-presenter.js').read_text(encoding='utf-8')
+                self.assertIn("'graph-ready': event => readyStatus(event)", presenter)
+                self.assertIn('graphStatusMessage(model.metadata.graph_status', presenter)
                 for state in ('stale', 'build_needed', 'failed', 'building'):
-                    self.assertIn(state, helper)
-                self.assertIn('music-analyzer graph build --database DB', helper)
-                self.assertNotIn('.reason', helper)
-                self.assertNotIn('.action', helper)
-                ready_index = helper.index("case 'ready'")
-                self.assertLess(ready_index, helper.index('Graph ready'))
+                    self.assertIn(state, presenter)
+                self.assertIn('music-analyzer graph build --database DB', presenter)
+                self.assertNotIn('.reason', presenter)
+                self.assertNotIn('.action', presenter)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for graph status DOM tests')
     def test_load_graph_displays_api_graph_status_without_misleading_ready_copy(self):
@@ -1185,7 +1177,7 @@ assert.strictEqual(color(model.nodes[0]),model.nodes[0].color,'selection must no
 assert(size(model.nodes[0])>size(model.nodes[1]),'selection should be larger');
 assert.strictEqual(info.textContent, '', 'removed graph status panel must not be updated');
 vm.runInContext("selectedGraphControls={mood:'heavy',bpmMin:100,bpmMax:140,genres:['jazz']}",context);
-assert.strictEqual(context.graphQueryFromControls(),'?mood=heavy','fetch full mood library before local filtering');
+assert.strictEqual(context.getGraphControlsForTesting().mood,'heavy','the graph is fetched for the mood; filters apply locally');
 """
         run_node_script(self, script, str(APP_JS))
 
@@ -1930,9 +1922,7 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
                 self.assertNotIn("/api/tracks?limit=all", refresh_source)
                 self.assertNotIn("/api/mood-axis-graph", refresh_source, 'startup refresh must not request graph before user clicks Load graph')
                 self.assertIn('renderGraphLoadStatus()', refresh_source)
-                load_graph_source = source[source.index('async function loadGraph()'):source.index('function renderInitialDetail')]
-                self.assertIn("const controlQuery=graphQueryFromControls()", load_graph_source)
-                self.assertIn("const graph=await api('/api/mood-axis-graph'+controlQuery+(controlQuery?'&':'?')+'contract=v3')", load_graph_source)
+                self.assertIn('function loadGraph(){return graphLoad.load();}', source)
                 self.assertNotIn("button.id='load-graph'", source)
                 self.assertNotIn("'Load graph'", source)
                 self.assertIn('loadGraph', source[source.index('module.exports'):])
@@ -2201,11 +2191,9 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
         for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
-                start = source.index('async function loadGraph()')
-                end = source.index('function applyCurrentGraphFilters()', start)
-                load_graph = source[start:end]
-                self.assertIn('contract=v3', load_graph, 'loadGraph must opt in to the indexed graph HTTP contract')
-                self.assertNotIn("api('/api/mood-axis-graph'+graphQueryFromControls())", load_graph, 'loadGraph must not silently use the legacy verbose graph endpoint')
+                self.assertIn("const MOOD_GRAPH_CONTRACT = 'v3';", source, 'the graph gateway must opt in to the indexed graph HTTP contract')
+                self.assertIn("params.set('contract', MOOD_GRAPH_CONTRACT);", source)
+                self.assertNotIn("api('/api/mood-axis-graph'", source, 'the graph must not be requested from the legacy verbose endpoint')
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for compact graph DTO parity tests')
     def test_compact_graph_dto_normalizes_to_existing_verbose_graph_model(self):

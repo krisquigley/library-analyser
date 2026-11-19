@@ -1,7 +1,7 @@
 // Issue #146: which tracks the graph filters keep.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {applyMoodGraphFilters, passesGraphFilters} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/graph-filters.js';
+import {applyMoodGraphFilters, clearedGraphFilters, editGraphControls, EMPTY_GRAPH_CONTROLS, passesGraphFilters} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/graph-filters.js';
 
 const node = (id, bpm, genres = [], threshold = {}) => ({id, bpm, genres, genreThreshold: 0.1, genreThresholdApplies: false, ...threshold});
 
@@ -32,4 +32,23 @@ test('filtering keeps the links between kept tracks and every unpositioned track
   assert.deepEqual(visible.links, [model.links[0], model.links[2]]);
   assert.equal(visible.unpositioned, model.unpositioned);
   assert.equal(applyMoodGraphFilters(model).nodes.length, 3);
+});
+
+test('new graph controls track no mood and filter nothing', () => {
+  assert.deepEqual(EMPTY_GRAPH_CONTROLS, {mood: '', bpmMin: null, bpmMax: null, genres: []});
+  assert.ok(Object.isFrozen(EMPTY_GRAPH_CONTROLS) && Object.isFrozen(EMPTY_GRAPH_CONTROLS.genres));
+});
+
+test('editing graph controls returns new controls with their own genre list', () => {
+  const genres = ['rock'];
+  const edited = editGraphControls(EMPTY_GRAPH_CONTROLS, {bpmMin: 90, genres});
+  genres.push('jazz');
+  assert.deepEqual(edited, {mood: '', bpmMin: 90, bpmMax: null, genres: ['rock']});
+  assert.ok(Object.isFrozen(edited) && Object.isFrozen(edited.genres));
+  assert.throws(() => editGraphControls(EMPTY_GRAPH_CONTROLS, {tempo: 1}), /Unknown graph control: tempo/);
+});
+
+test('clearing the filters keeps the tracked mood', () => {
+  const controls = editGraphControls(EMPTY_GRAPH_CONTROLS, {mood: 'heavy', bpmMin: 90, bpmMax: 150, genres: ['jazz']});
+  assert.deepEqual(clearedGraphFilters(controls), {mood: 'heavy', bpmMin: null, bpmMax: null, genres: []});
 });

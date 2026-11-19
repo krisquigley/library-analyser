@@ -3,7 +3,7 @@
 import {EMPTY_PLAYLIST_DRAFT, editPlaylistDraft, playlistRecipeOf} from '../../domain/playlist-draft.js';
 import {nextPlaylistDownloadState} from '../../domain/playlist-download.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
-import {EXPLORER_API} from '../ports/explorer-api.js';
+import {PLAYLIST_DOWNLOADS} from '../ports/explorer-api.js';
 import {PLAYLIST_FILE} from '../ports/playlist-file.js';
 import {requirePort} from '../ports/port.js';
 import {
@@ -11,7 +11,7 @@ import {
 } from './playlist-download-events.js';
 
 export function createPlaylistDownload({explorerApi, playlistFile, eventBus}) {
-  requirePort(EXPLORER_API, explorerApi);
+  requirePort(PLAYLIST_DOWNLOADS, explorerApi);
   requirePort(PLAYLIST_FILE, playlistFile);
   requirePort(EVENT_BUS, eventBus);
   let draft = EMPTY_PLAYLIST_DRAFT;
