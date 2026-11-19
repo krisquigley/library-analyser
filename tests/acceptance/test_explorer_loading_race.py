@@ -26,7 +26,7 @@ class ExplorerLoadingRaceRegressionTests(unittest.TestCase):
                     self.assertIn(boundary + '\n    if(abortStaleRefresh(refreshToken,token)) return;', refresh_body)
                 state_read = refresh_body.index("const refreshedState=await explorerApi.loadLibraryState();")
                 stale_guard = refresh_body.index('if(abortStaleRefresh(refreshToken,token)) return;', state_read)
-                epoch_sync = refresh_body.index('state=syncSelectionEpoch(refreshedState);')
+                epoch_sync = refresh_body.index('trackSelection.reconcile(refreshedState);')
                 self.assertLess(state_read, stale_guard)
                 self.assertLess(stale_guard, epoch_sync, 'a stale state snapshot must not roll back the reset epoch')
                 self.assertIn(

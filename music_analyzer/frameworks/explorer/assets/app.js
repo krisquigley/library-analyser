@@ -24,6 +24,8 @@ import {fieldValues} from './app/domain/track-evidence.js';
 import {detailFieldViewModel, scoreGaugeViewModel, trackDetailFailureViewModel, trackDetailLoadingViewModel, trackDetailViewModel, trackMetadataViewModel} from './app/adapters/presenters/track-detail-presenter.js';
 import {trackDetailView} from './app/frameworks/views/track-detail-view.js';
 import {sessionSelectionTickets} from './app/frameworks/session-selection-tickets.js';
+import {awaitingServer} from './app/domain/track-selection.js';
+import {createTrackSelection} from './app/application/select-track/select-track.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -44,13 +46,11 @@ const playlistControls=playlistDownloadController({playlistDownload,currentTrack
 const playlistControlsView=playlistDownloadView({onControlsEdited:controls=>playlistControls.controlsEdited(controls),onDownloadRequested:controls=>playlistControls.downloadRequested(controls)});
 for(const type of PLAYLIST_DOWNLOAD_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistControlsView.show(presentPlaylistDownloadEvent(event)));
 const LEGACY_PLAYLIST_CONTROLS={m3uBpmMin:'bpmMin',m3uBpmMax:'bpmMax',m3uCount:'count',m3uDuration:'durationMinutes',m3uHarmonic:'harmonicMixing',m3uMinKeyStrength:'minimumKeyStrength',m3uArc:'energyArc',m3uEnergyLow:'energyLow',m3uEnergyHigh:'energyHigh',m3uMood:'moodHold'};
-let selectionRequestSeq=0;
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
 let selectionEpoch=0;
 let refreshRequestSeq=0;
-let selectionDetailRequestSeq=0;
-let selectionDetailFlight=null;
-let pendingSelectionIntent=null;
+let selectionState='none';
+// Mirrors the selection's wait for the server for the browser probe and the diagnostics, until #146 step 8.
 let pendingSelectionOperation=null;
 let pendingCameraSelection=null;
 let cameraViewIntentGeneration=0;
@@ -86,35 +86,25 @@ const trackSearch=createTrackSearch({explorerApi,trackSession:trackSearchStore,c
 const trackList=trackListView({onTrackChosen:trackId=>setCurrent(trackId),onQueryTyped:query=>trackSearch.queryTyped(query),onLoadMore:()=>trackSearch.loadMore().catch(()=>{}),onRetry:()=>trackSearch.retry().catch(()=>{})});
 for(const type of TRACK_SEARCH_EVENT_TYPES) trackEvents.subscribe(type,event=>renderTracks(event.results.tracks));
 const trackDetail=trackDetailView();
+const legacySelectionSession=Object.freeze({read:()=>({snapshot:state,epoch:selectionEpoch,selectionState}),write(changes){if('snapshot' in changes) state=changes.snapshot; if('epoch' in changes) selectionEpoch=changes.epoch; if('selectionState' in changes){selectionState=changes.selectionState; pendingSelectionOperation=awaitingServer(selectionState)?selectionState:null;}}});
+const selectionEvents=createInMemoryEventBus();
+const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession:legacySelectionSession,eventBus:selectionEvents});
+let selectionViewIntent=0;
+selectionEvents.subscribe('track-chosen',()=>{selectionViewIntent=invalidateCameraViewIntent(); pendingCameraSelection=null; renderDetailLoading(); updateSelectedTrackVisuals();});
+selectionEvents.subscribe('selection-rewinding',()=>{selectionViewIntent=invalidateCameraViewIntent(); pendingCameraSelection=null; renderDetailLoading();});
+selectionEvents.subscribe('selection-accepted',event=>{if(selectionViewIntent!==cameraViewIntentGeneration) return; cancelCameraFocus(); pendingCameraSelection=event.focusCamera?event.trackId:null;});
+selectionEvents.subscribe('selection-refused',event=>renderDetailError(event.failure));
+selectionEvents.subscribe('library-selection-changed',event=>{cancelCameraFocus(); pendingCameraSelection=event.trackId;});
+selectionEvents.subscribe('no-track-selected',()=>{updateSelectedTrackVisuals(); renderInitialDetail(graphModel);});
+selectionEvents.subscribe('track-detail-loading',()=>{updateSelectedTrackVisuals(); renderDetailLoading();});
+selectionEvents.subscribe('track-detail-loaded',event=>{renderDetail(event.detail); updateSelectedTrackVisuals();});
+selectionEvents.subscribe('track-detail-failed',event=>renderDetailError(event.failure,()=>trackSelection.retryDetail()));
 function tabSessionStorage(){try{return typeof sessionStorage!=='undefined'?sessionStorage:undefined;}catch(_error){return undefined;}}
 function syncSelectionEpoch(snapshot){
   if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
   return snapshot;
 }
-function invalidateSelectionIntent(){invalidateCameraViewIntent(); selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null; pendingCameraSelection=null;}
-async function applyHistorySelection(action){
-  const viewIntentGeneration=invalidateCameraViewIntent();
-  const token=++selectionRequestSeq;
-  pendingCameraSelection=null;
-  pendingSelectionIntent=null;
-  pendingSelectionOperation=token;
-  renderDetailLoading();
-  try{
-    const posted=await explorerApi.applyHistory(action);
-    if(token!==selectionRequestSeq) return;
-    state=syncSelectionEpoch(posted);
-    if(viewIntentGeneration===cameraViewIntentGeneration){
-      cancelCameraFocus();
-      pendingCameraSelection=state.current_track_id;
-    }
-    pendingSelectionOperation=null;
-    await refresh();
-  }catch(error){
-    if(token!==selectionRequestSeq) return;
-    pendingSelectionOperation=null;
-    renderDetailError(error);
-  }
-}
+async function applyHistorySelection(action){if(await trackSelection.rewind(action)) await refresh();}
 function text(el,value){el.textContent=value==null?'':String(value);return el;}
 function nextFrame(){return new Promise(resolve=>{if(typeof requestAnimationFrame==='function') requestAnimationFrame(()=>resolve()); else setTimeout(resolve,0);});}
 function loadingElements(){return {surface:typeof document!=='undefined'?(document.getElementById('library-loading')||document.getElementById('loading-surface')):null,status:typeof document!=='undefined'?document.getElementById('loading-status'):null,error:typeof document!=='undefined'?document.getElementById('loading-error'):null,retry:typeof document!=='undefined'?document.getElementById('loading-retry'):null};}
@@ -151,7 +141,7 @@ function clearLoading(refreshToken){
 }
 function abortStaleRefresh(refreshToken,selectionToken){
   if(refreshToken!==refreshRequestSeq) return true;
-  if(selectionToken!==selectionRequestSeq){clearLoading(refreshToken); return true;}
+  if(selectionToken!==trackSelection.generation()){clearLoading(refreshToken); return true;}
   return false;
 }
 function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
@@ -163,67 +153,12 @@ function updateSelectedTrackVisuals(){
 }
 function renderDetailLoading(){trackDetail.showLoading(trackDetailLoadingViewModel());}
 function renderDetailError(error,retry){trackDetail.showFailure(trackDetailFailureViewModel(error),retry);}
-async function refreshSelectionDependent(token){
-  if(token!==selectionRequestSeq || pendingSelectionOperation!==null || pendingSelectionIntent!==null) return;
-  const selectedId=state.current_track_id;
-  if(selectionDetailFlight && selectionDetailFlight.token===token && selectionDetailFlight.id===selectedId) return selectionDetailFlight.promise;
-  const detailToken=++selectionDetailRequestSeq;
-  const ownsDetail=()=>token===selectionRequestSeq && detailToken===selectionDetailRequestSeq && state.current_track_id===selectedId;
-  updateSelectedTrackVisuals();
-  if(!selectedId){renderInitialDetail(graphModel); return;}
-  renderDetailLoading();
-  const flight={token,id:selectedId,promise:null};
-  selectionDetailFlight=flight;
-  flight.promise=(async()=>{
-    try{
-      const detail=await explorerApi.loadTrackDetail(selectedId);
-      if(!ownsDetail()) return;
-      renderDetail(detail); updateSelectedTrackVisuals();
-    }catch(error){
-      if(!ownsDetail()) return;
-      renderDetailError(error,()=>{
-        if(!ownsDetail() || pendingSelectionOperation!==null || pendingSelectionIntent!==null) return;
-        return refreshSelectionDependent(token);
-      });
-    }finally{
-      if(selectionDetailFlight===flight) selectionDetailFlight=null;
-    }
-  })();
-  return flight.promise;
-}
-async function setCurrent(id,{focusCamera=true}={}){
-  const viewIntentGeneration=invalidateCameraViewIntent();
-  const token=++selectionRequestSeq;
-  const selectionToken=selectionTickets.nextTicket();
-  pendingCameraSelection=null;
-  pendingSelectionIntent=id;
-  pendingSelectionOperation=token;
-  state={...state,current_track_id:id};
-  renderDetailLoading();
-  updateSelectedTrackVisuals();
-  try{
-    const posted=await explorerApi.chooseCurrentTrack({trackId:id,selectionToken,selectionEpoch,clientId:selectionTickets.clientId()});
-    if(token!==selectionRequestSeq) return;
-    state=syncSelectionEpoch(posted);
-    if(viewIntentGeneration===cameraViewIntentGeneration){
-      cancelCameraFocus();
-      pendingCameraSelection=focusCamera?state.current_track_id:null;
-    }
-    pendingSelectionIntent=null;
-    pendingSelectionOperation=null;
-    await refreshSelectionDependent(token);
-  }catch(error){
-    if(token!==selectionRequestSeq) return;
-    pendingSelectionOperation=null;
-    pendingSelectionIntent=null;
-    // An unaccepted intent never authorizes a detail GET, including via retry.
-    renderDetailError(error);
-  }
-}
+function refreshSelectionDependent(generation){return trackSelection.loadDetail(generation);}
+async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose(id,{focusCamera});}
 async function refresh(){
   const refreshToken=++refreshRequestSeq;
-  const token=selectionRequestSeq;
-  const operationPending=pendingSelectionOperation!==null;
+  const token=trackSelection.generation();
+  const operationPending=trackSelection.awaitingServer();
   try{
     setLoadingPhase(refreshToken,'Preparing library view');
     await nextFrame();
@@ -232,10 +167,7 @@ async function refresh(){
     const refreshedState=await explorerApi.loadLibraryState();
     if(abortStaleRefresh(refreshToken,token)) return;
     // A refresh begun during a selection/history POST cannot reconcile its older snapshot.
-    if(!operationPending && pendingSelectionOperation===null){
-      if(state.current_track_id!==refreshedState.current_track_id){cancelCameraFocus(); pendingCameraSelection=refreshedState.current_track_id;}
-      state=syncSelectionEpoch(refreshedState);
-    }
+    if(!operationPending) trackSelection.reconcile(refreshedState);
     renderGraphLoadStatus();
     if(abortStaleRefresh(refreshToken,token)) return;
     if(!operationPending) await refreshSelectionDependent(token);
@@ -730,5 +662,5 @@ if(typeof module!=='undefined'){module.exports={refresh,updateSelectedTrackVisua
 // A setter rebinds the module's own function, so a wrapper is called exactly as before. Each name
 // goes as its feature moves into app/ and its tests move with it.
 function exposeForBrowserTests(readers, writers){for(const [name,get] of Object.entries(readers)){if(name in globalThis) continue; Object.defineProperty(globalThis,name,{get,set:writers[name],configurable:true});}}
-exposeForBrowserTests({state:()=>state,graphModel:()=>graphModel,visibleGraph:()=>visibleGraph,forceGraph:()=>forceGraph,framedGraphLayout:()=>framedGraphLayout,renderedGraphData:()=>renderedGraphData,graphAxes:()=>graphAxes,selectedNodeHalo:()=>selectedNodeHalo,pendingSelectionOperation:()=>pendingSelectionOperation,pendingCameraSelection:()=>pendingCameraSelection,cameraFocusFrame:()=>cameraFocusFrame,trackSummaryPage:()=>trackSummaryPage,trackSummaryStatus:()=>trackSummaryStatus,graphLoadState:()=>graphLoadState,text:()=>text,api:()=>api,renderDetailLoading:()=>renderDetailLoading,setCurrent:()=>setCurrent,renderTracks:()=>renderTracks,renderDetailField:()=>renderDetailField,renderTrackMetadata:()=>renderTrackMetadata,renderDetail:()=>renderDetail,buildMoodGraphModel:()=>buildMoodGraphModel,buildMoodStrip:()=>buildMoodStrip,graphAxisSpec:()=>graphAxisSpec,graphObjectTrackId:()=>graphObjectTrackId,findSceneObject:()=>findSceneObject,syncSelectedNodeHalo:()=>syncSelectedNodeHalo,syncGraphAxes:()=>syncGraphAxes,cancelCameraFocus:()=>cancelCameraFocus,animateCameraFocus:()=>animateCameraFocus,renderMap:()=>renderMap,setStateForTesting:()=>setStateForTesting},
+exposeForBrowserTests({state:()=>state,graphModel:()=>graphModel,visibleGraph:()=>visibleGraph,forceGraph:()=>forceGraph,framedGraphLayout:()=>framedGraphLayout,renderedGraphData:()=>renderedGraphData,graphAxes:()=>graphAxes,selectedNodeHalo:()=>selectedNodeHalo,pendingSelectionOperation:()=>pendingSelectionOperation,pendingCameraSelection:()=>pendingCameraSelection,cameraFocusFrame:()=>cameraFocusFrame,trackSummaryPage:()=>trackSummaryPage,trackSummaryStatus:()=>trackSummaryStatus,graphLoadState:()=>graphLoadState,text:()=>text,renderDetailLoading:()=>renderDetailLoading,setCurrent:()=>setCurrent,renderTracks:()=>renderTracks,renderDetailField:()=>renderDetailField,renderTrackMetadata:()=>renderTrackMetadata,renderDetail:()=>renderDetail,buildMoodGraphModel:()=>buildMoodGraphModel,buildMoodStrip:()=>buildMoodStrip,graphAxisSpec:()=>graphAxisSpec,graphObjectTrackId:()=>graphObjectTrackId,findSceneObject:()=>findSceneObject,syncSelectedNodeHalo:()=>syncSelectedNodeHalo,syncGraphAxes:()=>syncGraphAxes,cancelCameraFocus:()=>cancelCameraFocus,animateCameraFocus:()=>animateCameraFocus,renderMap:()=>renderMap,setStateForTesting:()=>setStateForTesting},
   {buildMoodGraphModel:value=>{buildMoodGraphModel=value;},renderMap:value=>{renderMap=value;},renderDetail:value=>{renderDetail=value;},renderDetailLoading:value=>{renderDetailLoading=value;},setCurrent:value=>{setCurrent=value;},animateCameraFocus:value=>{animateCameraFocus=value;},cancelCameraFocus:value=>{cancelCameraFocus=value;}});

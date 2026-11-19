@@ -1745,14 +1745,15 @@ assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
 
     def test_undo_and_reset_still_force_complete_ui_refresh(self):
         app = APP_JS.read_text()
-        history = app[app.index('async function applyHistorySelection(action){'):app.index('function text(el,value)')]
+        self.assertIn('async function applyHistorySelection(action){if(await trackSelection.rewind(action)) await refresh();}', app)
+        use_case = (REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app/application/select-track/select-track.js').read_text()
+        history = use_case[use_case.index('async function rewind(action) {'):use_case.index('function loadDetail(generation) {')]
         boundaries = (
-            'const token=++selectionRequestSeq;',
-            'pendingSelectionIntent=null;',
-            'const posted=await explorerApi.applyHistory(action);',
-            'if(token!==selectionRequestSeq) return;',
-            'state=syncSelectionEpoch(posted);',
-            'await refresh();',
+            'const generation = ++latestGeneration;',
+            'const accepted = await explorerApi.applyHistory(action);',
+            'if (generation !== latestGeneration) return false;',
+            'accept(accepted);',
+            'return true;',
         )
         previous = -1
         for boundary in boundaries:
@@ -1760,7 +1761,7 @@ assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
             current = history.index(boundary)
             self.assertGreater(current, previous, 'history must guard stale responses before epoch sync and refresh')
             previous = current
-        self.assertIn('explorerApi.chooseCurrentTrack({trackId:id,selectionToken,selectionEpoch,clientId:selectionTickets.clientId()})', app)
+        self.assertIn('explorerApi.chooseCurrentTrack({trackId, selectionToken, selectionEpoch: epoch,', use_case)
         self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('undo');", app)
         self.assertIn("document.getElementById('reset').onclick=()=>applyHistorySelection('reset');", app)
 
