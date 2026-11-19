@@ -82,6 +82,25 @@ class ExplorerAppBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ExplorerAppBundleError, "'a'"):
             bundle_explorer_app(self.root / 'app.js')
 
+    def test_two_modules_with_the_same_private_top_level_name_are_rejected(self):
+        # Flattened, the later declaration would silently replace the earlier one.
+        _write(self.root, {
+            'app.js': "import {view} from './app/frameworks/view.js';\nimport {present} from './app/adapters/present.js';\n",
+            'app/frameworks/view.js': 'function status(text){ return text; }\nexport function view(){ return status; }\n',
+            'app/adapters/present.js': 'async function status({state}){ return state; }\nexport function present(){ return status; }\n',
+        })
+
+        with self.assertRaisesRegex(ExplorerAppBundleError, "'status' is declared in both"):
+            bundle_explorer_app(self.root / 'app.js')
+
+    def test_names_declared_inside_functions_may_repeat(self):
+        _write(self.root, {
+            'app.js': "import {a} from './app/domain/a.js';\nfunction b(){ const text = 2; return text; }\n",
+            'app/domain/a.js': 'export function a(){\n  const text = 1;\n  return text;\n}\n',
+        })
+
+        self.assertIn('const text = 1;', bundle_explorer_app(self.root / 'app.js'))
+
     def test_an_import_cycle_is_rejected(self):
         _write(self.root, {
             'app.js': "import {a} from './app/domain/a.js';\n",

@@ -921,11 +921,14 @@ async function flushSummarySearch(){for(let i=0;i<8;i++) await Promise.resolve()
     def test_track_summary_source_uses_next_cursor_and_load_more_without_unbounded_list(self):
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                source = (explorer_app_script(REPO_ROOT / package / 'frameworks/explorer/assets/app.js')).read_text(encoding='utf-8')
-                self.assertIn("params.set('cursor',cursor)", source)
-                self.assertIn("Load more tracks", source)
-                self.assertIn("Showing ${tracks.length} of ${total}", source)
-                self.assertIn('next_cursor', source[source.index('function renderTracks'):])
+                app = REPO_ROOT / package / 'frameworks/explorer/assets/app'
+                gateway = (app / 'adapters/gateways/explorer-api-gateway.js').read_text(encoding='utf-8')
+                self.assertIn("if (cursor) params.set('cursor', cursor);", gateway)
+                self.assertIn('nextCursor: page.next_cursor', gateway)
+                self.assertIn('Load more tracks', (app / 'frameworks/views/track-list-view.js').read_text(encoding='utf-8'))
+                self.assertIn('Showing ${tracks.length} of ${total}',
+                              (app / 'adapters/presenters/track-list-presenter.js').read_text(encoding='utf-8'))
+                source = explorer_app_script(REPO_ROOT / package / 'frameworks/explorer/assets/app.js').read_text(encoding='utf-8')
                 self.assertNotIn('/api/tracks?limit=all', source)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for track pagination DOM tests')
@@ -1917,7 +1920,7 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
         for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
-                refresh_source = source[source.index('async function refresh()'):source.index('function trackTitle')]
+                refresh_source = source[source.index('async function refresh()'):source.index('function loadTrackSummaryPage(')]
                 self.assertNotIn("/api/tracks/summary", refresh_source)
                 self.assertNotIn("/api/tracks?limit=all", refresh_source)
                 self.assertNotIn("/api/mood-axis-graph", refresh_source, 'startup refresh must not request graph before user clicks Load graph')

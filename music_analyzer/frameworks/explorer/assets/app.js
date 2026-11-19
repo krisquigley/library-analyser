@@ -15,6 +15,11 @@ import {graphControlsController} from './app/adapters/controllers/graph-controls
 import {GRAPH_IDLE_STATUS, graphControlOptionsViewModel, graphControlValuesViewModel, presentGraphLoadEvent} from './app/adapters/presenters/graph-load-presenter.js';
 import {graphControlsView} from './app/frameworks/views/graph-controls-view.js';
 import {graphStatusView} from './app/frameworks/views/graph-status-view.js';
+import {createTrackSearch} from './app/application/search-tracks/search-tracks.js';
+import {TRACK_SEARCH_EVENT_TYPES} from './app/application/search-tracks/track-search-events.js';
+import {emptyTrackResults} from './app/domain/track-search.js';
+import {trackListViewModel} from './app/adapters/presenters/track-list-presenter.js';
+import {trackListView} from './app/frameworks/views/track-list-view.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -51,11 +56,10 @@ let cameraFocusFrame=null;
 let cameraFocusControls=null;
 let loadingRefreshToken=0;
 let lastRefreshError=null;
+// Transitional (#146): trackSummaryPage and trackSummaryStatus mirror the search for the browser tests and tools.
+let trackSearchSession={searchState:'idle',results:emptyTrackResults(),failure:null};
 let trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query:'',order:'title'};
-let trackSummaryRequestSeq=0;
 let trackSummaryStatus='idle';
-let trackSummaryError=null;
-let trackSummaryPending=false;
 let graphLoadState={...GRAPH_IDLE_STATUS};
 // Transitional (#146): the graph session lives in the page's variables, which the browser tests and
 // tools still read and set, until the 3D scene and selection move into the layers.
@@ -73,6 +77,11 @@ graphEvents.subscribe('graph-render-due',event=>renderMap(event.visible));
 graphEvents.subscribe('graph-ready',showGraphLoadEvent);
 graphEvents.subscribe('graph-load-failed',showGraphLoadEvent);
 graphEvents.subscribe('graph-filters-applied',event=>{invalidateCameraViewIntent(); if(event.shown) renderMap(event.visible); showGraphLoadEvent(event);});
+const trackSearchStore=Object.freeze({read:()=>trackSearchSession,write(changes){trackSearchSession={...trackSearchSession,...changes}; const {results,searchState}=trackSearchSession; trackSummaryPage={tracks:results.tracks,metadata:results.metadata,next_cursor:results.nextCursor,query:results.query,order:'title'}; trackSummaryStatus=searchState==='failed'?'error':searchState;}});
+const trackEvents=createInMemoryEventBus();
+const trackSearch=createTrackSearch({explorerApi,trackSession:trackSearchStore,clock:{wait:ms=>new Promise(resolve=>setTimeout(resolve,ms))},eventBus:trackEvents});
+const trackList=trackListView({onTrackChosen:trackId=>setCurrent(trackId),onQueryTyped:query=>trackSearch.queryTyped(query),onLoadMore:()=>trackSearch.loadMore().catch(()=>{}),onRetry:()=>trackSearch.retry().catch(()=>{})});
+for(const type of TRACK_SEARCH_EVENT_TYPES) trackEvents.subscribe(type,event=>renderTracks(event.results.tracks));
 function sessionStorageNumber(key){
   try{
     if(typeof sessionStorage!=='undefined'){
@@ -280,65 +289,9 @@ async function refresh(){
     throw error;
   }
 }
-function trackTitle(t){return t.title||t.display_label||t.handle;}
-function trackArtist(t){return t.artist||'Unknown artist';}
-function applyTrackSummaryPage(page,options){
-  const append=!!(options&&options.append);
-  const previous=append&&Array.isArray(trackSummaryPage.tracks)?trackSummaryPage.tracks:[];
-  const tracks=append?[...previous,...(page.tracks||[])]:[...(page.tracks||[])];
-  trackSummaryPage={...page,tracks,query:(options&&options.query)||'',order:'title'};
-  renderTracks(tracks);
-}
-function wireTrackSearch(){
-  const search=document.getElementById('track-search');
-  if(!search || search.dataset.summarySearchWired) return;
-  search.dataset.summarySearchWired='1';
-  let timer=null;
-  search.oninput=()=>{
-    clearTimeout(timer);
-    ++trackSummaryRequestSeq;
-    trackSummaryPending=false;
-    trackSummaryError=null;
-    const query=search.value.trim();
-    trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query,order:'title'};
-    trackSummaryStatus=query?'debouncing':'idle';
-    renderTracks([]);
-    if(query) timer=setTimeout(()=>loadTrackSummaryPage(query).catch(()=>{}),150);
-  };
-}
-async function loadTrackSummaryPage(query,options){
-  const normalizedQuery=String(query||'').trim();
-  if(!normalizedQuery || trackSummaryPending) return;
-  const seq=++trackSummaryRequestSeq;
-  const append=!!(options&&options.append);
-  const cursor=options&&options.cursor;
-  trackSummaryPending=true;
-  trackSummaryStatus='loading';
-  trackSummaryError=null;
-  renderTracks(trackSummaryPage.tracks);
-  const params=new URLSearchParams({limit:'100',order:'title',query:normalizedQuery});
-  if(cursor) params.set('cursor',cursor);
-  try{
-    const page=await api('/api/tracks/summary?'+params.toString());
-    if(seq!==trackSummaryRequestSeq) return;
-    trackSummaryPending=false;
-    trackSummaryStatus='ready';
-    applyTrackSummaryPage(page,{append,query:normalizedQuery});
-  }catch(error){
-    if(seq!==trackSummaryRequestSeq) return;
-    trackSummaryPending=false;
-    trackSummaryStatus='error';
-    trackSummaryError={message:String(error&&error.message||error),query:normalizedQuery,append,cursor};
-    renderTracks(trackSummaryPage.tracks);
-  }
-}
-function loadNextTrackSummaryPage(){
-  const cursor=trackSummaryPage&&trackSummaryPage.next_cursor;
-  if(!cursor || trackSummaryPending) return Promise.resolve();
-  return loadTrackSummaryPage(trackSummaryPage.query||'',{append:true,cursor});
-}
-function renderTracks(tracks){const root=document.getElementById('tracks'); if(!root) return; const table=document.createElement('table'); table.className='tracks-table'; const caption=document.createElement('caption'); const total=trackSummaryPage&&trackSummaryPage.metadata?trackSummaryPage.metadata.track_count:null; text(caption,total==null?`${tracks.length} tracks`:`Showing ${tracks.length} of ${total}`); table.append(caption); const thead=document.createElement('thead'); const headRow=document.createElement('tr'); for(const label of ['Title','Artist']) headRow.append(text(document.createElement('th'),label)); thead.append(headRow); const tbody=document.createElement('tbody'); const empty=document.createElement('p'); empty.id='track-search-empty'; empty.className='muted'; empty.setAttribute('role','status'); text(empty,trackSummaryStatus==='idle'?'Search for tracks to begin':trackSummaryStatus==='ready'?'No tracks match your search':''); empty.hidden=tracks.length!==0 || !['idle','ready'].includes(trackSummaryStatus); const rows=tracks.map(t=>{const row=document.createElement('tr'); row.dataset.trackId=t.handle; row.dataset.title=trackTitle(t); row.dataset.artist=trackArtist(t); row.className=t.handle===state.current_track_id?'current':''; const titleCell=document.createElement('td'); const button=document.createElement('button'); text(button,trackTitle(t)); button.onclick=()=>setCurrent(t.handle); if(row.className) button.setAttribute('aria-current','true'); titleCell.append(button); const artistCell=text(document.createElement('td'),trackArtist(t)); row.append(titleCell,artistCell); return row;}); tbody.replaceChildren(...rows); table.append(thead,tbody); const status=document.createElement('p'); status.className='muted'; status.setAttribute('role','status'); status.setAttribute('aria-live','polite'); text(status,trackSummaryStatus==='loading'||trackSummaryStatus==='debouncing'?'Searching tracks…':trackSummaryStatus==='error'?`Search failed: ${trackSummaryError.message}`:total==null?`${tracks.length} tracks loaded`:`Showing ${tracks.length} of ${total}`); root.setAttribute('aria-busy',trackSummaryPending?'true':'false'); const children=[table,status]; if(trackSummaryPage&&trackSummaryPage.next_cursor){const nav=document.createElement('nav'); nav.setAttribute('aria-label','Track list pagination'); const more=document.createElement('button'); more.type='button'; more.disabled=trackSummaryPending; text(more,'Load more tracks'); more.onclick=()=>loadNextTrackSummaryPage().catch(()=>{}); nav.append(more); children.push(nav);} if(trackSummaryError){const retry=document.createElement('button'); retry.type='button'; text(retry,'Retry search'); const failed=trackSummaryError; retry.onclick=()=>loadTrackSummaryPage(failed.query,{append:failed.append,cursor:failed.cursor}).catch(()=>{}); children.push(retry);} children.push(empty); root.replaceChildren(...children); wireTrackSearch();}
-function filterTrackRows(query,tbody,empty){const needle=String(query||'').trim().toLowerCase(); let shown=0; for(const row of tbody.children){const haystack=`${row.dataset.title||''} ${row.dataset.artist||''}`.toLowerCase(); row.hidden=!!needle && !haystack.includes(needle); if(!row.hidden) shown++;} if(empty) empty.hidden=shown!==0;}
+function loadTrackSummaryPage(query,options){return trackSearch.loadPage({query,...options});}
+function loadNextTrackSummaryPage(){return trackSearch.loadMore();}
+function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession,currentTrackId:state.current_track_id}));}
 function renderGraphLoadStatus(){graphStatusDisplay.show({status:graphLoadState.status,message:graphLoadState.message||GRAPH_IDLE_STATUS.message});}
 function loadGraph(){return graphLoad.load();}
 

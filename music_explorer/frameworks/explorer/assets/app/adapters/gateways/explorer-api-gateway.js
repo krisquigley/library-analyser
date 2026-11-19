@@ -1,10 +1,12 @@
-// The ExplorerApi port over fetch (#146). A refusal's JSON {error} body is read for its message (#149, #152).
+// The ExplorerApi port over fetch (#146). A refusal's JSON {error} body is read for its message (#149, #152, #155).
 
 import {playlistDownloadQuery} from './playlist-download-query.js';
 
 const DEFAULT_PLAYLIST_FILENAME = 'library-graph-playlist.m3u';
 const DEFAULT_PLAYLIST_TYPE = 'audio/x-mpegurl;charset=utf-8';
 const MOOD_GRAPH_CONTRACT = 'v3';
+// The track list shows 100 rows a page: an owner decision (UI100).
+const TRACK_PAGE_SIZE = '100';
 
 export function fetchExplorerApi(fetchResource) {
   return Object.freeze({
@@ -24,7 +26,19 @@ export function fetchExplorerApi(fetchResource) {
       if (!response.ok) throw new Error(refusalMessage(response, await response.text(), 'Graph request failed'));
       return response.json();
     },
+    async searchTracks({query, cursor}) {
+      const response = await fetchResource(trackSearchPath(query, cursor));
+      if (!response.ok) throw new Error(refusalMessage(response, await response.text(), 'Track search failed'));
+      const page = await response.json();
+      return {tracks: page.tracks || [], metadata: page.metadata || {}, nextCursor: page.next_cursor || null};
+    },
   });
+}
+
+function trackSearchPath(query, cursor) {
+  const params = new URLSearchParams({limit: TRACK_PAGE_SIZE, order: 'title', query});
+  if (cursor) params.set('cursor', cursor);
+  return '/api/tracks/summary?' + params.toString();
 }
 
 function moodGraphPath(mood) {
