@@ -51,6 +51,21 @@ frameworks  ──▶  infrastructure / interface_adapters  ──▶  applicati
 
 The rule is enforced by AST import checks in `tests/architecture/` (`test_import_boundaries.py` for `music_analyzer`, `test_music_explorer_boundaries.py` for `music_explorer`). They fail closed: a new standard-library import in an inner layer needs a deliberate allowlist change and boundary review.
 
+### Schemas, State Machines and Events
+
+These three rules apply to every new piece of code, in Python and in the browser app. Existing code moves onto them as it is touched (Boy Scout Rule).
+
+- **All input is schema-driven and validated.** Anything entering the system has a declared schema and is validated against it at the boundary, before any use case sees it. That includes:
+  - an HTTP query or body, and a browser control's value;
+  - a CLI argument;
+  - a playlist recipe;
+  - a model's output and an audio file's tags;
+  - a row the Explorer reads.
+
+  The inner layer that consumes the data owns its schema: request models in `application/`, record shapes beside their port. The adapter or framework that receives the input runs the validation. Invalid input is rejected with a message the listener can act on, never coerced or half-read. Domain entities still guard their own invariants; a schema is not a substitute for a rule.
+- **Anything with state is driven by a state machine.** If something has a lifecycle, its states and legal transitions are declared as a transitions table in the domain, not as scattered status checks. That covers analysis runs, batch jobs, graph builds, a tag-write action (previewed → approved → applied or rejected), and the browser's selection, graph loading and playlist download. Illegal transitions are rejected as domain errors. A record stores its current state; phases that can be derived are never stored.
+- **All actions are event-driven.** Each part of the system acts only on events: a command produces events, and other parts react to them. They never call each other directly or poll for changes. In the browser, a control's change is a command; the use case emits events (for example, "graph loaded" or "playlist downloaded"), and the views re-render from them. Every state-machine transition emits an event. Events are simple data structures declared in `application/` (or `domain/`). The bus that carries them is a port, with its implementation outside.
+
 ### Directory Structure
 
 ```
@@ -90,13 +105,13 @@ Rules for the structure:
 
 ### The Explorer Browser App
 
-The frontend is held to the same standard as the backend: Clean Architecture as Uncle Bob would write it, with the folder structure as the architecture. The browser app is a program in its own right. It is plain JavaScript as native ES modules, served as static assets with no build step and no runtime dependencies beyond the vendored Three.js. It is laid out by layer:
+The browser app is a program in its own right and follows the same architecture. It is plain JavaScript as native ES modules, served as static assets with no build step and no runtime dependencies beyond the vendored Three.js. It is laid out by layer:
 
 ```
 music_explorer/frameworks/explorer/assets/app/
-├── domain/          # Pure rules: graph filters, selection, playlist recipe. No DOM, no fetch.
+├── domain/          # Pure rules and state machines: graph filters, selection, playlist recipe. No DOM, no fetch.
 ├── application/     # One directory per use case (load-graph/, select-track/, download-playlist/), plus ports/:
-│                    #   ExplorerApi (the HTTP gateway), Clock
+│                    #   ExplorerApi (the HTTP gateway), EventBus, Clock
 ├── adapters/
 │   ├── controllers/ #   DOM input → validated request models
 │   ├── presenters/  #   response models → view models
@@ -107,7 +122,7 @@ music_explorer/frameworks/explorer/assets/app/
 ```
 
 - The Dependency Rule applies to `import` statements exactly as to Python imports. It is enforced by an architecture test in `tests/architecture/` that parses every module's imports and fails closed.
-- **No global mutable state.** State lives in domain entities owned by the use cases. Views hold none.
+- **No global mutable state.** State lives in domain entities and state machines, owned by the use cases. Views hold none.
 - Domain and application modules are tested in Node (`node:test`) without a DOM or a network. Their tests mirror `app/` under `tests/unit/explorer_app/`.
 - Both asset trees (`music_explorer/…/assets/` and `music_analyzer/…/assets/`) stay identical, file for file.
 - The existing single `app.js` moves onto this structure as it is touched; new browser features go into the layered modules.
