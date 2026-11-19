@@ -1298,7 +1298,7 @@ await context.setCurrent('a');
 assert.strictEqual(bodies[0].selection_epoch, 7);
 assert.strictEqual(bodies[0].selection_token, 1);
 assert(/^tab-/.test(bodies[0].selection_client_id), 'tab-scoped client id is sent');
-await context.applyHistorySelection('/api/reset');
+await context.applyHistorySelection('reset');
 await context.setCurrent('b');
 assert.strictEqual(bodies[1].selection_epoch, 8, 'reset response epoch is used by next click');
 assert.strictEqual(bodies[1].selection_token, 2, 'same tab keeps monotonically increasing tokens across reload-safe session state');
@@ -1676,7 +1676,7 @@ context.fetch = (path, options={}) => {
 function element(tag){return {tag, id:'', textContent:'', className:'', dataset:{}, style:{}, children:[], clientWidth:800, clientHeight:600, value:'', options:[], getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}, setAttribute(){}, append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children = nodes;}, replaceWith(){}};}
 const elements = {tracks: element('div'), detail: element('section'), candidates: element('ol'), 'mood-strip': element('canvas'), 'mood-strip-picker': element('input'), 'mood-strip-value': element('output'), 'selected-mood': element('select'), 'genre-filter': element('select'), 'graph-info': element('p'), controls: element('div'), undo: element('button'), reset: element('button')};
 context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
-vm.runInContext("if(typeof document!=='undefined'){document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');}", context);
+vm.runInContext("if(typeof document!=='undefined'){document.getElementById('reset').onclick=()=>applyHistorySelection('reset');}", context);
 const reset = elements.reset.onclick();
 await Promise.resolve();
 const click = context.setCurrent('b');
@@ -1728,7 +1728,7 @@ const elements = {tracks: element('div'), detail: element('section'), candidates
 context.document = {createElement: element, createTextNode(value){return {textContent:String(value)};}, querySelector(){return null;}, querySelectorAll(selector){assert.strictEqual(selector, '#tracks tr[data-track-id]'); return elements.tracks.children.length ? elements.tracks.children[0].children[2].children : [];}, getElementById(id){return elements[id] || null;}};
 context.refresh = () => Promise.resolve();
 vm.runInContext('refresh = globalThis.refresh', context);
-vm.runInContext("if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');}", context);
+vm.runInContext("if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset');}", context);
 const click = context.setCurrent('b');
 await Promise.resolve();
 await elements.reset.onclick();
@@ -1745,11 +1745,11 @@ assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
 
     def test_undo_and_reset_still_force_complete_ui_refresh(self):
         app = APP_JS.read_text()
-        history = app[app.index('async function applyHistorySelection(path){'):app.index('function text(el,value)')]
+        history = app[app.index('async function applyHistorySelection(action){'):app.index('function text(el,value)')]
         boundaries = (
             'const token=++selectionRequestSeq;',
             'pendingSelectionIntent=null;',
-            "const posted=await api(path,{method:'POST'});",
+            'const posted=await explorerApi.applyHistory(action);',
             'if(token!==selectionRequestSeq) return;',
             'state=syncSelectionEpoch(posted);',
             'await refresh();',
@@ -1760,10 +1760,9 @@ assert(fetches.includes('/api/current') && fetches.includes('/api/reset'));
             current = history.index(boundary)
             self.assertGreater(current, previous, 'history must guard stale responses before epoch sync and refresh')
             previous = current
-        self.assertIn("selection_epoch:selectionEpoch", app)
-        self.assertIn("selection_client_id:selectionClientId()", app)
-        self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo');", app)
-        self.assertIn("document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset');", app)
+        self.assertIn('explorerApi.chooseCurrentTrack({trackId:id,selectionToken,selectionEpoch,clientId:selectionTickets.clientId()})', app)
+        self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('undo');", app)
+        self.assertIn("document.getElementById('reset').onclick=()=>applyHistorySelection('reset');", app)
 
     def test_graph_color_legend_handles_ranged_axis_objects(self):
         script = r"""

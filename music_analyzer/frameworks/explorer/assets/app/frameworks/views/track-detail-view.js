@@ -9,6 +9,30 @@ export function trackDetailView() {
     root.replaceChildren(setDetailText(document.createElement('h3'), heading), list);
   }
 
+  // The panel may be absent while the page is still being built; there is then nothing to say.
+  function showLoading({status}) {
+    const root = document.getElementById('detail');
+    if (!root) return;
+    const line = setDetailText(document.createElement('p'), status);
+    line.setAttribute('role', 'status');
+    line.setAttribute('aria-live', 'polite');
+    root.setAttribute('aria-busy', 'true');
+    root.replaceChildren(line);
+  }
+
+  function showFailure({alert}, onRetry) {
+    const root = document.getElementById('detail');
+    if (!root) return;
+    const line = setDetailText(document.createElement('p'), alert);
+    line.setAttribute('role', 'alert');
+    root.setAttribute('aria-busy', 'false');
+    root.replaceChildren(line);
+    if (!onRetry) return;
+    const retry = setDetailText(detailElement('button', {type: 'button'}), 'Retry detail');
+    retry.onclick = onRetry;
+    root.append(retry);
+  }
+
   function field({name, items}) {
     const section = detailElement('section', {className: 'field'});
     section.append(setDetailText(document.createElement('h4'), name),
@@ -34,7 +58,7 @@ export function trackDetailView() {
     return section;
   }
 
-  return Object.freeze({show, field, gauge, metadata});
+  return Object.freeze({show, showLoading, showFailure, field, gauge, metadata});
 }
 
 function detailElement(tag, properties) {

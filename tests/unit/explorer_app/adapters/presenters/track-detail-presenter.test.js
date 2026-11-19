@@ -1,7 +1,8 @@
 // Issue #146: what the track detail panel shows.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {detailFieldViewModel, scoreGaugeViewModel, trackDetailViewModel, trackMetadataViewModel} from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/track-detail-presenter.js';
+import {detailFieldViewModel, scoreGaugeViewModel, trackDetailFailureViewModel, trackDetailLoadingViewModel, trackDetailViewModel,
+  trackMetadataViewModel} from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/track-detail-presenter.js';
 
 const MOOD_MODEL = 'mtg_jamendo_moodtheme-discogs-effnet-1';
 const text = items => items.map(item => item.text ?? `gauge ${item.gauge.label}`);
@@ -56,4 +57,10 @@ test('metadata rows use friendly labels, merge aliases and skip blanks and repea
 test('the detail shows its metadata, then each field in order', () => {
   const detail = trackDetailViewModel({metadata: {common: [['title', 'Song']]}, fields: {bpm: {automatic: {values: [['bpm', 120]]}}}});
   assert.deepEqual([detail.heading, detail.metadata.lines, detail.fields.map(field => field.name)], ['Current Track', ['Title: Song'], ['bpm']]);
+});
+
+test('while the detail loads, and when it fails, the panel says so', () => {
+  assert.deepEqual(trackDetailLoadingViewModel(), {status: 'Loading current track detail…'});
+  assert.deepEqual(trackDetailFailureViewModel(new Error('Unknown track')), {alert: 'Unable to load current track detail: Unknown track'});
+  assert.deepEqual(trackDetailFailureViewModel('offline'), {alert: 'Unable to load current track detail: offline'});
 });

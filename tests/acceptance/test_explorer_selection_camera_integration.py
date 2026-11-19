@@ -126,7 +126,7 @@ function render(data=model(),full=data) {
 }
 function tick() {fixtureClock+=700; const pending=frames.splice(0); for(const callback of pending) callback(fixtureClock);}
 async function history(path) {
-  const promise=run(`applyHistorySelection(${JSON.stringify(path)})`);
+  const promise=run(`applyHistorySelection(${JSON.stringify(path.replace("/api/",""))})`);
   // Flush the bounded microtask/nextFrame chain used by real refresh().
   for(let i=0;i<20;i++) {await Promise.resolve(); tick();}
   await promise;

@@ -21,8 +21,9 @@ import {emptyTrackResults} from './app/domain/track-search.js';
 import {trackListViewModel} from './app/adapters/presenters/track-list-presenter.js';
 import {trackListView} from './app/frameworks/views/track-list-view.js';
 import {fieldValues} from './app/domain/track-evidence.js';
-import {detailFieldViewModel, scoreGaugeViewModel, trackDetailViewModel, trackMetadataViewModel} from './app/adapters/presenters/track-detail-presenter.js';
+import {detailFieldViewModel, scoreGaugeViewModel, trackDetailFailureViewModel, trackDetailLoadingViewModel, trackDetailViewModel, trackMetadataViewModel} from './app/adapters/presenters/track-detail-presenter.js';
 import {trackDetailView} from './app/frameworks/views/track-detail-view.js';
+import {sessionSelectionTickets} from './app/frameworks/session-selection-tickets.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -37,15 +38,14 @@ let graphAxesAnimating=false;
 let pendingGraphAxisSpec=[];
 let selectedGraphControls=EMPTY_GRAPH_CONTROLS;
 const playlistEvents=createInMemoryEventBus();
-const explorerApi=fetchExplorerApi(path=>fetch(path));
+const explorerApi=fetchExplorerApi((path,options)=>fetch(path,options));
 const playlistDownload=createPlaylistDownload({explorerApi,playlistFile:browserPlaylistFile(),eventBus:playlistEvents});
 const playlistControls=playlistDownloadController({playlistDownload,currentTrackId:()=>state.current_track_id,rejectInput:message=>playlistControlsView.show(presentRejectedPlaylistInput(message))});
 const playlistControlsView=playlistDownloadView({onControlsEdited:controls=>playlistControls.controlsEdited(controls),onDownloadRequested:controls=>playlistControls.downloadRequested(controls)});
 for(const type of PLAYLIST_DOWNLOAD_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistControlsView.show(presentPlaylistDownloadEvent(event)));
 const LEGACY_PLAYLIST_CONTROLS={m3uBpmMin:'bpmMin',m3uBpmMax:'bpmMax',m3uCount:'count',m3uDuration:'durationMinutes',m3uHarmonic:'harmonicMixing',m3uMinKeyStrength:'minimumKeyStrength',m3uArc:'energyArc',m3uEnergyLow:'energyLow',m3uEnergyHigh:'energyHigh',m3uMood:'moodHold'};
 let selectionRequestSeq=0;
-const selectionPostSeqKey='music-explorer-selection-post-seq';
-let selectionPostSeq=loadSelectionPostSeq();
+const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
 let selectionEpoch=0;
 let refreshRequestSeq=0;
 let selectionDetailRequestSeq=0;
@@ -86,39 +86,13 @@ const trackSearch=createTrackSearch({explorerApi,trackSession:trackSearchStore,c
 const trackList=trackListView({onTrackChosen:trackId=>setCurrent(trackId),onQueryTyped:query=>trackSearch.queryTyped(query),onLoadMore:()=>trackSearch.loadMore().catch(()=>{}),onRetry:()=>trackSearch.retry().catch(()=>{})});
 for(const type of TRACK_SEARCH_EVENT_TYPES) trackEvents.subscribe(type,event=>renderTracks(event.results.tracks));
 const trackDetail=trackDetailView();
-function sessionStorageNumber(key){
-  try{
-    if(typeof sessionStorage!=='undefined'){
-      const value=Number(sessionStorage.getItem(key)||'0');
-      return Number.isFinite(value)&&value>0?Math.floor(value):0;
-    }
-  }catch(_error){}
-  return 0;
-}
-function loadSelectionPostSeq(){return sessionStorageNumber(selectionPostSeqKey);}
-function storeSelectionPostSeq(value){
-  try{if(typeof sessionStorage!=='undefined') sessionStorage.setItem(selectionPostSeqKey,String(value));}catch(_error){}
-}
-function nextSelectionPostSeq(){selectionPostSeq+=1; storeSelectionPostSeq(selectionPostSeq); return selectionPostSeq;}
-function resetSelectionPostSeq(){selectionPostSeq=0; storeSelectionPostSeq(selectionPostSeq);}
-function selectionClientId(){
-  const key='music-explorer-selection-client-id';
-  try{
-    if(typeof sessionStorage!=='undefined'){
-      let id=sessionStorage.getItem(key);
-      if(!id){id='tab-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2); sessionStorage.setItem(key,id);}
-      return id;
-    }
-  }catch(_error){}
-  if(!selectionClientId.fallback) selectionClientId.fallback='tab-'+Math.random().toString(36).slice(2);
-  return selectionClientId.fallback;
-}
+function tabSessionStorage(){try{return typeof sessionStorage!=='undefined'?sessionStorage:undefined;}catch(_error){return undefined;}}
 function syncSelectionEpoch(snapshot){
   if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
   return snapshot;
 }
 function invalidateSelectionIntent(){invalidateCameraViewIntent(); selectionRequestSeq++; pendingSelectionIntent=null; pendingSelectionOperation=null; pendingCameraSelection=null;}
-async function applyHistorySelection(path){
+async function applyHistorySelection(action){
   const viewIntentGeneration=invalidateCameraViewIntent();
   const token=++selectionRequestSeq;
   pendingCameraSelection=null;
@@ -126,7 +100,7 @@ async function applyHistorySelection(path){
   pendingSelectionOperation=token;
   renderDetailLoading();
   try{
-    const posted=await api(path,{method:'POST'});
+    const posted=await explorerApi.applyHistory(action);
     if(token!==selectionRequestSeq) return;
     state=syncSelectionEpoch(posted);
     if(viewIntentGeneration===cameraViewIntentGeneration){
@@ -180,7 +154,6 @@ function abortStaleRefresh(refreshToken,selectionToken){
   if(selectionToken!==selectionRequestSeq){clearLoading(refreshToken); return true;}
   return false;
 }
-async function api(path, options){const r=await fetch(path, options); if(!r.ok) throw new Error(await r.text()); return r.json();}
 function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
 function updateSelectedTrackVisuals(){
   if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===state.current_track_id?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
@@ -188,26 +161,8 @@ function updateSelectedTrackVisuals(){
   else if(visibleGraph.nodes.length) renderCanvasFallback(visibleGraph);
   renderMoodStrip(visibleGraph);
 }
-function renderDetailLoading(){
-  const root=typeof document!=='undefined'?document.getElementById('detail'):null;
-  if(!root) return;
-  const status=document.createElement('p');
-  status.setAttribute('role','status'); status.setAttribute('aria-live','polite');
-  text(status,'Loading current track detail…');
-  root.setAttribute('aria-busy','true'); root.replaceChildren(status);
-}
-function renderDetailError(error,retry){
-  const root=typeof document!=='undefined'?document.getElementById('detail'):null;
-  if(!root) return;
-  const status=document.createElement('p');
-  status.setAttribute('role','alert');
-  text(status,'Unable to load current track detail: '+(error&&error.message?error.message:String(error)));
-  root.setAttribute('aria-busy','false'); root.replaceChildren(status);
-  if(retry){
-    const button=document.createElement('button'); button.type='button';
-    text(button,'Retry detail'); button.onclick=retry; root.append(button);
-  }
-}
+function renderDetailLoading(){trackDetail.showLoading(trackDetailLoadingViewModel());}
+function renderDetailError(error,retry){trackDetail.showFailure(trackDetailFailureViewModel(error),retry);}
 async function refreshSelectionDependent(token){
   if(token!==selectionRequestSeq || pendingSelectionOperation!==null || pendingSelectionIntent!==null) return;
   const selectedId=state.current_track_id;
@@ -221,7 +176,7 @@ async function refreshSelectionDependent(token){
   selectionDetailFlight=flight;
   flight.promise=(async()=>{
     try{
-      const detail=await api('/api/tracks/'+encodeURIComponent(selectedId));
+      const detail=await explorerApi.loadTrackDetail(selectedId);
       if(!ownsDetail()) return;
       renderDetail(detail); updateSelectedTrackVisuals();
     }catch(error){
@@ -239,7 +194,7 @@ async function refreshSelectionDependent(token){
 async function setCurrent(id,{focusCamera=true}={}){
   const viewIntentGeneration=invalidateCameraViewIntent();
   const token=++selectionRequestSeq;
-  const postToken=nextSelectionPostSeq();
+  const selectionToken=selectionTickets.nextTicket();
   pendingCameraSelection=null;
   pendingSelectionIntent=id;
   pendingSelectionOperation=token;
@@ -247,7 +202,7 @@ async function setCurrent(id,{focusCamera=true}={}){
   renderDetailLoading();
   updateSelectedTrackVisuals();
   try{
-    const posted=await api('/api/current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:id,selection_token:postToken,selection_epoch:selectionEpoch,selection_client_id:selectionClientId()})});
+    const posted=await explorerApi.chooseCurrentTrack({trackId:id,selectionToken,selectionEpoch,clientId:selectionTickets.clientId()});
     if(token!==selectionRequestSeq) return;
     state=syncSelectionEpoch(posted);
     if(viewIntentGeneration===cameraViewIntentGeneration){
@@ -274,7 +229,7 @@ async function refresh(){
     await nextFrame();
     if(abortStaleRefresh(refreshToken,token)) return;
     setLoadingPhase(refreshToken,'Loading library state');
-    const refreshedState=await api('/api/state');
+    const refreshedState=await explorerApi.loadLibraryState();
     if(abortStaleRefresh(refreshToken,token)) return;
     // A refresh begun during a selection/history POST cannot reconcile its older snapshot.
     if(!operationPending && pendingSelectionOperation===null){
@@ -761,7 +716,7 @@ function clearGraphFilters(){return graphLoad.clearFilters();}
 function buildGraphControls(root){graphFilterControls.mount(root);}
 function syncGraphControlOptions(model){graphFilterControls.showOptions(graphControlOptionsViewModel(model,selectedGraphControls));}
 function wireCanvas(){/* 3d-force-graph owns orbit/pick controls. */}
-if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('/api/undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('/api/reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); renderTracks([]); renderGraphLoadStatus(); wireCanvas(); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
+if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); renderTracks([]); renderGraphLoadStatus(); wireCanvas(); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 function setGraphModelForTesting(model){graphModel=model;}
 function setStateForTesting(next){state={...state,...next};}
 function setVisibleGraphForTesting(model){visibleGraph=model;}
@@ -769,7 +724,7 @@ function setGraphControlsForTesting(controls){const playlist={}; const graph={};
 function getGraphControlsForTesting(){return {...selectedGraphControls,genres:[...(selectedGraphControls.genres||[])]};}
 function getVisibleGraphForTesting(){return {nodes:[...(visibleGraph.nodes||[])],links:[...(visibleGraph.links||[])],unpositioned:[...(visibleGraph.unpositioned||[])]};}
 function getStateForTesting(){return {...state,history:[...(state.history||[])]};}
-if(typeof module!=='undefined'){module.exports={refresh,updateSelectedTrackVisuals,renderMap,syncSelectedNodeHalo,setLoadingPhase,setLoadingError,clearLoading,nextFrame,detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,normalizeMoodAxisGraphDto,buildMoodGraphModel,moodNodeColor,graphColorLegend,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,selectionClientId,syncSelectionEpoch,renderInitialDetail,renderDetail,renderTrackMetadata,setGraphModelForTesting,setVisibleGraphForTesting,setStateForTesting,getStateForTesting,loadGraph,applyCurrentGraphFilters,renderGraphLoadStatus,renderTracks,loadTrackSummaryPage,loadNextTrackSummaryPage,graphRelatednessLegend,relatednessLinkAlpha,buildGraphControls,syncGraphControlOptions,clearGraphFilters,downloadM3UPlaylist,setGraphControlsForTesting,getGraphControlsForTesting,getVisibleGraphForTesting};}
+if(typeof module!=='undefined'){module.exports={refresh,updateSelectedTrackVisuals,renderMap,syncSelectedNodeHalo,setLoadingPhase,setLoadingError,clearLoading,nextFrame,detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,normalizeMoodAxisGraphDto,buildMoodGraphModel,moodNodeColor,graphColorLegend,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,orbitCamera,panCamera,zoomCamera,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,syncSelectionEpoch,renderInitialDetail,renderDetail,renderTrackMetadata,setGraphModelForTesting,setVisibleGraphForTesting,setStateForTesting,getStateForTesting,loadGraph,applyCurrentGraphFilters,renderGraphLoadStatus,renderTracks,loadTrackSummaryPage,loadNextTrackSummaryPage,graphRelatednessLegend,relatednessLinkAlpha,buildGraphControls,syncGraphControlOptions,clearGraphFilters,downloadM3UPlaylist,setGraphControlsForTesting,getGraphControlsForTesting,getVisibleGraphForTesting};}
 // Transitional (#146). The real-browser tests and tools/explorer_browser_*.{py,js} read these
 // internals as page globals, and wrap some functions to time them, which a module does not allow.
 // A setter rebinds the module's own function, so a wrapper is called exactly as before. Each name

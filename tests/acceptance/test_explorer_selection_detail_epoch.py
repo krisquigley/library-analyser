@@ -62,7 +62,7 @@ assert(text().includes('DETAIL A'));
 
 REFRESH_DURING_HISTORY_POST = r"""
 await paintInitial();
-const undo=settled(context.applyHistorySelection('/api/undo'));
+const undo=settled(context.applyHistorySelection('undo'));
 assert(loading(),'history intent immediately owns detail loading');
 const refresh=settled(context.refresh());
 await nextRefreshFrame();

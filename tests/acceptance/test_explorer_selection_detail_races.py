@@ -68,7 +68,7 @@ const errorVisible=()=> /error|failed|unavailable|unable|could not/i.test(status
 async function accept(id, index=0, epoch=7, history=[], accepted=true) {req('/api/current',index).ok({...snapshot(id,epoch,history),selection_accepted:accepted});await flush();}
 async function finish(id,index=0){req('/api/tracks/'+id,index).ok(detail(id));await flush();}
 async function paintInitial(){const first=select('OLD');await accept('OLD');await finish('OLD');assert((await first).ok);assert(text().includes('DETAIL OLD'),'fixture renders actual detail metadata');}
-async function history(path, id, epoch, items=[]){const operation=settled(context.applyHistorySelection(path));req(path).ok(snapshot(id,epoch,items));await nextRefreshFrame();req('/api/state').ok(snapshot(id,epoch,items));await flush();if(id)await finish(id);assert((await operation).ok);}
+async function history(path, id, epoch, items=[]){const operation=settled(context.applyHistorySelection(path.replace("/api/","")));req(path).ok(snapshot(id,epoch,items));await nextRefreshFrame();req('/api/state').ok(snapshot(id,epoch,items));await flush();if(id)await finish(id);assert((await operation).ok);}
 """
 
 SCENARIOS = {
@@ -154,7 +154,7 @@ await finish('SERVER');assert((await a).ok);assert(!loading());assert(text().inc
 """,
     "undo_replaces_pending_detail_with_history_loading": r"""
 await paintInitial();const a=select('A');await accept('A',1);
-const undo=settled(context.applyHistorySelection('/api/undo'));
+const undo=settled(context.applyHistorySelection('undo'));
 req('/api/undo').ok(snapshot('PRIOR',8,['ROOT']));await nextRefreshFrame();
 req('/api/state').ok(snapshot('PRIOR',8,['ROOT']));await flush();await finish('A');await a;
 assert(loading(),'#70: stale detail must not clear undo current-detail loading');
