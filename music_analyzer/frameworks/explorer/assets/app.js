@@ -20,6 +20,9 @@ import {TRACK_SEARCH_EVENT_TYPES} from './app/application/search-tracks/track-se
 import {emptyTrackResults} from './app/domain/track-search.js';
 import {trackListViewModel} from './app/adapters/presenters/track-list-presenter.js';
 import {trackListView} from './app/frameworks/views/track-list-view.js';
+import {fieldValues} from './app/domain/track-evidence.js';
+import {detailFieldViewModel, scoreGaugeViewModel, trackDetailViewModel, trackMetadataViewModel} from './app/adapters/presenters/track-detail-presenter.js';
+import {trackDetailView} from './app/frameworks/views/track-detail-view.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -82,6 +85,7 @@ const trackEvents=createInMemoryEventBus();
 const trackSearch=createTrackSearch({explorerApi,trackSession:trackSearchStore,clock:{wait:ms=>new Promise(resolve=>setTimeout(resolve,ms))},eventBus:trackEvents});
 const trackList=trackListView({onTrackChosen:trackId=>setCurrent(trackId),onQueryTyped:query=>trackSearch.queryTyped(query),onLoadMore:()=>trackSearch.loadMore().catch(()=>{}),onRetry:()=>trackSearch.retry().catch(()=>{})});
 for(const type of TRACK_SEARCH_EVENT_TYPES) trackEvents.subscribe(type,event=>renderTracks(event.results.tracks));
+const trackDetail=trackDetailView();
 function sessionStorageNumber(key){
   try{
     if(typeof sessionStorage!=='undefined'){
@@ -299,63 +303,14 @@ function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playl
 function downloadM3UPlaylist(){return playlistDownload.download(state.current_track_id);}
 function applyCurrentGraphFilters(){return graphLoad.applyFilters();}
 function renderInitialDetail(model){const root=document.getElementById('detail'); if(!root) return; root.setAttribute('aria-busy','false'); root.replaceChildren();}
-function fieldDisplay(f){const a=f.automatic||{}; if(a.values&&a.values.length) return a.values; if(a.summary_values&&a.summary_values.length) return a.summary_values; return f.effective_source;}
-// Detail is a presentation of retained evidence, not a graph filter or analysis threshold.
-const detailScoreModels={genres:'genre_discogs400-discogs-effnet-1',mood:'mtg_jamendo_moodtheme-discogs-effnet-1',instruments:'mtg_jamendo_instrument-discogs-effnet-1'};
-function detailProvenance(f){return Object.fromEntries(f.automatic?.provenance||[]);}
-// Only presentation is rounded; callers retain raw scores for sorting and geometry.
-const detailDisplayCutoff=0.1;
-function detailEntries(f){return fieldDisplay(f);}
-function detailGauge(label,value){
-  const row=document.createElement('div'); row.className='score-row';
-  const title=document.createElement('span'); text(title,label);
-  const gauge=document.createElement('div'); gauge.className='score-gauge'; gauge.setAttribute('role','img');
-  gauge.setAttribute('aria-label',`${label}: ${displayNumber(value)} out of 1`);
-  const arc=document.createElement('span'); arc.className='score-arc';
-  const needle=document.createElement('span'); needle.className='score-needle'; needle.style.transform=`rotate(${value*240-120}deg)`;
-  const hub=document.createElement('span'); hub.className='score-hub';
-  gauge.append(arc,needle,hub);
-  row.append(title,gauge); return row;
-}
-function renderDetailField(name,f){
-  const div=document.createElement('section'); div.className='field';
-  div.append(text(document.createElement('h4'),name));
-  if(f.manual_text!=null){div.append(text(document.createElement('p'),`Manual override: ${f.manual_text} (${f.typed_override_status||'unresolved'}; automatic evidence not displayed)`));return div;}
-  const values=detailEntries(f);
-  const provenance=detailProvenance(f);
-  if(name in detailScoreModels){
-    if(!(detailScoreModels[name] in provenance) || (provenance.model!=null && provenance.model!==detailScoreModels[name]) || (provenance.scale!=null && provenance.scale!=='sigmoid_mean_score_0_1')){
-      div.append(text(document.createElement('p'),'no usable evidence (unsupported or missing model/scale)'));
-      if(f.missing_reason) div.append(text(document.createElement('p'),f.missing_reason));
-      return div;
-    }
-    div.append(text(document.createElement('p'),'display scores > 0.1 (raw 0–1 labelled scores; not probabilities; independent of analysis cutoff).'));
-    const entries=Array.isArray(values)?values.filter(([label,v])=>typeof label==='string' && typeof v==='number' && Number.isFinite(v) && v>detailDisplayCutoff && v<=1).sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0])):[];
-    if(!entries.length) div.append(text(document.createElement('p'),Array.isArray(values)&&values.length?'no significant values':'no usable evidence'));
-    // Bound layout, but never conceal qualifying labels without a count.
-    for(const [label,v] of entries.slice(0,12)) div.append(detailGauge(label,v));
-    if(entries.length>12) div.append(text(document.createElement('p'),`${entries.length-12} more significant labels not shown`));
-  } else if(name==='energy'){
-    if(provenance['emomusic-msd-musicnn-2']!=null && (provenance.model==null || provenance.model==='emomusic-msd-musicnn-2') && (provenance.scale==null || provenance.scale==='native_valence_arousal_regression') && Array.isArray(values)){
-      const valid=values.filter(([label,v])=>['valence','arousal'].includes(label) && typeof v==='number' && Number.isFinite(v));
-      div.append(text(document.createElement('p'),valid.length?`${valid.map(([k,v])=>`${k}: ${displayNumber(v)}`).join(' · ')} (Emomusic native regression scale; not a 0–1 probability)`:'no usable evidence'));
-    }else div.append(text(document.createElement('p'),'no usable evidence (unsupported model or contradictory scale)'));
-  }else if(name==='bpm' || name==='key'){
-    const entry=Array.isArray(values)?values.find(([label,v])=>label===name && (name==='key'?typeof v==='string' && v.trim():typeof v==='number' && Number.isFinite(v) && v>0)):null;
-    div.append(text(document.createElement('p'),entry?`${name==='bpm'?displayNumber(entry[1]):entry[1]}${name==='bpm'?' BPM (raw)':''}`:'no usable evidence'));
-  }else div.append(text(document.createElement('p'),'no usable evidence (no supported display scale)'));
-  if(f.missing_reason) div.append(text(document.createElement('p'),f.missing_reason));
-  return div;
-}
+function fieldDisplay(field){return fieldValues(field);}
+function detailGauge(label,value){return trackDetail.gauge(scoreGaugeViewModel(label,value));}
+function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}
 function graphRelatednessLegend(){return 'Link alpha reflects axis-independent relatedness strength from existing stored summaries; higher-score links are more opaque.';}
 function relatednessLinkAlpha(link){const score=Number(link&&link.score); const clamped=Number.isFinite(score)?Math.max(0,Math.min(1,score)):0; return Math.round((0.18+clamped*0.54)*100)/100;}
 function relatednessLinkColor(link){return `rgba(240,240,240,${relatednessLinkAlpha(link)})`;}
-const metadataLabels={title:'Title',artist:'Artist',album:'Album',album_artist:'Album artist',date:'Date',year:'Year',genre:'Genre',composer:'Composer',track_number:'Track number',disc_number:'Disc number',comment:'Comment'};
-const metadataAliases={albumartist:'album_artist',aalbumartist:'album_artist',aart:'album_artist',tpe2:'album_artist',tracknumber:'track_number',trkn:'track_number',trck:'track_number',discnumber:'disc_number',disk:'disc_number',tpos:'disc_number'};
-function canonicalMetadataKey(key){const normalized=String(key||'').trim().toLowerCase().replace(/[ -]+/g,'_'); return metadataAliases[normalized]||normalized;}
-function metadataValueText(value){return Array.isArray(value)?value.filter(v=>String(v).trim()).join('; '):String(value==null?'':value).trim();}
-function renderTrackMetadata(metadata){const section=document.createElement('section'); section.className='field track-metadata'; const common=metadata&&Array.isArray(metadata.common)?metadata.common:[]; const tags=metadata&&Array.isArray(metadata.tags)?metadata.tags:[];  const seen=new Set(); let rendered=0; const appendRow=(key,value)=>{const canonical=canonicalMetadataKey(key); const valueText=metadataValueText(value); if(!valueText||seen.has(canonical)) return; seen.add(canonical); rendered++; section.append(text(document.createElement('p'),`${metadataLabels[canonical]||key}: ${valueText}`));}; for(const [k,v] of common) appendRow(k,v); for(const [k,vals] of tags) appendRow(k,vals||[]); if(!rendered) section.append(text(document.createElement('p'),'No embedded textual metadata found'));  return section;}
-function renderDetail(d){const root=document.getElementById('detail'); root.setAttribute('aria-busy','false'); const heading=document.createElement('h3'); text(heading,'Current Track'); const fields=document.createElement('div'); fields.append(renderTrackMetadata(d.metadata)); for(const [name,f] of Object.entries(d.fields||{})) fields.append(renderDetailField(name,f)); root.replaceChildren(heading,fields);}
+function renderTrackMetadata(metadata){return trackDetail.metadata(trackMetadataViewModel(metadata));}
+function renderDetail(detail){trackDetail.show(trackDetailViewModel(detail));}
 function buildGraphModel(tracks, projection){return buildMoodGraphModel({positioned:tracks||[],edges:(projection&&projection.edges)||[],unpositioned:[],available_moods:[],selected_mood:'',metadata:{}});}
 function applyGraphFilters(model, filters){return applyMoodGraphFilters(model,filters);}
 function orbitCamera(c,dx,dy){c.yaw=(c.yaw||0)+dx*0.01; c.pitch=(c.pitch||0)+dy*0.01; return c;}
