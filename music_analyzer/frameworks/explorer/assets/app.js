@@ -31,6 +31,7 @@ import {moodMarkDescription, moodStripViewModel} from './app/adapters/presenters
 import {moodStripView} from './app/frameworks/views/mood-strip-view.js';
 import {graphCameraFrame} from './app/domain/camera-frame.js';
 import {graphAxisSpec, graphColorLegend, graphRelatednessLegend, linkLabel, nodeLabel, relatednessLinkAlpha, relatednessLinkColor} from './app/adapters/presenters/graph-scene-presenter.js';
+import {cameraArcPose, cameraFocusArc, cameraViewDirection, focusProgress, pickedNodePose, selectionFocusPose} from './app/domain/camera-arc.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -406,26 +407,6 @@ function observeCameraFocusControls(graph){
   cameraFocusControls=controls;
   if(controls?.addEventListener) controls.addEventListener('start',invalidateCameraViewIntent);
 }
-// Normalize by the largest component before measuring: finite wheel poses can
-// have an overflowing radius, while subnormal gaps have overflowing reciprocals.
-function cameraUnitDirection(vector){
-  const axes=['x','y','z'];
-  if(!axes.every(axis=>Number.isFinite(vector[axis]))) return null;
-  const largest=Math.max(...axes.map(axis=>Math.abs(vector[axis])));
-  if(largest===0) return null;
-  const scaled=Object.fromEntries(axes.map(axis=>[axis,vector[axis]/largest]));
-  const length=Math.hypot(scaled.x,scaled.y,scaled.z);
-  return Object.fromEntries(axes.map(axis=>[axis,scaled[axis]/length]));
-}
-function cameraViewDirection(position,target){
-  const axes=['x','y','z'];
-  if(!axes.every(axis=>Number.isFinite(position[axis])&&Number.isFinite(target[axis]))) return null;
-  const offset=Object.fromEntries(axes.map(axis=>[axis,position[axis]-target[axis]]));
-  if(axes.every(axis=>Number.isFinite(offset[axis]))) return cameraUnitDirection(offset);
-  // Opposite finite coordinates can overflow subtraction too.
-  const largest=Math.max(...axes.flatMap(axis=>[Math.abs(position[axis]),Math.abs(target[axis])]));
-  return cameraUnitDirection(Object.fromEntries(axes.map(axis=>[axis,position[axis]/largest-target[axis]/largest])));
-}
 // Disabled bundled cameraPosition looks at the point but leaves its orbit
 // target stale. Keep the public target synchronized for update and re-enable.
 function setCameraFocusPose(graph,position,target){
@@ -464,58 +445,17 @@ function animateCameraFocus(graph,position,target){
   cancelCameraFocus();
   const generation=cameraFocusGeneration;
   settleCameraFocusInput(graph);
-  const fromPosition={...graph.cameraPosition()};
-  const fromTarget={...graph.controls().target};
-  // Interpolate the camera-relative offset on an arc, never through lookAt.
-  // Transport up along that arc so passing a world-up pole cannot flip roll.
-  const axes=['x','y','z'];
-  const subtract=(a,b)=>Object.fromEntries(axes.map(axis=>[axis,a[axis]-b[axis]]));
-  const scale=(v,k)=>Object.fromEntries(axes.map(axis=>[axis,v[axis]*k]));
-  const dot=(a,b)=>axes.reduce((sum,axis)=>sum+a[axis]*b[axis],0);
-  const cross=(a,b)=>({x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x});
-  const magnitude=v=>Math.hypot(v.x,v.y,v.z);
-  const endOffset=subtract(position,target), endDistance=magnitude(endOffset);
-  const startOffset=subtract(fromPosition,fromTarget);
-  const measuredStartDistance=magnitude(startOffset);
-  // THREE/Trackball squares offsets during lookAt. Recover only exceptional
-  // radii whose squared norm is unsafe; ordinary orbits keep their full radius.
-  const safeRadius=Math.sqrt(Number.MAX_VALUE)/4;
-  const recoverRadius=measuredStartDistance>safeRadius;
-  const startDistance=recoverRadius?endDistance:(measuredStartDistance||endDistance);
-  // A small focus offset cannot be represented beside an astronomical pan target.
-  // Exceptional recovery also rebases translation; ordinary arcs stay intact.
-  const interpolationTarget=recoverRadius?{x:0,y:0,z:0}:fromTarget;
-  const endDirection=cameraUnitDirection(endOffset);
-  const startDirection=cameraViewDirection(fromPosition,fromTarget)||endDirection;
-  const cosine=Math.max(-1,Math.min(1,dot(startDirection,endDirection)));
-  const angle=Math.acos(cosine>1-1e-15?1:cosine);
-  let tangent=subtract(endDirection,scale(startDirection,cosine));
-  const camera=graph.camera(), fromUp=camera.up?{...camera.up}:null;
-  if(magnitude(tangent)<1e-8) {
-    // Antiparallel directions need a deterministic plane perpendicular to up.
-    tangent=cross(fromUp||{x:0,y:1,z:0},startDirection);
-    if(magnitude(tangent)<1e-8) tangent=cross({x:1,y:0,z:0},startDirection);
-    if(magnitude(tangent)<1e-8) tangent=cross({x:0,y:0,z:1},startDirection);
-  }
-  tangent=scale(tangent,1/magnitude(tangent));
-  const rotationAxis=cross(startDirection,tangent);
-  const started=typeof performance!=='undefined'?performance.now():Date.now();
+  const camera=graph.camera();
+  const arc=cameraFocusArc({fromPosition:{...graph.cameraPosition()},fromTarget:{...graph.controls().target},fromUp:camera.up?{...camera.up}:null,position,target});
+  const clockNow=()=>typeof performance!=='undefined'?performance.now():Date.now();
+  const started=clockNow();
   const step=timestamp=>{
     if(generation!==cameraFocusGeneration || graph!==forceGraph) return;
     cameraFocusFrame=null;
-    const now=Number.isFinite(timestamp)?timestamp:(typeof performance!=='undefined'?performance.now():Date.now());
-    const progress=Math.min(1,Math.max(0,(now-started)/700));
-    const interpolate=(from,to)=>Object.fromEntries(['x','y','z'].map(axis=>[axis,from[axis]+(to[axis]-from[axis])*progress]));
-    const theta=angle*progress, c=Math.cos(theta), s=Math.sin(theta);
-    const distance=startDistance+(endDistance-startDistance)*progress;
-    // Large finite starts can erase node coordinates at t=1 by cancellation.
-    const nextTarget=progress===1?target:interpolate(interpolationTarget,target);
-    const nextPosition=Object.fromEntries(axes.map(axis=>[axis,nextTarget[axis]+distance*(startDirection[axis]*c+tangent[axis]*s)]));
-    if(fromUp && camera.up?.set) {
-      const turned=cross(rotationAxis,fromUp), along=dot(rotationAxis,fromUp)*(1-c);
-      camera.up.set(...axes.map(axis=>fromUp[axis]*c+turned[axis]*s+rotationAxis[axis]*along));
-    }
-    setCameraFocusPose(graph,progress===1?position:nextPosition,nextTarget);
+    const progress=focusProgress(started,Number.isFinite(timestamp)?timestamp:clockNow());
+    const pose=cameraArcPose(arc,progress);
+    if(pose.up && camera.up?.set) camera.up.set(pose.up.x,pose.up.y,pose.up.z);
+    setCameraFocusPose(graph,pose.position,pose.target);
     if(progress<1) cameraFocusFrame=requestAnimationFrame(step);
   };
   cameraFocusFrame=requestAnimationFrame(step);
@@ -531,17 +471,12 @@ function selectGraphNode(picked){
     ?renderedGraphData.nodes.find(n=>n.id===id):null;
   if(forceGraph && node){
     try {
-      const axes=['x','y','z'];
-      const target={x:node.fx,y:node.fy,z:node.fz};
       const controls=forceGraph.controls(), from=forceGraph.cameraPosition();
-      const position=Object.fromEntries(axes.map(axis=>[axis,target[axis]+(from[axis]-controls.target[axis])]));
-      // Finite coordinates can still lose the orbit offset through rounding.
-      const squaredOffset=axes.reduce((sum,axis)=>sum+(position[axis]-target[axis])**2,0);
-      if(axes.every(axis=>Number.isFinite(target[axis])&&Number.isFinite(position[axis]))
-          && squaredOffset>=2**-1022 && Number.isFinite(squaredOffset)){
+      const pose=pickedNodePose({x:node.fx,y:node.fy,z:node.fz},{cameraPosition:from,orbitTarget:controls.target});
+      if(pose){
         observeCameraFocusControls(forceGraph);
         settleCameraFocusInput(forceGraph);
-        setCameraFocusPose(forceGraph,position,target);
+        setCameraFocusPose(forceGraph,pose.position,pose.target);
       }
     } catch(error) {
       // An unavailable camera must not prevent a valid track selection.
@@ -569,23 +504,9 @@ function focusPendingCameraSelection(graphRendered=false){
   try {
     // Configured orbit bounds take precedence over the nominal display-space radius.
     const controls=forceGraph.controls();
-    const distance=Math.max(controls.minDistance??0,Math.min(controls.maxDistance??Infinity,100));
-    // A positioned origin has no radial direction. Preserve the current orbit
-    // direction (relative to the panned target), or use +Z for a coincident pose.
-    const direction=length===0
-      ?(cameraViewDirection(forceGraph.cameraPosition(),controls.target)||{x:0,y:0,z:1})
-      :cameraUnitDirection(target);
-    // Normalize before radius scaling: distance*target can underflow for a
-    // tiny non-origin node even when the final camera offset is renderable.
-    const position={x:target.x+distance*direction.x,y:target.y+distance*direction.y,z:target.z+distance*direction.z};
-    if(![position.x,position.y,position.z].every(Number.isFinite)) return;
-    // Require a normal-range unscaled squared norm for reliable orientation.
-    // A nonzero offset can still underflow that norm (or overflow it). Skip
-    // before settling input; never widen custom bounds to make focus eligible.
-    const dx=position.x-target.x, dy=position.y-target.y, dz=position.z-target.z;
-    const squaredOffset=dx*dx+dy*dy+dz*dz;
-    if(!(squaredOffset>=2**-1022) || !Number.isFinite(squaredOffset)) return;
-    animateCameraFocus(forceGraph,position,target);
+    const pose=selectionFocusPose(target,{currentDirection:()=>cameraViewDirection(forceGraph.cameraPosition(),controls.target),minDistance:controls.minDistance,maxDistance:controls.maxDistance});
+    // Skip before settling input; never widen custom bounds to make focus eligible.
+    if(pose) animateCameraFocus(forceGraph,pose.position,pose.target);
   } catch(error) {
     // A camera adapter failure does not revoke an accepted selection.
     cancelCameraFocus();
