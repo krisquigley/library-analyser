@@ -79,3 +79,26 @@ test('a refused graph fails with the server message, not its JSON (#152)', async
     await assert.rejects(api.loadMoodGraph(''), {message});
   }
 });
+
+test('a track search asks for a page of 100 by title, from a cursor when given', async () => {
+  const body = {tracks: [{handle: 'a'}], metadata: {track_count: 5}, next_cursor: 'c2'};
+  const {api, requests} = gatewayAnswering({ok: true, json: async () => body, text: async () => JSON.stringify(body)});
+  assert.deepEqual(await api.searchTracks({query: 'alpha beta', cursor: null}),
+    {tracks: [{handle: 'a'}], metadata: {track_count: 5}, nextCursor: 'c2'});
+  await api.searchTracks({query: 'alpha', cursor: 'c2'});
+  assert.deepEqual(requests, ['/api/tracks/summary?limit=100&order=title&query=alpha+beta',
+    '/api/tracks/summary?limit=100&order=title&query=alpha&cursor=c2']);
+});
+
+test('a track page without metadata or a cursor is the last page', async () => {
+  const {api} = gatewayAnswering({ok: true, json: async () => ({}), text: async () => '{}'});
+  assert.deepEqual(await api.searchTracks({query: 'a', cursor: null}), {tracks: [], metadata: {}, nextCursor: null});
+});
+
+test('a refused track search fails with the server message, not its JSON (#155)', async () => {
+  const {api} = gatewayAnswering(response({ok: false, body: '{"error": "Explorer request failed"}',
+    headers: {'Content-Type': 'application/json'}}));
+  await assert.rejects(api.searchTracks({query: 'a', cursor: null}), {message: 'Explorer request failed'});
+  const empty = gatewayAnswering(response({ok: false, body: ''}));
+  await assert.rejects(empty.api.searchTracks({query: 'a', cursor: null}), {message: 'Track search failed'});
+});

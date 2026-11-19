@@ -9,7 +9,7 @@ entry, with the import and export syntax removed and strict mode on, as in a mod
 
 It flattens only the module syntax the app uses: named imports without renaming,
 from relative `.js` paths, and exports declared inline. Anything else is
-rejected, as is a name declared by two modules, which would collide once flat.
+rejected, as is a top-level name declared by two modules, exported or not, which would collide once flat.
 """
 from functools import lru_cache
 from pathlib import Path
@@ -22,7 +22,8 @@ _ANY_IMPORT = re.compile(r'^\s*import\b', re.M)
 _NAMED_CLAUSE = re.compile(r'^\{\s*[\w$]+(?:\s*,\s*[\w$]+)*\s*,?\s*\}$', re.S)
 _INLINE_EXPORT = re.compile(r'^export\s+(?=(?:async\s+)?function\b|const\b|let\b|class\b)', re.M)
 _ANY_EXPORT = re.compile(r'^\s*export\b', re.M)
-_EXPORTED_NAME = re.compile(r'^export\s+(?:async\s+)?(?:function\*?|const|let|class)\s+([\w$]+)', re.M)
+# A declaration at the start of a line is top level: the app's modules indent everything nested.
+_TOP_LEVEL_NAME = re.compile(r'^(?:export\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([\w$]+)', re.M)
 
 
 class ExplorerAppBundleError(ValueError):
@@ -94,10 +95,10 @@ def _flatten(source, path):
 
 
 def _reject_colliding_names(sources):
+    declared_in = {}
     for path, source in sources.items():
-        for name in _EXPORTED_NAME.findall(source):
-            declaration = re.compile(r'(?<![\w$.])(?:function\*?|const|let|var|class)\s+' + re.escape(name) + r'(?![\w$])')
-            for other, other_source in sources.items():
-                if other != path and declaration.search(other_source):
-                    raise ExplorerAppBundleError(
-                        f"'{name}' is declared in both {path.name} and {other.name}; the bundle would collide")
+        for name in dict.fromkeys(_TOP_LEVEL_NAME.findall(source)):
+            if name in declared_in:
+                raise ExplorerAppBundleError(
+                    f"'{name}' is declared in both {declared_in[name].name} and {path.name}; the bundle would collide")
+            declared_in[name] = path

@@ -3,7 +3,7 @@
 import {applyMoodGraphFilters, clearedGraphFilters, editGraphControls} from '../../domain/graph-filters.js';
 import {nextGraphLoadState} from '../../domain/graph-load.js';
 import {moodToTrack} from '../../domain/mood-graph.js';
-import {CLOCK} from '../ports/clock.js';
+import {FRAMES} from '../ports/clock.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
 import {MOOD_GRAPHS} from '../ports/explorer-api.js';
 import {GRAPH_SESSION} from '../ports/graph-session.js';
@@ -17,7 +17,7 @@ import {
 export function createGraphLoad({explorerApi, graphSession, clock, eventBus, buildGraphModel}) {
   requirePort(MOOD_GRAPHS, explorerApi);
   requirePort(GRAPH_SESSION, graphSession);
-  requirePort(CLOCK, clock);
+  requirePort(FRAMES, clock);
   requirePort(EVENT_BUS, eventBus);
   if (typeof buildGraphModel !== 'function') throw new TypeError('A graph load needs a graph model builder');
   let latestLoad = 0;
