@@ -57,7 +57,7 @@ The rule is enforced by AST import checks in `tests/architecture/` (`test_import
 <package>/                     # music_analyzer/ and music_explorer/
 ├── domain/                    # Business rules: entities, value objects, invariants. Pure, no I/O.
 ├── application/
-│   ├── use_cases/             #   One module per use case, named for user intent (scan_library, build_graph, playlists)
+│   ├── use_cases/             #   One directory per use case, named for user intent (scan_library/, build_graph/, generate_playlist/)
 │   ├── ports/                 #   Interfaces the use cases need (repositories, audio, clock…)
 │   └── dto/                   #   Plain data crossing the boundary
 ├── interface_adapters/        # Presenters, controllers, mappers: translate between use cases and the outside
@@ -80,12 +80,37 @@ plans/                         # Longer-term plans
 Rules for the structure:
 
 - **Screaming Architecture.** Name modules and directories for the domain concept or user intent they serve (`analyze_batch`, `playlists`), never technical kinds (`services`, `helpers`, `utils`, `manager`).
-- **Use cases don't call each other.** Share policy through the domain or a port.
+- **One use case per directory** in `application/use_cases/`. Each holds its interactor, its request and response models, and its output boundary (the presenter port). Use cases don't call each other; share policy through the domain or a port. Existing single-module use cases move into directories as they are touched.
+- **Unit tests mirror the source**, directory for directory: the tests for `music_explorer/domain/energy_plan.py` live in `tests/unit/music_explorer/domain/test_energy_plan.py`. Existing tests move as they are touched.
 - **Ports live with the inner layer that owns them.** Never put an interface next to its only implementation in an outer layer.
 - **Data crossing a boundary is a simple data structure** defined by the inner layer. Never pass SQLite rows, HTTP requests or JSON payloads inward, or entities outward.
 - **New boundary = new directory.** Code in a directory that doesn't respect its boundary is in the wrong place: move it.
 - **Frameworks are details.** SQLite, Essentia, FFmpeg, the HTTP server and the browser UI are plugins to the business rules.
 - **Both Explorer asset copies stay identical.** `music_explorer/frameworks/explorer/assets/` and `music_analyzer/frameworks/explorer/assets/` ship the same `app.js`; change both, and tests run against both.
+
+### The Explorer Browser App
+
+The frontend is held to the same standard as the backend: Clean Architecture as Uncle Bob would write it, with the folder structure as the architecture. The browser app is a program in its own right. It is plain JavaScript as native ES modules, served as static assets with no build step and no runtime dependencies beyond the vendored Three.js. It is laid out by layer:
+
+```
+music_explorer/frameworks/explorer/assets/app/
+├── domain/          # Pure rules: graph filters, selection, playlist recipe. No DOM, no fetch.
+├── application/     # One directory per use case (load-graph/, select-track/, download-playlist/), plus ports/:
+│                    #   ExplorerApi (the HTTP gateway), Clock
+├── adapters/
+│   ├── controllers/ #   DOM input → validated request models
+│   ├── presenters/  #   response models → view models
+│   ├── view-models/ #   plain data shaped for a view
+│   └── gateways/    #   ExplorerApi over fetch
+├── frameworks/      # The DOM views and the Three.js scene: details
+└── main/            # Composition root: the only module that knows every layer; wires them and starts the app
+```
+
+- The Dependency Rule applies to `import` statements exactly as to Python imports. It is enforced by an architecture test in `tests/architecture/` that parses every module's imports and fails closed.
+- **No global mutable state.** State lives in domain entities owned by the use cases. Views hold none.
+- Domain and application modules are tested in Node (`node:test`) without a DOM or a network. Their tests mirror `app/` under `tests/unit/explorer_app/`.
+- Both asset trees (`music_explorer/…/assets/` and `music_analyzer/…/assets/`) stay identical, file for file.
+- The existing single `app.js` moves onto this structure as it is touched; new browser features go into the layered modules.
 
 ### Code Standards (Clean Code)
 
