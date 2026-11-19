@@ -32,6 +32,7 @@ import {moodStripView} from './app/frameworks/views/mood-strip-view.js';
 import {graphCameraFrame} from './app/domain/camera-frame.js';
 import {graphAxisSpec, graphColorLegend, graphRelatednessLegend, linkLabel, nodeLabel, relatednessLinkAlpha, relatednessLinkColor} from './app/adapters/presenters/graph-scene-presenter.js';
 import {cameraArcPose, cameraFocusArc, cameraViewDirection, focusProgress, pickedNodePose, selectionFocusPose} from './app/domain/camera-arc.js';
+import {createCameraFocus} from './app/application/focus-camera/focus-camera.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -62,6 +63,11 @@ let pendingCameraSelection=null;
 let cameraViewIntentGeneration=0;
 let cameraFocusGeneration=0;
 let cameraFocusFrame=null;
+// The camera variables above mirror the focus for the browser probe and the tests, until #146 step 8.
+const legacyCameraFocusSession=Object.freeze({read:()=>({pendingTrackId:pendingCameraSelection,frame:cameraFocusFrame,viewIntent:cameraViewIntentGeneration,focusGeneration:cameraFocusGeneration}),write(changes){if('pendingTrackId' in changes) pendingCameraSelection=changes.pendingTrackId; if('frame' in changes) cameraFocusFrame=changes.frame; if('viewIntent' in changes) cameraViewIntentGeneration=changes.viewIntent; if('focusGeneration' in changes) cameraFocusGeneration=changes.focusGeneration;}});
+const cameraEvents=createInMemoryEventBus();
+const cameraFocus=createCameraFocus({focusSession:legacyCameraFocusSession,eventBus:cameraEvents});
+cameraEvents.subscribe('camera-focus-cancelled',event=>{if(typeof cancelAnimationFrame==='function') cancelAnimationFrame(event.frame);});
 let cameraFocusControls=null;
 let loadingRefreshToken=0;
 let lastRefreshError=null;
@@ -97,11 +103,11 @@ const legacySelectionSession=Object.freeze({read:()=>({snapshot:state,epoch:sele
 const selectionEvents=createInMemoryEventBus();
 const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession:legacySelectionSession,eventBus:selectionEvents});
 let selectionViewIntent=0;
-selectionEvents.subscribe('track-chosen',()=>{selectionViewIntent=invalidateCameraViewIntent(); pendingCameraSelection=null; renderDetailLoading(); updateSelectedTrackVisuals();});
-selectionEvents.subscribe('selection-rewinding',()=>{selectionViewIntent=invalidateCameraViewIntent(); pendingCameraSelection=null; renderDetailLoading();});
-selectionEvents.subscribe('selection-accepted',event=>{if(selectionViewIntent!==cameraViewIntentGeneration) return; cancelCameraFocus(); pendingCameraSelection=event.focusCamera?event.trackId:null;});
+selectionEvents.subscribe('track-chosen',()=>{selectionViewIntent=invalidateCameraViewIntent(); renderDetailLoading(); updateSelectedTrackVisuals();});
+selectionEvents.subscribe('selection-rewinding',()=>{selectionViewIntent=invalidateCameraViewIntent(); renderDetailLoading();});
+selectionEvents.subscribe('selection-accepted',event=>{if(selectionViewIntent!==cameraFocus.viewIntent()) return; cancelCameraFocus(); cameraFocus.request(event.focusCamera?event.trackId:null);});
 selectionEvents.subscribe('selection-refused',event=>renderDetailError(event.failure));
-selectionEvents.subscribe('library-selection-changed',event=>{cancelCameraFocus(); pendingCameraSelection=event.trackId;});
+selectionEvents.subscribe('library-selection-changed',event=>{cancelCameraFocus(); cameraFocus.request(event.trackId);});
 selectionEvents.subscribe('no-track-selected',()=>{updateSelectedTrackVisuals(); renderInitialDetail(graphModel);});
 selectionEvents.subscribe('track-detail-loading',()=>{updateSelectedTrackVisuals(); renderDetailLoading();});
 selectionEvents.subscribe('track-detail-loaded',event=>{renderDetail(event.detail); updateSelectedTrackVisuals();});
@@ -387,18 +393,10 @@ function animateGraphAxes(timestamp){
   requestAnimationFrame(animateGraphAxes);
 }
 // View ownership outlives a POST or a deferred layout, independently of the RAF timeline.
-function invalidateCameraViewIntent(){
-  cameraViewIntentGeneration++;
-  pendingCameraSelection=null;
-  cancelCameraFocus();
-  return cameraViewIntentGeneration;
-}
+// Cancel through the page's own cancelCameraFocus first: the browser diagnostic observes cancellations there.
+function invalidateCameraViewIntent(){cancelCameraFocus(); return cameraFocus.claimView();}
 // Own the timeline: bundled cameraPosition's timed tweens have no public cancellation.
-function cancelCameraFocus(){
-  cameraFocusGeneration++;
-  if(cameraFocusFrame!==null && typeof cancelAnimationFrame==='function') cancelAnimationFrame(cameraFocusFrame);
-  cameraFocusFrame=null;
-}
+function cancelCameraFocus(){cameraFocus.cancel();}
 function observeCameraFocusControls(graph){
   const controls=typeof graph?.controls==='function'?graph.controls():null;
   if(controls===cameraFocusControls) return;
@@ -443,29 +441,28 @@ function settleCameraFocusInput(graph){
 function animateCameraFocus(graph,position,target){
   observeCameraFocusControls(graph);
   cancelCameraFocus();
-  const generation=cameraFocusGeneration;
+  const generation=cameraFocus.begin();
   settleCameraFocusInput(graph);
   const camera=graph.camera();
   const arc=cameraFocusArc({fromPosition:{...graph.cameraPosition()},fromTarget:{...graph.controls().target},fromUp:camera.up?{...camera.up}:null,position,target});
   const clockNow=()=>typeof performance!=='undefined'?performance.now():Date.now();
   const started=clockNow();
   const step=timestamp=>{
-    if(generation!==cameraFocusGeneration || graph!==forceGraph) return;
-    cameraFocusFrame=null;
+    if(graph!==forceGraph || !cameraFocus.frameRan(generation)) return;
     const progress=focusProgress(started,Number.isFinite(timestamp)?timestamp:clockNow());
     const pose=cameraArcPose(arc,progress);
     if(pose.up && camera.up?.set) camera.up.set(pose.up.x,pose.up.y,pose.up.z);
     setCameraFocusPose(graph,pose.position,pose.target);
-    if(progress<1) cameraFocusFrame=requestAnimationFrame(step);
+    if(progress<1) cameraFocus.frameScheduled(generation,requestAnimationFrame(step)); else cameraFocus.finished(generation);
   };
-  cameraFocusFrame=requestAnimationFrame(step);
+  cameraFocus.frameScheduled(generation,requestAnimationFrame(step));
 }
 // Graph picks own the view immediately; server acceptance still owns detail.
 function selectGraphNode(picked){
   const id=picked?.id;
   if(typeof id!=='string' || !id) return;
   cancelCameraFocus();
-  pendingCameraSelection=null;
+  cameraFocus.request(null);
   // A replacement can be visible-but-not-mounted during loadGraph's frame gap.
   const node=visibleGraph.nodes.some(n=>n.id===id)
     ?renderedGraphData.nodes.find(n=>n.id===id):null;
@@ -490,10 +487,9 @@ function focusPendingCameraSelection(graphRendered=false){
   // Existing instances still show the old layout while a replacement loads.
   // Only renderMap may consume focus before the load state becomes ready.
   if(!graphRendered && graphLoadState.status!=='ready') return;
-  if(!forceGraph || framedGraphLayout===null || pendingCameraSelection===null) return;
-  const id=pendingCameraSelection;
-  pendingCameraSelection=null;
-  if(id!==state.current_track_id) return;
+  if(!forceGraph || framedGraphLayout===null || cameraFocus.peek()==null) return;
+  const id=cameraFocus.take(state.current_track_id);
+  if(id===null) return;
   const node=visibleGraph.nodes.find(n=>n.id===id);
   if(!node) return; // Keep active filters; hidden/unpositioned selections still show detail.
   const target={x:node.fx,y:node.fy,z:node.fz};
