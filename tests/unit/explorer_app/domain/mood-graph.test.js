@@ -1,7 +1,7 @@
 // Issue #146: the mood-axis graph model the 3D scene and the filters work on.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {moodGraphModel, moodNodeColor} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/mood-graph.js';
+import {moodGraphModel, moodNodeColor, moodToTrack} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/mood-graph.js';
 
 const axis = (raw, normalized) => ({label: 'axis', raw, normalized});
 
@@ -62,4 +62,12 @@ test('the graph keeps its moods, metadata and unpositioned tracks', () => {
   assert.deepEqual([model.availableMoods, model.selectedMood, model.metadata, model.unpositioned],
     [['happy'], 'happy', {graph_status: {state: 'ready'}}, GRAPH.unpositioned]);
   assert.deepEqual(moodGraphModel({}).nodes, []);
+});
+
+test('the tracked mood is the one asked for while the graph offers it, else the graph own', () => {
+  const model = {availableMoods: ['relaxing', 'heavy'], selectedMood: 'relaxing'};
+  assert.equal(moodToTrack('heavy', model), 'heavy');
+  assert.equal(moodToTrack('happy', model), 'relaxing');
+  assert.equal(moodToTrack('', model), 'relaxing');
+  assert.equal(moodToTrack('heavy', {availableMoods: [], selectedMood: ''}), '');
 });

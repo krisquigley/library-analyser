@@ -59,3 +59,23 @@ test('a refused download with a plain, empty or unreadable body still says why',
     await assert.rejects(api.downloadPlaylist(RECIPE), {message});
   }
 });
+
+test('the mood graph is asked for with the indexed contract, and for the tracked mood when there is one', async () => {
+  const graph = {dto_version: 'mood-axis-graph-indexed-v1'};
+  const {api, requests} = gatewayAnswering({ok: true, json: async () => graph, text: async () => JSON.stringify(graph)});
+  assert.equal(await api.loadMoodGraph(''), graph);
+  await api.loadMoodGraph('heavy & calm');
+  assert.deepEqual(requests, ['/api/mood-axis-graph?contract=v3', '/api/mood-axis-graph?mood=heavy+%26+calm&contract=v3']);
+});
+
+test('a refused graph fails with the server message, not its JSON (#152)', async () => {
+  const cases = [
+    [response({ok: false, body: '{"error": "Explorer request failed"}', headers: {'Content-Type': 'application/json'}}), 'Explorer request failed'],
+    [response({ok: false, body: 'graph temporarily unavailable'}), 'graph temporarily unavailable'],
+    [response({ok: false, body: ''}), 'Graph request failed'],
+  ];
+  for (const [answer, message] of cases) {
+    const {api} = gatewayAnswering(answer);
+    await assert.rejects(api.loadMoodGraph(''), {message});
+  }
+});

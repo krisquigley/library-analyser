@@ -12,6 +12,10 @@ export function moodNodeColor(valence, arousal) {
   return `hsl(${hue} ${saturation}% ${lightness}%)`;
 }
 
+export function moodToTrack(requested, model) {
+  return requested && model.availableMoods.includes(requested) ? requested : (model.selectedMood || '');
+}
+
 export function moodGraphModel(graph, {genreThresholdApplies = false} = {}) {
   const positioned = graph.positioned || [];
   const colorRanges = {valence: axisRange(positioned, 'x'), arousal: axisRange(positioned, 'y')};
