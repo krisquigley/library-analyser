@@ -65,7 +65,7 @@ class CameraOrbitPathTests(unittest.TestCase):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node required; do not skip RED')
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 script = trackball_fixture() + scenario + (
                     '\n})().then(()=>console.log("SCENARIO_COMPLETED"))'
                     '.catch(error=>{console.error(error);process.exitCode=1;});')
@@ -79,7 +79,7 @@ class CameraOrbitPathTests(unittest.TestCase):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node required; do not skip RED')
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 script = trackball_fixture() + FINITE_WHEEL_PAN + scenario + (
                     '\n})().then(()=>console.log("SCENARIO_COMPLETED"))'
                     '.catch(error=>{console.error(error);process.exitCode=1;});')
@@ -247,7 +247,7 @@ assert.ok(Math.abs(camera.position.distanceTo(controls.target)-100)<1e-9,
 assert.equal(vendorState.tweenGroup.getAll().length,0,'no private vendor tweens');
 '''
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 script = trackball_fixture() + scenario + (
                     '\n})().then(()=>console.log("SCENARIO_COMPLETED"))'
                     '.catch(error=>{console.error(error);process.exitCode=1;});')
@@ -323,7 +323,7 @@ assert.equal(vendorState.tweenGroup.getAll().length,0,'no private vendor tweens'
         }
         for asset in ASSETS:
             for name, case in cases.items():
-                with self.subTest(asset=str(asset.relative_to(ROOT)), path=name):
+                with self.subTest(asset=str(asset), path=name):
                     script = trackball_fixture() + case + (
                         '\n})().then(()=>console.log("SCENARIO_COMPLETED"))'
                         '.catch(error=>{console.error(error);process.exitCode=1;});')

@@ -46,7 +46,7 @@ class GraphRenderOnDemandTests(unittest.TestCase):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node required: RED must not be accepted via skipped tests')
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 script = (fixture() + HELPERS + scenario +
                           '\n})().then(()=>console.log("SCENARIO_COMPLETED")).catch(error=>{console.error(error);process.exitCode=1;});')
                 result = subprocess.run([node, '-e', script, str(asset)], cwd=ROOT,

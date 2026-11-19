@@ -16,6 +16,7 @@ from music_explorer.frameworks.explorer.server import create_server as standalon
 from music_analyzer.application.use_cases.explorer import BuildMoodAxisGraph as AnalyzerGraph, FilterMoodAxisGraph as AnalyzerFilter
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph as StandaloneGraph, FilterMoodAxisGraph as StandaloneFilter
 from tests.unit.application.test_mood_axis_graph import FakeRepo, track
+from tests.support.explorer_app_bundle import explorer_app_script
 
 ROOT = Path(__file__).resolve().parents[2]
 LABEL = 'Folk, World, & Country---Folk'
@@ -37,7 +38,7 @@ class ExplorerGenreAndPanelRegressions(unittest.TestCase):
         ]
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                source = (ROOT / package / 'frameworks/explorer/assets/app.js').read_text()
+                source = (explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')).read_text()
                 for text in forbidden:
                     self.assertNotIn(text, source)
 
@@ -95,4 +96,4 @@ assert.strictEqual(detail.attributes['aria-busy'], 'false', 'rendered detail set
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
                 assets = ROOT / package / 'frameworks/explorer/assets'
-                subprocess.run(['node', '-e', script, str(assets / 'app.js'), str(assets / 'index.html')], check=True)
+                subprocess.run(['node', '-e', script, str(explorer_app_script(assets / 'app.js')), str(assets / 'index.html')], check=True)

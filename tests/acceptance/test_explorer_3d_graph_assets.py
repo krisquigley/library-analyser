@@ -12,9 +12,10 @@ from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRep
 
 
 from tests.support.node_script import run_node_script
+from tests.support.explorer_app_bundle import explorer_app_script
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-APP_JS = REPO_ROOT / 'music_analyzer' / 'frameworks' / 'explorer' / 'assets' / 'app.js'
+APP_JS = explorer_app_script(REPO_ROOT / 'music_analyzer' / 'frameworks' / 'explorer' / 'assets' / 'app.js')
 
 
 def create_three_track_graph_db(path):
@@ -232,7 +233,7 @@ const bordered = graph.canvasPoint(
 assert.deepStrictEqual(bordered, {x:90, y:120});
 """;
         if shutil.which('node'):
-            for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
                 with self.subTest(app=app):
                     run_node_script(self, script, str(app))
         else:
@@ -266,7 +267,7 @@ assert.deepStrictEqual(model.nodes.map(n => [n.id, n.genreThreshold]), [['below'
 assert.deepStrictEqual(app.applyMoodGraphFilters(model, {genres:['rock']}).nodes.map(n => n.id), ['above','missing-fallback']);
 assert.deepStrictEqual(app.applyMoodGraphFilters(model, {genres:['rock']}).links, [], 'links to filtered-out nodes are still removed');
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -314,7 +315,7 @@ app.renderMap(model);
 assert(graph3d && graph3d.id === 'graph3d', 'renderMap replaces the legacy map canvas with the graph container before falling back');
 assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'fallback canvas mirrors doubled X/Y display coordinates from the canvas origin');
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -348,7 +349,7 @@ assert.deepStrictEqual(axes.map(a => [a.key, a.start, a.end]), [
   ['z',{x:54,y:90,z:2142},{x:54,y:90,z:2322}],
 ], 'axis visual guide geometry remains display-coordinate based');
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -390,12 +391,12 @@ assert.strictEqual(canvas.tagName, 'CANVAS');
 assert.strictEqual(canvas.parentElement, graph3d);
 assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'visible fallback canvas draws doubled X/Y node positions');
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
     def test_graph_filter_source_separates_mood_tracker_control(self):
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 controls_source = source[source.index('function buildGraphControls'):source.index('function syncGraphControlOptions')]
@@ -464,7 +465,7 @@ assert.deepStrictEqual(app.getGraphControlsForTesting().genres, []);
 assert.strictEqual(app.getGraphControlsForTesting().bpmMin, null);
 assert.strictEqual(app.graphQueryFromControls(), '?mood=heavy');
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -528,12 +529,12 @@ global.ForceGraph3D = undefined;
   assert.strictEqual(app.getGraphControlsForTesting().bpmMin, null);
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
     def test_load_graph_uses_api_graph_status_for_read_only_snapshot_copy(self):
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 start = source.index('async function loadGraph()')
@@ -591,7 +592,7 @@ async function loadWithStatus(graphStatus){
   }
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -654,7 +655,7 @@ global.fetch = async path => {
   assert.strictEqual(app.buildMoodStrip(app.getVisibleGraphForTesting(), null)[0].score, 0.1, 'strip uses the reloaded mood score');
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -709,7 +710,7 @@ const alpha = link => {
 };
 assert.deepStrictEqual(data.links.map(alpha), [0.18,0.45,0.72,0.18]);
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 self.assertIn('graphRelatednessLegend', source)
@@ -760,7 +761,7 @@ function makeScene(){return {children:[], add(obj){this.children.push(obj);}, re
 function makeGraph(scene){let data = {nodes:[],links:[]}; const graph = {graphDataCalls:0, scene(){return scene;}, camera(){return {fov:60};}, graphData(next){if(arguments.length){this.graphDataCalls += 1; data = next; return graph;} return data;}, refresh(){return graph;}}; for (const name of ['enableNodeDrag','cooldownTicks','nodeId','nodeRelSize','nodeLabel','nodeColor','nodeVal','linkLabel','linkOpacity','linkColor','linkWidth','onNodeClick','numDimensions','d3AlphaDecay','d3VelocityDecay','cameraPosition','width','height']) graph[name] = () => graph; return graph;}
 function selectedNodeHalos(scene){return scene.children.filter(obj => obj.name === 'selected-node-halo' || (obj.userData && obj.userData.role === 'selected-node-halo'));}
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -808,7 +809,7 @@ function makeSceneWithThree(){
 }
 function makeGraph(scene){let data = {nodes:[],links:[]}; const graph = {scene(){return scene;}, camera(){return {fov:60};}, graphData(next){if(arguments.length){data = next; return graph;} return data;}, refresh(){return graph;}}; for (const name of ['enableNodeDrag','cooldownTicks','nodeId','nodeRelSize','nodeLabel','nodeColor','nodeVal','linkLabel','linkOpacity','linkColor','linkWidth','onNodeClick','numDimensions','d3AlphaDecay','d3VelocityDecay','cameraPosition','width','height']) graph[name] = () => graph; return graph;}
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -845,7 +846,7 @@ function makeScene(){return {children:[], add(obj){this.children.push(obj);}, re
 function makeGraph(scene){let data = {nodes:[],links:[]}; const graph = {scene(){return scene;}, camera(){return {fov:60};}, graphData(next){if(arguments.length){data = next; return graph;} return data;}, refresh(){return graph;}}; for (const name of ['enableNodeDrag','cooldownTicks','nodeId','nodeRelSize','nodeLabel','nodeColor','nodeVal','linkLabel','linkOpacity','linkColor','linkWidth','onNodeClick','numDimensions','d3AlphaDecay','d3VelocityDecay','cameraPosition','width','height']) graph[name] = () => graph; return graph;}
 function selectedNodeHalos(scene){return scene.children.filter(obj => obj.name === 'selected-node-halo' || (obj.userData && obj.userData.role === 'selected-node-halo'));}
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -928,7 +929,7 @@ async function flushSummarySearch(){for(let i=0;i<8;i++) await Promise.resolve()
     def test_track_summary_source_uses_next_cursor_and_load_more_without_unbounded_list(self):
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                source = (REPO_ROOT / package / 'frameworks/explorer/assets/app.js').read_text(encoding='utf-8')
+                source = (explorer_app_script(REPO_ROOT / package / 'frameworks/explorer/assets/app.js')).read_text(encoding='utf-8')
                 self.assertIn("params.set('cursor',cursor)", source)
                 self.assertIn("Load more tracks", source)
                 self.assertIn("Showing ${tracks.length} of ${total}", source)
@@ -978,7 +979,7 @@ global.fetch = async path => {
   assert(!tracks.children.some(child => child.tagName === 'NAV'), 'load more navigation disappears at end');
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -1025,7 +1026,7 @@ global.fetch = async path => {
   assert(tracks.innerText.includes('Showing 1 of 1'));
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -1046,7 +1047,7 @@ assert.deepStrictEqual(metadata.children.map(n=>n.textContent), ['Title: Song','
 assert(!metadata.children.some(n=>n.tag==='details' || n.tag==='h4'));
 assert.strictEqual(app.renderTrackMetadata({}).children[0].textContent,'No embedded textual metadata found');
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -1112,7 +1113,7 @@ assert(!text.includes('selected mood'), text);
 assert(!text.includes('sample-relative'), text);
 assert(!text.includes('Missing: no mood'), text);
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -1431,7 +1432,7 @@ assert(!fetches.some(path => path.startsWith('/api/candidates')), 'removed list 
 assert(detail.children.some(child => child.textContent.includes('Current Track')), 'detail renders even when candidates are unavailable');
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => {console.error(error); process.exit(1);});
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -1808,11 +1809,11 @@ assert(!rendered.includes('Graph key / status'), rendered);
 assert(!rendered.includes('Color relative to this library'), rendered);
 """
         if shutil.which('node'):
-            for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
                 with self.subTest(app=app):
                     run_node_script(self, script, str(app))
         else:
-            for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+            for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
                 source = app.read_text(encoding='utf-8')
                 initial_source = source[source.index('function renderInitialDetail'):source.index('function fieldDisplay')]
                 self.assertNotIn('Graph key / status', initial_source)
@@ -1921,7 +1922,7 @@ assert.deepStrictEqual(app.graphDimensions({clientWidth: 534, clientHeight: 520,
 
 
     def test_browser_startup_source_leaves_sidebar_empty_until_search(self):
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 refresh_source = source[source.index('async function refresh()'):source.index('function trackTitle')]
@@ -2093,7 +2094,7 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
   await button.onclick();
   assert.deepStrictEqual(requests.filter(path => path.includes('m3u')),
     ['/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&duration_minutes=45&min_key_strength=0.5']);""")
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, app)
 
@@ -2117,7 +2118,7 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
   assert.deepStrictEqual(requests.filter(path => path.includes('m3u')), [
     '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.7',
     '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&harmonic=off']);""")
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, app)
 
@@ -2141,7 +2142,7 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
   assert.deepStrictEqual(requests.filter(path => path.includes('m3u')), [
     '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5',
     '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5&arc=peak&mood=relaxing']);""")
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, app)
 
@@ -2176,12 +2177,12 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
     '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5&arc=rise&energy_high=0.7',
     '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5&arc=rise&energy_low=0.2&energy_high=0.7',
     '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128&count=10&min_key_strength=0.5']);""")
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, app)
 
     def test_mirrored_browser_assets_advertise_explicit_m3u_download_without_startup_fetch(self):
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 self.assertIn('download-m3u', source, 'mirrored Explorer assets must expose an explicit Download M3U button')
@@ -2197,7 +2198,7 @@ const graph = {positioned: [], edges: [], unpositioned: [], available_moods: [],
         Node-backed tests below exercise the same contract through loadGraph's
         public test seam when Node is available.
         """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 start = source.index('async function loadGraph()')
@@ -2246,7 +2247,7 @@ assert.deepStrictEqual(compactModel.unpositioned, verboseModel.unpositioned);
 assert.deepStrictEqual(app.applyMoodGraphFilters(compactModel,{bpmMin:130,genres:['jazz']}).nodes.map(n=>n.id), ['b']);
 assert.throws(() => app.normalizeMoodAxisGraphDto({dto_version:'mood-axis-graph-compact-v999', nodes:[], links:[]}), /unknown|unsupported|dto/i);
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
@@ -2287,7 +2288,7 @@ global.fetch = async path => {
   assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a']);
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
 """
-        for app in (APP_JS, REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js'):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 

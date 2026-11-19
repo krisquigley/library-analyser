@@ -9,9 +9,10 @@ import os
 import shutil
 import subprocess
 import unittest
+from tests.support.explorer_app_bundle import explorer_app_script
 
 ROOT = Path(__file__).resolve().parents[2]
-ASSETS = tuple(ROOT / package / "frameworks/explorer/assets/app.js"
+ASSETS = tuple(explorer_app_script(ROOT / package / "frameworks/explorer/assets/app.js")
                for package in ("music_explorer", "music_analyzer"))
 NODE = os.environ.get("EXPLORER_TEST_NODE") or shutil.which("node") or "/tmp/node-host-v24"
 
@@ -168,7 +169,7 @@ class SelectionDetailRaceTests(unittest.TestCase):
         if not Path(NODE).is_file():
             self.fail(f"Node prerequisite unavailable: {NODE}")
         for asset in ASSETS:
-            with self.subTest(asset=str(asset.relative_to(ROOT)), scenario=name):
+            with self.subTest(asset=str(asset), scenario=name):
                 script = HARNESS + "\n(async()=>{\n" + SCENARIOS[name] + "\n})().catch(e=>{console.error(e);process.exitCode=1;});"
                 result = subprocess.run([NODE, "-e", script, str(asset)], capture_output=True,
                                         text=True, timeout=15, cwd=ROOT)

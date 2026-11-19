@@ -3,12 +3,13 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.support.explorer_app_bundle import explorer_app_script
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSET_PATHS = (
-    ROOT / 'music_explorer' / 'frameworks' / 'explorer' / 'assets' / 'app.js',
-    ROOT / 'music_analyzer' / 'frameworks' / 'explorer' / 'assets' / 'app.js',
+    explorer_app_script(ROOT / 'music_explorer' / 'frameworks' / 'explorer' / 'assets' / 'app.js'),
+    explorer_app_script(ROOT / 'music_analyzer' / 'frameworks' / 'explorer' / 'assets' / 'app.js'),
 )
 
 
@@ -76,6 +77,6 @@ assert.equal(afterStaleHalo.position.x, 70);
 '''
 
         for asset in ASSET_PATHS:
-            with self.subTest(asset=str(asset.relative_to(ROOT))):
+            with self.subTest(asset=str(asset)):
                 result = subprocess.run(['node', '-e', script, str(asset)], capture_output=True, text=True, cwd=ROOT)
                 self.assertEqual(result.returncode, 0, result.stderr)

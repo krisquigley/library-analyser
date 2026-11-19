@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import json
+import re
 from math import isfinite
 import threading
 from http import HTTPStatus
@@ -162,6 +163,11 @@ class ExplorerState:
             return self.snapshot_unlocked()
 
 
+_STATIC_ASSETS = frozenset({'/app.js', '/style.css', '/vendor/3d-force-graph/3d-force-graph.min.js',
+                            '/vendor/3d-force-graph/NOTICE'})
+# The browser app's ES modules (#146): lower-case, hyphenated names under /app/, never `..`.
+_APP_MODULE = re.compile(r'/app/(?:[a-z0-9-]+/)*[a-z0-9-]+\.js')
+
 def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765):
     repository = ReadOnlyExplorerSQLiteRepository(database_path)
     state = ExplorerState(repository)
@@ -204,7 +210,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             path = parsed.path
             if path == '/':
                 return self._asset('index.html', 'text/html; charset=utf-8')
-            if path in {'/app.js', '/style.css', '/vendor/3d-force-graph/3d-force-graph.min.js', '/vendor/3d-force-graph/NOTICE'}:
+            if path in _STATIC_ASSETS or _APP_MODULE.fullmatch(path):
                 return self._asset(path[1:], 'text/javascript; charset=utf-8' if path.endswith('.js') else ('text/plain; charset=utf-8' if path.endswith('NOTICE') else 'text/css; charset=utf-8'))
             if path == '/api/state':
                 return self._json(state.snapshot())
@@ -299,9 +305,10 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             return data
 
         def _asset(self, name, content_type):
-            if name not in {'index.html', 'app.js', 'style.css', 'vendor/3d-force-graph/3d-force-graph.min.js', 'vendor/3d-force-graph/NOTICE'}:
+            asset = resources.files('music_explorer.frameworks.explorer.assets').joinpath(name)
+            if not (name == 'index.html' or '/' + name in _STATIC_ASSETS or _APP_MODULE.fullmatch('/' + name)) or not asset.is_file():
                 return self._json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
-            text = resources.files('music_explorer.frameworks.explorer.assets').joinpath(name).read_text(encoding='utf-8')
+            text = asset.read_text(encoding='utf-8')
             payload = text.encode('utf-8')
             self.send_response(HTTPStatus.OK)
             self.send_header('Content-Type', content_type)

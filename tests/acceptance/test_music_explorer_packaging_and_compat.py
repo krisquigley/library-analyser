@@ -21,12 +21,16 @@ class MusicExplorerPackagingAndCompatibilityTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         analyzer_assets = root / 'music_analyzer/frameworks/explorer/assets'
         standalone_assets = root / 'music_explorer/frameworks/explorer/assets'
-        for name in ['app.js', 'index.html', 'style.css']:
+        def tree(root):
+            # #146: the whole tree, including the browser app's modules, file for file.
+            return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob('*')
+                    if path.is_file() and '__pycache__' not in path.parts}
+
+        standalone, analyzer = tree(standalone_assets), tree(analyzer_assets)
+        self.assertEqual(sorted(standalone), sorted(analyzer))
+        for name in standalone:
             with self.subTest(asset=name):
-                self.assertEqual(
-                    analyzer_assets.joinpath(name).read_text(encoding='utf-8'),
-                    standalone_assets.joinpath(name).read_text(encoding='utf-8'),
-                )
+                self.assertEqual(standalone[name], analyzer[name])
 
     def test_legacy_analyzer_cli_documents_compatibility_route(self):
         result = subprocess.run(
@@ -55,6 +59,10 @@ class MusicExplorerPackagingAndCompatibilityTests(unittest.TestCase):
                 entry_points = wheel_archive.read('music_analyzer-0.1.0.dist-info/entry_points.txt').decode('utf-8')
         self.assertIn('music_explorer/frameworks/explorer/assets/app.js', listing)
         self.assertIn('music_explorer/frameworks/explorer/assets/style.css', listing)
+        for package in ('music_explorer', 'music_analyzer'):
+            for module in ('app/domain/playlist-recipe.js', 'app/adapters/gateways/playlist-download-query.js'):
+                self.assertIn(f'{package}/frameworks/explorer/assets/{module}', listing)
+            self.assertNotIn(f'{package}/frameworks/explorer/assets/app/package.json', listing)
         self.assertIn('music_explorer/frameworks/explorer/assets/vendor/3d-force-graph/3d-force-graph.min.js', listing)
         self.assertIn('music-exporer = music_explorer.frameworks.cli.main:main', entry_points)
 
