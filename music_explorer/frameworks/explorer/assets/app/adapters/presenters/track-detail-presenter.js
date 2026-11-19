@@ -16,6 +16,14 @@ export function trackDetailViewModel(detail) {
     fields: Object.entries(detail.fields || {}).map(([name, field]) => detailFieldViewModel(name, field))};
 }
 
+export function trackDetailLoadingViewModel() {
+  return {status: 'Loading current track detail…'};
+}
+
+export function trackDetailFailureViewModel(failure) {
+  return {alert: 'Unable to load current track detail: ' + (failure && failure.message ? failure.message : String(failure))};
+}
+
 export function detailFieldViewModel(name, field) {
   if (field.manual_text != null) {
     return {name, items: [{text: `Manual override: ${field.manual_text} (${field.typed_override_status || 'unresolved'}; automatic evidence not displayed)`}]};

@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {requirePort} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/port.js';
-import {EXPLORER_API, MOOD_GRAPHS, PLAYLIST_DOWNLOADS, TRACK_SEARCHES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/explorer-api.js';
+import {EXPLORER_API, MOOD_GRAPHS, PLAYLIST_DOWNLOADS, SELECTIONS, TRACK_SEARCHES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/explorer-api.js';
 import {EVENT_BUS} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/event-bus.js';
 import {PLAYLIST_FILE} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/playlist-file.js';
 import {GRAPH_SESSION} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/graph-session.js';
@@ -10,7 +10,9 @@ import {TRACK_SEARCH_SESSION} from '../../../../../music_explorer/frameworks/exp
 import {CLOCK, DELAYS, FRAMES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/clock.js';
 
 test('the ports name the operations their adapters provide', () => {
-  assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'loadMoodGraph', 'searchTracks']);
+  assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'loadMoodGraph', 'searchTracks', 'chooseCurrentTrack', 'applyHistory',
+    'loadTrackDetail', 'loadLibraryState']);
+  assert.deepEqual(SELECTIONS.operations, ['chooseCurrentTrack', 'applyHistory', 'loadTrackDetail', 'loadLibraryState']);
   assert.deepEqual([TRACK_SEARCHES.name, TRACK_SEARCHES.operations], ['ExplorerApi', ['searchTracks']]);
   assert.deepEqual([PLAYLIST_DOWNLOADS.name, PLAYLIST_DOWNLOADS.operations], ['ExplorerApi', ['downloadPlaylist']]);
   assert.deepEqual([MOOD_GRAPHS.name, MOOD_GRAPHS.operations], ['ExplorerApi', ['loadMoodGraph']]);

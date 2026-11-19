@@ -161,7 +161,7 @@ const afterA=cameraSnapshot();
 const originalFetch=context.fetch;
 let resolveReset;
 context.fetch=(path,options)=>path==='/api/reset'?new Promise(resolve=>{resolveReset=resolve;}):originalFetch(path,options);
-const pending=run("applyHistorySelection('/api/reset')");
+const pending=run("applyHistorySelection('reset')");
 advance(120); advance(900);
 assert.deepEqual(cameraSnapshot(),afterA,'reset intent cancels A while its POST is still pending');
 authoritativeSnapshot={current_track_id:null,history:[],selection_epoch:1};

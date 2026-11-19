@@ -1,4 +1,4 @@
-// The ExplorerApi port over fetch (#146). A refusal's JSON {error} body is read for its message (#149, #152, #155).
+// The ExplorerApi port over fetch (#146). A refusal's JSON {error} body is read for its message (#149, #152, #155, #158).
 
 import {playlistDownloadQuery} from './playlist-download-query.js';
 
@@ -7,6 +7,7 @@ const DEFAULT_PLAYLIST_TYPE = 'audio/x-mpegurl;charset=utf-8';
 const MOOD_GRAPH_CONTRACT = 'v3';
 // The track list shows 100 rows a page: an owner decision (UI100).
 const TRACK_PAGE_SIZE = '100';
+const HISTORY_ACTIONS = Object.freeze(['undo', 'reset']);
 
 export function fetchExplorerApi(fetchResource) {
   return Object.freeze({
@@ -32,7 +33,28 @@ export function fetchExplorerApi(fetchResource) {
       const page = await response.json();
       return {tracks: page.tracks || [], metadata: page.metadata || {}, nextCursor: page.next_cursor || null};
     },
+    async chooseCurrentTrack({trackId, selectionToken, selectionEpoch, clientId}) {
+      const body = JSON.stringify({track_id: trackId, selection_token: selectionToken, selection_epoch: selectionEpoch,
+        selection_client_id: clientId});
+      return answer(await fetchResource('/api/current', {method: 'POST', headers: {'Content-Type': 'application/json'}, body}),
+        'Track selection failed');
+    },
+    async applyHistory(action) {
+      if (!HISTORY_ACTIONS.includes(action)) throw new Error(`not a history action: ${action}`);
+      return answer(await fetchResource(`/api/${action}`, {method: 'POST'}), 'History request failed');
+    },
+    async loadTrackDetail(trackId) {
+      return answer(await fetchResource('/api/tracks/' + encodeURIComponent(trackId)), 'Track detail request failed');
+    },
+    async loadLibraryState() {
+      return answer(await fetchResource('/api/state'), 'Library state request failed');
+    },
   });
+}
+
+async function answer(response, fallback) {
+  if (!response.ok) throw new Error(refusalMessage(response, await response.text(), fallback));
+  return response.json();
 }
 
 function trackSearchPath(query, cursor) {

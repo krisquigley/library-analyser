@@ -10,12 +10,12 @@ const RECIPE = playlistRecipe({startTrackId: 'track-start', bpmMin: '120', bpmMa
 
 function response({ok = true, body = '', headers = {}}) {
   const lowered = Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
-  return {ok, text: async () => body, headers: {get: name => lowered[name.toLowerCase()] ?? null}};
+  return {ok, text: async () => body, json: async () => JSON.parse(body), headers: {get: name => lowered[name.toLowerCase()] ?? null}};
 }
 
 function gatewayAnswering(answer) {
   const requests = [];
-  const api = fetchExplorerApi(async path => { requests.push(path); return answer; });
+  const api = fetchExplorerApi(async (path, options) => { requests.push(options ? [path, options] : path); return answer; });
   return {api, requests};
 }
 
@@ -101,4 +101,39 @@ test('a refused track search fails with the server message, not its JSON (#155)'
   await assert.rejects(api.searchTracks({query: 'a', cursor: null}), {message: 'Explorer request failed'});
   const empty = gatewayAnswering(response({ok: false, body: ''}));
   await assert.rejects(empty.api.searchTracks({query: 'a', cursor: null}), {message: 'Track search failed'});
+});
+
+const REFUSAL = response({ok: false, body: '{"error": "Unknown track"}', headers: {'Content-Type': 'application/json'}});
+
+test('choosing the current track posts the selection with its ticket and returns the new state', async () => {
+  const {api, requests} = gatewayAnswering(response({body: '{"current_track_id": "t1", "selection_epoch": 4}'}));
+  const state = await api.chooseCurrentTrack({trackId: 't1', selectionToken: 7, selectionEpoch: 3, clientId: 'tab-1'});
+  assert.deepEqual(state, {current_track_id: 't1', selection_epoch: 4});
+  assert.deepEqual(requests, [['/api/current', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: '{"track_id":"t1","selection_token":7,"selection_epoch":3,"selection_client_id":"tab-1"}'}]]);
+});
+
+test('undo and reset post to their own endpoint, and nothing else is a history action', async () => {
+  const {api, requests} = gatewayAnswering(response({body: '{"current_track_id": null}'}));
+  assert.deepEqual(await api.applyHistory('undo'), {current_track_id: null});
+  await api.applyHistory('reset');
+  assert.deepEqual(requests, [['/api/undo', {method: 'POST'}], ['/api/reset', {method: 'POST'}]]);
+  await assert.rejects(api.applyHistory('tracks'), /not a history action: tracks/);
+});
+
+test('a track detail and the library state are read by GET', async () => {
+  const {api, requests} = gatewayAnswering(response({body: '{"fields": {}}'}));
+  assert.deepEqual(await api.loadTrackDetail('a/b c'), {fields: {}});
+  await api.loadLibraryState();
+  assert.deepEqual(requests, ['/api/tracks/a%2Fb%20c', '/api/state']);
+});
+
+test('refused selection, history, detail and state requests fail with the server message, not its JSON (#158)', async () => {
+  const {api} = gatewayAnswering(REFUSAL);
+  for (const request of [() => api.chooseCurrentTrack({trackId: 'x', selectionToken: 1, selectionEpoch: 0, clientId: 'c'}),
+    () => api.applyHistory('undo'), () => api.loadTrackDetail('x'), () => api.loadLibraryState()]) {
+    await assert.rejects(request(), {message: 'Unknown track'});
+  }
+  const plain = gatewayAnswering(response({ok: false, body: ''}));
+  await assert.rejects(plain.api.loadTrackDetail('x'), {message: 'Track detail request failed'});
 });
