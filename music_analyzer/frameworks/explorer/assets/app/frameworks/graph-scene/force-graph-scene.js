@@ -28,6 +28,22 @@ export function graphDimensions(element) {
   return {width, height};
 }
 
+export function fitGraphToElement(graph, element) {
+  const size = graphDimensions(element);
+  graph.width(size.width).height(size.height);
+  return size;
+}
+
+// The element, its panel and the window can each change the graph's room.
+export function observeElementResize(element, onResize) {
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(onResize);
+    observer.observe(element);
+    if (element.parentElement) observer.observe(element.parentElement);
+  }
+  if (typeof window !== 'undefined') window.addEventListener('resize', onResize);
+}
+
 export function graphContainer() {
   const existing = document.getElementById('graph3d');
   if (existing) return existing;
