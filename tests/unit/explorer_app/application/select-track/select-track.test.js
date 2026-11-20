@@ -267,3 +267,55 @@ test('an undo makes a detail still loading stale', async () => {
   await loading;
   assert.equal(types().length, before);
 });
+
+test('a choice answered after a reset cannot roll back the reset epoch, and the next choice carries it', async () => {
+  const {selection, calls, last, record} = harness({current: 'OLD', epoch: 7});
+  const chosen = selection.choose('A');
+  const choicePost = last('choose');
+  const reset = selection.rewind('reset');
+  last('history').resolve(snapshot(null, 8));
+  assert.equal(await reset, true);
+  choicePost.resolve(snapshot('A', 7));
+  await chosen;
+  assert.deepEqual([record().snapshot.current_track_id, record().epoch], [null, 8]);
+  selection.choose('B');
+  assert.equal(calls.at(-1).args[0].selectionEpoch, 8);
+});
+
+test('the library state arriving while an accepted choice loads its detail does not ask for it twice', async () => {
+  const {selection, calls, last} = harness();
+  const chosen = selection.choose('A');
+  last('choose').resolve(snapshot('A', 2));
+  await flush();
+  selection.reconcile(snapshot('A', 2));
+  const again = selection.loadDetail(selection.generation());
+  last('detail').resolve({handle: 'A'});
+  await Promise.all([chosen, again]);
+  assert.equal(calls.filter(call => call.name === 'detail').length, 1);
+});
+
+test('the library state arriving during an undo is ignored, and no detail is asked for until the undo answers', async () => {
+  const {selection, calls, types, record} = harness({current: 'A', epoch: 4});
+  selection.rewind('undo');
+  selection.reconcile(snapshot('OLD', 3));
+  await selection.loadDetail(selection.generation());
+  assert.equal(record().snapshot.current_track_id, 'A');
+  assert.ok(!types().includes('library-selection-changed'));
+  assert.deepEqual(calls.map(call => call.name), ['history']);
+});
+
+test('after a refused choice the library state restores the server selection, its detail and its epoch', async () => {
+  const {selection, calls, last, types, record} = harness({current: 'OLD', epoch: 7});
+  const chosen = selection.choose('A');
+  last('choose').reject(new Error('Unknown track'));
+  await chosen;
+  selection.reconcile(snapshot('OLD', 8));
+  assert.equal(record().snapshot.current_track_id, 'OLD');
+  assert.ok(types().includes('library-selection-changed'));
+  const loading = selection.loadDetail(selection.generation());
+  assert.deepEqual(calls.at(-1), {name: 'detail', args: ['OLD']});
+  last('detail').resolve({handle: 'OLD'});
+  await loading;
+  selection.choose('B');
+  assert.equal(calls.at(-1).args[0].selectionEpoch, 8);
+});
