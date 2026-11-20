@@ -200,6 +200,21 @@ class ChainedArcTests(unittest.TestCase):
         self.assertAlmostEqual(0.4 - 0.3 / 2, plan.target_after(_timed(('start', 500))))
 
 
+class TargetsAlongTests(unittest.TestCase):
+    # #138: the planned curve a preview plots against the energy actually placed.
+    def test_each_placed_track_has_the_target_it_was_chosen_for(self):
+        plan = _chain(('rise', 3), ('fall', 3), levels={'start': 0.3, 'b': 0.85})
+        targets = plan.targets_along(_walk('start', 'a', 'b', 'c'))
+
+        for actual, expected in zip(targets, (0.3, 0.6, 0.9, 0.6)):
+            self.assertAlmostEqual(expected, actual)
+        self.assertEqual(4, len(targets))
+
+    def test_the_start_track_s_target_is_where_the_first_arc_begins(self):
+        self.assertAlmostEqual(0.5, _plan('rise', {}).targets_along(_walk('start'))[0])
+        self.assertEqual((), _plan('rise', {}).targets_along(()))
+
+
 class EnergyPlanShapeTests(unittest.TestCase):
     def test_a_plan_has_at_least_one_arc(self):
         with self.assertRaisesRegex(ValueError, 'at least one arc'):

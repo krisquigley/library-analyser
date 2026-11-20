@@ -97,5 +97,11 @@ class TransitionTests(unittest.TestCase):
         self.assertAlmostEqual(0.7, score)
 
 
+    def test_a_bpm_step_is_smooth_within_the_tolerance_and_unknown_without_two_tempos(self):
+        # #138: what a preview shows for each transition.
+        self.assertEqual([True, False, False, None, None],
+                         [self.mixing.bpm_step_smooth(*bpms) for bpms in ((100, 106), (100, 107), (107, 100), (None, 120),
+                                                                          (0, 120))])
+
 if __name__ == '__main__':
     unittest.main()

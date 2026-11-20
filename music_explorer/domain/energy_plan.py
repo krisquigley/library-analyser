@@ -157,6 +157,13 @@ class EnergyPlan:
         position = min(max(self.timeline.position(place, spans[index], starts[anchor]), 0.0), 1.0)
         return self._arc_target(index, self._anchor_level(index, walk, starts, spans), position)
 
+    def targets_along(self, walk: Sequence) -> tuple[float, ...]:
+        """The target each placed track was chosen for; the start track's is where the first arc begins."""
+        if not walk:
+            return ()
+        start = self._arc_target(0, self._anchor_level(0, walk[:1], self.timeline.starts(walk[:1]), self._spans()), 0.0)
+        return (start,) + tuple(self.target_after(walk[:place]) for place in range(1, len(walk)))
+
     def miss(self, track_id: str, target: float) -> float:
         """How far `track_id` misses `target`, as a ranking adjustment."""
         level = self.levels.get(track_id)

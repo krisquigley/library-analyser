@@ -15,6 +15,7 @@ from music_explorer.application.dto.candidates import CandidateQuery, SelectionC
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
 from music_explorer.application.use_cases.download_playlist.download_playlist import GenerateBpmGraphM3UPlaylist
+from music_explorer.application.use_cases.preview_playlist.preview_playlist import PreviewPlaylist
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http, to_indexed_mood_axis_graph_http
 from music_explorer.interface_adapters.playlist_recipe_query import playlist_recipe_from_query
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection, ProjectionArtifactError
@@ -63,7 +64,7 @@ _REQUEST_ERRORS = frozenset({
 # Endpoints whose existing validation messages are fixed policy text authored in
 # the application/domain (candidate controls, mood selection, playlist export).
 # R1 keeps their 400 contract rather than redesigning those validation APIs.
-_POLICY_VALIDATION_PATHS = frozenset({'/api/candidates', '/api/mood-axis-graph', '/api/playlists/m3u'})
+_POLICY_VALIDATION_PATHS = frozenset({'/api/candidates', '/api/mood-axis-graph', '/api/playlists/m3u', '/api/playlists/preview'})
 
 
 def _request_integer(value):
@@ -246,6 +247,9 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 recipe = playlist_recipe_from_query(parse_qs(parsed.query, keep_blank_values=True))
                 result = GenerateBpmGraphM3UPlaylist(repository).execute(recipe)
                 return self._m3u(result.content, result.warning)
+            if path == '/api/playlists/preview':
+                recipe = playlist_recipe_from_query(parse_qs(parsed.query, keep_blank_values=True))
+                return self._json(_to_json(PreviewPlaylist(repository).execute(recipe)))
             if path == '/api/mood-axis-graph':
                 query = parse_qs(parsed.query)
                 contract, contract_error = _parse_mood_axis_graph_contract(parsed.query)
