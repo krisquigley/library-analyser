@@ -26,7 +26,7 @@ def present_integrity(report: IntegrityReport, as_json=False):
     lines = [
         'D3 offline integrity diagnostic — snapshot checks, not writer parity or a trust token.',
         f'report_version={report.report_version} coverage_revision={report.coverage_revision} required_scope_revision={report.required_scope_revision}',
-        'supported_schema_versions=6,7,8,9,10',
+        'supported_schema_versions=6,7,8,9,10,11',
         f'schema_version={report.schema_version} status={report.status} complete={str(report.complete).lower()} implemented_scope_complete={str(report.implemented_scope_complete).lower()}',
         f'stop_reason={report.stop_reason} exit={report.exit_code}',
     ]

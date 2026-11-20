@@ -108,7 +108,7 @@ class RetainedCase(unittest.TestCase):
 
 class RetainedControls(RetainedCase):
     def test_genuine_versions_and_transparent_wrapper_first(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version):
                 path = self.public(version)
                 observed = StageObservation()
@@ -183,7 +183,7 @@ class RetainedControls(RetainedCase):
 
 class RetainedPolicyTests(RetainedCase):
     def test_all_supported_versions_drain_every_physical_row(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version):
                 scan = SQLiteIntegrityScanner().scan(str(self.public(version)))
                 self.assert_exhausted(scan)

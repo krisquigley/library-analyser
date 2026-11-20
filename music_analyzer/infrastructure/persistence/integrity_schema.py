@@ -142,6 +142,16 @@ _EXPECTED_GRAPH_FEATURE_SCHEMA = {
 
 _EXPECTED_GRAPH_FEATURE_INDEXES = {('idx_graph_feature_evidence_one_current_per_track', 'index'), ('idx_graph_feature_evidence_run_id', 'index')}
 
+_EXPECTED_PLAYLIST_RECIPE_SCHEMA = {
+    'playlist_recipes': {
+        'columns': ((('name', 'TEXT', True, 1), ('recipe_json', 'TEXT', True, 0), ('format_version', 'INTEGER', True, 0),
+                     ('created_at', 'TEXT', True, 0), ('updated_at', 'TEXT', True, 0)),),
+        'foreign_keys': ((),),
+        'unique_indexes': (),
+        'checks': (('CHECK(format_version >= 1)',),),
+    },
+}
+
 _EXPECTED_VIEWS = {
     'active_tracks': (
         ('id', 'sha256', 'size'),

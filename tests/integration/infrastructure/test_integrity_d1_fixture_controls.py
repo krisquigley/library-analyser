@@ -24,7 +24,7 @@ from tests.integration.infrastructure.integrity_d1_public_fixture import (
 
 class IntegrityD1PublicFixtureControls(unittest.TestCase):
     def test_literal_supported_schemas_have_version_correct_objects(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 create_public_core_database(path, version)
@@ -43,14 +43,14 @@ class IntegrityD1PublicFixtureControls(unittest.TestCase):
                         self.assertEqual(bool(present), version >= first_version)
                     if version >= 7:
                         columns = tuple(row[1] for row in db.execute('PRAGMA table_info(graph_builds)'))
-                        self.assertEqual('source_revision' in columns, version == 10)
-                        self.assertEqual('attempt_revision' in columns, version == 10)
+                        self.assertEqual('source_revision' in columns, version >= 10)
+                        self.assertEqual('attempt_revision' in columns, version >= 10)
                     self.assertEqual(db.execute(
                         "SELECT count(*) FROM sqlite_master WHERE type='trigger'"
                     ).fetchone(), (0,))
 
     def test_all_core_rows_are_populated_with_matching_digest_and_audio(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 self.assertEqual(create_public_core_database(path, version), PUBLIC_TRACK_IDS)
@@ -68,7 +68,7 @@ class IntegrityD1PublicFixtureControls(unittest.TestCase):
                     self.assertEqual(db.execute('SELECT count(*) FROM active_locations').fetchone(), (2,))
 
     def test_existing_full_readers_accept_all_supported_fixtures_without_mutation(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 create_public_core_database(path, version)
@@ -81,7 +81,7 @@ class IntegrityD1PublicFixtureControls(unittest.TestCase):
                         self.assertEqual(path.read_bytes(), before)
 
     def test_tiny_physical_and_foreign_key_baseline_cursors_exhaust_healthy(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 create_public_core_database(path, version)
@@ -96,7 +96,7 @@ class IntegrityD1PublicFixtureControls(unittest.TestCase):
     def test_fixture_rejects_unsupported_versions_before_creating_a_database(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'not-created.sqlite'
-            for version in (5, 11):
+            for version in (5, 12):
                 with self.subTest(version=version), self.assertRaises(ValueError):
                     create_public_core_database(path, version)
                 self.assertFalse(path.exists())

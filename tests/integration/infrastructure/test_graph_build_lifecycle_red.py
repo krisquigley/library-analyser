@@ -80,7 +80,7 @@ class GraphBuildLifecycleRedTests(unittest.TestCase):
             SQLiteAnalysisRepository(str(path))
 
             with closing(sqlite3.connect(path)) as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 11)
                 sql = ' '.join(db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='graph_builds'").fetchone()[0].split())
                 self.assertIn("'building'", sql)
                 self.assertIn("'interrupted'", sql)
@@ -100,7 +100,7 @@ class GraphBuildLifecycleRedTests(unittest.TestCase):
             create_v6_candidate_database(path)
             SQLiteAnalysisRepository(str(path))
             with closing(sqlite3.connect(path)) as db, db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 11)
                 db.execute('''
                     INSERT INTO graph_builds(
                         id,status,detail,edge_count,sparse_k,source_fingerprint,source_revision,attempt_revision,
@@ -126,7 +126,7 @@ class GraphBuildLifecycleRedTests(unittest.TestCase):
             create_v6_candidate_database(path)
             repository = SQLiteAnalysisRepository(str(path))
             with closing(sqlite3.connect(path)) as db, db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 11)
                 db.execute('''
                     INSERT INTO graph_builds(
                         id,status,detail,edge_count,sparse_k,source_fingerprint,source_revision,attempt_revision,

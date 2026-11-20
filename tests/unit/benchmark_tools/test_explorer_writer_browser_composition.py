@@ -37,7 +37,7 @@ class WriterBrowserCompositionTests(unittest.TestCase):
                    return_value=failed_setup_attempt(TimeoutError())):
             report = collect(args, {'width': 1280, 'height': 720})
         self.assertEqual(report['scope'], 'public-synthetic-sqlite-browser')
-        self.assertEqual(report['fixture']['schema_version'], 10)
+        self.assertEqual(report['fixture']['schema_version'], 11)
         bridge = report['samples'][0]['detail_bridge']
         for key, value in bridge['fixture'].items():
             self.assertEqual(value, report['fixture'][key])

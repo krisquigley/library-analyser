@@ -68,7 +68,7 @@ class IntegrityD1InstalledControls(unittest.TestCase):
         return result
 
     def test_true6_to10_script_and_module_are_limited_without_target_mutation(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             path = self.root / f'public-v{version}.sqlite'
             create_public_core_database(path, version)
             before = path.read_bytes()

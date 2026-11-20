@@ -31,7 +31,7 @@ def real_invoke(argv):
 class D3bCLITests(CountedAssertions):
     def test_real_public_genuine_six_through_ten_are_clean_complete_zero(self):
         with tempfile.TemporaryDirectory() as root:
-            for version in range(6, 11):
+            for version in range(6, 12):
                 path = Path(root) / ('PRIVATE-public-v%d.sqlite' % version)
                 create_public_core_database(path, version)
                 for suffix in ([], ['--json']):

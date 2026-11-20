@@ -79,7 +79,7 @@ def create_public_warm_fixture(path):
     with closing(sqlite3.connect(path)) as db, db:
         db.execute("UPDATE graph_builds SET created_at='2026-01-01 00:00:00', "
                    "completed_at='2026-01-01 00:00:00'")
-        assert db.execute('PRAGMA user_version').fetchone() == (10,)
+        assert db.execute('PRAGMA user_version').fetchone() == (11,)
         identities = tuple(db.execute('SELECT track_id,run_id,is_current '
                                       'FROM graph_feature_evidence ORDER BY track_id,run_id'))
     return (first, second), identities
@@ -314,9 +314,10 @@ class WarmGraphReadSafetyControls(unittest.TestCase):
             }])
             # Public synthetic golden independently characterized at 0421f946;
             # protects against simultaneous reader/mapper drift, not just parity.
+            # Re-characterized for schema v11 (#139): only the body's schema_version changed.
             self.assertEqual(len(expected_body), 1647)
             self.assertEqual(hashlib.sha256(expected_body).hexdigest(),
-                             '5d62a632a8341ba144a7259758b6bfa1e19f532b74553fd4773c2016a2c2fa0b')
+                             '0bd302cd63b387545cadd6fa456dc59ffd520f16803fa739f4253e05c29d8196')
             before = path.read_bytes()
             for module, builder in MIRRORS:
                 with self.subTest(reader=module.__name__):

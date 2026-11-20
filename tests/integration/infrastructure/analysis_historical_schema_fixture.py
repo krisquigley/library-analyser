@@ -140,13 +140,19 @@ SCHEMA_OBJECTS = (
     (9, 'idx_graph_feature_evidence_run_id', """CREATE INDEX idx_graph_feature_evidence_run_id ON graph_feature_evidence(run_id)"""),
     (8, 'idx_graph_positioned_edges_source_track_id', """CREATE INDEX idx_graph_positioned_edges_source_track_id ON graph_positioned_edges(source_track_id)"""),
     (8, 'idx_graph_positioned_edges_target_track_id', """CREATE INDEX idx_graph_positioned_edges_target_track_id ON graph_positioned_edges(target_track_id)"""),
+    (11, 'playlist_recipes', """CREATE TABLE playlist_recipes(
+    name TEXT NOT NULL PRIMARY KEY,
+    recipe_json TEXT NOT NULL,
+    format_version INTEGER NOT NULL CHECK(format_version >= 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""),
 )
 
 
 def create_historical_schema(path, version):
     """Create a fresh real version-specific schema; never downgrade a v10 file."""
-    if version not in range(1, 11):
-        raise ValueError('Expected schema version 1 through 10')
+    if version not in range(1, 12):
+        raise ValueError('Expected schema version 1 through 11')
     with closing(sqlite3.connect(path)) as db:
         db.execute('PRAGMA foreign_keys=ON')
         for first_version, name, sql in SCHEMA_OBJECTS:

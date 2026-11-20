@@ -128,6 +128,7 @@ def _coalesced_duration(file, files, stored_audio=None):
 
 
 APPLICATION_ID = 0x4D414E41
+SCHEMA_VERSION = 11
 _COLUMNS = {
     'runs': ('id', 'location', 'status', 'detail', 'created_at'),
     'stages': ('run_id', 'stage', 'result'),
@@ -161,6 +162,15 @@ _POSITIONED_GRAPH_COLUMNS = {
 _GRAPH_FEATURE_COLUMNS = {
     'graph_feature_evidence': ('track_id', 'run_id', 'fingerprint', 'evidence_json', 'is_current', 'created_at'),
 }
+_PLAYLIST_RECIPE_COLUMNS = {
+    'playlist_recipes': ('name', 'recipe_json', 'format_version', 'created_at', 'updated_at'),
+}
+_PLAYLIST_RECIPES_TABLE = """CREATE TABLE playlist_recipes(
+    name TEXT NOT NULL PRIMARY KEY,
+    recipe_json TEXT NOT NULL,
+    format_version INTEGER NOT NULL CHECK(format_version >= 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
 
 
 class SQLiteAnalysisRepository:
@@ -182,7 +192,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if version >= 6:
                 self._validate_adopted_views(db)
@@ -240,7 +250,11 @@ class SQLiteAnalysisRepository:
                 self._validate(db, 9)
                 self._migrate_graph_builds_to_v10(db)
                 db.execute('PRAGMA user_version=10')
-            self._validate(db, 10)
+            if db.execute('PRAGMA user_version').fetchone()[0] == 10:
+                self._validate(db, 10)
+                db.execute(_PLAYLIST_RECIPES_TABLE)
+                db.execute('PRAGMA user_version=11')
+            self._validate(db, SCHEMA_VERSION)
 
     def _validate_adopted_views(self, db):
         # Adoption-only contract check, before historical migrations can write.
@@ -486,6 +500,8 @@ class SQLiteAnalysisRepository:
             columns_by_table = {**columns_by_table, **_POSITIONED_GRAPH_COLUMNS}
         if version >= 9:
             columns_by_table = {**columns_by_table, **_GRAPH_FEATURE_COLUMNS}
+        if version >= 11:
+            columns_by_table = {**columns_by_table, **_PLAYLIST_RECIPE_COLUMNS}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         expected = {(name, 'table') for name in columns_by_table}
         if version >= 6:
@@ -734,14 +750,14 @@ class SQLiteAnalysisRepository:
     def _transaction(self):
         with self._connection() as db:
             db.execute('BEGIN IMMEDIATE')
-            self._validate(db, 10)
+            self._validate(db, SCHEMA_VERSION)
             yield db
 
     @contextmanager
     def _read_transaction(self):
         with self._connection() as db:
             db.execute('BEGIN')
-            self._validate(db, 10)
+            self._validate(db, SCHEMA_VERSION)
             yield db
 
     def source_revision(self) -> str:
@@ -1181,7 +1197,7 @@ class SQLiteAnalysisRepository:
             db.execute('BEGIN IMMEDIATE' if immediate else 'BEGIN')
             identity = db.execute('PRAGMA application_id').fetchone()[0]
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if identity != APPLICATION_ID or version != 10:
+            if identity != APPLICATION_ID or version != SCHEMA_VERSION:
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             yield db
 

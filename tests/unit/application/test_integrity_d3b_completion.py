@@ -81,7 +81,7 @@ class CountedAssertions(unittest.TestCase):
 
 class D3bCompletionTests(CountedAssertions):
     def test_full_exact_all_versions_clean_zero_final_d3_and_legacy_na(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             scan = completed_scan(version)
             report = execute(scan)
             with self.subTest(version=version):
@@ -193,7 +193,7 @@ class D3bFakePortControls(CountedAssertions):
             with self.subTest(case=index): self.assert_sanitized(variant)
 
     def test_counterfeit_na_and_prerequisites_rejected_controls(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             scan = completed_scan(version)
             owners = ('schema', 'metadata', 'retained_stages', 'sqlite_physical', 'sqlite_foreign_keys')
             owners += (() if version == 6 else ('current_graph', 'historical_graph'))

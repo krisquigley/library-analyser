@@ -12,7 +12,7 @@ from tests.integration.infrastructure.integrity_d1_public_fixture import create_
 
 class IntegrityD1Compatibility(unittest.TestCase):
     def test_literal_supported_versions_are_recognized_without_certification(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 create_public_core_database(path, version)
@@ -35,7 +35,7 @@ class IntegrityD1Compatibility(unittest.TestCase):
             self.assertEqual([f.code for f in result.findings], ['application_id_mismatch'])
 
     def test_unsupported_literal_versions_do_not_echo_version(self):
-        for version in (5, 11):
+        for version in (5, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 create_public_core_database(path, 6)
@@ -83,7 +83,7 @@ def remove_track_digest_unique(path):
 
 class IntegrityD1Schema(unittest.TestCase):
     def test_true_supported_schema_completes_schema_check(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 create_public_core_database(path, version)
@@ -214,7 +214,7 @@ class IntegrityD1SchemaFixtureControls(unittest.TestCase):
 
 class IntegrityD1Core(unittest.TestCase):
     def test_all_public_track_and_audio_rows_complete(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 create_public_core_database(path, version)

@@ -64,7 +64,7 @@ def inspect_fixture(path):
             db.execute('BEGIN')
             application_id = db.execute('PRAGMA application_id').fetchone()[0]
             schema_version = db.execute('PRAGMA user_version').fetchone()[0]
-            if application_id != _APPLICATION_ID or schema_version != 10:
+            if application_id != _APPLICATION_ID or schema_version != 11:
                 raise ValueError(_INVALID_FIXTURE)
             integrity_rows = db.execute('PRAGMA integrity_check').fetchall()
             foreign_keys = db.execute('PRAGMA foreign_key_check').fetchall()
