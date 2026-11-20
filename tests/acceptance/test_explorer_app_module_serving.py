@@ -33,9 +33,16 @@ class ExplorerAppModuleServingTests(unittest.TestCase):
             self.assertEqual('text/javascript', response.headers.get_content_type())
             self.assertEqual(expected, response.read().decode('utf-8'))
 
-    def test_the_index_loads_the_app_as_a_module(self):
+    def test_the_index_loads_the_app_from_its_composition_root(self):
         with urlopen(self.base + '/', timeout=5) as response:
-            self.assertIn('<script type="module" src="/app.js"></script>', response.read().decode('utf-8'))
+            self.assertIn('<script type="module" src="/app/main/main.js"></script>', response.read().decode('utf-8'))
+        with urlopen(self.base + '/app/main/main.js', timeout=5) as response:
+            self.assertEqual('text/javascript', response.headers.get_content_type())
+
+    def test_the_old_single_script_is_gone(self):
+        with self.assertRaises(HTTPError) as raised:
+            urlopen(self.base + '/app.js', timeout=5)
+        self.assertEqual(404, raised.exception.code)
 
     def test_anything_else_under_app_is_not_found(self):
         for path in ('/app/domain/missing.js', '/app/package.json', '/app/domain/Playlist-Recipe.JS',

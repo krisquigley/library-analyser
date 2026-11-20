@@ -1,6 +1,6 @@
 """Test-only bridge from the Explorer browser app's ES modules to one classic script (#146).
 
-The browser loads `app.js` as an ES module and follows its imports. Many
+The browser loads `app/main/main.js` as an ES module and follows its imports. Many
 acceptance tests instead evaluate the app as a single classic script in a Node
 `vm` context and reach into its top-level names. Until each feature has moved
 into the layered modules (and its tests with it), this bundle keeps them running
@@ -43,8 +43,9 @@ def bundle_explorer_app(entry: Path) -> str:
 def explorer_app_script(entry: Path) -> Path:
     """The bundle written to a temporary file, for tests that pass a script path to Node.
 
-    The other assets beside the entry (the vendored graph library, index.html,
-    style.css) are linked into the same directory, as tests find them by path.
+    The page's other assets (the vendored graph library, index.html, style.css),
+    found in the entry's nearest `assets` folder, are linked into the same
+    directory, as tests find them by path.
     The directory is named for the package, so a subtest still says which copy ran.
     """
     entry = Path(entry).resolve()
@@ -52,9 +53,10 @@ def explorer_app_script(entry: Path) -> Path:
         # The browser gate runs these modules against an installed wheel, without the source
         # tree; its own tests never evaluate the app, so only an import must not fail.
         return entry
-    package = entry.parents[3].name
+    assets = next((folder for folder in entry.parents if folder.name == 'assets'), entry.parent)
+    package = assets.parents[2].name
     directory = Path(tempfile.mkdtemp(prefix=f'explorer-app-{package}-'))
-    for sibling in entry.parent.iterdir():
+    for sibling in assets.iterdir():
         if sibling.name not in (entry.name, 'app', '__pycache__'):
             (directory / sibling.name).symlink_to(sibling)
     bundle = directory / entry.name

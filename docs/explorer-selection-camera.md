@@ -48,7 +48,7 @@ deferred 5k/20k performance work.
 
 Selection focus is an outward browser/ForceGraph concern. It does not change
 application/domain policy, graph topology, persistence, filters, or detail-fetch
-ownership. Both packaged `app.js` copies remain mirrored.
+ownership. Both packaged copies of the browser app remain mirrored.
 
 A selected positioned node is eligible only when it is visible in the current
 filtered graph and has finite display coordinates, including the origin. Initial

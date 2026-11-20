@@ -11,7 +11,7 @@ from tests.support.node_script import run_node_script
 from tests.support.explorer_app_bundle import explorer_app_script
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-APP_JS = explorer_app_script(REPO_ROOT / 'music_analyzer' / 'frameworks' / 'explorer' / 'assets' / 'app.js')
+APP_JS = explorer_app_script(REPO_ROOT / 'music_analyzer' / 'frameworks' / 'explorer' / 'assets' / 'app' / 'main' / 'main.js')
 
 
 from tests.support.three_track_graph_db import create_three_track_graph_db
@@ -79,7 +79,7 @@ class Explorer3DGraphAssetTests(unittest.TestCase):
         self.assertNotIn('.score-tick', style)
 
     def test_browser_startup_source_leaves_sidebar_empty_until_search(self):
-        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app/main/main.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 start = source.index('async function refresh()')
@@ -92,7 +92,7 @@ class Explorer3DGraphAssetTests(unittest.TestCase):
                 self.assertNotIn("'Load graph'", source)
 
     def test_mirrored_browser_assets_advertise_explicit_m3u_download_without_startup_fetch(self):
-        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
+        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app/main/main.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
                 self.assertIn('download-m3u', source, 'mirrored Explorer assets must expose an explicit Download M3U button')

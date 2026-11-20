@@ -168,7 +168,7 @@ class ExplorerState:
             return self.snapshot_unlocked()
 
 
-_STATIC_ASSETS = frozenset({'/app.js', '/style.css', '/vendor/3d-force-graph/3d-force-graph.min.js',
+_STATIC_ASSETS = frozenset({'/style.css', '/vendor/3d-force-graph/3d-force-graph.min.js',
                             '/vendor/3d-force-graph/NOTICE'})
 # The browser app's ES modules (#146): lower-case, hyphenated names under /app/, never `..`.
 _APP_MODULE = re.compile(r'/app/(?:[a-z0-9-]+/)*[a-z0-9-]+\.js')

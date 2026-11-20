@@ -1,7 +1,7 @@
 """Issue 70 PR6: real asset methods at the fake DOM/ForceGraph boundary.
 
 No rewritten selection/render methods and no WebGL or timing-performance claims.
-Each scenario gets a fresh VM and runs against both packaged app.js copies.
+Each scenario gets a fresh VM and runs against both packaged copies of the page.
 """
 import shutil
 import subprocess

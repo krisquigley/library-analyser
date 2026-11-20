@@ -11,7 +11,7 @@ from unittest import mock
 class MusicExplorerPackagingAndCompatibilityTests(unittest.TestCase):
     def test_explorer_assets_are_owned_by_new_installed_package(self):
         package_assets = resources.files('music_explorer.frameworks.explorer.assets')
-        app_js = package_assets.joinpath('app.js').read_text(encoding='utf-8')
+        app_js = package_assets.joinpath('app/main/main.js').read_text(encoding='utf-8')
         style = package_assets.joinpath('style.css').read_text(encoding='utf-8')
         self.assertIn('renderMoodStrip', app_js)
         self.assertIn('gauge', style.lower())
@@ -57,7 +57,7 @@ class MusicExplorerPackagingAndCompatibilityTests(unittest.TestCase):
             with zipfile.ZipFile(wheel) as wheel_archive:
                 listing = '\n'.join(wheel_archive.namelist())
                 entry_points = wheel_archive.read('music_analyzer-0.1.0.dist-info/entry_points.txt').decode('utf-8')
-        self.assertIn('music_explorer/frameworks/explorer/assets/app.js', listing)
+        self.assertIn('music_explorer/frameworks/explorer/assets/app/main/main.js', listing)
         self.assertIn('music_explorer/frameworks/explorer/assets/style.css', listing)
         for package in ('music_explorer', 'music_analyzer'):
             for module in ('app/domain/playlist-recipe.js', 'app/adapters/gateways/playlist-download-query.js'):

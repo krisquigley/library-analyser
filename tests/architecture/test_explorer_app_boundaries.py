@@ -4,8 +4,8 @@
 may import only from its own layer or an inner one, by a relative `.js` path
 that stays inside `app/`. Anything the checker cannot classify fails closed:
 an unknown layer, a bare or absolute specifier, a dynamic `import()`, or an
-import form the test bundle cannot flatten. The legacy `app.js`, which is
-moving into the layers, may import any layer, as `main/` may.
+import form the test bundle cannot flatten. `main/` is the composition root:
+the only layer that may import every other, and the page's entry.
 """
 from pathlib import Path, PurePosixPath
 import re
@@ -31,9 +31,8 @@ _NAMED_CLAUSE = re.compile(r'^\{\s*[\w$]+(?:\s*,\s*[\w$]+)*\s*,?\s*\}$', re.S)
 
 
 def violations(source: str, module: str) -> list[str]:
-    """Problems with `module` (a path relative to `app/`, or 'app.js' for the legacy entry)."""
-    module_path = PurePosixPath(module)
-    layer = 'main' if module == 'app.js' else module_path.parts[0]
+    """Problems with `module`, a path relative to `app/`."""
+    layer = PurePosixPath(module).parts[0]
     if layer not in ALLOWED_LAYERS:
         return [f'{module}: unknown layer {layer!r}']
     errors = []
@@ -44,7 +43,7 @@ def violations(source: str, module: str) -> list[str]:
     imports = list(_STATIC_IMPORT.finditer(source))
     if len(imports) != len(_ANY_IMPORT.findall(source)):
         errors.append(f'{module}: an import that is not `import {{…}} from \'…\'`')
-    base = PurePosixPath('app') if module == 'app.js' else PurePosixPath(module).parent
+    base = PurePosixPath(module).parent
     for match in imports:
         errors.extend(_import_violations(module, layer, base, match))
     return errors
@@ -56,10 +55,10 @@ def _import_violations(module, layer, base, match):
         return [f'{module}: {specifier}: only named imports without renaming']
     if not specifier.startswith(('./', '../')) or not specifier.endswith('.js'):
         return [f'{module}: {specifier}: must be a relative .js path']
-    target = _normalise(base / specifier) if module != 'app.js' else _normalise(PurePosixPath(specifier))
-    if target is None or (module == 'app.js' and target.parts[:1] != ('app',)):
+    target = _normalise(base / specifier)
+    if target is None:
         return [f'{module}: {specifier}: leaves app/']
-    target_layer = target.parts[1] if module == 'app.js' else target.parts[0]
+    target_layer = target.parts[0]
     if target_layer not in ALLOWED_LAYERS[layer]:
         return [f'{module}: {layer} may not import {target_layer} ({specifier})']
     return []
@@ -85,7 +84,7 @@ class ExplorerAppBoundaryRuleTests(unittest.TestCase):
             ('adapters/gateways/query.js', "import {\n  playlistRecipe,\n} from '../../domain/playlist-recipe.js';"),
             ('frameworks/views/panel.js', "import {query} from '../../adapters/gateways/query.js';"),
             ('main/start.js', "import {panel} from '../frameworks/views/panel.js';"),
-            ('app.js', "import {query} from './app/adapters/gateways/query.js';"),
+            ('main/main.js', "import {query} from '../adapters/gateways/query.js';"),
         ]
         for module, source in cases:
             with self.subTest(module=module):
@@ -114,7 +113,7 @@ class ExplorerAppBoundaryRuleTests(unittest.TestCase):
             ('domain/a.js', "import './b.js';"),
             ('domain/a.js', "export {x} from './b.js';"),
             ('domain/a.js', "const b = await import('./b.js');"),
-            ('app.js', "import {x} from './vendor/x.js';"),
+            ('main/main.js', "import {x} from '../../vendor/x.js';"),
         ]
         for module, source in cases:
             with self.subTest(module=module, source=source):
@@ -128,11 +127,15 @@ class ExplorerAppBoundaryTests(unittest.TestCase):
                 self.assertTrue((APP / layer).is_dir(), f'app/{layer}/ is missing')
 
     def test_every_module_respects_the_dependency_rule(self):
-        modules = {'app.js': ASSETS / 'app.js'}
-        modules.update({path.relative_to(APP).as_posix(): path for path in APP.rglob('*.js')})
+        modules = {path.relative_to(APP).as_posix(): path for path in APP.rglob('*.js')}
         errors = [error for module, path in sorted(modules.items())
                   for error in violations(path.read_text(encoding='utf-8'), module)]
         self.assertEqual([], errors)
+
+    def test_the_page_starts_from_main_and_no_script_lives_outside_the_layers(self):
+        self.assertTrue((APP / 'main/main.js').is_file())
+        self.assertIn('<script type="module" src="/app/main/main.js"></script>', (ASSETS / 'index.html').read_text(encoding='utf-8'))
+        self.assertEqual([], sorted(path.name for path in ASSETS.glob('*.js')))
 
     def test_only_javascript_modules_live_in_the_app_tree(self):
         others = [path.relative_to(APP).as_posix() for path in APP.rglob('*')

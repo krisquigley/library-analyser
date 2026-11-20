@@ -101,7 +101,7 @@ Rules for the structure:
 - **Data crossing a boundary is a simple data structure** defined by the inner layer. Never pass SQLite rows, HTTP requests or JSON payloads inward, or entities outward.
 - **New boundary = new directory.** Code in a directory that doesn't respect its boundary is in the wrong place: move it.
 - **Frameworks are details.** SQLite, Essentia, FFmpeg, the HTTP server and the browser UI are plugins to the business rules.
-- **Both Explorer asset copies stay identical.** `music_explorer/frameworks/explorer/assets/` and `music_analyzer/frameworks/explorer/assets/` ship the same `app.js`; change both, and tests run against both.
+- **Both Explorer asset copies stay identical.** `music_explorer/frameworks/explorer/assets/` and `music_analyzer/frameworks/explorer/assets/` ship the same browser app; change both, and tests run against both.
 
 ### The Explorer Browser App
 
@@ -125,7 +125,7 @@ music_explorer/frameworks/explorer/assets/app/
 - **No global mutable state.** State lives in domain entities and state machines, owned by the use cases. Views hold none.
 - Domain and application modules are tested in Node (`node:test`) without a DOM or a network. Their tests mirror `app/` under `tests/unit/explorer_app/`.
 - Both asset trees (`music_explorer/…/assets/` and `music_analyzer/…/assets/`) stay identical, file for file.
-- The existing single `app.js` moves onto this structure as it is touched; new browser features go into the layered modules.
+- `app/main/main.js` is the page's entry and composition root; no script lives outside the layers, and new browser features go into the layered modules.
 
 ### Code Standards (Clean Code)
 
