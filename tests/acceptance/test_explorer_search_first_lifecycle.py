@@ -94,7 +94,7 @@ class ExplorerSearchFirstLifecycleTests(unittest.TestCase):
         script = HARNESS + '\n(async()=>{\n' + scenario + '\n})().catch(e=>{console.error(e);process.exitCode=1;});'
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
+                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app/main/main.js')
                 result = subprocess.run([NODE, '-e', script, str(app)], cwd=ROOT,
                                         capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

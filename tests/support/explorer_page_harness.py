@@ -11,7 +11,7 @@ from tests.support.explorer_app_bundle import explorer_app_script
 
 ROOT = Path(__file__).resolve().parents[2]
 
-ASSETS = tuple(explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
+ASSETS = tuple(explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app/main/main.js')
                for package in ('music_explorer', 'music_analyzer'))
 
 

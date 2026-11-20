@@ -5,7 +5,7 @@ when nothing in the view changes. Under software rendering that continuous
 redraw starves the page's main thread (#86: a trivial in-page fetch took
 ~120 ms with a 1,000-node graph on screen versus ~0.7 ms with it hidden).
 
-These scenarios run the real packaged app.js against the fake ForceGraph
+These scenarios run the real packaged page against the fake ForceGraph
 boundary and observe only the public vendor animation API.
 """
 import shutil

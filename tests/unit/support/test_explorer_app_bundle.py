@@ -114,13 +114,13 @@ class ExplorerAppBundleTests(unittest.TestCase):
 
     def test_the_bundle_file_sits_beside_links_to_the_other_assets_in_a_directory_named_for_the_package(self):
         assets = self.root / 'music_explorer/frameworks/explorer/assets'
-        _write(assets, {'app.js': 'start();\n', 'index.html': '<html></html>', 'vendor/lib.js': 'lib();\n',
-                        'app/domain/a.js': 'export function a(){}\n'})
+        _write(assets, {'app/main/main.js': "import {a} from '../domain/a.js';\na();\n", 'index.html': '<html></html>',
+                        'vendor/lib.js': 'lib();\n', 'app/domain/a.js': 'export function a(){}\n'})
 
-        bundle = explorer_app_script(assets / 'app.js')
+        bundle = explorer_app_script(assets / 'app/main/main.js')
 
         self.assertTrue(bundle.parent.name.startswith('explorer-app-music_explorer-'))
-        self.assertEqual("'use strict';\nstart();\n", bundle.read_text(encoding='utf-8'))
+        self.assertEqual("'use strict';\nfunction a(){}\na();\n", bundle.read_text(encoding='utf-8'))
         self.assertEqual('lib();\n', (bundle.parent / 'vendor/lib.js').read_text(encoding='utf-8'))
         self.assertTrue((bundle.parent / 'index.html').is_file())
         self.assertFalse((bundle.parent / 'app').exists())

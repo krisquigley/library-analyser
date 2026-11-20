@@ -99,7 +99,7 @@ class GraphFailureAnnouncementTests(unittest.TestCase):
 """
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
+                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app/main/main.js')
                 result = subprocess.run([NODE, '-e', HARNESS + scenario, str(app)],
                                         cwd=ROOT, capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -159,7 +159,7 @@ class GraphFailureAnnouncementTests(unittest.TestCase):
             for field_id, value in (('m3u-count', '25'), ('m3u-bpm-min', '95'),
                                     ('m3u-bpm-max', '145')):
                 with self.subTest(package=package, field=field_id):
-                    app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
+                    app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app/main/main.js')
                     parameters = f'\nconst fieldId={field_id!r}, editedValue={value!r};\n'
                     result = subprocess.run([NODE, '-e', HARNESS + parameters + scenario, str(app)],
                                             cwd=ROOT, capture_output=True, text=True, timeout=15)
@@ -193,7 +193,7 @@ class GraphFailureAnnouncementTests(unittest.TestCase):
 """
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
+                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app/main/main.js')
                 result = subprocess.run([NODE, '-e', HARNESS + scenario, str(app)],
                                         cwd=ROOT, capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -288,7 +288,7 @@ class GraphFailureAnnouncementTests(unittest.TestCase):
 """
         for package in ('music_analyzer', 'music_explorer'):
             with self.subTest(package=package):
-                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')
+                app = explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app/main/main.js')
                 result = subprocess.run([NODE, '-e', HARNESS + scenario, str(app)],
                                         cwd=ROOT, capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
