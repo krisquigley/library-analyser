@@ -8,7 +8,8 @@ import {createInMemoryEventBus} from './app/frameworks/in-memory-event-bus.js';
 import {createGraphRendering} from './app/application/render-graph/render-graph.js';
 import {forceGraphRenderer, graphViewPose, observeGraphInput} from './app/frameworks/graph-scene/force-graph-rendering.js';
 import {createSelectedNodeHalo, findSceneObject, graphObjectTrackId} from './app/frameworks/graph-scene/selected-node-halo.js';
-import {createCameraControlsWatch, setCameraFocusPose, settleCameraFocusInput, showCameraArcPose} from './app/frameworks/graph-scene/camera-focus-scene.js';
+import {createCameraControlsWatch, settleCameraFocusInput, showCameraArcPose} from './app/frameworks/graph-scene/camera-focus-scene.js';
+import {jumpCameraToPickedNode, mountedPickedNode, pickedTrackId} from './app/frameworks/graph-scene/graph-pick.js';
 import {configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, graphContainer, graphDimensions, selectedTrackNodeSize} from './app/frameworks/graph-scene/force-graph-scene.js';
 import {playlistDownloadView} from './app/frameworks/views/playlist-download-view.js';
 import {displayNumber} from './app/domain/display-number.js';
@@ -36,7 +37,7 @@ import {moodMarkDescription, moodStripViewModel} from './app/adapters/presenters
 import {moodStripView} from './app/frameworks/views/mood-strip-view.js';
 import {graphCameraFrame} from './app/domain/camera-frame.js';
 import {graphAxisSpec, graphColorLegend, graphRelatednessLegend, linkLabel, nodeLabel, relatednessLinkAlpha, relatednessLinkColor} from './app/adapters/presenters/graph-scene-presenter.js';
-import {cameraArcPose, cameraFocusArc, cameraViewDirection, focusProgress, pickedNodePose, selectionFocusPose} from './app/domain/camera-arc.js';
+import {cameraArcPose, cameraFocusArc, cameraViewDirection, focusProgress, selectionFocusPose} from './app/domain/camera-arc.js';
 import {createCameraFocus} from './app/application/focus-camera/focus-camera.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
@@ -308,30 +309,14 @@ function animateCameraFocus(graph,position,target){
 }
 // Graph picks own the view immediately; server acceptance still owns detail.
 function selectGraphNode(picked){
-  const id=picked?.id;
-  if(typeof id!=='string' || !id) return;
+  const id=pickedTrackId(picked);
+  if(id===null) return;
   cancelCameraFocus();
   cameraFocus.request(null);
-  // A replacement can be visible-but-not-mounted during loadGraph's frame gap.
-  const node=visibleGraph.nodes.some(n=>n.id===id)
-    ?graphDataMount.current().nodes.find(n=>n.id===id):null;
-  if(forceGraph && node){
-    try {
-      const controls=forceGraph.controls(), from=forceGraph.cameraPosition();
-      const pose=pickedNodePose({x:node.fx,y:node.fy,z:node.fz},{cameraPosition:from,orbitTarget:controls.target});
-      if(pose){
-        observeCameraFocusControls(forceGraph);
-        settleCameraFocusInput(forceGraph);
-        setCameraFocusPose(forceGraph,pose.position,pose.target);
-      }
-    } catch(error) {
-      // An unavailable camera must not prevent a valid track selection.
-      cancelCameraFocus();
-    }
-  }
+  const node=mountedPickedNode(id,{visible:visibleGraph.nodes,mounted:graphDataMount.current().nodes});
+  if(forceGraph && node && jumpCameraToPickedNode(forceGraph,node,cameraControlsWatch)==='failed') cancelCameraFocus();
   return setCurrent(id,{focusCamera:false});
 }
-// Accepted selection gets one focus after initial framing, never a per-frame camera lock.
 function focusPendingCameraSelection(graphRendered=false){
   // Existing instances still show the old layout while a replacement loads.
   // Only renderMap may consume focus before the load state becomes ready.

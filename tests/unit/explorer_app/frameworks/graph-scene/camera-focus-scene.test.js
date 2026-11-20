@@ -125,3 +125,9 @@ test('the listener starting to move the camera claims the view, and new controls
   second.controls.dispatchEvent({type: 'start'});
   assert.deepEqual(heard, ['replaced', 'claimed', 'replaced', 'claimed', 'replaced']);
 });
+
+test('a graph without controls still takes a focus pose', () => {
+  const written = [];
+  setCameraFocusPose({cameraPosition: (...args) => written.push(args)}, {x: 1, y: 2, z: 3}, {x: 0, y: 0, z: 0});
+  assert.deepEqual(written, [[{x: 1, y: 2, z: 3}, {x: 0, y: 0, z: 0}, 0]]);
+});
