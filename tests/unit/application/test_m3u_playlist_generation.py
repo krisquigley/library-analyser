@@ -89,8 +89,8 @@ def _edge(a, b, score):
 
 def _load_use_case_class():
     candidates = (
-        ('music_explorer.application.use_cases.playlists', 'GenerateBpmGraphM3U'),
-        ('music_explorer.application.use_cases.playlists', 'GenerateBpmGraphM3UPlaylist'),
+        ('music_explorer.application.use_cases.download_playlist.download_playlist', 'GenerateBpmGraphM3U'),
+        ('music_explorer.application.use_cases.download_playlist.download_playlist', 'GenerateBpmGraphM3UPlaylist'),
         ('music_explorer.application.use_cases.explorer', 'GenerateBpmGraphM3U'),
         ('music_explorer.application.use_cases.explorer', 'GenerateBpmGraphM3UPlaylist'),
     )

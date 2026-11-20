@@ -6,7 +6,7 @@ refactor, on the seeded synthetic library.
 import unittest
 
 from music_explorer.application.dto.playlists import EnergyArcRequest, PlaylistRecipe
-from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
+from music_explorer.application.use_cases.download_playlist.download_playlist import GenerateBpmGraphM3UPlaylist
 from tests.support.synthetic_playlist_library import synthetic_playlist_library
 
 RECIPES = {
