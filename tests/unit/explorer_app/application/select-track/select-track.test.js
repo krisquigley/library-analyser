@@ -184,3 +184,86 @@ test('a use case refuses adapters that do not implement its ports', () => {
   assert.throws(() => createTrackSelection({explorerApi: {}, selectionTickets: {}, selectionSession: {}, eventBus: {}}),
     /ExplorerApi needs chooseCurrentTrack/);
 });
+
+test('a choice the server rejects in favour of another track selects and loads that track instead', async () => {
+  const {selection, calls, last, published, record} = harness();
+  const chosen = selection.choose('A');
+  last('choose').resolve({current_track_id: 'B', selection_epoch: 2, selection_accepted: false});
+  await flush();
+  assert.equal(record().snapshot.current_track_id, 'B');
+  assert.deepEqual(calls.filter(call => call.name === 'detail').map(call => call.args), [['B']]);
+  last('detail').resolve({handle: 'B'});
+  await chosen;
+  assert.deepEqual(published.find(event => event.type === 'selection-accepted').trackId, 'B');
+});
+
+test('after the library state confirms the same track, overlapping detail loads still share one request', async () => {
+  const {selection, calls, last} = harness({current: 'A'});
+  selection.reconcile(snapshot('A', 2));
+  const generation = selection.generation();
+  const loads = [selection.loadDetail(generation), selection.loadDetail(generation)];
+  last('detail').resolve({handle: 'A'});
+  await Promise.all(loads);
+  assert.equal(calls.filter(call => call.name === 'detail').length, 1);
+});
+
+async function failedDetail() {
+  const context = harness({current: 'A'});
+  const loading = context.selection.loadDetail(context.selection.generation());
+  context.last('detail').reject(new Error('Gone'));
+  await loading;
+  return context;
+}
+
+test('a retry answering after a newer choice changes nothing, whether it succeeds or fails', async () => {
+  for (const settle of ['resolve', 'reject']) {
+    const {selection, last, published, record} = await failedDetail();
+    const retry = selection.retryDetail();
+    const retried = last('detail');
+    const chosen = selection.choose('B');
+    last('choose').resolve(snapshot('B'));
+    await flush();
+    const before = published.length;
+    retried[settle](settle === 'resolve' ? {handle: 'A'} : new Error('late'));
+    await retry;
+    assert.equal(published.length, before, settle);
+    assert.equal(record().snapshot.current_track_id, 'B', settle);
+    last('detail').resolve({handle: 'B'});
+    await chosen;
+  }
+});
+
+test('a refusal of an earlier choice says nothing once a later choice is in flight', async () => {
+  const {selection, last, types, record} = harness();
+  const first = selection.choose('A');
+  const firstPost = last('choose');
+  selection.choose('B');
+  firstPost.reject(new Error('Unknown track'));
+  await first;
+  assert.ok(!types().includes('selection-refused'));
+  assert.equal(record().snapshot.current_track_id, 'B');
+  assert.equal(record().selectionState, 'choosing');
+});
+
+test('a stale detail failure is dropped too', async () => {
+  const {selection, last, types} = harness({current: 'A'});
+  const loading = selection.loadDetail(selection.generation());
+  const detail = last('detail');
+  selection.choose('B');
+  detail.reject(new Error('Gone'));
+  await loading;
+  assert.ok(!types().includes('track-detail-failed'));
+});
+
+test('an undo makes a detail still loading stale', async () => {
+  const {selection, last, types} = harness({current: 'A'});
+  const loading = selection.loadDetail(selection.generation());
+  const detail = last('detail');
+  const undo = selection.rewind('undo');
+  last('history').resolve(snapshot('PRIOR', 3));
+  await undo;
+  const before = types().length;
+  detail.resolve({handle: 'A'});
+  await loading;
+  assert.equal(types().length, before);
+});

@@ -10,6 +10,13 @@ export function trackDetailView() {
   }
 
   // The panel may be absent while the page is still being built; there is then nothing to say.
+  function showNone() {
+    const root = document.getElementById('detail');
+    if (!root) return;
+    root.setAttribute('aria-busy', 'false');
+    root.replaceChildren();
+  }
+
   function showLoading({status}) {
     const root = document.getElementById('detail');
     if (!root) return;
@@ -58,7 +65,7 @@ export function trackDetailView() {
     return section;
   }
 
-  return Object.freeze({show, showLoading, showFailure, field, gauge, metadata});
+  return Object.freeze({show, showNone, showLoading, showFailure, field, gauge, metadata});
 }
 
 function detailElement(tag, properties) {

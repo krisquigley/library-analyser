@@ -108,7 +108,7 @@ selectionEvents.subscribe('selection-rewinding',()=>{selectionViewIntent=invalid
 selectionEvents.subscribe('selection-accepted',event=>{if(selectionViewIntent!==cameraFocus.viewIntent()) return; cancelCameraFocus(); cameraFocus.request(event.focusCamera?event.trackId:null);});
 selectionEvents.subscribe('selection-refused',event=>renderDetailError(event.failure));
 selectionEvents.subscribe('library-selection-changed',event=>{cancelCameraFocus(); cameraFocus.request(event.trackId);});
-selectionEvents.subscribe('no-track-selected',()=>{updateSelectedTrackVisuals(); renderInitialDetail(graphModel);});
+selectionEvents.subscribe('no-track-selected',()=>{updateSelectedTrackVisuals(); renderInitialDetail();});
 selectionEvents.subscribe('track-detail-loading',()=>{updateSelectedTrackVisuals(); renderDetailLoading();});
 selectionEvents.subscribe('track-detail-loaded',event=>{renderDetail(event.detail); updateSelectedTrackVisuals();});
 selectionEvents.subscribe('track-detail-failed',event=>renderDetailError(event.failure,()=>trackSelection.retryDetail()));
@@ -202,7 +202,7 @@ function loadGraph(){return graphLoad.load();}
 function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphModel.availableMoods||[]}));}
 function downloadM3UPlaylist(){return playlistDownload.download(state.current_track_id);}
 function applyCurrentGraphFilters(){return graphLoad.applyFilters();}
-function renderInitialDetail(model){const root=document.getElementById('detail'); if(!root) return; root.setAttribute('aria-busy','false'); root.replaceChildren();}
+function renderInitialDetail(){trackDetail.showNone();}
 function fieldDisplay(field){return fieldValues(field);}
 function detailGauge(label,value){return trackDetail.gauge(scoreGaugeViewModel(label,value));}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}

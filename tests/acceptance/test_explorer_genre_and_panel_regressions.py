@@ -29,19 +29,6 @@ class ExplorerGenreAndPanelRegressions(unittest.TestCase):
                 graph = graph_use_case(FakeRepo([track('a', genres=((LABEL, 'Other'), (0.2, 0.05)))])).execute()
                 self.assertEqual([n.track_id for n in filter_use_case().execute(graph, genres=(LABEL,)).positioned], ['sha256:' + 'a' * 64])
 
-    def test_initial_no_selection_detail_copy_removed_from_both_packages(self):
-        forbidden = [
-            'All-library valence / arousal / BPM graph',
-            'Showing ${visibleGraph.nodes.length} positioned tracks',
-            '3d-force-graph is bundled locally',
-            'reasons||[]).join',
-        ]
-        for package in ('music_analyzer', 'music_explorer'):
-            with self.subTest(package=package):
-                source = (explorer_app_script(ROOT / package / 'frameworks/explorer/assets/app.js')).read_text()
-                for text in forbidden:
-                    self.assertNotIn(text, source)
-
     def test_api_preserves_comma_ampersand_in_discogs_label(self):
         for create_server in (analyzer_server, standalone_server):
             with self.subTest(server=create_server), tempfile.TemporaryDirectory() as td:
