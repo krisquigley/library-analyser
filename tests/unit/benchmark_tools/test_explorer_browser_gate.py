@@ -6,8 +6,10 @@ supervisor (memory, swap, OOM group, network, core dumps, scratch bounds) or
 a fallback to Docker fails here.
 """
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools import explorer_browser_gate as gate
 
@@ -146,6 +148,50 @@ class SummaryTests(unittest.TestCase):
     def test_container_blocked_marker_is_respected(self):
         summary = gate.summarize(self.evidence({'blocked.txt': 'wheelhouse checksum'}), ['a'])
         self.assertEqual((summary['status'], summary['reason']), ('BLOCKED', 'wheelhouse checksum'))
+
+
+
+class WheelSourceTests(unittest.TestCase):
+    """#209: the gate's wheel is built from the files git sees, never from an ignored build cache."""
+
+    def test_the_wheel_source_is_what_git_sees_including_uncommitted_edits(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo, copy = Path(temp) / 'repo', Path(temp) / 'copy'
+            repo.mkdir()
+            git = lambda *args: subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+            git('init', '-q')
+            (repo / '.gitignore').write_text('build/\n')
+            (repo / 'pkg').mkdir()
+            (repo / 'pkg/kept.js').write_text('kept')
+            (repo / 'pkg/deleted.js').write_text('deleted')
+            git('add', '.')
+            git('-c', 'user.email=gate@example.invalid', '-c', 'user.name=gate', 'commit', '-q', '-m', 'synthetic')
+            (repo / 'pkg/deleted.js').unlink()
+            (repo / 'pkg/kept.js').write_text('edited, not committed')
+            (repo / 'pkg/new.js').write_text('new, not committed')
+            (repo / 'build/lib/pkg').mkdir(parents=True)
+            (repo / 'build/lib/pkg/deleted.js').write_text('stale cache')
+
+            gate.copy_wheel_source(repo, copy)
+
+            files = sorted(path.relative_to(copy).as_posix() for path in copy.rglob('*') if path.is_file())
+            self.assertEqual(['.gitignore', 'pkg/kept.js', 'pkg/new.js'], files)
+            self.assertEqual('edited, not committed', (copy / 'pkg/kept.js').read_text())
+
+    def test_prepare_builds_the_wheel_from_that_copy(self):
+        built = []
+        with tempfile.TemporaryDirectory() as temp:
+            def run(command, **_):
+                if 'wheel' in command:
+                    built.append(Path(command[-1]))
+                    self.assertTrue((Path(command[-1]) / 'pyproject.toml').is_file(), 'the copy exists while building')
+                return subprocess.CompletedProcess(command, 0)
+            with patch.object(gate.subprocess, 'run', side_effect=run), \
+                    patch.object(gate, 'copy_wheel_source', lambda repo, destination: (destination / 'pyproject.toml').write_text('')):
+                gate.prepare(Path(temp) / 'repo', Path(temp) / 'wheelhouse')
+        self.assertEqual(1, len(built))
+        self.assertNotEqual(Path(temp) / 'repo', built[0], 'never the working tree itself')
+        self.assertFalse(built[0].exists(), 'the copy is removed afterwards')
 
 
 if __name__ == '__main__':

@@ -27,6 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 
 PLAYWRIGHT_VERSION = '1.65.2'
@@ -175,10 +176,29 @@ def provenance(config):
             'wheelhouse_sha256sums': _read(config.wheelhouse / 'SHA256SUMS').splitlines()}
 
 
+def copy_wheel_source(repo, destination):
+    """Copy the files git sees (tracked, or untracked and not ignored) as they stand, uncommitted edits included.
+
+    Setuptools reuses an in-tree build/ cache and never removes files deleted from the source, so building the
+    working tree itself could ship a deleted file in the evidence wheel (#209).
+    """
+    listed = subprocess.run(['git', '-C', str(repo), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+                            capture_output=True, check=True).stdout.decode('utf-8')
+    for name in sorted(set(filter(None, listed.split('\0')))):
+        source = Path(repo) / name
+        if not source.is_file():
+            continue  # Deleted from the working tree, though still in the index.
+        target = Path(destination) / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
 def prepare(repo, wheelhouse):
     wheelhouse.mkdir(parents=True, exist_ok=False)
     pip = [sys.executable, '-m', 'pip']
-    subprocess.run([*pip, 'wheel', '--no-deps', '--wheel-dir', str(wheelhouse), str(repo)], check=True)
+    with tempfile.TemporaryDirectory(prefix='explorer-gate-source-') as source:
+        copy_wheel_source(repo, Path(source))
+        subprocess.run([*pip, 'wheel', '--no-deps', '--wheel-dir', str(wheelhouse), source], check=True)
     subprocess.run([*pip, 'download', '--only-binary=:all:', '--implementation', 'cp',
                     '--python-version', IMAGE_PYTHON, '--platform', 'manylinux2014_x86_64',
                     '--dest', str(wheelhouse), f'playwright=={PLAYWRIGHT_VERSION}', 'mutagen>=1.47,<2'],
