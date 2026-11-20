@@ -20,7 +20,7 @@ EDGE_COLUMNS = ('source_track_id,target_track_id,score,distance,supported_group_
 STAMP = '2025-01-01 00:00:00'
 
 
-def create_public_graph_database(path, version=10):
+def create_public_graph_database(path, version=11):
     identities = create_public_core_database(path, version)
     with closing(sqlite3.connect(path)) as db:
         db.execute('PRAGMA foreign_keys=ON')
@@ -47,7 +47,7 @@ def create_public_graph_database(path, version=10):
             for build, current in ((OLD_BUILD, 0), (CURRENT_BUILD, 1)):
                 columns = 'id,status,detail,edge_count,sparse_k,source_fingerprint,distance_policy_version,neighbour_policy_version,is_current,created_at,completed_at'
                 values = (build, 'completed', '', 1, 1, 'public-source', DISTANCE_POLICY, NEIGHBOUR_POLICY, current, STAMP, STAMP)
-                if version == 10:
+                if version >= 10:
                     columns += ',source_revision,attempt_revision'
                     values += ('public-source-revision', 'public-attempt-revision')
                 db.execute(f'INSERT INTO graph_builds({columns}) VALUES({",".join("?" for _ in values)})', values)

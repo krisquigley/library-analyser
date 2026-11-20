@@ -79,7 +79,7 @@ class AnalysisSchemaAdoptionRedTests(unittest.TestCase):
         ), (), True))
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA application_id').fetchone(), (APPLICATION_ID,))
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (10,))
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (11,))
             self.assertEqual(tuple(db.execute('SELECT id FROM active_tracks ORDER BY id')),
                              tuple((track_id,) for track_id in self.track_ids))
 
@@ -192,7 +192,7 @@ class AnalysisHistoricalSchemaCompatibilityTests(unittest.TestCase):
         return track_ids
 
     def test_real_supported_versions_migrate_without_losing_historical_rows(self):
-        for version in range(1, 11):
+        for version in range(1, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / 'historical.sqlite'
                 track_ids = self._seed_historical_database(path, version)
@@ -205,23 +205,23 @@ class AnalysisHistoricalSchemaCompatibilityTests(unittest.TestCase):
                     self.assertEqual(bool(has_catalogue), version >= 2)
                     if version >= 7:
                         build_columns = tuple(row[1] for row in db.execute('PRAGMA table_info(graph_builds)'))
-                        self.assertEqual('source_revision' in build_columns, version == 10)
-                        self.assertEqual('attempt_revision' in build_columns, version == 10)
+                        self.assertEqual('source_revision' in build_columns, version >= 10)
+                        self.assertEqual('attempt_revision' in build_columns, version >= 10)
 
                 SQLiteAnalysisRepository(str(path))
 
                 after = logical_snapshot(path)
-                self.assertEqual(after[:2], ((APPLICATION_ID,), (10,)))
+                self.assertEqual(after[:2], ((APPLICATION_ID,), (11,)))
                 migrated_rows = dict(after[3])
                 for table, rows in before[3]:
                     self.assertEqual(migrated_rows[table], rows, table)
-                if version == 10:
+                if version == 11:
                     self.assertEqual(after, before)
                 for reader in READERS:
                     self.assertEqual(reader(str(path)).track_ids(), track_ids if version >= 6 else ())
 
     def test_both_readers_accept_real_supported_versions_without_migration(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / 'historical.sqlite'
                 track_ids = self._seed_historical_database(path, version)

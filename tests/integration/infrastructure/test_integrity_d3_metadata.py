@@ -226,7 +226,7 @@ class MetadataControls(MetadataCase):
 
 class MetadataTests(MetadataCase):
     def test_every_supported_version_includes_inactive_metadata(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version): self.exhausted(SQLiteIntegrityScanner().scan(str(self.public(version))))
 
     def test_empty_duplicate_keys_and_strings_are_preserved(self):

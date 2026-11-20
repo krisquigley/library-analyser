@@ -86,7 +86,7 @@ def _valid(scan):
             or scan.stop_reason not in STOPS):
         return False
     version = scan.schema_version
-    if version is not None and (type(version) is not int or version not in (6, 7, 8, 9, 10)):
+    if version is not None and (type(version) is not int or version not in (6, 7, 8, 9, 10, 11)):
         return False
     if scan.supported != (version is not None):
         return False

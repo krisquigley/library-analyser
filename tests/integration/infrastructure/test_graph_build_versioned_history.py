@@ -125,7 +125,7 @@ class GraphBuildVersionedHistoryTests(unittest.TestCase):
                 for reader_type in (ReadOnlyExplorerSQLiteRepository, StandaloneReadOnlyExplorerSQLiteRepository):
                     reader = reader_type(str(case_path))
                     # Ordinary metadata consumes neither descriptors nor graph history.
-                    self.assertEqual(reader.metadata()['schema_version'], 10)
+                    self.assertEqual(reader.metadata()['schema_version'], 11)
                     # R1 still retains FULL validation at the graph read boundary.
                     with self.assertRaises(Exception):
                         reader.current_graph_edges()

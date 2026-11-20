@@ -56,7 +56,7 @@ class PublicHTTPDiagnosticProvenanceRedTests(unittest.TestCase):
         self.assertEqual(manifest['content_sha256'],
                          hashlib.sha256(canonical_json(unsigned)).hexdigest())
         self.assertEqual(manifest['source'], 'public-synthetic-sqlite')
-        self.assertEqual(manifest['schema_version'], 10)
+        self.assertEqual(manifest['schema_version'], 11)
         self.assertEqual(manifest['counts']['tracks'], 12)
         self.assertEqual(manifest['counts']['runs'], 24)
         self.assertEqual(manifest['graph']['source'], 'sqlite-backed')

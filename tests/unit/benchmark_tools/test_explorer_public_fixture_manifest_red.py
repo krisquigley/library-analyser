@@ -37,7 +37,7 @@ class PublicFixtureManifestRedTests(unittest.TestCase):
         with public_fixture(self) as fixture:
             manifest = fixture['manifest']
             self.assertEqual(manifest['source'], 'public-synthetic-sqlite')
-            self.assertEqual(manifest['schema_version'], 10)
+            self.assertEqual(manifest['schema_version'], 11)
             self.assertEqual(manifest['application_id'], 0x4D414E41)
             self.assertEqual(manifest['seed'], 70)
             self.assertEqual(manifest['track_count'], 12)

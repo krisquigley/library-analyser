@@ -114,7 +114,7 @@ class GraphObservation:
 
 class IntegrityD2GraphControls(unittest.TestCase):
     def test_true_versions_core_physical_fk_and_full_readers(self):
-        for version in range(6, 11):
+        for version in range(6, 12):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 identities = create_public_graph_database(path, version)
@@ -124,7 +124,7 @@ class IntegrityD2GraphControls(unittest.TestCase):
                     self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
                     if version >= 7:
                         columns = [row[1] for row in db.execute('PRAGMA table_info(graph_builds)')]
-                        self.assertEqual('source_revision' in columns, version == 10)
+                        self.assertEqual('source_revision' in columns, version >= 10)
                         self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges').fetchone(), (2,))
                 scan = SQLiteIntegrityScanner().scan(str(path))
                 for name in ('compatibility', 'schema', 'core_rows'):

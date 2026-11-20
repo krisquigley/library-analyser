@@ -55,7 +55,7 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
             SQLiteAnalysisRepository(str(path))
 
             with closing(sqlite3.connect(path)) as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 11)
                 self.assertEqual(
                     db.execute('SELECT id,sha256,size FROM tracks').fetchone(),
                     ('sha256:' + 'a' * 64, 'a' * 64, 123),
@@ -148,7 +148,7 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
                 self.assertEqual(db.execute('SELECT count(*) FROM graph_build_edges WHERE build_id=?', (failed_id,)).fetchone()[0], 0)
 
             # The read-only mirror accepts the strict versioned schema and row invariants.
-            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).metadata()['schema_version'], 10)
+            self.assertEqual(ReadOnlyExplorerSQLiteRepository(str(path)).metadata()['schema_version'], 11)
 
     def test_failed_replacement_rolls_back_new_build_and_leaves_previous_current_snapshot_intact(self):
         with tempfile.TemporaryDirectory() as td:
@@ -235,7 +235,7 @@ class GraphBuildSchemaMigrationTests(unittest.TestCase):
 
             reader = ReadOnlyExplorerSQLiteRepository(str(path))
             # Ordinary metadata does not consume graph history or current pointers.
-            self.assertEqual(reader.metadata()['schema_version'], 10)
+            self.assertEqual(reader.metadata()['schema_version'], 11)
             # R1 retains this graph invariant at the FULL graph read boundary.
             with self.assertRaises(AnalysisError):
                 reader.current_graph_edges()
