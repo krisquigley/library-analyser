@@ -46,3 +46,8 @@ test('hover labels escape text and give each axis its raw value and scale', () =
   assert.match(nodeLabel({...hovered, moodScore: null}), /Selected mood score unavailable$/);
   assert.equal(linkLabel({score: 0.5, explanation: 'tempo & key'}), 'score 0.5; tempo &amp; key; groups 0');
 });
+
+test('a negative relatedness score is as faint as none, and the legend says what opacity means', () => {
+  assert.equal(relatednessLinkAlpha({score: -2}), 0.18);
+  assert.match(graphRelatednessLegend(), /Link alpha reflects axis-independent relatedness strength.*higher-score links are more opaque/);
+});

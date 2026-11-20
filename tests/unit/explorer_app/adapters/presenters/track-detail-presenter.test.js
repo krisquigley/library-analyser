@@ -71,3 +71,18 @@ test('the detail leaves out the reasons the evidence is provisional', () => {
   assert.deepEqual([detail.heading, detail.metadata.lines, detail.fields], ['Current Track', ['Title: A'], []]);
   assert.ok(!JSON.stringify(detail).includes('provisional') && !JSON.stringify(detail).includes('uncertainty'));
 });
+
+test('metadata is one flat list: tag aliases merge, the first of a repeated key wins, and markup stays text', () => {
+  const metadata = trackMetadataViewModel({common: [['title', 'Song'], ['album artist', 'Band']],
+    tags: [['TITLE', ['Other']], ['ALBUM_ARTIST', ['Other Band']], ['comment', ['<script>']], ['genre', ['Rock']], ['genre', ['Jazz']],
+      ['TRACKNUMBER', ['4']], ['TPE2', ['Other Band']]], warnings: ['diagnostic warning']});
+  assert.deepEqual(metadata, {lines: ['Title: Song', 'Album artist: Band', 'Comment: <script>', 'Genre: Rock', 'Track number: 4']});
+  assert.deepEqual(trackMetadataViewModel({}), {lines: ['No embedded textual metadata found']});
+});
+
+test('the current track shows no run diagnostics or graph key', () => {
+  const detail = trackDetailViewModel({handle: 'track-1', display_label: 'Alpha.flac', latest_run_status: 'completed',
+    available_locations: 1, reasons: ['ready'], warnings: ['diagnostic warning'], diagnostics: {graph: 'key'}, fields: {}});
+  assert.deepEqual(Object.keys(detail).sort(), ['fields', 'heading', 'metadata']);
+  assert.ok(!/completed|diagnostic|Display|graph/i.test(JSON.stringify(detail)), JSON.stringify(detail));
+});
