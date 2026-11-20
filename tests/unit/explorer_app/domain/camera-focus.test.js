@@ -2,7 +2,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CAMERA_FOCUS_STATES, CameraFocusTransitionError, cameraFocusState, nextCameraFocusState,
+  CAMERA_FOCUS_CANCEL_CAUSES, CAMERA_FOCUS_STATES, CameraFocusTransitionError, cameraFocusCancelCause, cameraFocusState,
+  nextCameraFocusState,
 } from '../../../../music_explorer/frameworks/explorer/assets/app/domain/camera-focus.js';
 
 test('the state is derived from what the camera is waiting for or doing', () => {
@@ -37,4 +38,14 @@ test('anything else is refused as a domain error', () => {
   assert.throws(() => nextCameraFocusState('idle', 'finish'), CameraFocusTransitionError);
   assert.throws(() => nextCameraFocusState('pending', 'next-frame'), /cannot next-frame while pending/);
   assert.throws(() => nextCameraFocusState('idle', 'skip'), CameraFocusTransitionError);
+});
+
+test('a cancelled focus always says why, from a fixed list of causes', () => {
+  assert.deepEqual(CAMERA_FOCUS_CANCEL_CAUSES, ['new-selection', 'new-focus', 'listener-orbit', 'controls-replaced',
+    'graph-reframed', 'graph-reloaded', 'graph-filtered', 'camera-failure']);
+  for (const cause of CAMERA_FOCUS_CANCEL_CAUSES) assert.equal(cameraFocusCancelCause(cause), cause);
+  for (const cause of [undefined, '', 'boredom']) {
+    assert.throws(() => cameraFocusCancelCause(cause), CameraFocusTransitionError);
+  }
+  assert.throws(() => cameraFocusCancelCause('boredom'), /A camera focus is not cancelled for: boredom/);
 });

@@ -2,7 +2,7 @@
 // it once it can show the track, and the arc runs frame by frame. The listener's own camera input claims the
 // view, which ends any request and arc. The scene's Three.js work and frame scheduling stay outside.
 
-import {cameraFocusState, nextCameraFocusState} from '../../domain/camera-focus.js';
+import {cameraFocusCancelCause, cameraFocusState, nextCameraFocusState} from '../../domain/camera-focus.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
 import {CAMERA_FOCUS_SESSION} from '../ports/camera-focus-session.js';
 import {requirePort} from '../ports/port.js';
@@ -18,14 +18,15 @@ export function createCameraFocus({focusSession, eventBus}) {
     focusSession.write(changes);
   }
 
-  function cancel() {
+  function cancel(cause) {
+    cameraFocusCancelCause(cause);
     const {frame, focusGeneration} = read();
     transition('cancel', {frame: null, focusGeneration: focusGeneration + 1});
-    if (frame != null) eventBus.publish(cameraFocusEvent('camera-focus-cancelled', {frame}));
+    if (frame != null) eventBus.publish(cameraFocusEvent('camera-focus-cancelled', {frame, cause}));
   }
 
-  function claimView() {
-    cancel();
+  function claimView(cause) {
+    cancel(cause);
     const viewIntent = read().viewIntent + 1;
     transition('claim-view', {viewIntent, pendingTrackId: null});
     eventBus.publish(cameraFocusEvent('camera-view-claimed', {viewIntent}));
@@ -33,7 +34,7 @@ export function createCameraFocus({focusSession, eventBus}) {
   }
 
   function request(trackId) {
-    cancel();
+    cancel('new-selection');
     transition('request', {pendingTrackId: trackId ?? null});
     if (trackId != null) eventBus.publish(cameraFocusEvent('camera-focus-requested', {trackId}));
   }
@@ -46,7 +47,7 @@ export function createCameraFocus({focusSession, eventBus}) {
   }
 
   function begin() {
-    cancel();
+    cancel('new-focus');
     const {focusGeneration} = read();
     eventBus.publish(cameraFocusEvent('camera-focus-started', {focusGeneration}));
     return focusGeneration;

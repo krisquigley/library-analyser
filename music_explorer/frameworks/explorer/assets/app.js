@@ -53,7 +53,7 @@ let graphAxes=null;
 const nodeHalo=createSelectedNodeHalo();
 const graphDataMount=createGraphDataMount({onReplaced:()=>nodeHalo.clear()});
 // A new layout is framed at once; cancelling first keeps a focus arc from overwriting the frame.
-const graphFraming=createGraphFraming({onReframe:()=>cancelCameraFocus()});
+const graphFraming=createGraphFraming({onReframe:()=>cancelCameraFocus('graph-reframed')});
 let graphAxesAnimating=false;
 let pendingGraphAxisSpec=[];
 let selectedGraphControls=EMPTY_GRAPH_CONTROLS;
@@ -81,7 +81,7 @@ const renderingEvents=createInMemoryEventBus();
 const graphRendering=createGraphRendering({renderer:forceGraphRenderer(()=>forceGraph),eventBus:renderingEvents});
 const cameraEvents=createInMemoryEventBus();
 const cameraFocus=createCameraFocus({focusSession:legacyCameraFocusSession,eventBus:cameraEvents});
-const cameraControlsWatch=createCameraControlsWatch({onControlsReplaced:()=>cancelCameraFocus(),onViewClaimed:()=>invalidateCameraViewIntent()});
+const cameraControlsWatch=createCameraControlsWatch({onControlsReplaced:()=>cancelCameraFocus('controls-replaced'),onViewClaimed:()=>invalidateCameraViewIntent('listener-orbit')});
 cameraEvents.subscribe('camera-focus-cancelled',event=>{if(typeof cancelAnimationFrame==='function') cancelAnimationFrame(event.frame);});
 let loadingRefreshToken=0;
 let lastRefreshError=null;
@@ -100,12 +100,12 @@ const graphFilterControls=graphControlsView({onMoodChosen:mood=>graphControls.mo
 const graphStatusDisplay=graphStatusView({onReload:()=>loadGraph().catch(()=>{}),appendPlaylistControls:panel=>appendM3UDownloadControls(panel)});
 function showGraphLoadEvent(event){const status=presentGraphLoadEvent(event); if(status) graphLoadState={...graphLoadState,...status}; renderGraphLoadStatus();}
 graphEvents.subscribe('graph-controls-edited',event=>graphFilterControls.showValues(graphControlValuesViewModel(event.controls)));
-graphEvents.subscribe('graph-load-started',event=>{invalidateCameraViewIntent(); showGraphLoadEvent(event);});
+graphEvents.subscribe('graph-load-started',event=>{invalidateCameraViewIntent('graph-reloaded'); showGraphLoadEvent(event);});
 graphEvents.subscribe('graph-model-built',event=>{graphFilterControls.showOptions(graphControlOptionsViewModel(event.model,event.controls)); showGraphLoadEvent(event);});
 graphEvents.subscribe('graph-render-due',event=>renderMap(event.visible));
 graphEvents.subscribe('graph-ready',showGraphLoadEvent);
 graphEvents.subscribe('graph-load-failed',showGraphLoadEvent);
-graphEvents.subscribe('graph-filters-applied',event=>{invalidateCameraViewIntent(); if(event.shown) renderMap(event.visible); showGraphLoadEvent(event);});
+graphEvents.subscribe('graph-filters-applied',event=>{invalidateCameraViewIntent('graph-filtered'); if(event.shown) renderMap(event.visible); showGraphLoadEvent(event);});
 const trackSearchStore=Object.freeze({read:()=>trackSearchSession,write(changes){trackSearchSession={...trackSearchSession,...changes}; const {results,searchState}=trackSearchSession; trackSummaryPage={tracks:results.tracks,metadata:results.metadata,next_cursor:results.nextCursor,query:results.query,order:'title'}; trackSummaryStatus=searchState==='failed'?'error':searchState;}});
 const trackEvents=createInMemoryEventBus();
 const trackSearch=createTrackSearch({explorerApi,trackSession:trackSearchStore,clock:{wait:ms=>new Promise(resolve=>setTimeout(resolve,ms))},eventBus:trackEvents});
@@ -117,11 +117,11 @@ const legacySelectionSession=Object.freeze({read:()=>({snapshot:state,epoch:sele
 const selectionEvents=createInMemoryEventBus();
 const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession:legacySelectionSession,eventBus:selectionEvents});
 let selectionViewIntent=0;
-selectionEvents.subscribe('track-chosen',()=>{selectionViewIntent=invalidateCameraViewIntent(); renderDetailLoading(); updateSelectedTrackVisuals();});
-selectionEvents.subscribe('selection-rewinding',()=>{selectionViewIntent=invalidateCameraViewIntent(); renderDetailLoading();});
-selectionEvents.subscribe('selection-accepted',event=>{if(selectionViewIntent!==cameraFocus.viewIntent()) return; cancelCameraFocus(); cameraFocus.request(event.focusCamera?event.trackId:null);});
+selectionEvents.subscribe('track-chosen',()=>{selectionViewIntent=invalidateCameraViewIntent('new-selection'); renderDetailLoading(); updateSelectedTrackVisuals();});
+selectionEvents.subscribe('selection-rewinding',()=>{selectionViewIntent=invalidateCameraViewIntent('new-selection'); renderDetailLoading();});
+selectionEvents.subscribe('selection-accepted',event=>{if(selectionViewIntent!==cameraFocus.viewIntent()) return; cancelCameraFocus('new-selection'); cameraFocus.request(event.focusCamera?event.trackId:null);});
 selectionEvents.subscribe('selection-refused',event=>renderDetailError(event.failure));
-selectionEvents.subscribe('library-selection-changed',event=>{cancelCameraFocus(); cameraFocus.request(event.trackId);});
+selectionEvents.subscribe('library-selection-changed',event=>{cancelCameraFocus('new-selection'); cameraFocus.request(event.trackId);});
 selectionEvents.subscribe('no-track-selected',()=>{updateSelectedTrackVisuals(); renderInitialDetail();});
 selectionEvents.subscribe('track-detail-loading',()=>{updateSelectedTrackVisuals(); renderDetailLoading();});
 selectionEvents.subscribe('track-detail-loaded',event=>{renderDetail(event.detail); updateSelectedTrackVisuals();});
@@ -291,13 +291,13 @@ function animateGraphAxes(timestamp){
 }
 // View ownership outlives a POST or a deferred layout, independently of the RAF timeline.
 // Cancel through the page's own cancelCameraFocus first: the browser diagnostic observes cancellations there.
-function invalidateCameraViewIntent(){cancelCameraFocus(); return cameraFocus.claimView();}
+function invalidateCameraViewIntent(cause){cancelCameraFocus(cause); return cameraFocus.claimView(cause);}
 // Own the timeline: bundled cameraPosition's timed tweens have no public cancellation.
-function cancelCameraFocus(){cameraFocus.cancel();}
+function cancelCameraFocus(cause){cameraFocus.cancel(cause);}
 function observeCameraFocusControls(graph){cameraControlsWatch.observe(graph);}
 function animateCameraFocus(graph,position,target){
   observeCameraFocusControls(graph);
-  cancelCameraFocus();
+  cancelCameraFocus('new-focus');
   const generation=cameraFocus.begin();
   settleCameraFocusInput(graph);
   const camera=graph.camera();
@@ -316,10 +316,10 @@ function animateCameraFocus(graph,position,target){
 function selectGraphNode(picked){
   const id=pickedTrackId(picked);
   if(id===null) return;
-  cancelCameraFocus();
+  cancelCameraFocus('new-selection');
   cameraFocus.request(null);
   const node=mountedPickedNode(id,{visible:visibleGraph.nodes,mounted:graphDataMount.current().nodes});
-  if(forceGraph && node && jumpCameraToPickedNode(forceGraph,node,cameraControlsWatch)==='failed') cancelCameraFocus();
+  if(forceGraph && node && jumpCameraToPickedNode(forceGraph,node,cameraControlsWatch)==='failed') cancelCameraFocus('camera-failure');
   return setCurrent(id,{focusCamera:false});
 }
 function focusPendingCameraSelection(graphRendered=false){
@@ -344,7 +344,7 @@ function focusPendingCameraSelection(graphRendered=false){
     if(pose) animateCameraFocus(forceGraph,pose.position,pose.target);
   } catch(error) {
     // A camera adapter failure does not revoke an accepted selection.
-    cancelCameraFocus();
+    cancelCameraFocus('camera-failure');
   }
 }
 function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,state.current_track_id),moodStrip.width()));}
