@@ -41,6 +41,7 @@ import {TRACK_SELECTION_EVENT_TYPES} from './app/application/select-track/track-
 import {GRAPH_LOAD_EVENT_TYPES} from './app/application/load-graph/graph-load-events.js';
 import {GRAPH_RENDERING_EVENT_TYPES} from './app/application/render-graph/render-graph-events.js';
 import {installExplorerDiagnostics} from './app/frameworks/explorer-diagnostics.js';
+import {createGraphAxes} from './app/frameworks/graph-scene/graph-axes.js';
 import {createLibraryRefresh} from './app/application/refresh-library/refresh-library.js';
 import {LIBRARY_REFRESH_EVENT_TYPES} from './app/application/refresh-library/library-refresh-events.js';
 import {presentLibraryRefreshEvent} from './app/adapters/presenters/library-loading-presenter.js';
@@ -50,7 +51,7 @@ let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
 let forceGraph=null;
 let graphResizeObserver=null;
-let graphAxes=null;
+const graphAxes=createGraphAxes();
 const nodeHalo=createSelectedNodeHalo();
 const graphDataMount=createGraphDataMount({onReplaced:()=>nodeHalo.clear()});
 // A new layout is framed at once; cancelling first keeps a focus arc from overwriting the frame.
@@ -151,60 +152,13 @@ function renderDetail(detail){trackDetail.show(trackDetailViewModel(detail));}
 function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
 function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); graphRendering.wake(); return size;}
 function observeGraphResize(elem){if(graphResizeObserver||!elem) return; const resize=()=>updateGraphSize(elem,forceGraph); if(typeof ResizeObserver!=='undefined'){graphResizeObserver=new ResizeObserver(resize); graphResizeObserver.observe(elem); if(elem.parentElement) graphResizeObserver.observe(elem.parentElement);} if(typeof window!=='undefined') window.addEventListener('resize',resize);}
-function disposeGraphAxes(group){
-  if(!group) return;
-  group.parent.remove(group);
-  for(const mesh of group.children){mesh.geometry.dispose();mesh.material.dispose();}
-  if(group.labels) for(const label of group.labels) label.remove();
-}
 
 function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||(visibleGraph&&visibleGraph.nodes)||[],state.current_track_id);}
-// Vendor bundles THREE privately. Reuse constructors of its rendered node mesh, so
-// scene objects share that exact THREE instance without a second dependency/global.
-function syncGraphAxes(graph,spec,element){
-  const signature=JSON.stringify(spec);
-  if(graphAxes && graphAxes.graph===graph && graphAxes.signature===signature) return graphAxes.group;
-  const scene=graph.scene();
-  if(!spec.length){disposeGraphAxes(graphAxes?.group);graphAxes=null;return null;}
-  const sample=findSceneObject(scene,obj=>obj.__graphObjType==='node' && obj.geometry && obj.material);
-  if(!sample){disposeGraphAxes(graphAxes?.group);graphAxes=null;return null;} // Objects may arrive one frame after graphData().
-  disposeGraphAxes(graphAxes?.group);
-  const group=new scene.constructor();
-  group.name='mood-xyz-axes';group.labels=[];
-  for(const axis of spec){
-    const mesh=new sample.constructor(new sample.geometry.constructor(1,8,6),new sample.material.constructor({color:axis.color,transparent:true,opacity:0.8,depthWrite:false}));
-    mesh.name='axis-'+axis.key;
-    mesh.raycast=()=>{}; // Not a track/link and never eligible for graph picking.
-    const length=axis.end[axis.key]-axis.start[axis.key];
-    const center={...axis.start,[axis.key]:axis.start[axis.key]+length/2};
-    mesh.position.set(center.x,center.y,center.z);
-    mesh.scale.set(axis.key==='x'?length/2:0.65,axis.key==='y'?length/2:0.65,axis.key==='z'?length/2:0.65);
-    group.add(mesh);
-    if(element){
-      for(const [content,position] of [[axis.label,axis.end],['data '+axis.references.join('–'),axis.start]]){
-        const label=document.createElement('span');label.className='graph-axis-label';label.textContent=content;
-        label.style.color=axis.color;element.append(label);group.labels.push(label);
-        label.axisPosition=position;
-      }
-    }
-  }
-  scene.add(group);graphAxes={graph,signature,group};
-  return group;
-}
-function placeGraphAxisLabels(graph){
-  if(!graphAxes?.group.labels?.length) return;
-  const elem=document.getElementById('graph3d');
-  for(const label of graphAxes.group.labels){
-    const p=graph.graph2ScreenCoords(label.axisPosition.x,label.axisPosition.y,label.axisPosition.z);
-    label.style.transform=`translate(${p.x}px,${p.y}px) translate(-50%,-50%)`;
-    label.style.display=Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.x>=0&&p.y>=0&&p.x<elem.clientWidth&&p.y<elem.clientHeight?'':'none';
-  }
-}
 function animateGraphAxes(timestamp){
   if(forceGraph){
     graphRendering.viewObserved(graphViewPose(forceGraph));
     if(graphRendering.drawing()){
-      syncGraphAxes(forceGraph,pendingGraphAxisSpec,document.getElementById('graph3d'));placeGraphAxisLabels(forceGraph);syncSelectedNodeHalo(forceGraph,visibleGraph);
+      const viewport=document.getElementById('graph3d'); graphAxes.sync(forceGraph,pendingGraphAxisSpec,viewport); graphAxes.placeLabels(forceGraph,viewport); syncSelectedNodeHalo(forceGraph,visibleGraph);
       graphRendering.frameDrawn(Number.isFinite(timestamp)?timestamp:performance.now());
     }
   }
