@@ -27,6 +27,7 @@ function element(tag) {
   return {
     tagName: tag.toUpperCase(), id:'', children:[], attributes:{}, dataset:{},
     className:'', value:'', textContent:'', hidden:false, disabled:false,
+    get classList(){const node=this,names=()=>node.className.split(/\s+/).filter(Boolean);return {add(...a){node.className=[...new Set([...names(),...a])].join(' ');},remove(...r){node.className=names().filter(n=>!r.includes(n)).join(' ');},contains(n){return names().includes(n);}};},
     append(...nodes){this.children.push(...nodes);},
     replaceChildren(...nodes){this.children=[...nodes]; this.textContent='';},
     setAttribute(k,v){this.attributes[k]=String(v);},
@@ -43,7 +44,7 @@ function page(tracks=[],next_cursor=null){return {tracks,next_cursor,metadata:{t
 const fixtureTrack={handle:'result',title:'Matching title',artist:'Artist'};
 const roots={};
 for(const id of ['tracks','track-search','undo','reset','controls','detail','graph-load-status',
-                  'library-loading','loading-status','loading-error','loading-retry']) {
+                  'loading-surface','loading-status','loading-error','loading-retry']) {
   roots[id]=element(id==='track-search'?'input':id==='undo'||id==='reset'?'button':'div');
   roots[id].id=id;
 }

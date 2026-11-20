@@ -19,6 +19,7 @@ function element(tag) {
   return {
     tagName: tag.toUpperCase(), id:'', children:[], attributes:{}, dataset:{},
     className:'', value:'', textContent:'', hidden:false, disabled:false,
+    get classList(){const node=this,names=()=>node.className.split(/\s+/).filter(Boolean);return {add(...a){node.className=[...new Set([...names(),...a])].join(' ');},remove(...r){node.className=names().filter(n=>!r.includes(n)).join(' ');},contains(n){return names().includes(n);}};},
     getContext(){return canvasContext;},
     append(...nodes){this.children.push(...nodes);},
     replaceChildren(...nodes){this.children=[...nodes]; this.textContent='';},

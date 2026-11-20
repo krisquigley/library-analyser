@@ -6,7 +6,7 @@ from tests.support.explorer_page_harness import ASSETS, PAGE
 from tests.support.node_script import run_node_script
 
 LOADING = r'''
-const surface = byId('library-loading');
+const surface = byId('loading-surface');
 const statusText = () => byId('loading-status').textContent;
 const asked = path => requests.filter(item => item.path === path).length;
 '''
@@ -68,6 +68,22 @@ assert.equal(surface.getAttribute('aria-busy'), 'false');
 assert.match(statusText(), /Unable to load/);
 assert.match(byId('loading-error').textContent, /network down/);
 assert.equal(byId('loading-retry').hidden, false, 'the failure offers Retry');
+''')
+
+
+    def test_a_refresh_overtaken_by_the_listeners_choice_still_ends_the_loading(self):
+        self.run_scenario(r'''
+routes['/api/tracks/summary'] = r => r.respond(summaryBody([track('a'), track('b')]));
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id, {epoch: 0}));
+routes['/api/tracks/<id>'] = r => r.respond(detailBody(r.path.split('/').pop()));
+const seam = boot(); frame(); await flush();
+await search('Track'); await settle();
+await chooseRow('b'); await settle();
+request('/api/state').respond(accepted('a', {epoch: 0})); await settle();
+assert.equal(seam.snapshot().currentTrackId, 'b', 'the older state never overwrites the newer choice');
+assert.ok(surface.classList.contains('done'), 'the overtaken refresh still ends the loading');
+assert.equal(surface.hidden, true);
+assert.equal(asked('/api/tracks/a'), 0, 'the overtaken refresh never loads the old detail');
 ''')
 
 

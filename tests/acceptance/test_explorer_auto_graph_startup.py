@@ -29,6 +29,7 @@ const canvasContext={clearRect(){},fillRect(){},beginPath(){},fill(){},
 function element(tag){return {
   tagName:tag.toUpperCase(),id:'',children:[],attributes:{},dataset:{},style:{},
   value:'',textContent:'',hidden:false,disabled:false,className:'',
+  get classList(){const node=this,names=()=>node.className.split(/\s+/).filter(Boolean);return {add(...a){node.className=[...new Set([...names(),...a])].join(' ');},remove(...r){node.className=names().filter(n=>!r.includes(n)).join(' ');},contains(n){return names().includes(n);}};},
   clientWidth:800,clientHeight:600,
   append(...nodes){for(const n of nodes){n.parentElement=this;this.children.push(n);}},
   replaceChildren(...nodes){this.children=[];this.textContent='';this.append(...nodes);},
