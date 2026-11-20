@@ -52,3 +52,17 @@ test('clearing the filters keeps the tracked mood', () => {
   const controls = editGraphControls(EMPTY_GRAPH_CONTROLS, {mood: 'heavy', bpmMin: 90, bpmMax: 150, genres: ['jazz']});
   assert.deepEqual(clearedGraphFilters(controls), {mood: 'heavy', bpmMin: null, bpmMax: null, genres: []});
 });
+
+test('filtering leaves the graph and the controls it was given untouched', () => {
+  const freezeDeep = value => {
+    if (value && typeof value === 'object') Object.values(value).forEach(freezeDeep);
+    return Object.isFrozen(value) ? value : Object.freeze(value);
+  };
+  const model = freezeDeep({nodes: [node('a', 120, [['rock', 0.5]]), node('b', 90), {id: 'h', bpm: 120, genres: [], hidden: true}],
+    links: [{source: 'a', target: 'b'}], unpositioned: [{track_id: 'u', reasons: ['no mood']}]});
+  const controls = freezeDeep(editGraphControls(EMPTY_GRAPH_CONTROLS, {bpmMin: 100, genres: ['rock']}));
+  const before = JSON.stringify([model, controls]);
+  const visible = applyMoodGraphFilters(model, controls);
+  assert.deepEqual(visible.nodes.map(n => n.id), ['a']);
+  assert.equal(JSON.stringify([model, controls]), before);
+});

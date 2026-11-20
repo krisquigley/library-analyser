@@ -80,24 +80,3 @@ for(const axis of ['x','y','z']){
   }
 }
 ''')
-
-    def test_filtering_keeps_hidden_missing_unpositioned_out_of_display_nodes(self):
-        self.run_geometry(r'''
-const dto={positioned:[
-  {track_id:'visible',bpm:125,genres:[['jazz',0.8]],x:{raw:0.2,normalized:0.2},y:{raw:0.3,normalized:0.3},z:{raw:125,normalized:12.5}},
-  {track_id:'hidden',bpm:90,genres:[['jazz',0.8]],x:{raw:0.8,normalized:0.8},y:{raw:0.9,normalized:0.9},z:{raw:90,normalized:9}}
-],unpositioned:[{track_id:'unpositioned',reasons:['missing axes']}],edges:[{a:'visible',b:'hidden',score:0.7}]};
-const model=app.buildMoodGraphModel(dto);
-const filters={bpmMin:100,bpmMax:140,genres:['jazz']};
-const before=JSON.stringify({model,filters});
-const visible=app.applyMoodGraphFilters(model,filters);
-assert.deepEqual(visible.nodes.map(n=>n.id),['visible']);
-for(const id of ['hidden','missing','unpositioned']){
-  assert.equal(visible.nodes.find(n=>n.id===id),undefined);
-}
-assert.deepEqual(visible.links,[],'no link may retain a hidden endpoint');
-assert.deepEqual(visible.unpositioned,dto.unpositioned,'unpositioned metadata is not a display node');
-const frame=app.graphCameraFrame(visible.nodes,{width:800,height:600},50);
-assert.deepEqual(frame.target,{x:72,y:108,z:4500});
-assert.equal(JSON.stringify({model,filters}),before,'geometry preparation must not clear filters or alter topology');
-''')

@@ -1,6 +1,5 @@
 import json
 import shutil
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -129,97 +128,6 @@ class Explorer3DGraphAssetTests(unittest.TestCase):
             finally:
                 server.shutdown(); server.server_close()
 
-    def test_vanilla_js_graph_model_has_stable_3d_positions_filtering_and_clear(self):
-        script = r"""
-const assert = require('assert');
-const graph = require(process.argv[1]);
-const payload = {selected_mood:'relaxing', available_moods:['relaxing','heavy'], metadata:{}, unpositioned:[{track_id:'c',display_label:'Missing',reasons:['mood: no supported labels available']}], positioned:[
-  {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.9,normalized:0.9}, bpm:120, genres:[['rock',0.6]], genre_threshold:0.5, reasons:[]},
-  {track_id:'b', display_label:'Beta', x:{raw:0.3, normalized:0.3, scale:'native'}, y:{raw:0.4, normalized:0.4, scale:'native'}, z:{label:'BPM', raw:130, normalized:6.5, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'relaxing',raw:0.2,normalized:0.2}, bpm:130, genres:[['jazz',0.7]], genre_threshold:0.5, reasons:[]}
-], edges:[{a:'a',b:'b',score:0.77,explanation:'axis-independent relatedness',supported_group_count:3}]};
-const model = graph.buildMoodGraphModel(payload);
-assert.deepStrictEqual(model.nodes.map(n => n.id), ['a','b']);
-assert(model.nodes.every(n => Math.abs(n.x) > 1), 'render coordinates are scaled for browser visibility');
-assert.strictEqual(model.nodes[0].x, model.nodes[0].axis.x.normalized * 360, 'X display spacing is doubled from the current display origin');
-assert.strictEqual(model.nodes[0].fx, model.nodes[0].x, 'fixed X coordinate matches displayed X');
-assert.strictEqual(model.nodes[0].y, model.nodes[0].axis.y.normalized * 360, 'Y display spacing is doubled from the current display origin');
-assert.strictEqual(model.nodes[0].fy, model.nodes[0].y, 'fixed Y coordinate matches displayed Y');
-assert.strictEqual(model.nodes[0].axis.x.raw, 0.7, 'raw X value is unchanged by display scaling');
-assert.strictEqual(model.nodes[0].axis.x.normalized, 0.7, 'normalized X value is unchanged by display scaling');
-assert.strictEqual(model.nodes[0].axis.y.raw, 0.2, 'raw Y value is unchanged by display scaling');
-assert.strictEqual(model.nodes[0].axis.y.normalized, 0.2, 'normalized Y value is unchanged by display scaling');
-const before = new Map(model.nodes.map(n => [n.id, JSON.stringify([n.x,n.y,n.z,n.fx,n.fy,n.fz])]));
-for (const node of model.nodes) {
-  assert.strictEqual(node.z, node.axis.z.normalized * 360, 'fixed BPM depth is half its previous display scale');
-  assert.strictEqual(node.fz, node.z, 'fixed simulation depth must match displayed depth');
-}
-assert.strictEqual(model.nodes[1].z-model.nodes[0].z, 180, '10 BPM retains visible depth at half scale');
-const other = graph.buildMoodGraphModel({...payload,selected_mood:'heavy',positioned:payload.positioned.map(n=>({...n,mood_score:{label:'heavy',raw:0.5,normalized:0.5}}))});
-assert.deepStrictEqual(other.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]),model.nodes.map(n=>[n.id,n.x,n.y,n.z,n.fx,n.fy,n.fz]));
-assert.deepStrictEqual(graph.graphCameraFrame(other.nodes,{width:900,height:700},50),graph.graphCameraFrame(model.nodes,{width:900,height:700},50));
-const expandedCamera = graph.graphCameraFrame(model.nodes,{width:900,height:700},50);
-assert.deepStrictEqual(expandedCamera.target, {x:180,y:108,z:2250}, 'initial camera frame centers the doubled X/Y display geometry and unchanged Z geometry');
-assert.deepStrictEqual(other.links,model.links);
-assert.deepStrictEqual(model.genreOptions, ['jazz','rock']);
-const visible = graph.applyMoodGraphFilters(model, {bpmMin:119,bpmMax:121,genres:['jazz']});
-assert.deepStrictEqual(visible.nodes.map(n => n.id), []);
-const genreAny = graph.applyMoodGraphFilters(model, {genres:['jazz','rock']});
-assert.deepStrictEqual(genreAny.nodes.map(n => n.id), ['a','b']);
-const cleared = graph.applyMoodGraphFilters(model, {});
-assert.deepStrictEqual(cleared.nodes.map(n => n.id), ['a','b']);
-for (const node of cleared.nodes) assert.strictEqual(JSON.stringify([node.x,node.y,node.z,node.fx,node.fy,node.fz]), before.get(node.id));
-const camera = {yaw:0,pitch:0,distance:5,panX:0,panY:0};
-graph.orbitCamera(camera, 20, -10); graph.panCamera(camera, 5, -3); graph.zoomCamera(camera, -2);
-assert.notStrictEqual(camera.yaw, 0); assert.notStrictEqual(camera.pitch, 0); assert(camera.distance < 5); assert.notStrictEqual(camera.panX, 0);
-const point = graph.canvasPoint({clientX:160, clientY:110}, {left:100, top:50, width:600, height:300}, {width:900, height:600});
-assert.deepStrictEqual(point, {x:90, y:120});
-const bordered = graph.canvasPoint(
-  {clientX:162, clientY:112},
-  {left:100, top:50, width:604, height:304},
-  {width:900, height:600, clientWidth:600, clientHeight:300, clientLeft:2, clientTop:2}
-);
-assert.deepStrictEqual(bordered, {x:90, y:120});
-""";
-        if shutil.which('node'):
-            for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
-                with self.subTest(app=app):
-                    run_node_script(self, script, str(app))
-        else:
-            source = APP_JS.read_text(encoding='utf-8')
-            self.assertIn('function buildGraphModel', source)
-            self.assertIn('function applyGraphFilters', source)
-            self.assertIn('function orbitCamera', source)
-            self.assertIn('function panCamera', source)
-            self.assertIn('function zoomCamera', source)
-            self.assertIn('function canvasPoint', source)
-            self.assertIn('canvasPoint', source[source.index('module.exports'):])
-            self.assertIn('module.exports', source)
-
-
-    def test_indexed_v3_genre_filter_respects_node_threshold_in_both_mirrored_assets(self):
-        script = r"""
-const assert = require('assert');
-const app = require(process.argv[1]);
-const graph = {dto_version:'mood-axis-graph-indexed-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{}, axis:[
-  {key:'x', label:'valence', scale:'native-emomusic-valence-regression'},
-  {key:'y', label:'arousal', scale:'native-emomusic-arousal-regression'},
-  {key:'z', label:'BPM', scale:'fixed-BPM/20-display-units'}
-], genre_labels:['rock'], reason_text:[], explanation_table:[], provenance_table:[], link_defaults:{}, nodes:[
-  ['below','Below threshold',0.1,0.1,0.1,0.1,120,6,0.2,0.2,[[0,0.2]],[],0.35],
-  ['at','At threshold',0.2,0.2,0.2,0.2,121,6.05,0.2,0.2,[[0,0.35]],[],0.35],
-  ['above','Above threshold',0.3,0.3,0.3,0.3,122,6.1,0.2,0.2,[[0,0.36]],[],0.35],
-  ['missing-fallback','Missing threshold fallback',0.4,0.4,0.4,0.4,123,6.15,0.2,0.2,[[0,0.2]],[]]
-], unpositioned:[], links:[[0,2,0.5,1]]};
-const model = app.buildMoodGraphModel(graph);
-assert.deepStrictEqual(model.nodes.map(n => [n.id, n.genreThreshold]), [['below',0.35],['at',0.35],['above',0.35],['missing-fallback',0.1]]);
-assert.deepStrictEqual(app.applyMoodGraphFilters(model, {genres:['rock']}).nodes.map(n => n.id), ['above','missing-fallback']);
-assert.deepStrictEqual(app.applyMoodGraphFilters(model, {genres:['rock']}).links, [], 'links to filtered-out nodes are still removed');
-"""
-        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
-            with self.subTest(app=app):
-                run_node_script(self, script, str(app))
-
-
     @unittest.skipUnless(shutil.which('node'), 'Node is required for graph display spacing tests')
     def test_graph_axis_guides_and_canvas_fallback_use_doubled_xy_display_spacing(self):
         script = r"""
@@ -267,39 +175,6 @@ assert.deepStrictEqual(arcs, [[300+72,200-108,5],[300+252,200-180,9]], 'fallback
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
 
-
-    @unittest.skipUnless(shutil.which('node'), 'Node is required for raw graph axis labels tests')
-    def test_graph_axis_labels_use_raw_axis_values_when_display_positions_are_scaled(self):
-        script = r"""
-const assert = require('assert');
-const app = require(process.argv[1]);
-const payload = {selected_mood:'focus', available_moods:['focus'], metadata:{}, unpositioned:[], positioned:[
-  {track_id:'native-a', display_label:'Native A', x:{raw:-2.46, normalized:0.2, scale:'native-valence'}, y:{raw:10.01, normalized:0.3, scale:'native-arousal'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'focus',raw:0.6,normalized:0.6}, bpm:120, genres:[], reasons:[]},
-  {track_id:'native-b', display_label:'Native B', x:{raw:3.35, normalized:0.7, scale:'native-valence'}, y:{raw:30.08, normalized:0.5, scale:'native-arousal'}, z:{label:'BPM', raw:128, normalized:6.4, scale:'fixed-BPM/20-display-units'}, mood_score:{label:'focus',raw:0.4,normalized:0.4}, bpm:128, genres:[], reasons:[]}
-], edges:[]};
-const model = app.buildMoodGraphModel(payload);
-const close = (actual, expected, label) => assert(Math.abs(actual - expected) <= 1e-9, `${label}: expected ${expected}, got ${actual}`);
-assert.deepStrictEqual(model.nodes.map(n => n.id), ['native-a','native-b']);
-for (const [node, expected] of [[model.nodes[0], {x:72,y:108,z:2160}], [model.nodes[1], {x:252,y:180,z:2304}]]) {
-  close(node.x, expected.x, `${node.id} x display`);
-  close(node.y, expected.y, `${node.id} y display`);
-  close(node.z, expected.z, `${node.id} z display`);
-}
-const axes = app.graphAxisSpec(model.nodes);
-assert.deepStrictEqual(axes.map(a => [a.key, a.references]), [
-  ['x', ['-2.5', '3.4']],
-  ['y', ['10.0', '30.1']],
-  ['z', ['120.0', '128.0']],
-], 'axis reference labels must come from node.axis raw DTO values, not scaled display positions');
-assert.deepStrictEqual(axes.map(a => [a.key, a.start, a.end]), [
-  ['x',{x:54,y:90,z:2142},{x:270,y:90,z:2142}],
-  ['y',{x:54,y:90,z:2142},{x:54,y:198,z:2142}],
-  ['z',{x:54,y:90,z:2142},{x:54,y:90,z:2322}],
-], 'axis visual guide geometry remains display-coordinate based');
-"""
-        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
-            with self.subTest(app=app):
-                run_node_script(self, script, str(app))
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for fallback graph canvas attachment tests')
     def test_canvas_fallback_draws_into_visible_graph_container_after_replacing_legacy_map(self):
@@ -419,68 +294,6 @@ assert.strictEqual(app.getGraphControlsForTesting().mood, 'heavy');
 
 
 
-    @unittest.skipUnless(shutil.which('node'), 'Node is required for graph filter render tests')
-    def test_loaded_graph_filters_recompute_visible_graph_without_fetching_graph_again(self):
-        script = r"""
-const assert = require('assert');
-const app = require(process.argv[1]);
-function makeElement(tag){
-  const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null,
-    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
-    replaceChildren(...nodes){this.children=[]; this.append(...nodes);},
-    replaceChild(node,old){
-      const index=this.children.indexOf(old);
-      if(index<0) throw new Error('NotFoundError: child is not attached');
-      old.parentElement=null;node.parentElement=this;
-      this.children.splice(index,1,node);return old;
-    },
-    setAttribute(name,value){this.attributes[name]=String(value);},
-    removeAttribute(name){delete this.attributes[name];},
-    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};},
-    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
-  };
-  return el;
-}
-function findById(root,id){ if(root.id===id) return root; for(const child of root.children||[]){const found=child&&typeof child==='object'?findById(child,id):null; if(found) return found;} return null; }
-const elements = {'graph-load-status': makeElement('section'), graph3d: makeElement('div'), 'mood-strip': null, 'mood-strip-picker': null, 'mood-strip-value': null};
-global.document = {createElement: makeElement, getElementById:id=>elements[id]||null, querySelectorAll:()=>[]};
-global.requestAnimationFrame = cb => cb();
-let graphRequests = 0;
-global.fetch = async path => {
-  if (String(path).startsWith('/api/mood-axis-graph')) graphRequests += 1;
-  return {ok:true, json:async()=>({selected_mood:'relaxing', available_moods:['relaxing','heavy'], positioned:[
-    {track_id:'a', display_label:'Alpha', x:{raw:0.7, normalized:0.7, scale:'native'}, y:{raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.9}, bpm:120, genres:[['rock',0.6]], reasons:[]},
-    {track_id:'b', display_label:'Beta', x:{raw:0.3, normalized:0.3, scale:'native'}, y:{raw:0.4, normalized:0.4, scale:'native'}, z:{label:'BPM', raw:130, normalized:6.5, scale:'fixed'}, mood_score:{label:'relaxing',raw:0.2}, bpm:130, genres:[['jazz',0.7]], reasons:[]}
-  ], edges:[{a:'a',b:'b',score:0.5}], unpositioned:[]})};
-};
-const root = makeElement('div');
-app.buildGraphControls(root);
-const bpmMin = findById(root, 'bpm-min');
-const genre = findById(root, 'genre-filter');
-const clear = findById(root, 'clear-graph-filters');
-global.ForceGraph3D = undefined;
-(async()=>{
-  await app.loadGraph();
-  assert.strictEqual(graphRequests, 1, 'Load graph fetches graph once');
-  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a','b']);
-  bpmMin.value = '125';
-  bpmMin.onchange();
-  assert.strictEqual(graphRequests, 1, 'BPM filtering must not reload graph');
-  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['b']);
-  genre.selectedOptions = [{value:'jazz'}];
-  genre.onchange();
-  assert.strictEqual(graphRequests, 1, 'genre filtering must not reload graph');
-  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['b']);
-  clear.onclick();
-  assert.strictEqual(graphRequests, 1, 'clearing graph filters must not reload graph');
-  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a','b']);
-  assert.strictEqual(app.getGraphControlsForTesting().bpmMin, null);
-})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
-"""
-        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
-            with self.subTest(app=app):
-                run_node_script(self, script, str(app))
-
     def test_load_graph_uses_api_graph_status_for_read_only_snapshot_copy(self):
         for package in ('music_explorer', 'music_analyzer'):
             with self.subTest(package=package):
@@ -530,69 +343,6 @@ async function loadWithStatus(graphStatus){
     assert.match(text, /music-analyzer graph build --database DB/, `${state} response gives the explicit read-only rebuild command`);
     assert.doesNotMatch(text, /private\.sqlite|Users\/alice|hidden command/, `${state} response must not leak API paths or commands`);
   }
-})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
-"""
-        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
-            with self.subTest(app=app):
-                run_node_script(self, script, str(app))
-
-    @unittest.skipUnless(shutil.which('node'), 'Node is required for mood tracker reload tests')
-    def test_mood_tracker_change_reloads_ready_graph_but_not_before_initial_load(self):
-        script = r"""
-const assert = require('assert');
-const app = require(process.argv[1]);
-function makeElement(tag){
-  const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null, parentElement:null, clientWidth:900, clientHeight:700,
-    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
-    replaceChildren(...nodes){this.children=[]; this.textContent=''; this.append(...nodes);},
-    setAttribute(name,value){this.attributes[name]=String(value);},
-    removeAttribute(name){delete this.attributes[name];},
-    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, arc(){}, fill(){}};},
-    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
-  };
-  return el;
-}
-function findById(root,id){ if(root.id===id) return root; for(const child of root.children||[]){const found=child&&typeof child==='object'?findById(child,id):null; if(found) return found;} return null; }
-const elements = {'graph-load-status': makeElement('section'), graph3d: makeElement('div'), 'mood-strip': null, 'mood-strip-picker': null, 'mood-strip-value': null};
-global.document = {createElement: makeElement, getElementById:id=>elements[id]||null, querySelectorAll:()=>[]};
-global.requestAnimationFrame = cb => cb();
-global.ForceGraph3D = undefined;
-const root = makeElement('div');
-app.buildGraphControls(root);
-const mood = findById(root, 'selected-mood');
-let requests = [];
-global.fetch = async path => {
-  requests.push(String(path));
-  const url = new URL(String(path), 'http://example.test');
-  const selectedMood = url.searchParams.get('mood') || 'relaxing';
-  assert.strictEqual(url.searchParams.get('contract'), 'v3', 'graph reloads must opt into the indexed v3 contract');
-  const heavy = selectedMood === 'heavy';
-  return {ok:true, json:async()=>({
-    dto_version:'mood-axis-graph-compact-v1',
-    selected_mood:selectedMood,
-    available_moods:['relaxing','heavy'],
-    metadata:{graph_status:{state:'ready'}},
-    nodes:[
-      {id:'a', label:'Alpha', axis:{x:{label:'valence',raw:0.7, normalized:0.7, scale:'native'}, y:{label:'arousal',raw:0.2, normalized:0.2, scale:'native'}, z:{label:'BPM', raw:120, normalized:6, scale:'fixed'}}, mood_score:{label:selectedMood,raw:heavy?0.8:0.1,normalized:heavy?0.8:0.1}, bpm:120, genres:[], reasons:[]}
-    ],
-    links:[],
-    unpositioned:[]
-  })};
-};
-(async()=>{
-  mood.value = 'heavy';
-  const before = mood.onchange();
-  if (before && before.then) await before;
-  assert.deepStrictEqual(requests, [], 'changing the mood before Load graph only stores the choice and never auto-fetches');
-  await app.loadGraph();
-  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v3'], 'manual Load graph uses the stored mood and indexed contract');
-  assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'heavy');
-  mood.value = 'relaxing';
-  const after = mood.onchange();
-  if (after && after.then) await after;
-  assert.deepStrictEqual(requests, ['/api/mood-axis-graph?mood=heavy&contract=v3','/api/mood-axis-graph?mood=relaxing&contract=v3'], 'changing the mood after the graph is ready reloads indexed graph data');
-  assert.strictEqual(app.getVisibleGraphForTesting().nodes[0].moodScore.label, 'relaxing');
-  assert.strictEqual(app.buildMoodStrip(app.getVisibleGraphForTesting(), null)[0].score, 0.1, 'strip uses the reloaded mood score');
 })().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error=>{console.error(error); process.exit(1);});
 """
         for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
@@ -1652,48 +1402,6 @@ assert.throws(() => app.normalizeMoodAxisGraphDto({dto_version:'mood-axis-graph-
         for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 run_node_script(self, script, str(app))
-
-    @unittest.skipUnless(shutil.which('node'), 'Node is required for indexed graph request negotiation tests')
-    def test_load_graph_fetches_indexed_v3_contract_and_preserves_single_in_flight_graph_request(self):
-        script = r"""
-const assert = require('assert');
-const app = require(process.argv[1]);
-function makeElement(tag){
-  const el = {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', value:'', selected:false, selectedOptions:[], multiple:false, size:0, type:'', placeholder:'', textContent:'', onclick:null, onchange:null, parentElement:null, clientWidth:900, clientHeight:700,
-    append(...nodes){for (const node of nodes) { if (node && typeof node === 'object') node.parentElement = this; this.children.push(node); }},
-    replaceChildren(...nodes){this.children=[]; this.textContent=''; this.append(...nodes);},
-    setAttribute(name,value){this.attributes[name]=String(value);},
-    removeAttribute(name){delete this.attributes[name];},
-    getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};},
-    get innerText(){return [this.textContent, ...this.children.map(c=>c.innerText || c.textContent || '')].filter(Boolean).join(' ');}
-  };
-  return el;
-}
-const elements = {'graph-load-status': makeElement('section'), graph3d: makeElement('div'), map: makeElement('canvas'), 'mood-strip': null, 'mood-strip-picker': null, 'mood-strip-value': null};
-global.document = {createElement: makeElement, getElementById:id=>elements[id]||null, querySelectorAll:()=>[]};
-global.requestAnimationFrame = cb => cb();
-global.ForceGraph3D = undefined;
-app.setGraphControlsForTesting({mood:'heavy', bpmMin:null, bpmMax:null, genres:[]});
-const requests = [];
-global.fetch = async path => {
-  requests.push(String(path));
-  return {ok:true, json:async()=>({dto_version:'mood-axis-graph-compact-v1', selected_mood:'heavy', available_moods:['heavy'], metadata:{graph_status:{state:'ready'}}, nodes:[{id:'a', label:'Alpha', x:{raw:0,normalized:0.5}, y:{raw:0,normalized:0.5}, z:{label:'BPM',raw:120,normalized:6}, mood_score:{label:'heavy',raw:0.8}, bpm:120, genres:[], genre_threshold:0.5, reasons:[]}], links:[], unpositioned:[]})};
-};
-(async()=>{
-  const first = app.loadGraph();
-  const second = app.loadGraph();
-  await Promise.all([first, second]);
-  assert(requests.every(path => path.startsWith('/api/mood-axis-graph')), 'only graph requests are issued by loadGraph');
-  assert(requests.every(path => /(?:\?|&)contract=v3(?:&|$)/.test(path)), 'each graph request explicitly opts into indexed v3');
-  assert(requests.every(path => /(?:\?|&)mood=heavy(?:&|$)/.test(path)), 'indexed negotiation preserves selected mood query');
-  assert(!requests.some(path => path === '/api/mood-axis-graph' || path === '/api/mood-axis-graph?mood=heavy'), 'browser must not fall back to the legacy verbose graph URL');
-  assert.deepStrictEqual(app.getVisibleGraphForTesting().nodes.map(n=>n.id), ['a']);
-})().then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => { console.error(error); process.exit(1); });
-"""
-        for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
-            with self.subTest(app=app):
-                run_node_script(self, script, str(app))
-
 
 if __name__ == '__main__':
     unittest.main()

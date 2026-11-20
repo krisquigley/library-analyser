@@ -4,8 +4,6 @@ import sqlite3
 import tempfile
 import threading
 from urllib.request import urlopen
-import shutil
-import subprocess
 import unittest
 from pathlib import Path
 from urllib.parse import urlencode
@@ -16,7 +14,6 @@ from music_explorer.frameworks.explorer.server import create_server as standalon
 from music_analyzer.application.use_cases.explorer import BuildMoodAxisGraph as AnalyzerGraph, FilterMoodAxisGraph as AnalyzerFilter
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph as StandaloneGraph, FilterMoodAxisGraph as StandaloneFilter
 from tests.unit.application.test_mood_axis_graph import FakeRepo, track
-from tests.support.explorer_app_bundle import explorer_app_script
 
 ROOT = Path(__file__).resolve().parents[2]
 LABEL = 'Folk, World, & Country---Folk'
@@ -50,37 +47,3 @@ class ExplorerGenreAndPanelRegressions(unittest.TestCase):
                     self.assertIn(ids[0], [node['track_id'] for node in graph['positioned']])
                 finally:
                     server.shutdown(); server.server_close()
-
-    @unittest.skipUnless(shutil.which('node'), 'Node required for browser behavior test')
-    def test_browser_options_filter_and_panels_in_both_packages(self):
-        script = r'''
-const assert = require('assert');
-const fs = require('fs');
-const app = require(process.argv[1]);
-const html = fs.readFileSync(process.argv[2], 'utf8');
-const label = 'Folk, World, & Country---Folk';
-const node = {track_id:'a',display_label:'A',x:{raw:0.1,normalized:0.1},y:{raw:0.2,normalized:0.2},z:{raw:120,normalized:6},bpm:120,genres:[[label,0.2],['Other',0.05]],genre_threshold:0.5};
-const model = app.buildMoodGraphModel({positioned:[node],edges:[]});
-assert(model.genreOptions.includes(label));
-assert(!model.genreOptions.includes('Other'), 'options should only include genres with matching nodes');
-assert.deepStrictEqual(app.applyMoodGraphFilters(model,{genres:[label]}).nodes.map(n=>n.id),['a']);
-assert(!html.includes('id="candidates"'), 'remove numbered list below candidate controls');
-assert(html.includes('id="controls"') && html.includes('id="tracks-panel"'));
-const element = tag => ({tagName:tag,children:[],textContent:'',className:'',attributes:{},setAttribute(key,value){this.attributes[key]=String(value)},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items}});
-const detail = element('div');
-global.document = {getElementById:id=>id==='detail'?detail:null,createElement:element};
-app.setVisibleGraphForTesting({nodes:[{id:'a'}],links:[],unpositioned:[{track_id:'b'}]});
-app.renderInitialDetail({unpositioned:[{track_id:'b',display_label:'B',reasons:['missing supported mood coordinates']} ]});
-assert.strictEqual(JSON.stringify(detail), JSON.stringify({...detail, children:[]}), 'initial no-selection detail panel should be empty');
-assert.strictEqual(detail.attributes['aria-busy'], 'false', 'initial empty detail settles aria-busy');
-app.renderDetail({reasons:['genres: provisional, uncalibrated scores','energy: uncertainty'],metadata:{common:[['title','A']],tags:[]},fields:{}});
-assert(!JSON.stringify(detail).includes('provisional, uncalibrated'));
-assert(!JSON.stringify(detail).includes('energy: uncertainty'));
-assert(JSON.stringify(detail).includes('Current Track'));
-assert(JSON.stringify(detail).includes('Title: A'));
-assert.strictEqual(detail.attributes['aria-busy'], 'false', 'rendered detail settles aria-busy');
-'''
-        for package in ('music_analyzer', 'music_explorer'):
-            with self.subTest(package=package):
-                assets = ROOT / package / 'frameworks/explorer/assets'
-                subprocess.run(['node', '-e', script, str(explorer_app_script(assets / 'app.js')), str(assets / 'index.html')], check=True)

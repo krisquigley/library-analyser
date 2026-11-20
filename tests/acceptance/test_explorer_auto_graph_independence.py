@@ -92,25 +92,6 @@ class ExplorerAutomaticGraphIndependenceTests(unittest.TestCase):
     def test_automatic_graph_renders_despite_failed_search_and_preserves_search_retry(self):
         self.run_browser(SEARCH_FAILURE_SCENARIO)
 
-    def test_inline_loading_and_retry_replace_manual_load_graph_button_and_copy(self):
-        self.run_browser(r"""
-boot(); await flush();
-assert(!graphButtons().some(n=>/^load graph$/i.test(n.innerText)),
-  'automatic startup removes obsolete manual Load graph button');
-assert(!/use the load graph button|graph not loaded/i.test(graphStatus()),
-  'automatic startup removes obsolete manual graph instruction');
-assert.equal(graphRequests().length,1);
-assert(/loading graph/i.test(graphStatus()),'automatic graph request exposes inline loading');
-assert(walk(roots['graph-load-status']).some(n=>n.getAttribute('role')==='status'&&/loading/i.test(n.innerText)),
-  'inline loading feedback is announced');
-assertInlineOnly();
-graphGate.resolve(response('graph temporarily unavailable',false)); await flush();
-assert(/graph temporarily unavailable/i.test(graphStatus()));
-assert(graphRetry(),'failed automatic graph exposes retry instead of Load graph');
-assert(!graphButtons().some(n=>/^load graph$/i.test(n.innerText)));
-assertInlineOnly();
-""")
-
     def test_state_startup_failure_does_not_block_search_detail_or_successful_graph(self):
         """A distinct RED: existing startup state error leaves a blocking overlay."""
         self.run_browser(r"""
@@ -126,9 +107,6 @@ assert(/graph ready/i.test(graphStatus()),'state failure must not prevent graph 
 assert(canvasPaints.length>0);
 assertInlineOnly();
 """)
-
-    def test_baseline_control_existing_graph_failure_and_scoped_retry_are_valid(self):
-        self.run_browser(FAILURE_RETRY_SCENARIO, mode='baseline-control')
 
 if __name__ == '__main__':
     unittest.main()

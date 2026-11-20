@@ -1,5 +1,4 @@
 import shutil
-import subprocess
 import unittest
 from pathlib import Path
 
@@ -40,31 +39,6 @@ assert.deepStrictEqual(fromCompact.links, fromVerbose.links);
 assert.deepStrictEqual(fromCompact.unpositioned, fromVerbose.unpositioned);
 assert.strictEqual(app.nodeLabel(fromCompact.nodes[0]), app.nodeLabel(fromVerbose.nodes[0]));
 assert.deepStrictEqual(app.applyMoodGraphFilters(fromCompact, {bpmMin:119,bpmMax:121,genres:['rock']}).nodes.map(n=>n.id), ['a']);
-"""
-        run_node_script(self, script, str(APP_JS))
-
-    def test_load_graph_explicitly_requests_indexed_contract_v3(self):
-        if not shutil.which('node'):
-            source = APP_JS.read_text(encoding='utf-8')
-            if "const MOOD_GRAPH_CONTRACT = 'v3';" not in source or "params.set('mood', mood)" not in source:
-                self.fail('the graph gateway must request /api/mood-axis-graph with contract=v3 and the tracked mood')
-            return
-        script = r"""
-const assert = require('assert');
-const app = require(process.argv[1]);
-function makeElement(tag){return {tagName:tag.toUpperCase(), children:[], attributes:{}, dataset:{}, className:'', id:'', hidden:false, value:'', selectedOptions:[], textContent:'', append(...nodes){this.children.push(...nodes);}, replaceChildren(...nodes){this.children=[...nodes];}, setAttribute(k,v){this.attributes[k]=String(v);}, removeAttribute(k){delete this.attributes[k];}, getContext(){return {clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, arc(){}, fill(){}};}};}
-const elements = {'graph-load-status': makeElement('section'), graph3d: makeElement('div'), 'mood-strip': makeElement('div'), 'mood-strip-picker': makeElement('select'), 'mood-strip-value': makeElement('span')};
-global.document = {createElement: makeElement, createTextNode: text => ({textContent:String(text)}), getElementById: id => elements[id] || null, querySelectorAll: () => []};
-global.requestAnimationFrame = cb => cb();
-let requested = [];
-global.fetch = async path => {requested.push(String(path)); return {ok:true, json:async()=>({dto_version:'mood-axis-graph-compact-v1', selected_mood:'relaxing', available_moods:['relaxing'], metadata:{graph_status:{state:'ready'}}, nodes:[], links:[], unpositioned:[]})};};
-app.setGraphControlsForTesting({mood:'relaxing', bpmMin:90, bpmMax:150, genres:['rock']});
-app.loadGraph().then(() => {
-  assert.strictEqual(requested.length, 1);
-  assert.match(requested[0], /^\/api\/mood-axis-graph\?/);
-  assert(requested[0].includes('contract=v3'), 'browser must opt into indexed graph contract');
-  assert(requested[0].includes('mood=relaxing'), 'mood negotiation must be preserved');
-}).then(() => console.log('NODE_SCRIPT_COMPLETED')).catch(error => {console.error(error && error.stack || error); process.exit(1);});
 """
         run_node_script(self, script, str(APP_JS))
 

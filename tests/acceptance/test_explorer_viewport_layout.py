@@ -36,6 +36,7 @@ class ExplorerViewportLayoutTests(unittest.TestCase):
             self.assertIn('overlay', html.ancestors[element][2], element)
         for element in ('tracks-panel', 'candidate-panel', 'detail-panel'):
             self.assertEqual(html.tags[element], 'details')
+        self.assertNotIn('candidates', html.tags, 'no numbered candidate list below the controls')
         css = (ASSETS / 'style.css').read_text()
         self.assertIn('position:fixed', css)
         self.assertIn('100dvh', css)
