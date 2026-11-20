@@ -193,7 +193,7 @@ unconditional distribution-metadata compatibility test still invokes
 `python -m pip wheel`, so the full suite requires an available `pip`:
 
 ```sh
-python -m unittest discover -s tests/unit -v
+python -m unittest discover -s tests/unit -t . -v
 python -m unittest tests.architecture.test_import_boundaries -v
 RUN_FFMPEG_TESTS=0 RUN_PACKAGING_TESTS=0 python -m unittest discover -v
 python -m pip install setuptools==84.0.0

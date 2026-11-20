@@ -52,7 +52,7 @@ not a wall-clock latency or real-library memory-cap claim.
 ## Focused checks
 
 ```sh
-python3 -m unittest discover -s tests/unit -p 'test_graph_read_benchmark*.py' -v
+python3 -m unittest discover -s tests/unit -t . -p 'test_graph_read_benchmark*.py' -v
 python3 -m unittest -v tests.unit.benchmark_tools.test_graph_read_benchmark tests.unit.benchmark_tools.test_graph_read_benchmark_cli
 python3 -m unittest discover -s tests/architecture -v
 python3 -m unittest -v \

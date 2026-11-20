@@ -20,7 +20,7 @@ jobs:
           python-version: "3.14.8"
       - name: Dependency-free unit and boundary tests
         run: |
-          python -m unittest discover -s tests/unit -v
+          python -m unittest discover -s tests/unit -t . -v
           python -m unittest tests.architecture.test_import_boundaries -v
       - name: Isolated mandatory real SQLite empirical qualification (hard120s)
         id: empirical

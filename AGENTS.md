@@ -183,7 +183,7 @@ A ticket describes a problem as it stood when it was written; the code may have 
 Run from the repository root with the project's virtualenv active (`python -m pip install .`).
 
 ```bash
-python -m unittest discover -s tests/unit -v                     # fast unit tests
+python -m unittest discover -s tests/unit -t . -v                # fast unit tests
 python -m unittest tests.architecture.test_import_boundaries tests.architecture.test_music_explorer_boundaries -v   # Dependency Rule
 RUN_FFMPEG_TESTS=0 RUN_PACKAGING_TESTS=0 python -m unittest discover -v   # full suite, as CI runs it: before every PR
 RUN_FFMPEG_TESTS=1 python -m unittest tests.integration.infrastructure.test_audio_decode -v   # opt-in real FFmpeg decode
