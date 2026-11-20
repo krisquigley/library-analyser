@@ -1,4 +1,5 @@
 """In-scene axis coordinates and lifecycle: the booted page without a browser, and opt-in Chromium."""
+import shutil
 import unittest
 
 from tests.support.explorer_page_harness import ASSETS, PAGE
@@ -44,6 +45,8 @@ console.log('NODE_SCRIPT_COMPLETED');
 
 
 class GraphAxesTests(unittest.TestCase):
+    # The browser gate runs this module for its Chromium test, in a container without Node.
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for the booted-page test')
     def test_the_axes_join_the_scene_and_change_only_with_the_layout(self):
         for asset in ASSETS:
             with self.subTest(asset=str(asset)):
