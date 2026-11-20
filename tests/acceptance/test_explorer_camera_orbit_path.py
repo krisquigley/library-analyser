@@ -25,7 +25,7 @@ class CameraOrbitPathTests(unittest.TestCase):
 
     def test_bundled_astronomical_finite_wheel_pan_rebases_target_and_restores_bounds(self):
         self.run_finite_wheel_pan_scenario(r'''
-render(); wheelAndPanToRadius(5e153);
+await render(); wheelAndPanToRadius(5e153);
 const originalUpLength=camera.up.length();
 controls.minDistance=0.25; controls.maxDistance=1e155;
 const originalBounds={min:controls.minDistance,max:controls.maxDistance};

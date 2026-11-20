@@ -32,7 +32,7 @@ class CameraCustomBoundsTests(unittest.TestCase):
 
     def test_astronomical_recovery_uses_custom_minimum_without_vendor_snap(self):
         self.run_actual_vendor(r'''
-render(); wheelAndPanToRadius(5e153);
+await render(); wheelAndPanToRadius(5e153);
 controls.minDistance=250; controls.maxDistance=1e155;
 await select('a');
 for(const time of [0,16,100,350,695,700,900,1200]) {

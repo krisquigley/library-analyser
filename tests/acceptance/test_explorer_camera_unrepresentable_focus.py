@@ -13,7 +13,7 @@ class CameraUnrepresentableFocusTests(unittest.TestCase):
 
     def test_camera_settlement_exception_cannot_suppress_accepted_detail(self):
         self.run_actual_vendor(r'''
-render(); manualStart();
+await render(); manualStart();
 const initial=renderedPose();
 const original=vendor.cameraPosition;
 let injected=false;
@@ -24,7 +24,7 @@ vendor.cameraPosition=function(...args) {
 await select('a');
 assert.ok(injected,'camera failure was actually exercised');
 assert.deepEqual(details,['a'],'camera failure cannot suppress accepted detail GET');
-assert.equal(run('getStateForTesting().current_track_id'),'a');
+assert.equal(seam.snapshot().currentTrackId,'a');
 assertRenderedStable(renderedPose(),initial,'failed settlement restores start pose');
 const writes=calls.length;
 for(const time of [0,16,350,700,1200]) {

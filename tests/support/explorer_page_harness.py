@@ -15,11 +15,7 @@ ASSETS = tuple(explorer_app_script(ROOT / package / 'frameworks/explorer/assets/
                for package in ('music_explorer', 'music_analyzer'))
 
 
-PAGE = r'''
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-
+FAKE_DOM = r'''
 // --- The DOM: plain elements with the parts the page's views use. -------------------------------
 let elementCount = 0;
 function element(tag) {
@@ -33,6 +29,7 @@ function element(tag) {
     get innerText() { return this.hidden ? '' : [this.ownText, ...this.children.map(child => child.innerText || '')].join(' '); },
     set innerHTML(value) { this.ownText = String(value); this.children = []; },
     get options() { return this.children.filter(child => child.tagName === 'OPTION'); },
+    get selectedOptions() { return this.options.filter(option => option.selected); },
     classList: {
       values: new Set(),
       add(...names) { for (const name of names) this.values.add(name); },
@@ -47,6 +44,7 @@ function element(tag) {
       }
     },
     appendChild(child) { this.append(child); return child; },
+    replaceChild(fresh, old) { old.replaceWith(fresh); return old; },
     prepend(...nodes) { const rest = this.children; this.children = []; this.append(...nodes); this.children.push(...rest); },
     replaceChildren(...nodes) { for (const child of this.children) child.parentElement = null; this.children = []; this.ownText = ''; this.append(...nodes); },
     replaceWith(...nodes) {
@@ -122,6 +120,15 @@ const document = {body, createElement: element, createTextNode: textNode,
   addEventListener(type, listener) { (documentListeners[type] ??= []).push(listener); }, removeEventListener() {}};
 const byId = id => document.getElementById(id);
 
+'''
+
+
+PAGE = r'''
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+
+''' + FAKE_DOM + r'''
 // --- Time: frames and timers run only when a test says so. -----------------------------------------
 let clock = 0, timerId = 0;
 const frames = [], timers = new Map();

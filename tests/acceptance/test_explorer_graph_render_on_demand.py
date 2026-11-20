@@ -20,17 +20,8 @@ VENDOR_LOOP = '''
   if(key==='resumeAnimation') return ()=>{loop.push('resume'); loop.running=true; return graph;};
   if(key==='onNodeClick')'''
 
-ELEMENT_EVENTS = ('getBoundingClientRect() {return {width:800,height:600,left:0,top:0};}\n'
-                  '  addEventListener(type,fn) {(this.listeners[type] ||= []).push(fn);}\n'
-                  '  dispatch(type) {for(const fn of this.listeners[type]||[]) fn({type});}')
-
-
 def fixture():
     text = replace_fixture_seam(FIXTURE, "\n  if(key==='onNodeClick')", VENDOR_LOOP)
-    text = replace_fixture_seam(text, 'this.clientWidth=800; this.clientHeight=600; }',
-                                'this.clientWidth=800; this.clientHeight=600; this.listeners={}; }')
-    text = replace_fixture_seam(text, 'getBoundingClientRect() {return {width:800,height:600,left:0,top:0};}',
-                                ELEMENT_EVENTS)
     return text.replace('const frames = [],', 'const loop=Object.assign([],{running:true});\nconst frames = [],', 1)
 
 
@@ -57,10 +48,10 @@ class GraphRenderOnDemandTests(unittest.TestCase):
 
     def test_graph_data_or_selection_change_resumes_redrawing(self):
         self.run_scenario(r'''
-render(); idle(); loop.length=0;
+await render(); idle(); loop.length=0;
 // Same layout, so no reframing moves the camera: only the data changed.
 const linked=model(); linked.links=[{source:'a',target:'b',score:0.5}];
-render(linked); frame(); assert.equal(loop.running,true,'new graph data is redrawn');
+await render(linked); frame(); assert.equal(loop.running,true,'new graph data is redrawn');
 idle(); loop.length=0;
 await select('b'); frame();
 assert.equal(loop.running,true,'a selection (node size, halo, focus) is redrawn');
@@ -69,7 +60,7 @@ idle(); assert.equal(loop.running,false);
 
     def test_resize_resumes_redrawing(self):
         self.run_scenario(r'''
-render(); idle(); loop.length=0;
+await render(); idle(); loop.length=0;
 for(const callback of resizeCallbacks) callback();
 frame(); assert.equal(loop.running,true,'a resized canvas is redrawn');
 ''')
