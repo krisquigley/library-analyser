@@ -39,6 +39,11 @@ import {graphCameraFrame} from './app/domain/camera-frame.js';
 import {graphAxisSpec, graphColorLegend, graphRelatednessLegend, linkLabel, nodeLabel, relatednessLinkAlpha, relatednessLinkColor} from './app/adapters/presenters/graph-scene-presenter.js';
 import {cameraArcPose, cameraFocusArc, cameraViewDirection, focusProgress, selectionFocusPose} from './app/domain/camera-arc.js';
 import {createCameraFocus} from './app/application/focus-camera/focus-camera.js';
+import {CAMERA_FOCUS_EVENT_TYPES} from './app/application/focus-camera/camera-focus-events.js';
+import {TRACK_SELECTION_EVENT_TYPES} from './app/application/select-track/track-selection-events.js';
+import {GRAPH_LOAD_EVENT_TYPES} from './app/application/load-graph/graph-load-events.js';
+import {GRAPH_RENDERING_EVENT_TYPES} from './app/application/render-graph/render-graph-events.js';
+import {installExplorerDiagnostics} from './app/frameworks/explorer-diagnostics.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -362,6 +367,9 @@ if(typeof module!=='undefined'){module.exports={refresh,updateSelectedTrackVisua
 // internals as page globals, and wrap some functions to time them, which a module does not allow.
 // A setter rebinds the module's own function, so a wrapper is called exactly as before. Each name
 // goes as its feature moves into app/ and its tests move with it.
+// The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
+installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents]],snapshot:diagnosticSnapshot,scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId})});
+function diagnosticSnapshot(){return {currentTrackId:state.current_track_id??null,history:state.history||[],graphStatus:graphLoadState.status,cameraFocusActive:cameraFocusFrame!=null,pendingCameraTrackId:pendingCameraSelection,selectionPending:pendingSelectionOperation!=null,trackSearchStatus:trackSummaryStatus};}
 function exposeForBrowserTests(readers, writers){for(const [name,get] of Object.entries(readers)){if(name in globalThis) continue; Object.defineProperty(globalThis,name,{get,set:writers[name],configurable:true});}}
 exposeForBrowserTests({state:()=>state,graphModel:()=>graphModel,visibleGraph:()=>visibleGraph,forceGraph:()=>forceGraph,framedGraphLayout:()=>graphFraming.layout(),renderedGraphData:()=>graphDataMount.current(),graphAxes:()=>graphAxes,selectedNodeHalo:()=>nodeHalo.current(),pendingSelectionOperation:()=>pendingSelectionOperation,pendingCameraSelection:()=>pendingCameraSelection,cameraFocusFrame:()=>cameraFocusFrame,trackSummaryPage:()=>trackSummaryPage,trackSummaryStatus:()=>trackSummaryStatus,graphLoadState:()=>graphLoadState,text:()=>text,renderDetailLoading:()=>renderDetailLoading,setCurrent:()=>setCurrent,renderTracks:()=>renderTracks,renderDetailField:()=>renderDetailField,renderTrackMetadata:()=>renderTrackMetadata,renderDetail:()=>renderDetail,buildMoodGraphModel:()=>buildMoodGraphModel,buildMoodStrip:()=>buildMoodStrip,graphAxisSpec:()=>graphAxisSpec,graphObjectTrackId:()=>graphObjectTrackId,findSceneObject:()=>findSceneObject,syncSelectedNodeHalo:()=>syncSelectedNodeHalo,syncGraphAxes:()=>syncGraphAxes,cancelCameraFocus:()=>cancelCameraFocus,animateCameraFocus:()=>animateCameraFocus,renderMap:()=>renderMap,setStateForTesting:()=>setStateForTesting},
   {buildMoodGraphModel:value=>{buildMoodGraphModel=value;},renderMap:value=>{renderMap=value;},renderDetail:value=>{renderDetail=value;},renderDetailLoading:value=>{renderDetailLoading=value;},setCurrent:value=>{setCurrent=value;},animateCameraFocus:value=>{animateCameraFocus=value;},cancelCameraFocus:value=>{cancelCameraFocus=value;}});

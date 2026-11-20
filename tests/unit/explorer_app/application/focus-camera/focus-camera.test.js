@@ -14,7 +14,7 @@ function harness(initial = {}) {
 
 test('the event types are the ones the use case publishes', () => {
   assert.deepEqual(CAMERA_FOCUS_EVENT_TYPES, ['camera-view-claimed', 'camera-focus-cancelled', 'camera-focus-requested',
-    'camera-focus-finished']);
+    'camera-focus-started', 'camera-focus-finished']);
 });
 
 test('requesting a focus cancels any arc in flight and waits for the track', () => {
@@ -65,4 +65,11 @@ test('an arc runs while its generation is current, frame by frame, and says when
   const newer = focus.begin();
   assert.equal(focus.frameRan(arc), false);
   assert.notEqual(newer, arc);
+});
+
+test('beginning an arc cancels the one in flight and says which arc started', () => {
+  const {focus, published} = harness({frame: 4, focusGeneration: 2});
+  const arc = focus.begin();
+  assert.equal(arc, 3);
+  assert.deepEqual(published, [{type: 'camera-focus-cancelled', frame: 4}, {type: 'camera-focus-started', focusGeneration: 3}]);
 });
