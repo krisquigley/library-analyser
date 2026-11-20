@@ -10,7 +10,7 @@ CHECKS = (
     ('compatibility', 'databases'), ('schema', 'schema_descriptors'),
     ('core_rows', 'rows'), ('metadata', 'rows'), ('retained_stages', 'rows'),
     ('current_graph', 'rows'), ('historical_graph', 'rows'),
-    ('current_evidence', 'rows'), ('historical_evidence', 'rows'),
+    ('current_evidence', 'rows'), ('historical_evidence', 'rows'), ('playlist_recipes', 'rows'),
     ('sqlite_physical', 'physical_records'),
     ('sqlite_foreign_keys', 'foreign_key_records'), ('resource_access', 'databases'),
 )
@@ -26,7 +26,8 @@ def completed_scan():
     checks = tuple(IntegrityCheck(name, name, 'completed',
                                   1 if name in ('compatibility', 'resource_access', 'sqlite_physical') else 0,
                                   unit, 'exact') for name, unit in CHECKS)
-    return IntegrityScan(10, checks, implemented_scope_complete=True, stop_reason='completed')
+    scan = IntegrityScan(10, checks, implemented_scope_complete=True, stop_reason='completed')
+    return change(scan, 'playlist_recipes', state='not_applicable', count=None, count_precision='unavailable')
 
 
 def change(scan, owner, **fields):

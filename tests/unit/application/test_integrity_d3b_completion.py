@@ -11,7 +11,7 @@ CHECKS = (
     ('compatibility', 'databases', 6), ('schema', 'schema_descriptors', 6),
     ('core_rows', 'rows', 6), ('metadata', 'rows', 6), ('retained_stages', 'rows', 6),
     ('current_graph', 'rows', 7), ('historical_graph', 'rows', 7),
-    ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
+    ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9), ('playlist_recipes', 'rows', 11),
     ('sqlite_physical', 'physical_records', 6),
     ('sqlite_foreign_keys', 'foreign_key_records', 6), ('resource_access', 'databases', 6),
 )
@@ -198,6 +198,7 @@ class D3bFakePortControls(CountedAssertions):
             owners = ('schema', 'metadata', 'retained_stages', 'sqlite_physical', 'sqlite_foreign_keys')
             owners += (() if version == 6 else ('current_graph', 'historical_graph'))
             owners += (() if version < 9 else ('current_evidence', 'historical_evidence'))
+            owners += (() if version < 11 else ('playlist_recipes',))
             for owner in owners:
                 with self.subTest(version=version, owner=owner):
                     self.assert_sanitized(changed(scan, owner, state='not_applicable', count=None,

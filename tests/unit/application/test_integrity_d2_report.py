@@ -10,7 +10,7 @@ CHECKS = (
     ('compatibility', 'databases', 6), ('schema', 'schema_descriptors', 6),
     ('core_rows', 'rows', 6), ('metadata', 'rows', 6), ('retained_stages', 'rows', 6),
     ('current_graph', 'rows', 7), ('historical_graph', 'rows', 7),
-    ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
+    ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9), ('playlist_recipes', 'rows', 11),
     ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6),
     ('resource_access', 'databases', 6),
 )
@@ -28,6 +28,8 @@ def selected_scan(version, empty=False):
             state, count, precision = 'completed', 1, 'exact'
         elif name in OWNERS and version >= 7:
             state, count, precision = 'completed', 0 if empty else graph_counts[OWNERS.index(name)], 'exact'
+        elif name == 'playlist_recipes' and version >= 11:
+            state, count, precision = 'completed', 0, 'exact'
         elif name in ('current_evidence', 'historical_evidence') and version >= 9:
             state, count, precision = 'completed', 0, 'exact'
         else:

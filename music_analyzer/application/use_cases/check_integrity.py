@@ -14,7 +14,7 @@ CHECKS = (
     ('core_rows', 'rows', 6), ('metadata', 'rows', 6), ('retained_stages', 'rows', 6),
     ('current_graph', 'rows', 7), ('historical_graph', 'rows', 7),
     ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
-    ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6),
+    ('playlist_recipes', 'rows', 11), ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6),
     ('resource_access', 'databases', 6),
 )
 CODES = {
@@ -32,6 +32,7 @@ CODES = {
                          'graph_mirror_invalid', 'graph_edge_invalid'),
     'current_evidence': EVIDENCE_CODES,
     'historical_evidence': EVIDENCE_CODES,
+    'playlist_recipes': ('recipe_json_invalid', 'recipe_contract_invalid', 'recipe_name_invalid', 'recipe_version_invalid'),
     'sqlite_physical': ('sqlite_integrity_invalid',),
     'sqlite_foreign_keys': ('sqlite_foreign_key_invalid',),
     'resource_access': ('initial_access_failed', 'read_failed', 'cleanup_failed', 'deadline_exceeded',
@@ -39,7 +40,10 @@ CODES = {
 }
 STOPS = ('completed', 'physical_limit', 'scope_not_implemented', 'unsupported_database', 'unreadable_database', 'schema_blocked',
          'deadline', 'row_limit', 'utf8_limit', 'value_limit', 'finding_limit', 'read_error', 'cleanup_error', 'cancelled')
-SELECTED = ('compatibility', 'schema', 'core_rows', 'metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence', 'resource_access')
+SELECTED = ('compatibility', 'schema', 'core_rows', 'metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence', 'playlist_recipes', 'resource_access')
+ROW_CHECKS = ('core_rows', 'metadata', 'retained_stages', 'current_graph', 'historical_graph',
+              'current_evidence', 'historical_evidence', 'playlist_recipes')
+FIRST_VERSIONS = {name: first_version for name, unit, first_version in CHECKS}
 OPERATIONAL_STOPS = {
     'unreadable_database': 'initial_access_failed', 'read_error': 'read_failed',
     'cleanup_error': 'cleanup_failed', 'deadline': 'deadline_exceeded',
@@ -112,12 +116,12 @@ def _valid(scan):
             allowed = ('blocked',) if version is None else ('completed', 'interrupted', 'blocked', 'not_implemented')
             if item.state not in allowed:
                 return False
-        elif name in ('current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and version is not None and version < first_version:
+        elif version is not None and version < first_version:
             if item.state != 'not_applicable':
                 return False
         elif item.state not in ('completed', 'interrupted', 'blocked'):
             return False
-        if version is None and name in ('schema', 'core_rows', 'metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and item.state != 'blocked':
+        if version is None and name in ('schema',) + ROW_CHECKS and item.state != 'blocked':
             return False
     if type(scan.findings) is not tuple or len(scan.findings) > 100:
         return False
@@ -135,8 +139,7 @@ def _valid(scan):
         key = (item.check_id, item.code)
         if item.severity != severity or key in keys:
             return False
-        if version is not None and ((version < 7 and item.check_id in ('current_graph', 'historical_graph'))
-                or (version < 9 and item.check_id in ('current_evidence', 'historical_evidence'))):
+        if version is not None and version < FIRST_VERSIONS[item.check_id]:
             return False
         keys.add(key)
     by_id = {item.check_id: item for item in scan.checks}
@@ -149,27 +152,25 @@ def _valid(scan):
     compatibility_failed = any(item.check_id == 'compatibility' for item in scan.findings)
     schema_failed = any(item.check_id == 'schema' for item in scan.findings)
     for item in scan.findings:
-        if (item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
-                              'historical_graph', 'current_evidence', 'historical_evidence')
+        if (item.check_id in ROW_CHECKS
                 and by_id[item.check_id].state == 'interrupted'
                 and item.count_precision != 'lower_bound'):
             return False
-        if item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph', 'historical_graph', 'current_evidence', 'historical_evidence') and (
-                version is None or version < (9 if item.check_id.endswith('_evidence') else (6 if item.check_id in ('core_rows', 'metadata', 'retained_stages') else 7)) or compatibility_failed
+        if item.check_id in ROW_CHECKS and (
+                version is None or version < FIRST_VERSIONS[item.check_id] or compatibility_failed
                 or by_id['compatibility'].state != 'completed'
                 or by_id['schema'].state != 'completed' or schema_failed
                 or by_id[item.check_id].state not in ('completed', 'interrupted')):
             return False
         owner = by_id[item.check_id]
-        if (item.check_id in ('core_rows', 'metadata', 'retained_stages', 'current_graph',
-                              'historical_graph', 'current_evidence', 'historical_evidence')
+        if (item.check_id in ROW_CHECKS
                 and owner.state == 'completed' and item.count_precision != 'exact'):
             return False
         # Each predicate may flag the same row independently: bound each
         # row-owned group, never their sum. Graph counts, pointers and mirrors
         # describe relations rather than one occurrence per semantic work row.
         row_bounded = (item.check_id in ('core_rows', 'metadata', 'retained_stages',
-                                        'current_evidence', 'historical_evidence')
+                                        'current_evidence', 'historical_evidence', 'playlist_recipes')
                        or (item.check_id in ('current_graph', 'historical_graph')
                            and item.code in ('graph_lifecycle_invalid', 'graph_edge_invalid')))
         # Core orphan markers precede delivery/charging of audio value rows.
@@ -236,7 +237,7 @@ def _valid(scan):
         if version is not None and any(
                 by_id[name].state != 'blocked' for name, first in
                 (('metadata', 6), ('retained_stages', 6), ('current_graph', 7), ('historical_graph', 7),
-                 ('current_evidence', 9), ('historical_evidence', 9),
+                 ('current_evidence', 9), ('historical_evidence', 9), ('playlist_recipes', 11),
                  ('sqlite_physical', 6), ('sqlite_foreign_keys', 6)) if version >= first):
             return False
     if scan.stop_reason == 'scope_not_implemented' and (
