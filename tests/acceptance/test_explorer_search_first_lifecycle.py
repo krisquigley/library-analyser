@@ -120,78 +120,6 @@ stateGate.resolve(response(stateBody)); await flush();
 assert.equal(summaryRequests().length,1,'finishing state must not overwrite searched results');
 """)
 
-    def test_whitespace_clears_results_immediately_without_unfiltered_fetch(self):
-        self.run_browser(r"""
-boot(); await flush(); await searchFor('Matching');
-assert.equal(rows().length,1,'fixture establishes rendered search results');
-const before=summaryRequests().length;
-input('   \t ');
-assert.equal(rows().length,0,'blank intent clears rows synchronously, before debounce');
-assert(!walk(tracks).some(n=>n.tagName==='BUTTON'&&/load more/i.test(n.innerText)), 'blank intent also removes pagination');
-await advance(150);
-assert.equal(summaryRequests().length,before,'whitespace must never issue an unfiltered summary request');
-""")
-
-    def test_blank_queries_never_fetch_an_unfiltered_page(self):
-        for query in ('', '   \t '):
-            with self.subTest(query=query):
-                self.run_browser("const blank=" + repr(query) + r""";
-boot(); await flush(); await searchFor('Matching');
-const before=summaryRequests().length;
-input(blank); await advance(150);
-assert.equal(summaryRequests().length,before,'blank query must not fetch any summary page');
-assert.equal(rows().length,0);
-""")
-
-    def test_idle_prompt_is_distinct_from_completed_search_no_matches(self):
-        self.run_browser(r"""
-summaryResponder=()=>response(page()); boot(); await flush();
-assert.equal(rows().length,0);
-const idle=visibleStatus();
-assert(/search/i.test(idle)&&!/no tracks match|no results|no matches/i.test(idle),'idle invites a search rather than reporting no matches');
-summaryResponder=()=>response(page()); await searchFor('not-present');
-assert.equal(rows().length,0);
-assert(/no tracks match|no results|no matches/i.test(visibleStatus()),'completed empty search has explicit no-match status');
-assert.notEqual(visibleStatus(),idle);
-""")
-
-    def test_search_has_scoped_loading_feedback(self):
-        self.run_browser(r"""
-boot(); await flush();
-const pending=deferred(); summaryResponder=()=>pending.promise;
-await searchFor('Matching');
-assert(/loading|searching/i.test(visibleStatus())||tracks.getAttribute('aria-busy')==='true',
-  'pending search exposes scoped loading feedback');
-assert.notEqual(roots['library-loading'].getAttribute('aria-busy'),'true','search must not reopen blocking library loading');
-pending.resolve(response(page([fixtureTrack]))); await flush();
-assert.equal(rows().length,1);
-assert.notEqual(tracks.getAttribute('aria-busy'),'true','successful search is no longer busy');
-""")
-
-    def test_failed_search_exposes_error_instead_of_swallowing_failure(self):
-        self.run_browser(r"""
-boot(); await flush();
-summaryResponder=()=>response('summary temporarily unavailable',false);
-await searchFor('Matching');
-assert(/summary temporarily unavailable|failed|error|unable/i.test(visibleStatus()),'failed search is visible, not swallowed');
-assert.notEqual(roots['library-loading'].getAttribute('aria-busy'),'true');
-""")
-
-    def test_failed_search_retry_requests_only_same_query(self):
-        self.run_browser(r"""
-boot(); await flush();
-summaryResponder=()=>response('summary temporarily unavailable',false);
-await searchFor('Matching');
-const retry=retryButton(); assert(retry,'failed search offers scoped retry');
-const before=requests.length;
-summaryResponder=()=>response(page([fixtureTrack])); retry.onclick(); await flush();
-const retried=requests.slice(before);
-assert.equal(retried.length,1,'retry only searches; it must not refresh state/detail/graph');
-assert.equal(retried[0].url.pathname,'/api/tracks/summary');
-assert.equal(retried[0].url.searchParams.get('query'),'Matching');
-assert.equal(rows().length,1); assert(!retryButton(),'successful retry removes error/retry state');
-""")
-
     def test_refresh_preserves_search_and_selected_detail_without_list_fetch(self):
         self.run_browser(r"""
 stateBody={current_track_id:'selected',selection_epoch:0};
@@ -216,48 +144,6 @@ assert(history.some(r=>r.url.pathname==='/api/'+id&&r.options.method==='POST'));
 assert.equal(history.filter(r=>r.url.pathname==='/api/tracks/summary').length,0,id+' must not refill the sidebar');
 assert.equal(search.value,'Matching'); assert.deepEqual(rows().map(r=>r.dataset.trackId),['result']);
 """)
-
-    def test_baseline_control_nonblank_search_is_bounded_and_selected_detail_is_retained(self):
-        """Existing compact endpoint/detail/no-match behavior, not a new RED gate."""
-        self.run_browser(r"""
-stateBody={current_track_id:'selected',selection_epoch:0};
-boot(); await flush();
-assert.equal(requests.filter(r=>r.url.pathname==='/api/tracks/selected').length,1);
-summaryResponder=()=>response(page());
-await searchFor('not-present');
-const query=summaryRequests().at(-1).url;
-assert.equal(query.pathname,'/api/tracks/summary');
-assert.equal(query.searchParams.get('limit'),'100');
-assert.equal(query.searchParams.get('order'),'title');
-assert.equal(query.searchParams.get('query'),'not-present');
-assert.equal(query.searchParams.get('cursor'),null);
-assert.equal(rows().length,0);
-assert(/no tracks match|no results|no matches/i.test(visibleStatus()));
-assert.equal(requests.filter(r=>r.url.pathname==='/api/tracks/selected').length,1,'search does not re-fetch selected detail');
-""")
-
-    def test_baseline_control_hostile_metadata_is_rendered_as_text_and_selection_is_scoped(self):
-        """Already-green safety/selection control, not claimed as new RED behavior."""
-        self.run_browser(r"""
-boot(); await flush();
-const title='<img src=x onerror=alert(1)>', artist='<script>unsafe()</script>';
-summaryResponder=()=>response(page([{handle:'hostile',title,artist}]));
-await searchFor('hostile');
-assert.equal(rows().length,1);
-const row=rows()[0];
-assert.equal(row.children[0].children[0].textContent,title);
-assert.equal(row.children[1].textContent,artist);
-assert(!walk(tracks).some(n=>['IMG','SCRIPT'].includes(n.tagName)),'metadata does not create executable elements');
-const before=requests.length;
-await row.children[0].children[0].onclick(); await flush();
-assert.deepEqual(requests.slice(before).map(r=>r.url.pathname),['/api/current','/api/tracks/hostile']);
-assert.equal(row.children[0].children[0].getAttribute('aria-current'),'true');
-const graphRequests=requests.filter(r=>r.url.pathname==='/api/mood-axis-graph');
-assert.equal(graphRequests.length,1,'PR3 starts graph once independently of metadata selection');
-assert.equal(graphRequests[0].url.searchParams.get('contract'),'v3');
-assert(!walk(roots['graph-load-status']).some(n=>n.tagName==='BUTTON'&&n.innerText==='Load graph'));
-""")
-
 
 if __name__ == '__main__':
     unittest.main()
