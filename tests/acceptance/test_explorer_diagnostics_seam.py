@@ -40,6 +40,15 @@ assert.ok(Object.isFrozen(diagnostics.graph().model));
 vm.runInContext('explorerDiagnostics = null', context);
 assert.equal(context.explorerDiagnostics, diagnostics, 'the page cannot replace its seam');
 assert.ok(!Object.keys(context).includes('explorerDiagnostics'), 'the seam is not enumerable');
+
+// Tests and tools observe the page only through this seam: the page offers no module exports and no test hooks.
+const module = {exports: {}};
+const loaded = vm.createContext({console, URLSearchParams, setTimeout, clearTimeout, requestAnimationFrame() {}, module,
+  sessionStorage: {getItem: () => null, setItem() {}}, fetch: () => new Promise(() => {}), location: {search: '?diagnostics'}});
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), loaded);
+assert.deepEqual(Object.keys(module.exports), [], 'the page exports nothing');
+const hooks = [...vm.runInContext('Object.getOwnPropertyNames(globalThis)', loaded)].filter(name => /ForTesting$/.test(name));
+assert.deepEqual(hooks, [], 'the page declares no test hooks');
 console.log('NODE_SCRIPT_COMPLETED');
 """
 

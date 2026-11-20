@@ -63,7 +63,6 @@ const playlistDownload=createPlaylistDownload({explorerApi,playlistFile:browserP
 const playlistControls=playlistDownloadController({playlistDownload,currentTrackId:()=>state.current_track_id,rejectInput:message=>playlistControlsView.show(presentRejectedPlaylistInput(message))});
 const playlistControlsView=playlistDownloadView({onControlsEdited:controls=>playlistControls.controlsEdited(controls),onDownloadRequested:controls=>playlistControls.downloadRequested(controls),onArcAdded:()=>playlistControls.arcAdded(),onArcRemoved:place=>playlistControls.arcRemoved(place),onArcMoved:(place,offset)=>playlistControls.arcMoved(place,offset),onArcEdited:(place,fields)=>playlistControls.arcEdited(place,fields)});
 for(const type of PLAYLIST_DOWNLOAD_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistControlsView.show(presentPlaylistDownloadEvent(event)));
-const LEGACY_PLAYLIST_CONTROLS={m3uBpmMin:'bpmMin',m3uBpmMax:'bpmMax',m3uCount:'count',m3uDuration:'durationMinutes',m3uHarmonic:'harmonicMixing',m3uMinKeyStrength:'minimumKeyStrength',m3uArcUnit:'arcLengthUnit',m3uMood:'moodHold'};
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
 let selectionEpoch=0;
 let refreshRequestSeq=0;
@@ -85,10 +84,7 @@ const cameraControlsWatch=createCameraControlsWatch({onControlsReplaced:()=>canc
 cameraEvents.subscribe('camera-focus-cancelled',event=>{if(typeof cancelAnimationFrame==='function') cancelAnimationFrame(event.frame);});
 let loadingRefreshToken=0;
 let lastRefreshError=null;
-// Transitional (#146): trackSummaryPage and trackSummaryStatus mirror the search for the browser tests and tools.
 let trackSearchSession={searchState:'idle',results:emptyTrackResults(),failure:null};
-let trackSummaryPage={tracks:[],metadata:{},next_cursor:null,query:'',order:'title'};
-let trackSummaryStatus='idle';
 let graphLoadState={...GRAPH_IDLE_STATUS};
 // Transitional (#146): the graph session lives in the page's variables, which the browser tests and
 // tools still read and set, until the 3D scene and selection move into the layers.
@@ -106,7 +102,7 @@ graphEvents.subscribe('graph-render-due',event=>renderMap(event.visible));
 graphEvents.subscribe('graph-ready',showGraphLoadEvent);
 graphEvents.subscribe('graph-load-failed',showGraphLoadEvent);
 graphEvents.subscribe('graph-filters-applied',event=>{invalidateCameraViewIntent('graph-filtered'); if(event.shown) renderMap(event.visible); showGraphLoadEvent(event);});
-const trackSearchStore=Object.freeze({read:()=>trackSearchSession,write(changes){trackSearchSession={...trackSearchSession,...changes}; const {results,searchState}=trackSearchSession; trackSummaryPage={tracks:results.tracks,metadata:results.metadata,next_cursor:results.nextCursor,query:results.query,order:'title'}; trackSummaryStatus=searchState==='failed'?'error':searchState;}});
+const trackSearchStore=Object.freeze({read:()=>trackSearchSession,write(changes){trackSearchSession={...trackSearchSession,...changes};}});
 const trackEvents=createInMemoryEventBus();
 const trackSearch=createTrackSearch({explorerApi,trackSession:trackSearchStore,clock:{wait:ms=>new Promise(resolve=>setTimeout(resolve,ms))},eventBus:trackEvents});
 const trackList=trackListView({onTrackChosen:trackId=>setCurrent(trackId),onQueryTyped:query=>trackSearch.queryTyped(query),onLoadMore:()=>trackSearch.loadMore().catch(()=>{}),onRetry:()=>trackSearch.retry().catch(()=>{})});
@@ -355,14 +351,6 @@ function buildGraphControls(root){graphFilterControls.mount(root);}
 function syncGraphControlOptions(model){graphFilterControls.showOptions(graphControlOptionsViewModel(model,selectedGraphControls));}
 function wireCanvas(){/* 3d-force-graph owns orbit/pick controls. */}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); renderTracks([]); renderGraphLoadStatus(); wireCanvas(); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
-function setGraphModelForTesting(model){graphModel=model;}
-function setStateForTesting(next){state={...state,...next};}
-function setVisibleGraphForTesting(model){visibleGraph=model;}
-function setGraphControlsForTesting(controls){const playlist={}; const graph={}; for(const [name,value] of Object.entries(controls||{})){if(Object.hasOwn(LEGACY_PLAYLIST_CONTROLS,name)) playlist[LEGACY_PLAYLIST_CONTROLS[name]]=value; else graph[name]=value;} if(Object.keys(playlist).length) playlistDownload.edit(playlist); if(Object.keys(graph).length) graphLoad.editControls(graph);}
-function getGraphControlsForTesting(){return {...selectedGraphControls,genres:[...(selectedGraphControls.genres||[])]};}
-function getVisibleGraphForTesting(){return {nodes:[...(visibleGraph.nodes||[])],links:[...(visibleGraph.links||[])],unpositioned:[...(visibleGraph.unpositioned||[])]};}
-function getStateForTesting(){return {...state,history:[...(state.history||[])]};}
-if(typeof module!=='undefined'){module.exports={refresh,updateSelectedTrackVisuals,renderMap,syncSelectedNodeHalo,setLoadingPhase,setLoadingError,clearLoading,nextFrame,detailGauge,displayNumber,graphAxisSpec,syncGraphAxes,buildMoodStrip,nodeLabel,normalizeMoodAxisGraphDto,buildMoodGraphModel,moodNodeColor,graphColorLegend,applyMoodGraphFilters,passesGraphFilters,buildGraphModel,applyGraphFilters,canvasPoint,fieldDisplay,graphDimensions,updateGraphSize,graphCameraFrame,syncSelectionEpoch,renderInitialDetail,renderDetail,renderTrackMetadata,setGraphModelForTesting,setVisibleGraphForTesting,setStateForTesting,getStateForTesting,loadGraph,applyCurrentGraphFilters,renderGraphLoadStatus,renderTracks,loadTrackSummaryPage,loadNextTrackSummaryPage,graphRelatednessLegend,relatednessLinkAlpha,buildGraphControls,syncGraphControlOptions,clearGraphFilters,downloadM3UPlaylist,setGraphControlsForTesting,getGraphControlsForTesting,getVisibleGraphForTesting};}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
 installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphModel,visible:visibleGraph,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
-function diagnosticSnapshot(){return {currentTrackId:state.current_track_id??null,selectionEpoch:state.selection_epoch??null,history:state.history||[],graphStatus:graphLoadState.status,cameraFocusActive:cameraFocusFrame!=null,pendingCameraTrackId:pendingCameraSelection,selectionPending:pendingSelectionOperation!=null,trackSearchStatus:trackSummaryStatus,trackResultCount:trackSummaryPage.tracks.length};}
+function diagnosticSnapshot(){return {currentTrackId:state.current_track_id??null,selectionEpoch:state.selection_epoch??null,history:state.history||[],graphStatus:graphLoadState.status,cameraFocusActive:cameraFocusFrame!=null,pendingCameraTrackId:pendingCameraSelection,selectionPending:pendingSelectionOperation!=null,trackSearchStatus:trackSearchSession.searchState==='failed'?'error':trackSearchSession.searchState,trackResultCount:trackSearchSession.results.tracks.length};}
