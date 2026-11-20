@@ -120,7 +120,7 @@ class GraphFailureAnnouncementTests(unittest.TestCase):
   assert(field&&controls&&download&&status);
   field.value=editedValue;field.onchange();
   await download.onclick();await flush();
-  assert.equal(status.innerText,'M3U download failed: Select a start track before downloading M3U');
+  assert.equal(status.innerText,'M3U download failed: Select a start track first');
   assert.equal(status.getAttribute('role'),'alert');
   assert.equal(status.getAttribute('aria-live'),'assertive');
   assert.equal(requests.filter(r=>r.url.pathname==='/api/playlists/m3u').length,0,

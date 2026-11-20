@@ -1,8 +1,16 @@
-// The M3U endpoint's address for a playlist recipe (#146, #137).
+// The M3U and preview endpoints' addresses for a playlist recipe (#146, #137, #138): the same parameters for both.
 
 const ARC_LENGTH_PARAMETERS = Object.freeze({tracks: 'arc_tracks', minutes: 'arc_minutes'});
 
 export function playlistDownloadQuery(recipe) {
+  return '/api/playlists/m3u?' + playlistParameters(recipe);
+}
+
+export function playlistPreviewQuery(recipe) {
+  return '/api/playlists/preview?' + playlistParameters(recipe);
+}
+
+function playlistParameters(recipe) {
   const params = new URLSearchParams();
   params.set('start', recipe.startTrackId);
   params.set('bpm_min', recipe.bpmMin);
@@ -13,7 +21,7 @@ export function playlistDownloadQuery(recipe) {
   else params.set('harmonic', 'off');
   appendEnergyPlan(params, recipe.energyPlan, recipe.length.arcs);
   if (recipe.moodHold) params.set('mood', recipe.moodHold);
-  return '/api/playlists/m3u?' + params.toString();
+  return params.toString();
 }
 
 // Arcs repeat in order; a list is sent only when some arc uses it, a blank keeping each unset value's place.

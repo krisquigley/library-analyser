@@ -61,5 +61,36 @@ assert.deepEqual(cameraMoves.at(-1).target, {x: node.fx, y: node.fy, z: node.fz}
 ''')
 
 
+    def test_preview_shows_the_drafted_playlist_from_the_current_track(self):
+        self.run_scenario(r'''
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/playlists/preview'] = r => r.respond({
+  tracks: [
+    {track_id: 'b', title: 'Track b', artist: 'Public synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
+      energy_level: 0.5, energy_target: null},
+    {track_id: 'a', title: 'Track a', artist: 'Public synthetic', bpm: 121, key: null, camelot: null, arousal: null,
+      energy_level: null, energy_target: null},
+  ],
+  transitions: [{from_track_id: 'b', to_track_id: 'a', key_compatible: null, bpm_step_smooth: true, bpm_change: 1}],
+  complete: false, warning: 'Only 2 of 10 tracks fit'});
+await settle(6);
+await search('b'); await settle(2);
+await chooseRow('b'); await settle(4); await untilCameraSettles();
+const bpmMin = byId('m3u-bpm-min'); bpmMin.value = '118'; bpmMin.onchange();
+heard.length = 0;
+await press('preview-playlist'); await settle(2);
+const asked = request('/api/playlists/preview').url.searchParams;
+assert.deepEqual([asked.get('start'), asked.get('bpm_min')], ['b', '118']);
+assert.deepEqual(heard, ['playlist-preview-started', 'playlist-previewed']);
+const cells = byId('playlist-preview-tracks').children.map(line => line.children.map(cell => cell.textContent));
+assert.deepEqual(cells, [
+  ['1', 'Public synthetic – Track b', '120.0', '8A', '0.5', '—', 'Start'],
+  ['2', 'Public synthetic – Track a', '121.0', '—', '—', '—', 'Key unknown, +1.0 BPM'],
+]);
+assert.equal(byId('playlist-preview-status').textContent, '2 tracks. Warning: Only 2 of 10 tracks fit');
+assert.equal(requests.filter(r => r.path === '/api/playlists/m3u').length, 0, 'a preview downloads nothing');
+''')
+
+
 if __name__ == '__main__':
     unittest.main()

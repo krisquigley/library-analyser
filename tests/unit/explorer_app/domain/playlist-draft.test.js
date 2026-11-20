@@ -97,5 +97,5 @@ test("a chain with lengths sets the playlist's length in the draft's unit", () =
 });
 
 test('a draft without a start track has no recipe', () => {
-  assert.throws(() => playlistRecipeOf(EMPTY_PLAYLIST_DRAFT, null), /Select a start track before downloading M3U/);
+  assert.throws(() => playlistRecipeOf(EMPTY_PLAYLIST_DRAFT, null), /Select a start track first/);
 });

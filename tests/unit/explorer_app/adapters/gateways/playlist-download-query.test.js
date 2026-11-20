@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {playlistRecipe} from '../../../../../music_explorer/frameworks/explorer/assets/app/domain/playlist-recipe.js';
-import {playlistDownloadQuery} from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/gateways/playlist-download-query.js';
+import {playlistDownloadQuery, playlistPreviewQuery} from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/gateways/playlist-download-query.js';
 
 const base = {startTrackId: 'track-start', bpmMin: '120', bpmMax: '128'};
 const arc = (shape, fields = {}) => ({shape, low: '', high: '', length: '', ...fields});
@@ -39,4 +39,10 @@ test('arc lengths in minutes, and a missing one sent blank for the server to rej
     energyArcs: [arc('rise', {length: '20'}), arc('fall')]});
   assert.equal(playlistDownloadQuery(recipe), '/api/playlists/m3u?start=track-start&bpm_min=120&bpm_max=128'
     + '&min_key_strength=0.5&arc=rise&arc=fall&arc_minutes=20&arc_minutes=');
+});
+
+test('the preview asks the preview endpoint with the same parameters as the download (#138)', () => {
+  const recipe = playlistRecipe({...base, energyArcs: [arc('peak', {length: '6'})], arcUnit: 'tracks'});
+  assert.equal(playlistPreviewQuery(recipe),
+    playlistDownloadQuery(recipe).replace('/api/playlists/m3u?', '/api/playlists/preview?'));
 });

@@ -18,3 +18,4 @@
 
 .tracks-table{width:100%;border-collapse:collapse}.tracks-table th,.tracks-table td{text-align:left;padding:.2rem .25rem;border-bottom:1px solid rgba(255,255,255,.12)}.tracks-table button{width:100%;text-align:left}.tracks-table tr.current{background:rgba(132,185,255,.18)}#track-search{width:100%;margin:.35rem 0}
 #m3u-energy-arcs{margin:.4rem 0;padding:.3rem .4rem;border:1px solid #55768a;min-width:0}.m3u-arc-row{display:flex;flex-wrap:wrap;align-items:center;gap:.2rem;margin:.25rem 0}.m3u-arc-row input[type=number]{width:4.6rem}
+#playlist-preview{margin:.4rem 0}.playlist-preview-table{width:100%;border-collapse:collapse;font-size:.75rem}.playlist-preview-table th,.playlist-preview-table td{padding:.12rem .25rem;border-bottom:1px solid #2c475c;text-align:left;vertical-align:top}
