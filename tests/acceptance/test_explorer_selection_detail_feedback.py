@@ -1,6 +1,7 @@
 """Refs #70: red-only selected-detail feedback contracts for both web assets.
 
-Run the unmodified complete delivery scripts with fake DOM and deferred HTTP.
+Run the unmodified complete delivery scripts with fake DOM and deferred HTTP, driven as the
+listener does: tracks are chosen by searching and clicking their row (#146), never by calling the page.
 Controls separately prove accepted detail and graph adapters already work; these
 are semantic lifecycle checks, not browser paint or performance measurements.
 """
@@ -66,7 +67,8 @@ const context=vm.createContext({console,URLSearchParams,URL,
     if(url.pathname==='/api/state')return response(stateBody);
     if(url.pathname==='/api/current')return postResponder(options);
     if(url.pathname==='/api/mood-axis-graph')return graphResponder();
-    if(url.pathname==='/api/tracks/summary')return response({tracks:[{handle:'new',title:'New result',artist:'Artist'}],next_cursor:null,metadata:{track_count:1}});
+    if(url.pathname==='/api/tracks/summary'){const id=url.searchParams.get('query');
+      return response({tracks:[{handle:id,title:id==='new'?'New result':'Result '+id,artist:'Artist'}],next_cursor:null,metadata:{track_count:1}});}
     if(url.pathname.startsWith('/api/tracks/'))return detailResponder(decodeURIComponent(url.pathname.split('/').at(-1)));
     throw new Error('Unexpected request '+path);
   }
@@ -94,13 +96,16 @@ function assertFailure(){
   assert(retry(),'failed current detail must offer a visible scoped retry button');assertNotBlocking();
 }
 function capture(promise){return promise.then(()=>null,error=>error);}
+// The listener's way to a track: type its name, wait out the typing pause, then click its row.
+async function showRow(id){const search=roots['track-search'];search.value=id;search.oninput();
+  await new Promise(resolve=>setTimeout(resolve,200));await flush();}
+function pick(id){const row=walk(roots.tracks).find(n=>n.tagName==='TR'&&n.dataset.trackId===id);
+  assert(row,'a search row for '+id);return capture(Promise.resolve(row.children[0].children[0].onclick()));}
+async function choose(id){await showRow(id);return pick(id);}
 async function boot(){
   vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context,{filename:process.argv[1]});await flush();
-  // Use baseline's real explicit graph path if automatic startup is absent.
-  // Graph auto-start is not the subject of this detail-feedback slice.
-  if(!paths().includes('/api/mood-axis-graph')){capture(context.loadGraph());await flush();}
-  assert.equal(paths().filter(p=>p==='/api/mood-axis-graph').length,1,'fixture starts one real pending graph request');
-  await context.setCurrent('old');await flush();
+  assert.equal(paths().filter(p=>p==='/api/mood-axis-graph').length,1,'startup starts one real pending graph request');
+  await choose('old');await flush();
   assert(roots.detail.innerText.includes('Previously selected title'),'positive fixture precondition: real renderDetail displays prior metadata');
   assertNotBlocking();
 }
@@ -122,59 +127,10 @@ class SelectionDetailFeedbackTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def run_failure_retry(self, failure):
-        self.run_browser("const failure=" + repr(failure) + ";\n" + r"""
-await boot();const gate=deferred();detailResponder=()=>gate.promise;
-const selected=capture(context.setCurrent('new'));await flush();
-assert.equal(getCount('new'),1,'fixture must reach selected GET before failing it');
-if(failure==='http')gate.resolve(response('detail temporarily unavailable',false));
-else gate.reject(new Error('detail temporarily unavailable'));
-await selected;await flush();assertFailure();
-const retryGate=deferred();detailResponder=()=>retryGate.promise;
-const before=requests.length;capture(Promise.resolve(retry().onclick()));await flush();
-assert.deepEqual(paths(before),['/api/tracks/new'],'detail retry must not POST intent or refresh state, summaries, or graph');
-assertLoading();assert.equal(getCount('new'),2);
-retryGate.resolve(response(detail('new','Recovered current title')));await flush();
-assert(roots.detail.innerText.includes('Recovered current title'),'retry paints accepted current metadata');
-assert(!retry(),'successful retry removes retry control');
-assert.equal(statusNodes().length,0,'success removes pending/error feedback');
-assert.deepEqual(paths(before),['/api/tracks/new']);
-""")
-
-    def run_late_retry(self, outcome):
-        self.run_browser("const outcome=" + repr(outcome) + ";\n" + r"""
-await boot();detailResponder=()=>response('detail temporarily unavailable',false);
-await capture(context.setCurrent('new'));await flush();
-assert.equal(getCount('new'),1,'initial current detail GET reaches failure');
-// This is intentionally the RED gate on base: no invented error/retry fixture.
-assertFailure();
-const retryGate=deferred();detailResponder=id=>id==='new'?retryGate.promise:response(detail(id,'Newer accepted title'));
-const retryStart=requests.length;
-const retryCompletion=capture(Promise.resolve(retry().onclick()));await flush();
-assert.deepEqual(paths(retryStart),['/api/tracks/new'],'retry posts no intent and refreshes no state, summaries, or graph');
-assert.equal(getCount('new'),2,'one retry GET for failed selected track');assertLoading();
-const selectionStart=requests.length;
-assert.equal(await capture(context.setCurrent('other')),null);await flush();
-assert.deepEqual(paths(selectionStart),['/api/current','/api/tracks/other']);
-assert(roots.detail.innerText.includes('Newer accepted title'),'newer accepted selection paints its own metadata before retry settles');
-assert.equal(statusNodes().length,0);assert(!retry());
-const newerDetail=roots.detail.innerText,beforeLate=requests.length;
-if(outcome==='success')retryGate.resolve(response(detail('new','Stale retried title')));
-else retryGate.resolve(response('stale retry temporarily unavailable',false));
-await retryCompletion;await flush();
-assert.equal(roots.detail.innerText,newerDetail,'late retry completion must not replace newer selected detail');
-assert(!roots.detail.innerText.includes('Stale retried title'));
-assert(!roots.detail.innerText.includes('stale retry temporarily unavailable'));
-assert.equal(statusNodes().length,0,'late retry must not attach loading/error to newer current detail');
-assert(!retry(),'late retry must not attach retry action to newer successful current detail');
-assert.equal(requests.length,beforeLate,'late retry completion must not start another request');
-assert.equal(getCount('other'),1);assert.equal(getCount('new'),2);assertNotBlocking();
-""")
-
     def test_graph_completion_cannot_remove_pending_detail_loading(self):
         self.run_browser(r"""
 await boot();const gate=deferred();detailResponder=()=>gate.promise;
-const selected=capture(context.setCurrent('new'));await flush();
+await showRow('new');const selected=pick('new');await flush();
 assert.equal(getCount('new'),1);const before=requests.length;
 graphGate.resolve(response(graphBody));await flush();
 assert(/graph ready/i.test(roots['graph-load-status'].innerText),'graph completes independently of pending detail');
@@ -186,7 +142,7 @@ assertLoading();gate.resolve(response(detail('new','Accepted new title')));await
     def test_failed_detail_does_not_stop_independent_graph_success(self):
         self.run_browser(r"""
 await boot();detailResponder=()=>response('detail temporarily unavailable',false);
-await capture(context.setCurrent('new'));await flush();const before=requests.length;
+await choose('new');await flush();const before=requests.length;
 graphGate.resolve(response(graphBody));await flush();
 assert(/graph ready/i.test(roots['graph-load-status'].innerText));assert(paints.length>0);
 assert.equal(requests.length,before,'graph success must not refetch failed detail');assertFailure();
