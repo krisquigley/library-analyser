@@ -24,3 +24,34 @@ test('a single node is never framed closer than 40, and a bad field of view or s
   assert.ok(frame.position.z - 3 >= 40);
   assert.deepEqual(graphCameraFrame([{x: 1, y: 2, z: 3}], {width: 1, height: 1}, 50), frame);
 });
+
+test('framing uses display coordinates, never the native axis values, and changes no node', () => {
+  const node = Object.freeze({x: 72, y: 36, z: 180, fx: 72, fy: 36, fz: 180,
+    axis: Object.freeze({x: Object.freeze({raw: -2}), y: Object.freeze({raw: 10}), z: Object.freeze({raw: 120})})});
+  const before = JSON.stringify(node);
+  assert.deepEqual(graphCameraFrame([node], {width: 800, height: 600}, 50).target, {x: 72, y: 36, z: 180});
+  assert.equal(JSON.stringify(node), before);
+});
+
+test('a portrait viewport or a narrow field of view backs the camera further off', () => {
+  const nodes = [{x: -100, y: -10, z: 0}, {x: 100, y: 10, z: 0}];
+  const distance = (size, fov) => graphCameraFrame(nodes, size, fov).position.z;
+  assert.ok(distance({width: 500, height: 1000}, 50) > distance({width: 1000, height: 500}, 50));
+  assert.ok(distance({width: 1000, height: 500}, 20) > distance({width: 1000, height: 500}, 50));
+});
+
+test('an origin node is framed from a finite, real distance whatever the field of view', () => {
+  for (const fov of [NaN, 0, 180]) {
+    const {position, target} = graphCameraFrame([{x: 0, y: 0, z: 0}], {width: 800, height: 600}, fov);
+    assert.deepEqual(target, {x: 0, y: 0, z: 0});
+    assert.ok(Number.isFinite(position.z) && position.z > 0, `${fov}: ${position.z}`);
+  }
+});
+
+test('nodes without numeric coordinates do not move the frame', () => {
+  const placed = {x: 10, y: 20, z: 30};
+  const frame = graphCameraFrame([placed], {width: 800, height: 600}, 50);
+  for (const x of [undefined, null, '0']) {
+    assert.deepEqual(graphCameraFrame([placed, {x, y: 500, z: 500}], {width: 800, height: 600}, 50), frame, String(x));
+  }
+});

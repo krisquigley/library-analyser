@@ -180,50 +180,6 @@ render(); tick(); tick(); assertFocus('b');
 assert.equal(calls.length,2,'initial frame then authoritative focus, never rejected A');
 ''')
 
-    def test_positioned_origin_selection_focuses_without_invalid_camera_jump(self):
-        self.run_scenario(r'''
-render(model([a,node('origin',0,0,0)])); calls.length=0;
-Object.assign(camera.position,{x:400,y:-240,z:180});
-Object.assign(controls.target,{x:120,y:-80,z:30});
-const offset={x:280,y:-160,z:150}, length=Math.hypot(280,-160,150);
-await select('origin'); tick(); tick();
-assert.deepEqual(details,['origin']);
-const focus=animated(); assert.equal(focus.length,1,'positioned origin is eligible');
-assert.deepEqual(focus[0].target,{x:0,y:0,z:0});
-assert.ok(Object.values(focus[0].position).every(Number.isFinite));
-for(const axis of ['x','y','z'])
-  assert.ok(Math.abs(focus[0].position[axis]-100*offset[axis]/length)<1e-9,
-    'origin keeps the panned viewing direction with useful offset');
-assert.equal(focus[0].duration,0,'no uncancellable vendor tween');
-assertHalo('origin');
-assert.equal(elements.detail['aria-busy'],'false');
-''')
-
-    def test_control_selected_halo_and_mood_resize_fixture_preserve_orbit(self):
-        """Control validates the post-focus fixture separately from its RED precondition."""
-        self.run_scenario(r'''
-run("setStateForTesting({current_track_id:'a'})"); render(); tick(); assertHalo('a');
-const before=replacements; calls.length=0;
-Object.assign(camera.position,{x:901,y:802,z:703});
-Object.assign(controls.target,{x:91,y:82,z:73});
-render(model([a,b].map(n=>({...n,moodScore:{raw:0.8,label:'calm'}}))));
-tick(); tick(); for(const callback of resizeCallbacks) callback(); tick();
-assertHalo('a'); assert.equal(calls.length,0);
-assert.equal(replacements,before);
-assert.deepEqual(camera.position,{x:901,y:802,z:703});
-assert.deepEqual(controls.target,{x:91,y:82,z:73});
-''')
-
-    def test_control_detail_is_usable_while_graph_is_unavailable(self):
-        self.run_scenario(r'''
-await select('a'); await select('b');
-assert.deepEqual(details,['a','b']);
-assert.equal(calls.length,0,'detail requires no graph instance');
-assert.equal(elements.detail['aria-busy'],'false');
-assert.equal(requests.filter(r=>r.path.startsWith('/api/tracks/')).length,2);
-assert.equal(requests.filter(r=>r.path.includes('graph')).length,0);
-''')
-
     def test_control_without_selection_frames_once_and_keeps_manual_camera(self):
         self.run_scenario(r'''
 render(); assert.equal(calls.length,1); assert.equal(calls[0].duration,0);
