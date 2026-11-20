@@ -125,7 +125,7 @@ assert.equal(summaryRequests().length,1,'finishing state must not overwrite sear
 stateBody={current_track_id:'selected',selection_epoch:0};
 boot(); await flush(); await searchFor('Matching');
 const before=requests.length;
-await context.refresh(); await flush();
+await roots['loading-retry'].onclick(); await flush();
 const refreshed=requests.slice(before);
 assert.equal(refreshed.filter(r=>r.url.pathname==='/api/tracks/summary').length,0,'refresh must not replace the search with catalogue page one');
 assert.equal(search.value,'Matching'); assert.deepEqual(rows().map(r=>r.dataset.trackId),['result']);

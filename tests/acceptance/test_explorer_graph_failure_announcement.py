@@ -44,7 +44,7 @@ class GraphFailureAnnouncementTests(unittest.TestCase):
   // Selection precedes this refresh so its delayed response is not discarded
   // as stale by the real selection request guard.
   stateGate=deferred();
-  const refreshing=context.refresh();await flush();
+  const refreshing=roots['loading-retry'].onclick();await flush();
   graphGate.resolve(response(graphBody));await flush();
   assert(/Graph ready: 1 positioned tracks/.test(graphStatus()));
   assert.equal(requests.filter(r=>r.url.pathname==='/api/state').length,2,
@@ -179,7 +179,7 @@ class GraphFailureAnnouncementTests(unittest.TestCase):
   assert(m3u&&count,'ready graph offers the actual M3U controls');
   const before=requests.length;
   stateGate=deferred();
-  const refreshing=context.refresh();await flush();
+  const refreshing=roots['loading-retry'].onclick();await flush();
   assert.deepEqual(requests.slice(before).map(r=>r.url.pathname),['/api/state']);
   stateGate.resolve(response(stateBody));await refreshing;await flush();
   assert.equal(graphRequests().length,1,'state refresh must not reload ready graph');

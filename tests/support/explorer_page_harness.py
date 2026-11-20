@@ -21,7 +21,7 @@ let elementCount = 0;
 function element(tag) {
   const listeners = {};
   const node = {
-    tagName: String(tag).toUpperCase(), id: '', children: [], attributes: {}, dataset: {}, style: {},
+    tagName: String(tag).toUpperCase(), id: '', children: [], attributes: {}, style: {},
     value: '', ownText: '', hidden: false, disabled: false, className: '', parentElement: null,
     clientWidth: 800, clientHeight: 600, serial: ++elementCount,
     get textContent() { return this.ownText + this.children.map(child => child.textContent || '').join(''); },
@@ -76,6 +76,10 @@ function element(tag) {
     closest(selector) { for (let node = this; node; node = node.parentElement) if (matches(node, selector)) return node; return null; },
     focus() {}, blur() {}, scrollIntoView() {}, click() { return this.dispatch('click'); },
   };
+  // As in a browser, dataset.trackId is the data-track-id attribute.
+  node.dataset = new Proxy({}, {set(values, key, value) {
+    values[key] = String(value); node.attributes['data-' + key.replace(/[A-Z]/g, c => '-' + c.toLowerCase())] = String(value); return true;
+  }});
   return node;
 }
 function textNode(value) { const node = element('#text'); node.ownText = String(value); return node; }
@@ -156,7 +160,7 @@ const camera = {fov: 50, position: {x: 500, y: 400, z: 300}, up: {x: 0, y: 1, z:
 const controls = {target: {x: 0, y: 0, z: 0}, listeners: {}, addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); },
   removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter(item => item !== fn); }, update() {}};
 const cameraMoves = [];
-let mounted = {nodes: [], links: []}, nodeClick = null;
+let mounted = {nodes: [], links: []}, nodeClick = null, nodeSize = null, mounts = 0;
 const graph = new Proxy({}, {get(_target, key) {
   if (key === 'scene') return () => scene;
   if (key === 'camera') return () => camera;
@@ -165,7 +169,7 @@ const graph = new Proxy({}, {get(_target, key) {
   if (key === 'graph2ScreenCoords') return () => ({x: 400, y: 300});
   if (key === 'graphData') return data => {
     if (!data) return mounted;
-    mounted = data;
+    mounted = data; mounts += 1;
     scene.children = scene.children.filter(child => !child.userData?.trackId);
     for (const node of data.nodes) {
       const mesh = new Mesh(new Geometry(4), new Material()); mesh.userData.trackId = node.id;
@@ -180,6 +184,7 @@ const graph = new Proxy({}, {get(_target, key) {
     return graph;
   };
   if (key === 'onNodeClick') return handler => { nodeClick = handler; return graph; };
+  if (key === 'nodeVal') return size => { nodeSize = size; return graph; };
   return () => graph;
 }});
 
