@@ -8,6 +8,7 @@ import {PLAYLIST_FILE} from '../../../../../music_explorer/frameworks/explorer/a
 import {GRAPH_SESSION} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/graph-session.js';
 import {TRACK_SEARCH_SESSION} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/track-search-session.js';
 import {CLOCK, DELAYS, FRAMES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/clock.js';
+import {GRAPH_RENDERER} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/graph-renderer.js';
 
 test('the ports name the operations their adapters provide', () => {
   assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'loadMoodGraph', 'searchTracks', 'chooseCurrentTrack', 'applyHistory',
@@ -23,6 +24,7 @@ test('the ports name the operations their adapters provide', () => {
   assert.deepEqual(TRACK_SEARCH_SESSION.operations, ['read', 'write']);
   assert.deepEqual(EVENT_BUS.operations, ['publish', 'subscribe']);
   assert.deepEqual(PLAYLIST_FILE.operations, ['save']);
+  assert.deepEqual(GRAPH_RENDERER.operations, ['pause', 'resume', 'canPause']);
 });
 
 test('an adapter with every operation is accepted as it is', () => {
