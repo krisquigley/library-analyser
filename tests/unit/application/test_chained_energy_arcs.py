@@ -3,7 +3,7 @@ from itertools import combinations
 import unittest
 
 from music_explorer.application.dto.playlists import EnergyArcRequest, PlaylistRecipe
-from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
+from music_explorer.application.use_cases.download_playlist.download_playlist import GenerateBpmGraphM3UPlaylist
 from tests.unit.application.test_m3u_playlist_generation import _FakePlaylistRepository, _PlayableTrack, _edge
 
 

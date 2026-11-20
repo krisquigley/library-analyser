@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from music_explorer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
-from music_explorer.application.use_cases.playlists import GenerateBpmGraphM3UPlaylist
+from music_explorer.application.use_cases.download_playlist.download_playlist import GenerateBpmGraphM3UPlaylist
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http, to_indexed_mood_axis_graph_http
 from music_explorer.interface_adapters.playlist_recipe_query import playlist_recipe_from_query
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection, ProjectionArtifactError
