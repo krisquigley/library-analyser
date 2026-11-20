@@ -8,7 +8,7 @@ import {createInMemoryEventBus} from './app/frameworks/in-memory-event-bus.js';
 import {createGraphRendering} from './app/application/render-graph/render-graph.js';
 import {forceGraphRenderer, graphViewPose, observeGraphInput} from './app/frameworks/graph-scene/force-graph-rendering.js';
 import {createSelectedNodeHalo, findSceneObject, graphObjectTrackId} from './app/frameworks/graph-scene/selected-node-halo.js';
-import {createCameraControlsWatch, settleCameraFocusInput, showCameraArcPose} from './app/frameworks/graph-scene/camera-focus-scene.js';
+import {animateCameraArc, createCameraControlsWatch} from './app/frameworks/graph-scene/camera-focus-scene.js';
 import {jumpCameraToPickedNode, mountedPickedNode, pickedTrackId} from './app/frameworks/graph-scene/graph-pick.js';
 import {configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, fitGraphToElement, graphContainer, observeElementResize, selectedTrackNodeSize} from './app/frameworks/graph-scene/force-graph-scene.js';
 import {playlistDownloadView} from './app/frameworks/views/playlist-download-view.js';
@@ -34,7 +34,7 @@ import {moodStripMarks} from './app/domain/mood-strip.js';
 import {moodStripViewModel} from './app/adapters/presenters/mood-strip-presenter.js';
 import {moodStripView} from './app/frameworks/views/mood-strip-view.js';
 import {graphAxisSpec, linkLabel, nodeLabel, relatednessLinkColor} from './app/adapters/presenters/graph-scene-presenter.js';
-import {cameraArcPose, cameraFocusArc, cameraViewDirection, focusProgress, selectionFocusPose} from './app/domain/camera-arc.js';
+import {cameraViewDirection, selectionFocusPose} from './app/domain/camera-arc.js';
 import {createCameraFocus} from './app/application/focus-camera/focus-camera.js';
 import {CAMERA_FOCUS_EVENT_TYPES} from './app/application/focus-camera/camera-focus-events.js';
 import {TRACK_SELECTION_EVENT_TYPES} from './app/application/select-track/track-selection-events.js';
@@ -163,27 +163,15 @@ function animateGraphAxes(timestamp){
   requestAnimationFrame(animateGraphAxes);
 }
 // View ownership outlives a POST or a deferred layout, independently of the RAF timeline.
-// Cancel through the page's own cancelCameraFocus first: the browser diagnostic observes cancellations there.
 function invalidateCameraViewIntent(cause){cancelCameraFocus(cause); return cameraFocus.claimView(cause);}
 // Own the timeline: bundled cameraPosition's timed tweens have no public cancellation.
 function cancelCameraFocus(cause){cameraFocus.cancel(cause);}
 function observeCameraFocusControls(graph){cameraControlsWatch.observe(graph);}
+const cameraFrames=Object.freeze({request:callback=>requestAnimationFrame(callback),now:()=>typeof performance!=='undefined'?performance.now():Date.now()});
 function animateCameraFocus(graph,position,target){
   observeCameraFocusControls(graph);
   cancelCameraFocus('new-focus');
-  const generation=cameraFocus.begin();
-  settleCameraFocusInput(graph);
-  const camera=graph.camera();
-  const arc=cameraFocusArc({fromPosition:{...graph.cameraPosition()},fromTarget:{...graph.controls().target},fromUp:camera.up?{...camera.up}:null,position,target});
-  const clockNow=()=>typeof performance!=='undefined'?performance.now():Date.now();
-  const started=clockNow();
-  const step=timestamp=>{
-    if(graph!==forceGraph || !cameraFocus.frameRan(generation)) return;
-    const progress=focusProgress(started,Number.isFinite(timestamp)?timestamp:clockNow());
-    showCameraArcPose(graph,cameraArcPose(arc,progress));
-    if(progress<1) cameraFocus.frameScheduled(generation,requestAnimationFrame(step)); else cameraFocus.finished(generation);
-  };
-  cameraFocus.frameScheduled(generation,requestAnimationFrame(step));
+  animateCameraArc(graph,{position,target},{cameraFocus,frames:cameraFrames,isShown:()=>graph===forceGraph});
 }
 // Graph picks own the view immediately; server acceptance still owns detail.
 function selectGraphNode(picked){

@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createCameraControlsWatch, setCameraFocusPose, settleCameraFocusInput, showCameraArcPose,
+  animateCameraArc, createCameraControlsWatch, setCameraFocusPose, settleCameraFocusInput, showCameraArcPose,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/graph-scene/camera-focus-scene.js';
 import {loadVendoredGraph, UNFLUSHED_INPUT, vendoredGraphScene} from './vendored-graph.js';
 
@@ -130,4 +130,49 @@ test('a graph without controls still takes a focus pose', () => {
   const written = [];
   setCameraFocusPose({cameraPosition: (...args) => written.push(args)}, {x: 1, y: 2, z: 3}, {x: 0, y: 0, z: 0});
   assert.deepEqual(written, [[{x: 1, y: 2, z: 3}, {x: 0, y: 0, z: 0}, 0]]);
+});
+
+// A plain camera and a focus use case stand-in that records the arc's timeline.
+function arcHarness({running = () => true} = {}) {
+  const camera = {position: {x: 0, y: 0, z: 100}, up: {x: 0, y: 1, z: 0, set(x, y, z) { Object.assign(this, {x, y, z}); }}};
+  const controls = {target: {x: 0, y: 0, z: 0}};
+  const graph = {camera: () => camera, controls: () => controls,
+    cameraPosition(position) { if (!position) return {...camera.position}; Object.assign(camera.position, position); return graph; }};
+  const timeline = [], pending = [];
+  let clock = 1000;
+  const cameraFocus = {begin: () => { timeline.push('begin'); return 7; }, frameRan: arc => { timeline.push(['ran', arc]); return running(); },
+    frameScheduled: (arc, frame) => timeline.push(['scheduled', arc, frame]), finished: arc => timeline.push(['finished', arc])};
+  const frames = {request: callback => { pending.push(callback); return pending.length; }, now: () => clock};
+  const runFrame = at => { clock = at; pending.shift()(at); };
+  return {graph, camera, controls, cameraFocus, frames, timeline, pending, runFrame};
+}
+
+test('the arc begins a focus, then draws a frame at a time until it lands after 700 ms', () => {
+  const h = arcHarness();
+  animateCameraArc(h.graph, {position: {x: 0, y: 0, z: 50}, target: {x: 10, y: 0, z: 0}}, {cameraFocus: h.cameraFocus, frames: h.frames, isShown: () => true});
+  assert.deepEqual(h.timeline, ['begin', ['scheduled', 7, 1]]);
+  h.runFrame(1350);
+  assert.ok(h.controls.target.x > 0 && h.controls.target.x < 10, 'halfway, the camera is between the two poses');
+  assert.deepEqual(h.timeline.slice(2), [['ran', 7], ['scheduled', 7, 1]]);
+  h.runFrame(1700);
+  assert.deepEqual(h.controls.target, {x: 10, y: 0, z: 0});
+  assert.deepEqual(h.camera.position, {x: 0, y: 0, z: 50});
+  assert.deepEqual(h.timeline.slice(-2), [['ran', 7], ['finished', 7]]);
+  assert.equal(h.pending.length, 0);
+});
+
+test('a cancelled focus stops at its next frame and leaves the camera where it was', () => {
+  const h = arcHarness({running: () => false});
+  animateCameraArc(h.graph, {position: {x: 0, y: 0, z: 50}, target: {x: 10, y: 0, z: 0}}, {cameraFocus: h.cameraFocus, frames: h.frames, isShown: () => true});
+  h.runFrame(1350);
+  assert.deepEqual(h.controls.target, {x: 0, y: 0, z: 0});
+  assert.equal(h.pending.length, 0);
+});
+
+test('a focus on a graph no longer shown stops without touching the camera', () => {
+  const h = arcHarness();
+  animateCameraArc(h.graph, {position: {x: 0, y: 0, z: 50}, target: {x: 10, y: 0, z: 0}}, {cameraFocus: h.cameraFocus, frames: h.frames, isShown: () => false});
+  h.runFrame(1350);
+  assert.deepEqual(h.controls.target, {x: 0, y: 0, z: 0});
+  assert.ok(!h.timeline.some(entry => entry[0] === 'ran'), 'a replaced graph is not the focus\'s to draw');
 });

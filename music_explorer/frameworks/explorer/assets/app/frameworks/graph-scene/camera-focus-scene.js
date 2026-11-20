@@ -1,6 +1,8 @@
 // The camera focus's work on the vendored camera and Trackball controls (#146). The bundled camera setter's timed
 // tweens have no public cancellation, so every pose is written at once and the arc's timeline is owned outside.
 
+import {cameraArcPose, cameraFocusArc, focusProgress} from '../../domain/camera-arc.js';
+
 const TRACKBALL_SETTINGS = Object.freeze(['staticMoving', 'dynamicDampingFactor', 'rotateSpeed', 'zoomSpeed', 'panSpeed',
   'noZoom', 'noPan', 'noRotate', 'minDistance', 'maxDistance']);
 // Zero speeds consume input endpoints; full dynamic damping clears residual rotation; no limits, so the drain
@@ -22,6 +24,26 @@ export function showCameraArcPose(graph, {position, target, up}) {
   const camera = graph.camera();
   if (up && camera.up?.set) camera.up.set(up.x, up.y, up.z);
   setCameraFocusPose(graph, position, target);
+}
+
+// The focus arc, drawn on the vendored camera a frame at a time. Its timeline belongs to the camera focus use case:
+// a cancelled or superseded focus stops at its next frame, and so does one whose graph is no longer shown.
+// frames.request(callback) schedules a frame and returns its handle; frames.now() is the time a frame lacks.
+export function animateCameraArc(graph, {position, target}, {cameraFocus, frames, isShown}) {
+  const arc = cameraFocus.begin();
+  settleCameraFocusInput(graph);
+  const camera = graph.camera();
+  const path = cameraFocusArc({fromPosition: {...graph.cameraPosition()}, fromTarget: {...graph.controls().target},
+    fromUp: camera.up ? {...camera.up} : null, position, target});
+  const started = frames.now();
+  const step = timestamp => {
+    if (!isShown() || !cameraFocus.frameRan(arc)) return;
+    const progress = focusProgress(started, Number.isFinite(timestamp) ? timestamp : frames.now());
+    showCameraArcPose(graph, cameraArcPose(path, progress));
+    if (progress < 1) cameraFocus.frameScheduled(arc, frames.request(step));
+    else cameraFocus.finished(arc);
+  };
+  cameraFocus.frameScheduled(arc, frames.request(step));
 }
 
 // Input the Trackball has taken in but not applied would otherwise turn the camera after the focus lands.
