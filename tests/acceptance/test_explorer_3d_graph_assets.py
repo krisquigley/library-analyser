@@ -82,7 +82,8 @@ class Explorer3DGraphAssetTests(unittest.TestCase):
         for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app.js')):
             with self.subTest(app=app):
                 source = app.read_text(encoding='utf-8')
-                refresh_source = source[source.index('async function refresh()'):source.index('function loadTrackSummaryPage(')]
+                start = source.index('async function refresh()')
+                refresh_source = source[start:source.index('\n}\n', start)]
                 self.assertNotIn("/api/tracks/summary", refresh_source)
                 self.assertNotIn("/api/tracks?limit=all", refresh_source)
                 self.assertNotIn("/api/mood-axis-graph", refresh_source, 'startup refresh must not request graph before user clicks Load graph')

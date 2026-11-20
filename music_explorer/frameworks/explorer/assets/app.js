@@ -12,9 +12,8 @@ import {createCameraControlsWatch, settleCameraFocusInput, showCameraArcPose} fr
 import {jumpCameraToPickedNode, mountedPickedNode, pickedTrackId} from './app/frameworks/graph-scene/graph-pick.js';
 import {configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, graphContainer, graphDimensions, selectedTrackNodeSize} from './app/frameworks/graph-scene/force-graph-scene.js';
 import {playlistDownloadView} from './app/frameworks/views/playlist-download-view.js';
-import {displayNumber} from './app/domain/display-number.js';
-import {applyMoodGraphFilters, EMPTY_GRAPH_CONTROLS, passesGraphFilters} from './app/domain/graph-filters.js';
-import {moodGraphModel, moodNodeColor} from './app/domain/mood-graph.js';
+import {EMPTY_GRAPH_CONTROLS} from './app/domain/graph-filters.js';
+import {moodGraphModel} from './app/domain/mood-graph.js';
 import {isIndexedMoodAxisGraph, normalizeMoodAxisGraphDto} from './app/adapters/gateways/mood-axis-graph-dto.js';
 import {createGraphLoad} from './app/application/load-graph/load-graph.js';
 import {graphControlsController} from './app/adapters/controllers/graph-controls-controller.js';
@@ -26,17 +25,15 @@ import {TRACK_SEARCH_EVENT_TYPES} from './app/application/search-tracks/track-se
 import {emptyTrackResults} from './app/domain/track-search.js';
 import {trackListViewModel} from './app/adapters/presenters/track-list-presenter.js';
 import {trackListView} from './app/frameworks/views/track-list-view.js';
-import {fieldValues} from './app/domain/track-evidence.js';
-import {detailFieldViewModel, scoreGaugeViewModel, trackDetailFailureViewModel, trackDetailLoadingViewModel, trackDetailViewModel, trackMetadataViewModel} from './app/adapters/presenters/track-detail-presenter.js';
+import {detailFieldViewModel, trackDetailFailureViewModel, trackDetailLoadingViewModel, trackDetailViewModel, trackMetadataViewModel} from './app/adapters/presenters/track-detail-presenter.js';
 import {trackDetailView} from './app/frameworks/views/track-detail-view.js';
 import {sessionSelectionTickets} from './app/frameworks/session-selection-tickets.js';
 import {awaitingServer} from './app/domain/track-selection.js';
 import {createTrackSelection} from './app/application/select-track/select-track.js';
 import {moodStripMarks} from './app/domain/mood-strip.js';
-import {moodMarkDescription, moodStripViewModel} from './app/adapters/presenters/mood-strip-presenter.js';
+import {moodStripViewModel} from './app/adapters/presenters/mood-strip-presenter.js';
 import {moodStripView} from './app/frameworks/views/mood-strip-view.js';
-import {graphCameraFrame} from './app/domain/camera-frame.js';
-import {graphAxisSpec, graphColorLegend, graphRelatednessLegend, linkLabel, nodeLabel, relatednessLinkAlpha, relatednessLinkColor} from './app/adapters/presenters/graph-scene-presenter.js';
+import {graphAxisSpec, linkLabel, nodeLabel, relatednessLinkColor} from './app/adapters/presenters/graph-scene-presenter.js';
 import {cameraArcPose, cameraFocusArc, cameraViewDirection, focusProgress, selectionFocusPose} from './app/domain/camera-arc.js';
 import {createCameraFocus} from './app/application/focus-camera/focus-camera.js';
 import {CAMERA_FOCUS_EVENT_TYPES} from './app/application/focus-camera/camera-focus-events.js';
@@ -90,7 +87,7 @@ let graphLoadState={...GRAPH_IDLE_STATUS};
 // tools still read and set, until the 3D scene and selection move into the layers.
 const legacyGraphSession=Object.freeze({read:()=>({loadState:graphLoadState.status==='error'?'failed':graphLoadState.status,model:graphModel,visible:visibleGraph,controls:selectedGraphControls}),write(changes){if('model' in changes) graphModel=changes.model; if('visible' in changes) visibleGraph=changes.visible; if('controls' in changes) selectedGraphControls=changes.controls; if('loadState' in changes) graphLoadState={...graphLoadState,status:changes.loadState==='failed'?'error':changes.loadState};}});
 const graphEvents=createInMemoryEventBus();
-const graphLoad=createGraphLoad({explorerApi,graphSession:legacyGraphSession,clock:{nextFrame:()=>nextFrame()},eventBus:graphEvents,buildGraphModel:graph=>buildMoodGraphModel(graph)});
+const graphLoad=createGraphLoad({explorerApi,graphSession:legacyGraphSession,clock:{nextFrame:()=>nextFrame()},eventBus:graphEvents,buildGraphModel:buildMoodGraphModel});
 const graphControls=graphControlsController({graphLoad,rejectInput:message=>graphFilterControls.showRejection(message)});
 const graphFilterControls=graphControlsView({onMoodChosen:mood=>graphControls.moodChosen(mood),onBpmRangeEdited:range=>graphControls.bpmRangeEdited(range),onGenresEdited:genres=>graphControls.genresEdited(genres),onFiltersCleared:()=>graphControls.filtersCleared()});
 const graphStatusDisplay=graphStatusView({onReload:()=>loadGraph().catch(()=>{}),appendPlaylistControls:panel=>appendM3UDownloadControls(panel)});
@@ -123,10 +120,6 @@ selectionEvents.subscribe('track-detail-loading',()=>{updateSelectedTrackVisuals
 selectionEvents.subscribe('track-detail-loaded',event=>{renderDetail(event.detail); updateSelectedTrackVisuals();});
 selectionEvents.subscribe('track-detail-failed',event=>renderDetailError(event.failure,()=>trackSelection.retryDetail()));
 function tabSessionStorage(){try{return typeof sessionStorage!=='undefined'?sessionStorage:undefined;}catch(_error){return undefined;}}
-function syncSelectionEpoch(snapshot){
-  if(snapshot && typeof snapshot.selection_epoch==='number') selectionEpoch=snapshot.selection_epoch;
-  return snapshot;
-}
 async function applyHistorySelection(action){if(await trackSelection.rewind(action)) await refresh();}
 function text(el,value){el.textContent=value==null?'':String(value);return el;}
 function nextFrame(){return new Promise(resolve=>{if(typeof requestAnimationFrame==='function') requestAnimationFrame(()=>resolve()); else setTimeout(resolve,0);});}
@@ -203,27 +196,16 @@ async function refresh(){
     throw error;
   }
 }
-function loadTrackSummaryPage(query,options){return trackSearch.loadPage({query,...options});}
-function loadNextTrackSummaryPage(){return trackSearch.loadMore();}
 function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession,currentTrackId:state.current_track_id}));}
 function renderGraphLoadStatus(){graphStatusDisplay.show({status:graphLoadState.status,message:graphLoadState.message||GRAPH_IDLE_STATUS.message});}
 function loadGraph(){return graphLoad.load();}
 
 function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphModel.availableMoods||[]}));}
-function downloadM3UPlaylist(){return playlistDownload.download(state.current_track_id);}
-function applyCurrentGraphFilters(){return graphLoad.applyFilters();}
 function renderInitialDetail(){trackDetail.showNone();}
-function fieldDisplay(field){return fieldValues(field);}
-function detailGauge(label,value){return trackDetail.gauge(scoreGaugeViewModel(label,value));}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}
 function renderTrackMetadata(metadata){return trackDetail.metadata(trackMetadataViewModel(metadata));}
 function renderDetail(detail){trackDetail.show(trackDetailViewModel(detail));}
-function buildGraphModel(tracks, projection){return buildMoodGraphModel({positioned:tracks||[],edges:(projection&&projection.edges)||[],unpositioned:[],available_moods:[],selected_mood:'',metadata:{}});}
-function applyGraphFilters(model, filters){return applyMoodGraphFilters(model,filters);}
-function canvasPoint(e,rect,canvas){const cw=canvas.clientWidth||rect.width, ch=canvas.clientHeight||rect.height, bx=canvas.clientLeft||0, by=canvas.clientTop||0; return {x:(e.clientX-rect.left-bx)*(canvas.width/cw),y:(e.clientY-rect.top-by)*(canvas.height/ch)};}
 function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
-// Raw selected-label means, never display-normalized z or camera coordinates.
-function buildMoodStrip(data, selectedId){return moodStripMarks(data.nodes,selectedId).map(mark=>({...mark,description:moodMarkDescription(mark)}));}
 function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); graphRendering.wake(); return size;}
 function observeGraphResize(elem){if(graphResizeObserver||!elem) return; const resize=()=>updateGraphSize(elem,forceGraph); if(typeof ResizeObserver!=='undefined'){graphResizeObserver=new ResizeObserver(resize); graphResizeObserver.observe(elem); if(elem.parentElement) graphResizeObserver.observe(elem.parentElement);} if(typeof window!=='undefined') window.addEventListener('resize',resize);}
 function disposeGraphAxes(group){
@@ -346,11 +328,8 @@ function focusPendingCameraSelection(graphRendered=false){
 function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,state.current_track_id),moodStrip.width()));}
 function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=graphContainer(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode}); observeGraphResize(elem); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); graphDataMount.mount(forceGraph,data); syncSelectedNodeHalo(forceGraph,data); graphFraming.frame(forceGraph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();} else {nodeHalo.clear();drawCanvasFallback(data,elem,state.current_track_id);} renderMoodStrip(data);}
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
-function clearGraphFilters(){return graphLoad.clearFilters();}
 function buildGraphControls(root){graphFilterControls.mount(root);}
-function syncGraphControlOptions(model){graphFilterControls.showOptions(graphControlOptionsViewModel(model,selectedGraphControls));}
-function wireCanvas(){/* 3d-force-graph owns orbit/pick controls. */}
-if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); renderTracks([]); renderGraphLoadStatus(); wireCanvas(); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
+if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); renderTracks([]); renderGraphLoadStatus(); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
 installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphModel,visible:visibleGraph,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
 function diagnosticSnapshot(){return {currentTrackId:state.current_track_id??null,selectionEpoch:state.selection_epoch??null,history:state.history||[],graphStatus:graphLoadState.status,cameraFocusActive:cameraFocusFrame!=null,pendingCameraTrackId:pendingCameraSelection,selectionPending:pendingSelectionOperation!=null,trackSearchStatus:trackSearchSession.searchState==='failed'?'error':trackSearchSession.searchState,trackResultCount:trackSearchSession.results.tracks.length};}
