@@ -12,6 +12,15 @@ export function fakeElement(tagName) {
     replaceChildren(...nodes) { this.children = nodes; },
     replaceChild(node, old) { this.children = this.children.map(child => (child === old ? node : child)); },
     focus() { this.focused = true; },
+    get classList() {
+      const element = this;
+      const names = () => element.className.split(/\s+/).filter(Boolean);
+      return {
+        add(...added) { element.className = [...new Set([...names(), ...added])].join(' '); },
+        remove(...removed) { element.className = names().filter(name => !removed.includes(name)).join(' '); },
+        contains(name) { return names().includes(name); },
+      };
+    },
   };
 }
 

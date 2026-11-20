@@ -41,6 +41,10 @@ import {TRACK_SELECTION_EVENT_TYPES} from './app/application/select-track/track-
 import {GRAPH_LOAD_EVENT_TYPES} from './app/application/load-graph/graph-load-events.js';
 import {GRAPH_RENDERING_EVENT_TYPES} from './app/application/render-graph/render-graph-events.js';
 import {installExplorerDiagnostics} from './app/frameworks/explorer-diagnostics.js';
+import {createLibraryRefresh} from './app/application/refresh-library/refresh-library.js';
+import {LIBRARY_REFRESH_EVENT_TYPES} from './app/application/refresh-library/library-refresh-events.js';
+import {presentLibraryRefreshEvent} from './app/adapters/presenters/library-loading-presenter.js';
+import {libraryLoadingView} from './app/frameworks/views/library-loading-view.js';
 let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
@@ -62,7 +66,6 @@ const playlistControlsView=playlistDownloadView({onControlsEdited:controls=>play
 for(const type of PLAYLIST_DOWNLOAD_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistControlsView.show(presentPlaylistDownloadEvent(event)));
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
 let selectionEpoch=0;
-let refreshRequestSeq=0;
 let selectionState='none';
 // Mirrors the selection's wait for the server for the browser probe and the diagnostics, until #146 step 8.
 let pendingSelectionOperation=null;
@@ -79,8 +82,6 @@ const cameraEvents=createInMemoryEventBus();
 const cameraFocus=createCameraFocus({focusSession:legacyCameraFocusSession,eventBus:cameraEvents});
 const cameraControlsWatch=createCameraControlsWatch({onControlsReplaced:()=>cancelCameraFocus('controls-replaced'),onViewClaimed:()=>invalidateCameraViewIntent('listener-orbit')});
 cameraEvents.subscribe('camera-focus-cancelled',event=>{if(typeof cancelAnimationFrame==='function') cancelAnimationFrame(event.frame);});
-let loadingRefreshToken=0;
-let lastRefreshError=null;
 let trackSearchSession={searchState:'idle',results:emptyTrackResults(),failure:null};
 let graphLoadState={...GRAPH_IDLE_STATUS};
 // Transitional (#146): the graph session lives in the page's variables, which the browser tests and
@@ -119,47 +120,15 @@ selectionEvents.subscribe('no-track-selected',()=>{updateSelectedTrackVisuals();
 selectionEvents.subscribe('track-detail-loading',()=>{updateSelectedTrackVisuals(); renderDetailLoading();});
 selectionEvents.subscribe('track-detail-loaded',event=>{renderDetail(event.detail); updateSelectedTrackVisuals();});
 selectionEvents.subscribe('track-detail-failed',event=>renderDetailError(event.failure,()=>trackSelection.retryDetail()));
+const refreshEvents=createInMemoryEventBus();
+const libraryRefresh=createLibraryRefresh({explorerApi,librarySelection:trackSelection,clock:{nextFrame:()=>nextFrame()},eventBus:refreshEvents});
+const libraryLoading=libraryLoadingView({onRetry:()=>refresh().catch(()=>{})});
+for(const type of LIBRARY_REFRESH_EVENT_TYPES) refreshEvents.subscribe(type,event=>libraryLoading.show(presentLibraryRefreshEvent(event)));
+refreshEvents.subscribe('library-loaded',()=>{if(graphLoadState.status==='ready') renderMap(visibleGraph);});
+function refresh(){return libraryRefresh.refresh();}
 function tabSessionStorage(){try{return typeof sessionStorage!=='undefined'?sessionStorage:undefined;}catch(_error){return undefined;}}
 async function applyHistorySelection(action){if(await trackSelection.rewind(action)) await refresh();}
-function text(el,value){el.textContent=value==null?'':String(value);return el;}
 function nextFrame(){return new Promise(resolve=>{if(typeof requestAnimationFrame==='function') requestAnimationFrame(()=>resolve()); else setTimeout(resolve,0);});}
-function loadingElements(){return {surface:typeof document!=='undefined'?(document.getElementById('library-loading')||document.getElementById('loading-surface')):null,status:typeof document!=='undefined'?document.getElementById('loading-status'):null,error:typeof document!=='undefined'?document.getElementById('loading-error'):null,retry:typeof document!=='undefined'?document.getElementById('loading-retry'):null};}
-function setLoadingClass(surface,state){if(!surface) return; if(surface.classList){surface.classList.remove('active'); surface.classList.remove('refresh'); surface.classList.remove('error'); surface.classList.remove('done'); if(state) surface.classList.add(state);} else surface.className=state?'loading-surface '+state:'loading-surface';}
-function setLoadingPhase(refreshToken,phase,detail){
-  if(refreshToken!==refreshRequestSeq) return false;
-  loadingRefreshToken=refreshToken;
-  lastRefreshError=null;
-  const {surface,status,error,retry}=loadingElements();
-  if(surface){surface.hidden=false; setLoadingClass(surface,'refresh'); surface.setAttribute('aria-busy','false');}
-  if(status){text(status,detail?`${phase}: ${detail}`:phase); status.removeAttribute('role'); status.setAttribute('role','status');}
-  if(error){error.hidden=true; text(error,'');}
-  if(retry) retry.hidden=true;
-  return true;
-}
-function setLoadingError(refreshToken,message){
-  if(refreshToken!==refreshRequestSeq) return false;
-  lastRefreshError=String(message||'Loading failed');
-  const {surface,status,error,retry}=loadingElements();
-  if(surface){surface.hidden=false; setLoadingClass(surface,'refresh'); surface.setAttribute('aria-busy','false');}
-  if(status) text(status,'Unable to load library');
-  if(error){error.hidden=false; error.setAttribute('role','alert'); text(error,lastRefreshError);}
-  if(retry){retry.hidden=false; retry.onclick=()=>refresh().catch(()=>{});}
-  return true;
-}
-function clearLoading(refreshToken){
-  if(refreshToken!==refreshRequestSeq) return false;
-  const {surface,status,error,retry}=loadingElements();
-  if(surface){surface.setAttribute('aria-busy','false'); setLoadingClass(surface,'done'); surface.hidden=true;}
-  if(status) text(status,'Library loaded');
-  if(error){error.hidden=true; text(error,'');}
-  if(retry) retry.hidden=true;
-  return true;
-}
-function abortStaleRefresh(refreshToken,selectionToken){
-  if(refreshToken!==refreshRequestSeq) return true;
-  if(selectionToken!==trackSelection.generation()){clearLoading(refreshToken); return true;}
-  return false;
-}
 const selectedNodeValue=selectedTrackNodeSize(()=>state.current_track_id);
 function updateSelectedTrackVisuals(){
   if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===state.current_track_id?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
@@ -169,33 +138,7 @@ function updateSelectedTrackVisuals(){
 }
 function renderDetailLoading(){trackDetail.showLoading(trackDetailLoadingViewModel());}
 function renderDetailError(error,retry){trackDetail.showFailure(trackDetailFailureViewModel(error),retry);}
-function refreshSelectionDependent(generation){return trackSelection.loadDetail(generation);}
 async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose(id,{focusCamera});}
-async function refresh(){
-  const refreshToken=++refreshRequestSeq;
-  const token=trackSelection.generation();
-  const operationPending=trackSelection.awaitingServer();
-  try{
-    setLoadingPhase(refreshToken,'Preparing library view');
-    await nextFrame();
-    if(abortStaleRefresh(refreshToken,token)) return;
-    setLoadingPhase(refreshToken,'Loading library state');
-    const refreshedState=await explorerApi.loadLibraryState();
-    if(abortStaleRefresh(refreshToken,token)) return;
-    // A refresh begun during a selection/history POST cannot reconcile its older snapshot.
-    if(!operationPending) trackSelection.reconcile(refreshedState);
-    renderGraphLoadStatus();
-    if(abortStaleRefresh(refreshToken,token)) return;
-    if(!operationPending) await refreshSelectionDependent(token);
-    if(abortStaleRefresh(refreshToken,token)) return;
-    if(graphLoadState.status==='ready') renderMap(visibleGraph);
-    clearLoading(refreshToken);
-  }catch(error){
-    if(abortStaleRefresh(refreshToken,token)) return;
-    setLoadingError(refreshToken,error&&error.message?error.message:error);
-    throw error;
-  }
-}
 function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession,currentTrackId:state.current_track_id}));}
 function renderGraphLoadStatus(){graphStatusDisplay.show({status:graphLoadState.status,message:graphLoadState.message||GRAPH_IDLE_STATUS.message});}
 function loadGraph(){return graphLoad.load();}
@@ -329,7 +272,7 @@ function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(
 function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=graphContainer(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode}); observeGraphResize(elem); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); graphDataMount.mount(forceGraph,data); syncSelectedNodeHalo(forceGraph,data); graphFraming.frame(forceGraph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();} else {nodeHalo.clear();drawCanvasFallback(data,elem,state.current_track_id);} renderMoodStrip(data);}
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
 function buildGraphControls(root){graphFilterControls.mount(root);}
-if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); const retry=document.getElementById('loading-retry'); if(retry) retry.onclick=()=>refresh().catch(()=>{}); buildControls(); renderTracks([]); renderGraphLoadStatus(); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
+if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); libraryLoading.mount(); buildControls(); renderTracks([]); renderGraphLoadStatus(); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
-installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphModel,visible:visibleGraph,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
+installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphModel,visible:visibleGraph,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
 function diagnosticSnapshot(){return {currentTrackId:state.current_track_id??null,selectionEpoch:state.selection_epoch??null,history:state.history||[],graphStatus:graphLoadState.status,cameraFocusActive:cameraFocusFrame!=null,pendingCameraTrackId:pendingCameraSelection,selectionPending:pendingSelectionOperation!=null,trackSearchStatus:trackSearchSession.searchState==='failed'?'error':trackSearchSession.searchState,trackResultCount:trackSearchSession.results.tracks.length};}

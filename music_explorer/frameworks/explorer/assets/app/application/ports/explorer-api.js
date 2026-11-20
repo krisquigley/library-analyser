@@ -11,6 +11,7 @@
 export const PLAYLIST_DOWNLOADS = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['downloadPlaylist'])});
 export const MOOD_GRAPHS = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['loadMoodGraph'])});
 export const TRACK_SEARCHES = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['searchTracks'])});
+export const LIBRARY_STATES = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['loadLibraryState'])});
 export const SELECTIONS = Object.freeze({name: 'ExplorerApi',
   operations: Object.freeze(['chooseCurrentTrack', 'applyHistory', 'loadTrackDetail', 'loadLibraryState'])});
 export const EXPLORER_API = Object.freeze({name: 'ExplorerApi',

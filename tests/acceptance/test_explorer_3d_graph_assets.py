@@ -87,7 +87,6 @@ class Explorer3DGraphAssetTests(unittest.TestCase):
                 self.assertNotIn("/api/tracks/summary", refresh_source)
                 self.assertNotIn("/api/tracks?limit=all", refresh_source)
                 self.assertNotIn("/api/mood-axis-graph", refresh_source, 'startup refresh must not request graph before user clicks Load graph')
-                self.assertIn('renderGraphLoadStatus()', refresh_source)
                 self.assertIn('function loadGraph(){return graphLoad.load();}', source)
                 self.assertNotIn("button.id='load-graph'", source)
                 self.assertNotIn("'Load graph'", source)
