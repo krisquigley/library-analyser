@@ -1,10 +1,8 @@
-"""In-scene axis coordinates and lifecycle, without a browser or audio database."""
-import shutil
-import subprocess
+"""In-scene axis coordinates and lifecycle: the booted page without a browser, and opt-in Chromium."""
 import unittest
-from pathlib import Path
 
-from tests.support.explorer_app_bundle import explorer_app_script
+from tests.support.explorer_page_harness import ASSETS, PAGE
+from tests.support.node_script import run_node_script
 from tests.support.explorer_diagnostics_page import GRAPH, SCENE, diagnostics_url, snapshot_is
 
 LABELS = "document.querySelectorAll('.graph-axis-label')"
@@ -16,42 +14,40 @@ SHOWN_AXES = """() => {
     axes: groups[0].children.map(o => ({name: o.name, position: o.position.toArray()})), nodes: graph.graphData().nodes.length};
 }"""
 
-APP_JS = explorer_app_script(Path(__file__).resolve().parents[2] / 'music_analyzer/frameworks/explorer/assets/app.js')
+# The axes as the booted page mounts them in the 3D graph's scene, redrawn only when the layout changes (#146).
+AXES_LIFECYCLE = r"""
+(async () => {
+let library = [track('a', 0.2, 0.3, 0.2), track('b', 0.7, 0.5, 0.6)];
+routes['/api/state'] = r => r.respond(accepted(null, {epoch: 0}));
+routes['/api/mood-axis-graph'] = r => r.respond(graphBody(library));
+const axes = () => scene.children.filter(child => child.name === 'mood-xyz-axes');
+async function reload(tracks) { library = tracks; await press('reload-graph'); await settle(); }
+boot(); await settle();
+assert.equal(axes().length, 1, 'one axes group joins the scene');
+const group = axes()[0];
+assert.deepEqual(group.children.map(mesh => mesh.name), ['axis-x', 'axis-y', 'axis-z']);
+for (const mesh of group.children) {
+  assert.equal(mesh.raycast(), undefined, 'an axis is never picked as a track');
+  assert.ok(Number.isFinite(mesh.position.x) && Number.isFinite(mesh.scale.x), 'each axis is placed and sized');
+}
+await reload([...library].reverse());
+assert.strictEqual(axes()[0], group, 'the same layout keeps the same axes');
+await reload([track('a', 0, 0, 0)]);
+assert.equal(axes().length, 1, 'a new layout replaces the axes');
+assert.notStrictEqual(axes()[0], group);
+assert.ok(group.children.every(mesh => mesh.geometry.disposed && mesh.material.disposed), 'the old axes are disposed');
+await reload([]);
+assert.equal(axes().length, 0, 'no positioned tracks, no axes');
+console.log('NODE_SCRIPT_COMPLETED');
+})().catch(error => { console.error(error.stack); process.exitCode = 1; });
+"""
 
 
 class GraphAxesTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which('node'), 'Node required for browser model tests')
-    def test_axis_spec_and_scene_lifecycle(self):
-        script = r'''
-const assert=require('assert');
-const {graphAxisSpec, syncGraphAxes}=require(process.argv[1]);
-const nodes=[{x:72,y:108,z:4320},{x:252,y:180,z:4608}];
-const spec=graphAxisSpec(nodes);
-assert.deepStrictEqual(spec.map(a=>a.label),['X valence (native)','Y arousal (native)','Z BPM']);
-assert.deepStrictEqual(spec.map(a=>a.end[a.key]-a.start[a.key]),[216,108,324]);
-assert.deepStrictEqual(spec.map(a=>a.references),[['0.2','0.7'],['0.3','0.5'],['120.0','128.0']]);
-assert.deepStrictEqual(graphAxisSpec([...nodes].reverse()),spec);
-assert.deepStrictEqual(graphAxisSpec([]),[]);
-class Sphere {constructor(radius){this.radius=radius} dispose(){this.disposed=true}}
-class Material {constructor(props){this.props=props} dispose(){this.disposed=true}}
-class Mesh {constructor(geometry,material){this.geometry=geometry;this.material=material;this.position={set:(...v)=>this.xyz=v};this.scale={set:(...v)=>this.wh=v};this.rotation={set:(...v)=>this.angles=v}}}
-class Scene {constructor(){this.children=[]} add(o){this.children.push(o);o.parent=this} remove(o){this.children.splice(this.children.indexOf(o),1)}}
-const scene=new Scene();
-const nodeMesh=new Mesh(new Sphere(4),new Material({})); nodeMesh.__graphObjType="node"; scene.children.push({children:[nodeMesh]});
-const graph={scene:()=>scene,graphData:()=>({nodes:[{__threeObj:new Mesh(new Sphere(4),new Material({}))}]})};
-let group=syncGraphAxes(graph,spec);
-assert.equal(scene.children.length,2);assert.equal(group.children.length,3);
-assert(group.children.every(c=>c.raycast && c.xyz && c.wh));
-assert.strictEqual(syncGraphAxes(graph,graphAxisSpec([...nodes].reverse())),group);
-assert.equal(scene.children.length,2);
-syncGraphAxes(graph,graphAxisSpec([{x:0,y:0,z:0}]));
-assert.equal(scene.children.length,2);
-assert(group.children.every(c=>c.geometry.disposed && c.material.disposed));
-syncGraphAxes(graph,[]);
-assert.equal(scene.children.length,1);
-'''
-        result = subprocess.run(['node', '-e', script, str(APP_JS)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def test_the_axes_join_the_scene_and_change_only_with_the_layout(self):
+        for asset in ASSETS:
+            with self.subTest(asset=str(asset)):
+                run_node_script(self, PAGE + AXES_LIFECYCLE, str(asset))
 
 @unittest.skipUnless(__import__('os').environ.get('RUN_BROWSER_SMOKE') == '1', 'opt-in Chromium')
 class GraphAxesBrowserTests(unittest.TestCase):

@@ -82,9 +82,9 @@ const context = {
     async text(){bodyReads++;tick+=10;return JSON.stringify(graph);}}),
   explorerDiagnostics:seam,
   // The page's own work, as its events carry it, with an explicit cost on the clock.
-  buildMoodGraphModel(value){seam.publish({type:'graph-model-building'});tick+=11;seam.publish({type:'graph-model-built'});return value;},
-  renderMap(){seam.publish({type:'graph-render-due'},()=>{tick+=13;});},
-  animateCameraFocus(){seam.publish({type:'camera-focus-started',focusGeneration:1},()=>{tick+=17;});}
+  pageBuildsGraphModel(value){seam.publish({type:'graph-model-building'});tick+=11;seam.publish({type:'graph-model-built'});return value;},
+  pageRendersGraph(){seam.publish({type:'graph-render-due'},()=>{tick+=13;});},
+  pageStartsCameraFocus(){seam.publish({type:'camera-focus-started',focusGeneration:1},()=>{tick+=17;});}
 };
 context.window=context;
 vm.createContext(context);
@@ -109,8 +109,8 @@ class BrowserPhaseAttribution(unittest.TestCase):
         result = _run_observer('''
 const response=await context.fetch('/api/mood-axis-graph');
 const value=await response.json();
-context.buildMoodGraphModel(value);
-context.renderMap();
+context.pageBuildsGraphModel(value);
+context.pageRendersGraph();
 ''')
         self.assertEqual(result['body_reads'], 1, 'do not clone or consume a second body')
         observed = result['diagnostic']['milestones_ms']
@@ -148,10 +148,10 @@ observer({getEntries:()=>[{startTime:10,duration:60,name:'private attribution /h
 
     def test_first_presentation_is_distinct_from_post_focus_readback(self):
         result = _run_observer('''
-context.renderMap();
+context.pageRendersGraph();
 advanceFrames(20);
 advanceFrames(30);
-context.animateCameraFocus();
+context.pageStartsCameraFocus();
 advanceFrames(80);
 ''')['diagnostic']['milestones_ms']
         self.assertIn('graph_first_presentation', result,

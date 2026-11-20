@@ -31,8 +31,8 @@ class BrowserContentionPlumbing(unittest.TestCase):
 
     def test_repeated_scene_and_model_preserve_first_consumption_spans(self):
         result=_run_observer('''
-context.buildMoodGraphModel({});context.renderMap();advanceFrames(40);
-context.buildMoodGraphModel({});context.renderMap();advanceFrames(80);
+context.pageBuildsGraphModel({});context.pageRendersGraph();advanceFrames(40);
+context.pageBuildsGraphModel({});context.pageRendersGraph();advanceFrames(80);
 ''')['diagnostic']['milestones_ms']
         self.assertEqual((result['graph_model_start'],result['graph_model_end']),(0,11))
         self.assertEqual((result['graph_scene_start'],result['graph_scene_end']),(11,24))

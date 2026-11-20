@@ -147,14 +147,18 @@ async function untilCameraSettles(limit = 400) {
 async function advance(ms) { clock += ms; for (const [id, timer] of [...timers]) if (timer.at <= clock) { timers.delete(id); timer.callback(); } await flush(); }
 
 // --- The vendored 3D graph's boundary: a scene that mounts what the page gives it. ----------------
-const scene = {children: [], add(child) { this.children.push(child); child.parent = this; },
-  remove(child) { this.children = this.children.filter(item => item !== child); child.parent = null; }};
-class Geometry { constructor(radius) { this.parameters = {radius}; } dispose() {} }
-class Material { constructor(props = {}) { Object.assign(this, props); } dispose() {} }
+class Scene {
+  constructor() { this.children = []; }
+  add(child) { this.children.push(child); child.parent = this; }
+  remove(child) { this.children = this.children.filter(item => item !== child); child.parent = null; }
+}
+const scene = new Scene();
+class Geometry { constructor(radius) { this.parameters = {radius}; } dispose() { this.disposed = true; } }
+class Material { constructor(props = {}) { Object.assign(this, props); } dispose() { this.disposed = true; } }
 class Mesh {
   constructor(geometry, material) { this.geometry = geometry; this.material = material; this.userData = {};
     this.position = {x: 0, y: 0, z: 0, set(x, y, z) { Object.assign(this, {x, y, z}); }};
-    this.scale = {setScalar(value) { this.value = value; }, set() {}}; }
+    this.scale = {setScalar(value) { this.value = value; }, set(x, y, z) { Object.assign(this, {x, y, z}); }}; }
 }
 const camera = {fov: 50, position: {x: 500, y: 400, z: 300}, up: {x: 0, y: 1, z: 0}};
 const controls = {target: {x: 0, y: 0, z: 0}, listeners: {}, addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); },
@@ -172,7 +176,7 @@ const graph = new Proxy({}, {get(_target, key) {
     mounted = data; mounts += 1;
     scene.children = scene.children.filter(child => !child.userData?.trackId);
     for (const node of data.nodes) {
-      const mesh = new Mesh(new Geometry(4), new Material()); mesh.userData.trackId = node.id;
+      const mesh = new Mesh(new Geometry(4), new Material()); mesh.userData.trackId = node.id; mesh.__graphObjType = 'node';
       mesh.position.set(node.fx, node.fy, node.fz); scene.add(mesh);
     }
     return graph;
