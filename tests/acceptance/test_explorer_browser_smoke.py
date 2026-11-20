@@ -15,7 +15,7 @@ from music_analyzer.frameworks.explorer.server import create_server
 class ExplorerBrowserSmokeTests(unittest.TestCase):
     def test_mood_dropdown_changes_score_without_reframing_or_navigation(self):
         from playwright.sync_api import sync_playwright
-        from tests.acceptance.test_explorer_3d_graph_assets import create_three_track_graph_db
+        from tests.support.three_track_graph_db import create_three_track_graph_db
         import tempfile
         from pathlib import Path
 

@@ -8,7 +8,7 @@ from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from music_explorer.frameworks.explorer.server import create_server
-from tests.acceptance.test_explorer_3d_graph_assets import create_three_track_graph_db
+from tests.support.three_track_graph_db import create_three_track_graph_db
 
 
 class CompactMoodAxisGraphHttpContractRedTests(unittest.TestCase):

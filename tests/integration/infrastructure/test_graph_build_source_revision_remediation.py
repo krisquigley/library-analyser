@@ -14,7 +14,7 @@ from music_analyzer.domain.catalogue import FileIdentity
 from music_analyzer.domain.projection import _bounded_edges
 from music_analyzer.infrastructure.persistence.analysis import AnalysisError, SQLiteAnalysisRepository
 from music_analyzer.infrastructure.persistence.explorer_readonly import ReadOnlyExplorerSQLiteRepository
-from tests.acceptance.test_explorer_3d_graph_assets import create_three_track_graph_db
+from tests.support.three_track_graph_db import create_three_track_graph_db
 
 
 def _build_graph(db_path: Path):

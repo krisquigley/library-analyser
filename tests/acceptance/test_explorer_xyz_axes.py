@@ -2,7 +2,11 @@
 import shutil
 import subprocess
 import unittest
-from tests.acceptance.test_explorer_3d_graph_assets import APP_JS
+from pathlib import Path
+
+from tests.support.explorer_app_bundle import explorer_app_script
+
+APP_JS = explorer_app_script(Path(__file__).resolve().parents[2] / 'music_analyzer/frameworks/explorer/assets/app.js')
 
 
 class GraphAxesTests(unittest.TestCase):
@@ -80,7 +84,7 @@ class GraphAxesBrowserTests(unittest.TestCase):
         import threading
         from pathlib import Path
         from playwright.sync_api import sync_playwright
-        from tests.acceptance.test_explorer_3d_graph_assets import create_three_track_graph_db
+        from tests.support.three_track_graph_db import create_three_track_graph_db
         from music_analyzer.frameworks.explorer.server import create_server
 
         with tempfile.TemporaryDirectory() as td:

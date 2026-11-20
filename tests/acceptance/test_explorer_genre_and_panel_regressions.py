@@ -9,7 +9,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from urllib.parse import urlencode
-from tests.acceptance.test_explorer_3d_graph_assets import create_three_track_graph_db
+from tests.support.three_track_graph_db import create_three_track_graph_db
 from music_analyzer.frameworks.explorer.server import create_server as analyzer_server
 from music_explorer.frameworks.explorer.server import create_server as standalone_server
 
