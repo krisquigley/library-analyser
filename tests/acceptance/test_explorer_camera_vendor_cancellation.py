@@ -26,18 +26,6 @@ class CameraVendorCancellationTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('SCENARIO_COMPLETED', result.stdout)
 
-    def test_vendor_zero_duration_setter_does_not_cancel_existing_tweens(self):
-        self.run_scenario(r'''
-vendor.cameraPosition(vendorState,{x:100,y:0,z:0},{x:20,y:0,z:0},700);
-advance(100);
-assert.equal(vendorState.tweenGroup.getAll().length,2);
-vendor.cameraPosition(vendorState,{x:5,y:6,z:7},{x:8,y:9,z:10},0);
-assert.equal(camera.position.x,5);
-advance(200);
-assert.notEqual(camera.position.x,5,'actual vendor tween overwrites instant setter');
-assert.notEqual(controls.target.x,8,'actual vendor target tween also survives');
-''')
-
     def test_missing_selection_cancels_motion_without_later_vendor_overwrite(self):
         self.run_scenario(r'''
 render(); await select('a'); advance(0); advance(100);

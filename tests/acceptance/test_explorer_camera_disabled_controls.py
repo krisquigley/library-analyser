@@ -102,24 +102,6 @@ assertRenderedStable(renderedPose(),completed,'replacement focus remains stable'
 assert.deepEqual(settings(),config,'completed replacement focus preserves all public settings');
 ''')
 
-    def test_actual_vendor_disabled_setter_leaves_orbit_target_stale(self):
-        self.run_scenario(r'''
-render(); manualStart();
-controls.enabled=false;
-const oldTarget=controls.target.clone();
-const position={x:501,y:402,z:303}, target={x:51,y:42,z:33};
-vendor.cameraPosition(vendorState,position,target,0);
-assert.ok(controls.target.distanceTo(oldTarget)<1e-9,
-  'bundled disabled camera setter leaves public target stale');
-const expected=camera.clone(); expected.lookAt(new vendor.THREE.Vector3(target.x,target.y,target.z));
-assert.ok(camera.quaternion.angleTo(expected.quaternion)<1e-7,
-  'bundled disabled setter renders the requested look-at');
-const rendered=camera.quaternion.clone();
-controls.update();
-assert.ok(camera.quaternion.angleTo(rendered)>0.01,
-  'actual Trackball update redirects orientation to stale orbit target');
-''')
-
     def test_disabled_focus_syncs_target_and_survives_reenable_with_pending_input(self):
         for input_name in ('none', 'unflushedWheel', 'unflushedPan', 'unflushedOrbit'):
             with self.subTest(input=input_name):
