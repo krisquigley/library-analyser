@@ -24,3 +24,12 @@ export function nextCameraFocusState(state, action) {
   if (!next) throw new CameraFocusTransitionError(`A camera focus cannot ${action} while ${state}`);
   return next;
 }
+
+// Why a focus in flight is cancelled: carried on the cancellation event, so what observes the page never guesses.
+export const CAMERA_FOCUS_CANCEL_CAUSES = Object.freeze(['new-selection', 'new-focus', 'listener-orbit', 'controls-replaced',
+  'graph-reframed', 'graph-reloaded', 'graph-filtered', 'camera-failure']);
+
+export function cameraFocusCancelCause(cause) {
+  if (!CAMERA_FOCUS_CANCEL_CAUSES.includes(cause)) throw new CameraFocusTransitionError(`A camera focus is not cancelled for: ${cause}`);
+  return cause;
+}

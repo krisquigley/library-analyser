@@ -21,22 +21,24 @@ test('requesting a focus cancels any arc in flight and waits for the track', () 
   const {focus, published, record} = harness({frame: 7});
   focus.request('a');
   assert.deepEqual([record().pendingTrackId, record().frame], ['a', null]);
-  assert.deepEqual(published, [{type: 'camera-focus-cancelled', frame: 7}, {type: 'camera-focus-requested', trackId: 'a'}]);
+  assert.deepEqual(published, [{type: 'camera-focus-cancelled', frame: 7, cause: 'new-selection'},
+    {type: 'camera-focus-requested', trackId: 'a'}]);
   focus.request(null);
   assert.equal(record().pendingTrackId, null);
 });
 
 test('cancelling stops the arc in flight but leaves a request waiting', () => {
   const {focus, published, record} = harness({pendingTrackId: 'a'});
-  focus.cancel();
+  focus.cancel('graph-reframed');
   assert.deepEqual([record().pendingTrackId, record().focusGeneration, published], ['a', 1, []]);
 });
 
 test('the listener claiming the view ends any request and arc, and names the new view intent', () => {
   const {focus, published, record} = harness({pendingTrackId: 'a', frame: 3, viewIntent: 4});
-  assert.equal(focus.claimView(), 5);
+  assert.equal(focus.claimView('listener-orbit'), 5);
   assert.deepEqual([record().pendingTrackId, record().frame], [null, null]);
   assert.deepEqual(published.map(event => event.type), ['camera-focus-cancelled', 'camera-view-claimed']);
+  assert.equal(published[0].cause, 'listener-orbit');
   assert.equal(focus.viewIntent(), 5);
 });
 
@@ -71,5 +73,16 @@ test('beginning an arc cancels the one in flight and says which arc started', ()
   const {focus, published} = harness({frame: 4, focusGeneration: 2});
   const arc = focus.begin();
   assert.equal(arc, 3);
-  assert.deepEqual(published, [{type: 'camera-focus-cancelled', frame: 4}, {type: 'camera-focus-started', focusGeneration: 3}]);
+  assert.deepEqual(published, [{type: 'camera-focus-cancelled', frame: 4, cause: 'new-focus'},
+    {type: 'camera-focus-started', focusGeneration: 3}]);
+});
+
+test('an arc in flight is cancelled with its cause; an idle cancel or an unknown cause publishes nothing', () => {
+  const {focus, published, record} = harness({frame: 9});
+  assert.throws(() => focus.cancel('boredom'), /not cancelled for: boredom/);
+  assert.deepEqual([record().frame, published], [9, []]);
+  focus.cancel('camera-failure');
+  focus.cancel('graph-filtered');
+  assert.deepEqual(published, [{type: 'camera-focus-cancelled', frame: 9, cause: 'camera-failure'}]);
+  assert.throws(() => focus.claimView(), /not cancelled for: undefined/);
 });
