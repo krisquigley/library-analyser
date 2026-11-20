@@ -9,7 +9,8 @@ import {MOOD_GRAPHS} from '../ports/explorer-api.js';
 import {GRAPH_SESSION} from '../ports/graph-session.js';
 import {requirePort} from '../ports/port.js';
 import {
-  graphControlsEdited, graphFiltersApplied, graphLoadFailed, graphLoadStarted, graphModelBuilt, graphReady, graphRenderDue,
+  graphControlsEdited, graphFiltersApplied, graphLoadFailed, graphLoadStarted, graphModelBuilding, graphModelBuilt, graphReady,
+  graphRenderDue,
 } from './graph-load-events.js';
 
 // buildGraphModel turns the server's graph response into the domain model. It is passed in, not
@@ -38,6 +39,7 @@ export function createGraphLoad({explorerApi, graphSession, clock, eventBus, bui
   async function buildAndRender(load) {
     const response = await explorerApi.loadMoodGraph(graphSession.read().controls.mood);
     if (load !== latestLoad) return;
+    eventBus.publish(graphModelBuilding());
     const model = buildGraphModel(response);
     const requested = graphSession.read().controls;
     const controls = editGraphControls(requested, {mood: moodToTrack(requested.mood, model)});

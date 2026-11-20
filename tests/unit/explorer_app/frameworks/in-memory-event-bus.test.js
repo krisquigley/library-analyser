@@ -29,3 +29,26 @@ test('an unsubscribed handler hears nothing more', () => {
   bus.publish({type: 'playlist-download-started'});
   assert.deepEqual(heard, ['playlist-download-started']);
 });
+
+test('a dispatch can be observed just before and just after its subscribers run, until the observer stops', () => {
+  const bus = createInMemoryEventBus();
+  const heard = [];
+  bus.subscribe('graph-render-due', () => heard.push('subscriber'));
+  const stop = bus.observeDispatch('graph-render-due', {
+    before: event => heard.push(['before', event.type]), after: event => heard.push(['after', event.type])});
+  bus.observeDispatch('graph-render-due', {after: () => heard.push('second observer after')});
+  bus.publish({type: 'graph-render-due'});
+  stop();
+  bus.publish({type: 'graph-render-due'});
+  assert.deepEqual(heard, [['before', 'graph-render-due'], 'subscriber', ['after', 'graph-render-due'],
+    'second observer after', 'subscriber', 'second observer after']);
+});
+
+test('an observed dispatch whose subscriber throws still reports the throw to the publisher', () => {
+  const bus = createInMemoryEventBus();
+  const heard = [];
+  bus.subscribe('graph-ready', () => { throw new Error('view failed'); });
+  bus.observeDispatch('graph-ready', {before: () => heard.push('before'), after: () => heard.push('after')});
+  assert.throws(() => bus.publish({type: 'graph-ready'}), /view failed/);
+  assert.deepEqual(heard, ['before']);
+});

@@ -37,8 +37,20 @@ test('a subscriber hears the events of the bus that carries that type, until it 
   assert.deepEqual(diagnostics.eventTypes(), ['camera-focus-started', 'camera-focus-finished', 'track-chosen']);
 });
 
+test("a dispatch is observed just before and after the page's own handlers, for timing", () => {
+  const {diagnostics, camera} = seam();
+  const heard = [];
+  camera.subscribe('camera-focus-started', () => heard.push('page'));
+  const stop = diagnostics.observe('camera-focus-started', {before: () => heard.push('before'), after: () => heard.push('after')});
+  camera.publish({type: 'camera-focus-started', focusGeneration: 1});
+  stop();
+  camera.publish({type: 'camera-focus-started', focusGeneration: 2});
+  assert.deepEqual(heard, ['before', 'page', 'after', 'page']);
+});
+
 test('an event type no bus carries is refused, and two buses cannot claim one type', () => {
   assert.throws(() => seam().diagnostics.subscribe('graph-ready', () => {}), /No diagnostics event: graph-ready/);
+  assert.throws(() => seam().diagnostics.observe('graph-ready', {}), /No diagnostics event: graph-ready/);
   const bus = createInMemoryEventBus();
   assert.throws(() => createExplorerDiagnostics({buses: [[['a'], bus], [['a'], bus]], snapshot: () => ({}), scene: () => ({})}),
     /Two buses carry the event a/);
