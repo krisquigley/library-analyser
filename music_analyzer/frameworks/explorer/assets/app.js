@@ -8,6 +8,7 @@ import {createInMemoryEventBus} from './app/frameworks/in-memory-event-bus.js';
 import {createGraphRendering} from './app/application/render-graph/render-graph.js';
 import {forceGraphRenderer, graphViewPose, observeGraphInput} from './app/frameworks/graph-scene/force-graph-rendering.js';
 import {createSelectedNodeHalo, findSceneObject, graphObjectTrackId} from './app/frameworks/graph-scene/selected-node-halo.js';
+import {createCameraControlsWatch, setCameraFocusPose, settleCameraFocusInput, showCameraArcPose} from './app/frameworks/graph-scene/camera-focus-scene.js';
 import {playlistDownloadView} from './app/frameworks/views/playlist-download-view.js';
 import {displayNumber} from './app/domain/display-number.js';
 import {applyMoodGraphFilters, EMPTY_GRAPH_CONTROLS, passesGraphFilters} from './app/domain/graph-filters.js';
@@ -73,8 +74,8 @@ const renderingEvents=createInMemoryEventBus();
 const graphRendering=createGraphRendering({renderer:forceGraphRenderer(()=>forceGraph),eventBus:renderingEvents});
 const cameraEvents=createInMemoryEventBus();
 const cameraFocus=createCameraFocus({focusSession:legacyCameraFocusSession,eventBus:cameraEvents});
+const cameraControlsWatch=createCameraControlsWatch({onControlsReplaced:()=>cancelCameraFocus(),onViewClaimed:()=>invalidateCameraViewIntent()});
 cameraEvents.subscribe('camera-focus-cancelled',event=>{if(typeof cancelAnimationFrame==='function') cancelAnimationFrame(event.frame);});
-let cameraFocusControls=null;
 let loadingRefreshToken=0;
 let lastRefreshError=null;
 // Transitional (#146): trackSummaryPage and trackSummaryStatus mirror the search for the browser tests and tools.
@@ -287,47 +288,7 @@ function animateGraphAxes(timestamp){
 function invalidateCameraViewIntent(){cancelCameraFocus(); return cameraFocus.claimView();}
 // Own the timeline: bundled cameraPosition's timed tweens have no public cancellation.
 function cancelCameraFocus(){cameraFocus.cancel();}
-function observeCameraFocusControls(graph){
-  const controls=typeof graph?.controls==='function'?graph.controls():null;
-  if(controls===cameraFocusControls) return;
-  cancelCameraFocus();
-  if(cameraFocusControls?.removeEventListener) cameraFocusControls.removeEventListener('start',invalidateCameraViewIntent);
-  cameraFocusControls=controls;
-  if(controls?.addEventListener) controls.addEventListener('start',invalidateCameraViewIntent);
-}
-// Disabled bundled cameraPosition looks at the point but leaves its orbit
-// target stale. Keep the public target synchronized for update and re-enable.
-function setCameraFocusPose(graph,position,target){
-  const controls=graph.controls?.();
-  if(controls?.target) Object.assign(controls.target,target);
-  graph.cameraPosition(position,target,0);
-}
-// Drain pending rotation/wheel/pan once through Trackball's public API. Zero
-// speeds consume input endpoints; full dynamic damping clears residual rotation.
-// A canonical pose keeps the update safe even when the original radius overflows.
-function settleCameraFocusInput(graph){
-  const controls=graph.controls(), camera=graph.camera();
-  if(typeof controls.update!=='function') return;
-  const position={...graph.cameraPosition()}, target={...controls.target};
-  const up=camera.up?{...camera.up}:null;
-  const orientation=camera.quaternion?.clone?camera.quaternion.clone():null;
-  const settings={staticMoving:controls.staticMoving,dynamicDampingFactor:controls.dynamicDampingFactor,
-    rotateSpeed:controls.rotateSpeed,zoomSpeed:controls.zoomSpeed,
-    panSpeed:controls.panSpeed,noZoom:controls.noZoom,noPan:controls.noPan,
-    noRotate:controls.noRotate,minDistance:controls.minDistance,maxDistance:controls.maxDistance};
-  try {
-    Object.assign(controls,{staticMoving:false,dynamicDampingFactor:1,rotateSpeed:0,zoomSpeed:0,panSpeed:0,
-      noZoom:false,noPan:false,noRotate:false,minDistance:0,maxDistance:Infinity});
-    if(camera.up?.set) camera.up.set(0,1,0);
-    setCameraFocusPose(graph,{x:0,y:0,z:100},{x:0,y:0,z:0});
-    controls.update();
-  } finally {
-    Object.assign(controls,settings);
-    if(up && camera.up?.set) camera.up.set(up.x,up.y,up.z);
-    setCameraFocusPose(graph,position,target);
-    if(orientation) camera.quaternion.copy(orientation);
-  }
-}
+function observeCameraFocusControls(graph){cameraControlsWatch.observe(graph);}
 function animateCameraFocus(graph,position,target){
   observeCameraFocusControls(graph);
   cancelCameraFocus();
@@ -340,9 +301,7 @@ function animateCameraFocus(graph,position,target){
   const step=timestamp=>{
     if(graph!==forceGraph || !cameraFocus.frameRan(generation)) return;
     const progress=focusProgress(started,Number.isFinite(timestamp)?timestamp:clockNow());
-    const pose=cameraArcPose(arc,progress);
-    if(pose.up && camera.up?.set) camera.up.set(pose.up.x,pose.up.y,pose.up.z);
-    setCameraFocusPose(graph,pose.position,pose.target);
+    showCameraArcPose(graph,cameraArcPose(arc,progress));
     if(progress<1) cameraFocus.frameScheduled(generation,requestAnimationFrame(step)); else cameraFocus.finished(generation);
   };
   cameraFocus.frameScheduled(generation,requestAnimationFrame(step));
