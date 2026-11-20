@@ -29,7 +29,7 @@ class GenerateBpmGraphM3UPlaylist:
         bpm_max = _finite_bound(recipe.bpm_max, 'BPM maximum')
         if bpm_min > bpm_max:
             raise ValueError('bpm bounds must be ordered')
-        goal = _goal(recipe.length, recipe.duration_minutes)
+        goal, arc_lengths = _goal_and_arc_lengths(recipe)
         if not start_track_id:
             raise ValueError('start track is required')
 
@@ -55,18 +55,18 @@ class GenerateBpmGraphM3UPlaylist:
                 related[edge.a].append((edge.b, float(edge.score)))
                 related[edge.b].append((edge.a, float(edge.score)))
 
-        plan, hold = self._energy_plan_and_mood_hold(candidates, recipe, goal)
+        plan, hold = self._energy_plan_and_mood_hold(candidates, recipe, goal, arc_lengths)
         walk = walk_playlist(start_track_id, walk_tracks, related, goal,
                              rank_transition=_ranking(harmonic_mixing, plan, hold))
         warning = None if walk.complete else _shortfall(goal)
         content = '#EXTM3U\n' + ''.join(candidates[track_id].path + '\n' for track_id in walk.track_ids)
         return M3UPlaylist(content, walk.track_ids, warning)
 
-    def _energy_plan_and_mood_hold(self, candidates, recipe, goal):
+    def _energy_plan_and_mood_hold(self, candidates, recipe, goal, arc_lengths):
         mood_hold = recipe.mood_hold
         if not recipe.energy_plan and not mood_hold:
             return None, None
-        segments = tuple(_arc_segment(arc, goal) for arc in recipe.energy_plan)  # rejects a bad arc before any read
+        segments = tuple(_arc_segment(arc, length) for arc, length in zip(recipe.energy_plan, arc_lengths))
         evidence = self.repository.playlist_mood_evidence(mood_hold or None)
         arousal, mood = {}, {}
         for track_id, track in candidates.items():
@@ -131,9 +131,47 @@ def _key(track, harmonic_mixing):
                       minimum_strength=harmonic_mixing.minimum_key_strength)
 
 
-# Until arcs carry their own lengths, the one arc spans the whole playlist.
-def _arc_segment(arc, goal):
-    return ArcSegment(arc.shape, _playlist_span(goal), EnergyRange.of(low=arc.energy_low, high=arc.energy_high))
+def _arc_segment(arc, length):
+    return ArcSegment(arc.shape, length, EnergyRange.of(low=arc.energy_low, high=arc.energy_high))
+
+
+def _goal_and_arc_lengths(recipe):
+    """The playlist's goal, and each arc's length in the plan's unit (tracks, or seconds by duration).
+
+    Arcs with lengths set the playlist's length to their sum. Without them, a single arc spans the
+    playlist, whose length is set as before.
+    """
+    arcs = recipe.energy_plan
+    measured = [arc for arc in arcs if arc.tracks is not None or arc.minutes is not None]
+    if not measured:
+        if len(arcs) > 1:
+            raise ValueError('Each arc in a chain needs a length')
+        goal = _goal(recipe.length, recipe.duration_minutes)
+        return goal, (_playlist_span(goal),) * len(arcs)
+    if len(measured) < len(arcs):
+        raise ValueError('Each arc in a chain needs a length')
+    if recipe.length is not None or recipe.duration_minutes is not None:
+        raise ValueError("With arc lengths, the playlist's length is the sum of its arcs: leave its length unset")
+    by_tracks = {arc.minutes is None for arc in arcs}
+    if len(by_tracks) > 1 or any(arc.tracks is not None and arc.minutes is not None for arc in arcs):
+        raise ValueError('Every arc must be measured in the same unit: tracks or minutes')
+    if by_tracks == {True}:
+        lengths = tuple(_arc_tracks(arc.tracks) for arc in arcs)
+        return _goal(sum(lengths), None), lengths
+    minutes = tuple(_arc_minutes(arc.minutes) for arc in arcs)
+    return _goal(None, sum(minutes)), tuple(each * 60.0 for each in minutes)
+
+
+def _arc_tracks(value):
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError('An arc length must be a whole number of tracks, at least 1')
+    return value
+
+
+def _arc_minutes(value):
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(value) or value <= 0:
+        raise ValueError('An arc length must be a positive number of minutes')
+    return float(value)
 
 
 def _playlist_span(goal):

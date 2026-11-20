@@ -27,7 +27,7 @@ class PlaylistRecipeQueryTests(unittest.TestCase):
         self.assertEqual((0, None), _length(_recipe(start='a')))
 
     def test_a_length_that_is_not_a_whole_number_is_rejected(self):
-        for bad in ('ten', '2.5', ''):
+        for bad in ('ten', '2.5'):
             with self.subTest(length=bad):
                 with self.assertRaisesRegex(ValueError, 'Playlist length must be positive and between 1 and 1000'):
                     _recipe(start='a', length=bad)
@@ -74,6 +74,55 @@ class PlaylistRecipeQueryTests(unittest.TestCase):
                 recipe = _recipe(start='a', length='5', **query)
                 self.assertEqual(((), None), (recipe.energy_plan, recipe.mood_hold))
 
+
+
+def _chain(**lists):
+    return playlist_recipe_from_query({'start': ['a'], **lists})
+
+
+class ChainedArcQueryTests(unittest.TestCase):
+    # #137: arcs repeat in order; each one's range and length sit at the same place in their own lists.
+    def test_arcs_repeat_in_order_with_their_own_ranges_and_lengths(self):
+        recipe = _chain(arc=['rise', 'steady', 'fall'], arc_tracks=['4', '3', '5'], energy_low=['', '0.3', ''],
+                        energy_high=['0.8', '', ''])
+
+        self.assertEqual((EnergyArcRequest('rise', energy_high=0.8, tracks=4),
+                          EnergyArcRequest('steady', energy_low=0.3, tracks=3),
+                          EnergyArcRequest('fall', tracks=5)), recipe.energy_plan)
+        self.assertEqual((None, None), _length(recipe), "the arcs set the playlist's length")
+
+    def test_arcs_can_last_minutes(self):
+        recipe = _chain(arc=['rise', 'fall'], arc_minutes=['20', '12.5'])
+
+        self.assertEqual((EnergyArcRequest('rise', minutes=20.0), EnergyArcRequest('fall', minutes=12.5)),
+                         recipe.energy_plan)
+
+    def test_an_arc_length_that_cannot_be_read_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'An arc length must be a whole number of tracks, at least 1'):
+            _chain(arc=['rise'], arc_tracks=['2.5'])
+        with self.assertRaisesRegex(ValueError, 'An arc length must be a positive number of minutes'):
+            _chain(arc=['rise'], arc_minutes=['long'])
+
+    def test_each_arc_needs_its_own_value_in_every_list_it_uses(self):
+        for lists in ({'arc_tracks': ['4']}, {'energy_low': ['0.2', '0.3', '0.4']}, {'arc_minutes': ['5', '', '7']}):
+            with self.subTest(lists=lists):
+                with self.assertRaisesRegex(ValueError, 'Give each arc its own'):
+                    _chain(arc=['rise', 'fall'], **lists)
+
+    def test_every_arc_in_a_chain_needs_a_shape(self):
+        with self.assertRaisesRegex(ValueError, 'Each arc in a chain needs a shape'):
+            _chain(arc=['rise', 'none'], arc_tracks=['3', '3'])
+
+    def test_an_arc_length_needs_an_energy_arc(self):
+        with self.assertRaisesRegex(ValueError, 'An arc length needs an energy arc'):
+            _chain(arc_tracks=['3'], length=['5'])
+
+    def test_a_blank_single_value_is_unset_as_if_it_were_left_out(self):
+        recipe = playlist_recipe_from_query({'start_track_id': [''], 'start': ['a'], 'length': [''],
+                                             'duration_minutes': ['60'], 'mood': [''], 'arc': ['']})
+
+        self.assertEqual(('a', None, '60', (), None), (recipe.start_track_id, recipe.length, recipe.duration_minutes,
+                                                     recipe.energy_plan, recipe.mood_hold))
 
 def _length(recipe):
     return recipe.length, recipe.duration_minutes

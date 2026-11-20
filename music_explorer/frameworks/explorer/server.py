@@ -243,7 +243,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 projection = BuildLiveProjection(repository).execute()
                 return self._json(_to_json(projection))
             if path == '/api/playlists/m3u':
-                recipe = playlist_recipe_from_query(parse_qs(parsed.query))
+                recipe = playlist_recipe_from_query(parse_qs(parsed.query, keep_blank_values=True))
                 result = GenerateBpmGraphM3UPlaylist(repository).execute(recipe)
                 return self._m3u(result.content, result.warning)
             if path == '/api/mood-axis-graph':
