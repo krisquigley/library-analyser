@@ -156,7 +156,7 @@ titles, databases or audio.
 **Checks** (standard-library `unittest`, run from the repository root):
 
 ```sh
-python -m unittest discover -s tests/unit -v              # fast unit tests
+python -m unittest discover -s tests/unit -t . -v              # fast unit tests
 python -m unittest tests.architecture.test_import_boundaries -v
 RUN_FFMPEG_TESTS=0 RUN_PACKAGING_TESTS=0 python -m unittest discover -v   # full suite, as CI
 RUN_FFMPEG_TESTS=1 python -m unittest tests.integration.infrastructure.test_audio_decode -v

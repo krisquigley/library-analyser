@@ -180,7 +180,7 @@ opens music or Mixxx data or the configured analysis database.
 
 ```sh
 .venv/bin/python -m unittest discover -v
-.venv/bin/python -m unittest discover -s tests/unit -v
+.venv/bin/python -m unittest discover -s tests/unit -t . -v
 .venv/bin/python -m unittest tests.architecture.test_import_boundaries -v
 # Optional real decode tests; existing FFmpeg required (otherwise skipped):
 RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest tests.integration.infrastructure.test_audio_decode -v
