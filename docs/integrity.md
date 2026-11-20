@@ -15,9 +15,9 @@ All Explorer reads, including graph/candidate/projection/export (R1 + R2), use t
 intentional [scoped read policy](explorer-read-policy.md); readers no longer contain a FULL validator.
 D3 is explicit and is not run as a hidden prerequisite for ordinary reads.
 
-Every report exposes the finite twelve-check checklist: compatibility, schema, core_rows, metadata, retained_stages, current_graph, historical_graph, current_evidence, historical_evidence, sqlite_physical, sqlite_foreign_keys, resource_access. D3 includes metadata and retained stage payload checks, SQLite physical and foreign-key checks, both graph checks and both compact evidence checks. Graph checks are genuinely not applicable in v6, and evidence checks in v6–8, only after trustworthy application/version recognition. Missing applicable coverage is never labeled not applicable. Schema drift can block dependent core checks.
+Every report exposes the finite thirteen-check checklist: compatibility, schema, core_rows, metadata, retained_stages, current_graph, historical_graph, current_evidence, historical_evidence, playlist_recipes, sqlite_physical, sqlite_foreign_keys, resource_access. D3 includes metadata and retained stage payload checks, SQLite physical and foreign-key checks, both graph checks, both compact evidence checks and the stored playlist recipe check. Graph checks are genuinely not applicable in v6, evidence checks in v6–8 and the playlist recipe check in v6–10, only after trustworthy application/version recognition. Missing applicable coverage is never labeled not applicable. Schema drift can block dependent core checks.
 
-A supported database returns `status=clean`, `complete=true`, `stop_reason=completed`, **exit0** only when all twelve applicable checks have completed with exact counts, genuine legacy N/A is justified, and final connection cleanup and the deadline check succeed. Fully completed diagnostics with corruption findings return `status=corrupt`, `complete=true`, **exit1**. Missing/blocked coverage, read errors, resource stops, cleanup failure and deadline expiry return `status=incomplete`, `complete=false`, **exit4**; late cancellation takes priority with **exit130**. `implemented_scope_complete` records completion of the implemented diagnostic scope, not the absence of corruption. Complete does not mean writer parity, authenticity, a trust token, or automatic Explorer/P8 eligibility. #85's six-second case remains unresolved; no latency guarantee is made. #96 is separate. Explorer scoped reads (R1 + R2) are not exhaustive writer certification.
+A supported database returns `status=clean`, `complete=true`, `stop_reason=completed`, **exit0** only when all thirteen applicable checks have completed with exact counts, genuine legacy N/A is justified, and final connection cleanup and the deadline check succeed. Fully completed diagnostics with corruption findings return `status=corrupt`, `complete=true`, **exit1**. Missing/blocked coverage, read errors, resource stops, cleanup failure and deadline expiry return `status=incomplete`, `complete=false`, **exit4**; late cancellation takes priority with **exit130**. `implemented_scope_complete` records completion of the implemented diagnostic scope, not the absence of corruption. Complete does not mean writer parity, authenticity, a trust token, or automatic Explorer/P8 eligibility. #85's six-second case remains unresolved; no latency guarantee is made. #96 is separate. Explorer scoped reads (R1 + R2) are not exhaustive writer certification.
 
 Wire shape is `report_version=1`, capability is `coverage_revision=D3`, and the finite promised checklist is `required_scope_revision=P7-1`. These fields do not change the package version or database schema version. Findings use fixed predicate codes and grouped occurrence counts, not distinct corrupt-track totals. Several findings can overlap on the same row; do not sum them as corrupt tracks. Completed counts are exact; interrupted counts/findings are lower bounds; blocked/unimplemented/N/A counts are unavailable, not fabricated zeroes.
 
@@ -71,7 +71,7 @@ continues through established content policy. Codec/read errors and MemoryError
 are operational, not corruption evidence. No constant native scratch, linear-time,
 hard wall-time or universal RSS guarantee is made.
 
-These phases run in the displayed twelve-check order using the same pinned
+These phases run in the displayed thirteen-check order using the same pinned
 read-only snapshot and shared operational meters as the other checks. They do not
 change reader trust, writer policy, schema, graph/evidence derivation or P8 eligibility.
 Healthy or corrupt findings do not alone determine completion: physical/FK checks and
@@ -164,3 +164,14 @@ The first compatibility read can fail even after connection open; that remains a
 Text and JSON output are deterministic, sanitized fixed labels/codes/counts. They do not echo paths, configuration, SQL, database-derived object names, payloads, row samples, exception text or tracebacks. Unsupported raw schema versions are not echoed. Invalid integrity options do not echo supplied tokens or values. Output remains sensitive in the ordinary sense that counts and categorical findings describe the explicitly selected database; share it deliberately.
 
 This diagnostic does not suggest automatic repair. Keep the source and a consistent backup, preserve evidence, and investigate findings separately; successful selected work is not permission to use omitted phases as trusted inputs.
+
+## Stored playlist recipes
+
+On v11 the `playlist_recipes` check reads every stored recipe row (#139) and counts one unit of work per row. Each row is checked against the analyzer's own recipe contract (`music_analyzer/domain/playlist_recipe.py`), the same one `playlist-recipe save` applies, so a failing row was changed outside the analyzer. A row can raise each of these at most once:
+
+- `recipe_json_invalid`: the stored recipe is not JSON text.
+- `recipe_contract_invalid`: it is JSON but not a valid version 1 recipe.
+- `recipe_name_invalid`: the name is not the trimmed, printable, 1–100 character name the analyzer saves.
+- `recipe_version_invalid`: the `format_version` column does not match the document's version.
+
+A recipe whose start track is no longer in the database is not corruption: `playlist-recipe list` and `show` report it. Findings are counts only; no recipe name or document is reported. Values are admitted through the same size and row budgets as the other phases. Before v11 the check is not applicable.

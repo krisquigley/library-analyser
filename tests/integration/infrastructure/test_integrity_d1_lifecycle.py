@@ -11,7 +11,7 @@ from tests.integration.infrastructure.integrity_d1_public_fixture import create_
 from tests.integration.infrastructure.test_integrity_d1_safety import ConnectObservation, ObservedConnection
 
 IDS = ('compatibility', 'schema', 'core_rows', 'metadata', 'retained_stages', 'current_graph',
-       'historical_graph', 'current_evidence', 'historical_evidence', 'sqlite_physical', 'sqlite_foreign_keys', 'resource_access')
+       'historical_graph', 'current_evidence', 'historical_evidence', 'playlist_recipes', 'sqlite_physical', 'sqlite_foreign_keys', 'resource_access')
 
 
 class LifecycleConnection(ObservedConnection):
@@ -73,6 +73,7 @@ class IntegrityD1Lifecycle(unittest.TestCase):
                 self.assertEqual(states['metadata'], 'completed')
                 self.assertEqual(states['current_graph'], 'not_applicable' if version == 6 else 'completed')
                 self.assertEqual(states['historical_evidence'], 'not_applicable' if version < 9 else 'completed')
+                self.assertEqual(states['playlist_recipes'], 'not_applicable' if version < 11 else 'completed')
 
     def test_absolute_deadline_includes_initial_access_and_cleanup(self):
         with tempfile.TemporaryDirectory() as td:

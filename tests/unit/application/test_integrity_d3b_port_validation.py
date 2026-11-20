@@ -10,7 +10,7 @@ CHECKS = (
     ('compatibility', 'databases'), ('schema', 'schema_descriptors'),
     ('core_rows', 'rows'), ('metadata', 'rows'), ('retained_stages', 'rows'),
     ('current_graph', 'rows'), ('historical_graph', 'rows'),
-    ('current_evidence', 'rows'), ('historical_evidence', 'rows'),
+    ('current_evidence', 'rows'), ('historical_evidence', 'rows'), ('playlist_recipes', 'rows'),
     ('sqlite_physical', 'physical_records'), ('sqlite_foreign_keys', 'foreign_key_records'),
     ('resource_access', 'databases'),
 )
@@ -33,11 +33,12 @@ ROW_CODES = {
 
 
 def completed_scan():
-    return IntegrityScan(10, tuple(
+    scan = IntegrityScan(10, tuple(
         IntegrityCheck(name, name, 'completed',
                        1 if name in ('compatibility', 'sqlite_physical', 'resource_access') else 0,
                        unit, 'exact') for name, unit in CHECKS),
         implemented_scope_complete=True, stop_reason='completed')
+    return changed(scan, 'playlist_recipes', state='not_applicable', count=None, count_precision='unavailable')
 
 
 def failed_schema_scan(version, schema_state):

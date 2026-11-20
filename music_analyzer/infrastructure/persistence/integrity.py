@@ -83,6 +83,8 @@ class Delivery:
         self.graph_findings = {}
         self.retained_work = {}
         self.retained_findings = {}
+        self.recipe_work = None
+        self.recipe_findings = {}
         self.sqlite_work = {}
         self.sqlite_findings = {}
 
@@ -342,6 +344,7 @@ class SQLiteIntegrityScanner:
         evidence_checks = {}
         retained_checks = {}
         sqlite_checks = {}
+        recipe_check = None
         findings = []
         stop = 'scope_not_implemented'
         phase = 'compatibility'
@@ -402,6 +405,11 @@ class SQLiteIntegrityScanner:
                             phase = owner
                             evidence_checks[owner], evidence_findings = scan_evidence(delivery, owner)
                             findings.extend(evidence_findings)
+                    if version >= 11:
+                        from music_analyzer.infrastructure.persistence.integrity_playlist_recipes import scan_playlist_recipes
+                        phase = 'playlist_recipes'
+                        recipe_check, recipe_findings = scan_playlist_recipes(delivery)
+                        findings.extend(recipe_findings)
                     for owner in ('sqlite_physical', 'sqlite_foreign_keys'):
                         phase = owner
                         sqlite_checks[owner], sqlite_findings = self._sqlite(delivery, owner)
@@ -472,6 +480,10 @@ class SQLiteIntegrityScanner:
                 evidence_checks[phase] = check(phase, 'interrupted', delivery.evidence_work.get(phase, 0), 'rows')
                 findings.extend(finding(phase, code, count, 'lower_bound')
                                 for code, count in delivery.evidence_findings.get(phase, {}).items())
+            if phase == 'playlist_recipes' and recipe_check is None:
+                recipe_check = check(phase, 'interrupted', delivery.recipe_work or 0, 'rows')
+                findings.extend(finding(phase, code, count, 'lower_bound')
+                                for code, count in delivery.recipe_findings.items())
             if phase in ('sqlite_physical', 'sqlite_foreign_keys') and phase not in sqlite_checks:
                 unit = 'physical_records' if phase == 'sqlite_physical' else 'foreign_key_records'
                 sqlite_checks[phase] = check(phase, 'interrupted', delivery.sqlite_work.get(phase, 0), unit)
@@ -486,10 +498,13 @@ class SQLiteIntegrityScanner:
                 ('metadata', 'rows', 6), ('retained_stages', 'rows', 6),
                 ('current_graph', 'rows', 7), ('historical_graph', 'rows', 7),
                 ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
-                ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6)):
+                ('playlist_recipes', 'rows', 11), ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6)):
             state = 'blocked' if version is None else ('not_applicable' if version < first_version else 'not_implemented')
             if state == 'not_implemented':
                 state = 'blocked'
+            if check_id == 'playlist_recipes' and recipe_check is not None:
+                checks.append(recipe_check)
+                continue
             checks.append(sqlite_checks.get(check_id, retained_checks.get(check_id, evidence_checks.get(
                 check_id, graph_checks.get(check_id, check(check_id, state, None, unit))))))
         checks.append(resource_check)
@@ -506,7 +521,8 @@ class SQLiteIntegrityScanner:
                  'sqlite_integrity_invalid', 'sqlite_foreign_key_invalid', 'physical_limit_reached')
         from music_analyzer.application.use_cases.integrity_evidence import EvidenceCode
         from music_analyzer.infrastructure.persistence.integrity_retained import CODES as retained_codes
-        codes += retained_codes + tuple(code.value for code in EvidenceCode)
+        from music_analyzer.infrastructure.persistence.integrity_playlist_recipes import CODES as recipe_codes
+        codes += retained_codes + tuple(code.value for code in EvidenceCode) + recipe_codes
         grouped = {}
         for item in findings:
             key = (item.check_id, item.code)
@@ -540,7 +556,8 @@ class SQLiteIntegrityScanner:
                                   for owner in ('current_graph', 'historical_graph')))
                              and (version < 9 or all(evidence_checks.get(owner) is not None
                                   and evidence_checks[owner].state == 'completed'
-                                  for owner in ('current_evidence', 'historical_evidence'))))
+                                  for owner in ('current_evidence', 'historical_evidence')))
+                             and (version < 11 or (recipe_check is not None and recipe_check.state == 'completed')))
 
     def _sqlite(self, delivery, owner):
         """Drain fixed numeric projections, never native diagnostics or identities.

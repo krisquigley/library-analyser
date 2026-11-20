@@ -10,7 +10,7 @@ CHECKS = (
     ('core_rows', 'rows', 6), ('metadata', 'rows', 6), ('retained_stages', 'rows', 6),
     ('current_graph', 'rows', 7), ('historical_graph', 'rows', 7),
     ('current_evidence', 'rows', 9), ('historical_evidence', 'rows', 9),
-    ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6),
+    ('playlist_recipes', 'rows', 11), ('sqlite_physical', 'physical_records', 6), ('sqlite_foreign_keys', 'foreign_key_records', 6),
     ('resource_access', 'databases', 6),
 )
 
@@ -21,7 +21,8 @@ def healthy_scan(version):
         if name in ('compatibility', 'schema', 'core_rows', 'metadata', 'retained_stages', 'resource_access'):
             state, count, precision = 'completed', 1, 'exact'
         elif ((name in ('current_graph', 'historical_graph') and version >= 7)
-              or (name in ('current_evidence', 'historical_evidence') and version >= 9)):
+              or (name in ('current_evidence', 'historical_evidence') and version >= 9)
+              or (name == 'playlist_recipes' and version >= 11)):
             state, count, precision = 'completed', 0, 'exact'
         else:
             state = 'not_applicable' if version < first_version else 'not_implemented'
@@ -89,7 +90,7 @@ class IntegrityD1WireGate(unittest.TestCase):
         self.assertEqual(scanner.calls, [('explicit-public.sqlite', 2.5)],
                          'usecase must call injected scanner without constructing details')
 
-    def test_frozen_report_revisions_and_all_twelve_checks_are_visible(self):
+    def test_frozen_report_revisions_and_every_check_are_visible(self):
         report = CheckIntegrity(FakeScanner(healthy_scan(6))).execute('explicit-public.sqlite')
         for field, expected in (
                 ('report_version', 1), ('coverage_revision', 'D3'),
