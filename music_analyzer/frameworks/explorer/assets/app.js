@@ -47,7 +47,6 @@ import {createLibraryRefresh} from './app/application/refresh-library/refresh-li
 import {LIBRARY_REFRESH_EVENT_TYPES} from './app/application/refresh-library/library-refresh-events.js';
 import {presentLibraryRefreshEvent} from './app/adapters/presenters/library-loading-presenter.js';
 import {libraryLoadingView} from './app/frameworks/views/library-loading-view.js';
-let state={current_track_id:null};
 let forceGraph=null;
 const graphAxes=createGraphAxes();
 const nodeHalo=createSelectedNodeHalo();
@@ -59,25 +58,16 @@ let pendingGraphAxisSpec=[];
 const playlistEvents=createInMemoryEventBus();
 const explorerApi=fetchExplorerApi((path,options)=>fetch(path,options));
 const playlistDownload=createPlaylistDownload({explorerApi,playlistFile:browserPlaylistFile(),eventBus:playlistEvents});
-const playlistControls=playlistDownloadController({playlistDownload,currentTrackId:()=>state.current_track_id,rejectInput:message=>playlistControlsView.show(presentRejectedPlaylistInput(message))});
+const playlistControls=playlistDownloadController({playlistDownload,currentTrackId,rejectInput:message=>playlistControlsView.show(presentRejectedPlaylistInput(message))});
 const playlistControlsView=playlistDownloadView({onControlsEdited:controls=>playlistControls.controlsEdited(controls),onDownloadRequested:controls=>playlistControls.downloadRequested(controls),onArcAdded:()=>playlistControls.arcAdded(),onArcRemoved:place=>playlistControls.arcRemoved(place),onArcMoved:(place,offset)=>playlistControls.arcMoved(place,offset),onArcEdited:(place,fields)=>playlistControls.arcEdited(place,fields)});
 for(const type of PLAYLIST_DOWNLOAD_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistControlsView.show(presentPlaylistDownloadEvent(event)));
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
-let selectionEpoch=0;
-let selectionState='none';
-// Mirrors the selection's wait for the server for the browser probe and the diagnostics, until #146 step 8.
-let pendingSelectionOperation=null;
-let pendingCameraSelection=null;
-let cameraViewIntentGeneration=0;
-let cameraFocusGeneration=0;
-let cameraFocusFrame=null;
-// The camera variables above mirror the focus for the browser probe and the tests, until #146 step 8.
-const legacyCameraFocusSession=Object.freeze({read:()=>({pendingTrackId:pendingCameraSelection,frame:cameraFocusFrame,viewIntent:cameraViewIntentGeneration,focusGeneration:cameraFocusGeneration}),write(changes){if('pendingTrackId' in changes) pendingCameraSelection=changes.pendingTrackId; if('frame' in changes) cameraFocusFrame=changes.frame; if('viewIntent' in changes) cameraViewIntentGeneration=changes.viewIntent; if('focusGeneration' in changes) cameraFocusGeneration=changes.focusGeneration;}});
+const cameraFocusSession=createInMemorySession({pendingTrackId:null,frame:null,viewIntent:0,focusGeneration:0});
 // Render on demand (#86): the vendor loop would otherwise redraw WebGL every frame, even when nothing moves.
 const renderingEvents=createInMemoryEventBus();
 const graphRendering=createGraphRendering({renderer:forceGraphRenderer(()=>forceGraph),eventBus:renderingEvents});
 const cameraEvents=createInMemoryEventBus();
-const cameraFocus=createCameraFocus({focusSession:legacyCameraFocusSession,eventBus:cameraEvents});
+const cameraFocus=createCameraFocus({focusSession:cameraFocusSession,eventBus:cameraEvents});
 const cameraControlsWatch=createCameraControlsWatch({onControlsReplaced:()=>cancelCameraFocus('controls-replaced'),onViewClaimed:()=>invalidateCameraViewIntent('listener-orbit')});
 cameraEvents.subscribe('camera-focus-cancelled',event=>{if(typeof cancelAnimationFrame==='function') cancelAnimationFrame(event.frame);});
 const graphSession=createInMemorySession({loadState:'idle',controls:EMPTY_GRAPH_CONTROLS,
@@ -103,9 +93,10 @@ const trackList=trackListView({onTrackChosen:trackId=>setCurrent(trackId),onQuer
 for(const type of TRACK_SEARCH_EVENT_TYPES) trackEvents.subscribe(type,event=>renderTracks(event.results.tracks));
 const trackDetail=trackDetailView();
 const moodStrip=moodStripView();
-const legacySelectionSession=Object.freeze({read:()=>({snapshot:state,epoch:selectionEpoch,selectionState}),write(changes){if('snapshot' in changes) state=changes.snapshot; if('epoch' in changes) selectionEpoch=changes.epoch; if('selectionState' in changes){selectionState=changes.selectionState; pendingSelectionOperation=awaitingServer(selectionState)?selectionState:null;}}});
+const selectionSession=createInMemorySession({snapshot:{current_track_id:null},epoch:0,selectionState:'none'});
+function currentTrackId(){return selectionSession.read().snapshot.current_track_id;}
 const selectionEvents=createInMemoryEventBus();
-const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession:legacySelectionSession,eventBus:selectionEvents});
+const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession,eventBus:selectionEvents});
 let selectionViewIntent=0;
 selectionEvents.subscribe('track-chosen',()=>{selectionViewIntent=invalidateCameraViewIntent('new-selection'); renderDetailLoading(); updateSelectedTrackVisuals();});
 selectionEvents.subscribe('selection-rewinding',()=>{selectionViewIntent=invalidateCameraViewIntent('new-selection'); renderDetailLoading();});
@@ -125,17 +116,17 @@ function refresh(){return libraryRefresh.refresh();}
 function tabSessionStorage(){try{return typeof sessionStorage!=='undefined'?sessionStorage:undefined;}catch(_error){return undefined;}}
 async function applyHistorySelection(action){if(await trackSelection.rewind(action)) await refresh();}
 function nextFrame(){return new Promise(resolve=>{if(typeof requestAnimationFrame==='function') requestAnimationFrame(()=>resolve()); else setTimeout(resolve,0);});}
-const selectedNodeValue=selectedTrackNodeSize(()=>state.current_track_id);
+const selectedNodeValue=selectedTrackNodeSize(currentTrackId);
 function updateSelectedTrackVisuals(){
-  if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===state.current_track_id?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
+  if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===currentTrackId()?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
   if(forceGraph){graphRendering.wake(); forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,graphState().visible); focusPendingCameraSelection();}
-  else if(graphState().visible.nodes.length) drawCanvasFallback(graphState().visible,null,state.current_track_id);
+  else if(graphState().visible.nodes.length) drawCanvasFallback(graphState().visible,null,currentTrackId());
   renderMoodStrip(graphState().visible);
 }
 function renderDetailLoading(){trackDetail.showLoading(trackDetailLoadingViewModel());}
 function renderDetailError(error,retry){trackDetail.showFailure(trackDetailFailureViewModel(error),retry);}
 async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose(id,{focusCamera});}
-function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:state.current_track_id}));}
+function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId()}));}
 function loadGraph(){return graphLoad.load();}
 
 function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]}));}
@@ -146,7 +137,7 @@ function renderDetail(detail){trackDetail.show(trackDetailViewModel(detail));}
 function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
 function fitGraph(elem){const size=fitGraphToElement(forceGraph,elem); graphRendering.wake(); return size;}
 
-function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||graphState().visible.nodes,state.current_track_id);}
+function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||graphState().visible.nodes,currentTrackId());}
 function animateGraphAxes(timestamp){
   if(forceGraph){
     graphRendering.viewObserved(graphViewPose(forceGraph));
@@ -183,7 +174,7 @@ function focusPendingCameraSelection(graphRendered=false){
   // Only renderMap may consume focus before the load state becomes ready.
   if(!graphRendered && graphState().loadState!=='ready') return;
   if(!forceGraph || graphFraming.layout()===null || cameraFocus.peek()==null) return;
-  const id=cameraFocus.take(state.current_track_id);
+  const id=cameraFocus.take(currentTrackId());
   if(id===null) return;
   const node=graphState().visible.nodes.find(n=>n.id===id);
   if(!node) return; // Keep active filters; hidden/unpositioned selections still show detail.
@@ -203,11 +194,11 @@ function focusPendingCameraSelection(graphRendered=false){
     cancelCameraFocus('camera-failure');
   }
 }
-function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,state.current_track_id),moodStrip.width()));}
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphState().model.nodes.length?graphState().model.nodes:data.nodes);const elem=graphContainer(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode}); observeElementResize(elem,()=>fitGraph(elem)); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=fitGraph(elem); graphDataMount.mount(forceGraph,data); syncSelectedNodeHalo(forceGraph,data); graphFraming.frame(forceGraph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();} else {nodeHalo.clear();drawCanvasFallback(data,elem,state.current_track_id);} renderMoodStrip(data);}
+function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,currentTrackId()),moodStrip.width()));}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphState().model.nodes.length?graphState().model.nodes:data.nodes);const elem=graphContainer(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode}); observeElementResize(elem,()=>fitGraph(elem)); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=fitGraph(elem); graphDataMount.mount(forceGraph,data); syncSelectedNodeHalo(forceGraph,data); graphFraming.frame(forceGraph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();} else {nodeHalo.clear();drawCanvasFallback(data,elem,currentTrackId());} renderMoodStrip(data);}
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
 function buildGraphControls(root){graphFilterControls.mount(root);}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); libraryLoading.mount(); buildControls(); renderTracks([]); graphStatusDisplay.show(GRAPH_IDLE_STATUS); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
 installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
-function diagnosticSnapshot(){return {currentTrackId:state.current_track_id??null,selectionEpoch:state.selection_epoch??null,history:state.history||[],graphStatus:graphState().loadState==='failed'?'error':graphState().loadState,cameraFocusActive:cameraFocusFrame!=null,pendingCameraTrackId:pendingCameraSelection,selectionPending:pendingSelectionOperation!=null,trackSearchStatus:trackSearchSession.read().searchState==='failed'?'error':trackSearchSession.read().searchState,trackResultCount:trackSearchSession.read().results.tracks.length};}
+function diagnosticSnapshot(){const {snapshot,selectionState}=selectionSession.read(); const camera=cameraFocusSession.read(); return {currentTrackId:snapshot.current_track_id??null,selectionEpoch:snapshot.selection_epoch??null,history:snapshot.history||[],graphStatus:graphState().loadState==='failed'?'error':graphState().loadState,cameraFocusActive:camera.frame!=null,pendingCameraTrackId:camera.pendingTrackId,selectionPending:awaitingServer(selectionState),trackSearchStatus:trackSearchSession.read().searchState==='failed'?'error':trackSearchSession.read().searchState,trackResultCount:trackSearchSession.read().results.tracks.length};}
