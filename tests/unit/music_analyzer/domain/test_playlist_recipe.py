@@ -47,7 +47,7 @@ class InvalidRecipeTests(unittest.TestCase):
 
     def test_only_this_format_and_version(self):
         self.assertRejected('not a playlist recipe', _recipe(format='m3u'))
-        self.assertRejected('version 2 is not supported; this analyzer reads version 1', _recipe(version=2))
+        self.assertRejected('version 2 is not supported; only version 1 can be read', _recipe(version=2))
         self.assertRejected('version True is not supported', _recipe(version=True))
         self.assertRejected('must be a JSON object', ['not', 'an', 'object'])
 

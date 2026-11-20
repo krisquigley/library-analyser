@@ -16,6 +16,7 @@ import sqlite3
 from music_analyzer.application.use_cases.graph_feature_evidence import validate_graph_feature_evidence_payload
 from music_explorer.application.dto.explorer import AnalysisReport, ExplorerStoredTrack, ExplorerTrackSummary, MoodAxisEdge, ScoreSummary, StageResult, TrackMetadata
 from music_explorer.application.dto.playlists import PlayableTrackCandidate, PlaylistMoodEvidence
+from music_explorer.application.ports.saved_playlist_recipes import SavedPlaylistRecipeRow
 from music_explorer.application.use_cases.explorer import _build_mood_axis_graph
 from music_explorer.domain.analysis import finite
 from music_explorer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION
@@ -175,6 +176,21 @@ def _graph_feature_evidence_size_expression(column='evidence_json'):
 
 def _playlist_duration(value):
     return float(value) if _finite_number(value) and value > 0 else None
+
+
+_PLAYLIST_RECIPES_SCHEMA = 11
+_SAVED_RECIPE_COLUMNS = 'name,recipe_json,updated_at'
+
+
+def _saved_playlist_recipe(row):
+    name, recipe_json, updated_at = row
+    if not isinstance(name, str) or not isinstance(updated_at, str):
+        raise AnalysisError('Unexpected analysis database rows')
+    try:
+        document = json.loads(recipe_json) if isinstance(recipe_json, str) else None
+    except ValueError:
+        document = None
+    return SavedPlaylistRecipeRow(name, document, updated_at)
 
 
 def _database_schema_version(db, default=10):
@@ -376,6 +392,20 @@ class ReadOnlyExplorerSQLiteRepository:
             row = db.execute(f'SELECT {_ACTIVE_CANDIDATE_PREDICATE} {_ACTIVE_CANDIDATE_JOIN} WHERE t.id=?',
                              (track_id,)).fetchone()
             return bool(row is not None and row[0])
+
+    def saved_playlist_recipes(self):
+        with self._transaction() as db:
+            if _database_schema_version(db) < _PLAYLIST_RECIPES_SCHEMA:
+                return ()
+            rows = db.execute(f'SELECT {_SAVED_RECIPE_COLUMNS} FROM playlist_recipes ORDER BY name').fetchall()
+            return tuple(_saved_playlist_recipe(row) for row in rows)
+
+    def saved_playlist_recipe(self, name: str):
+        with self._transaction() as db:
+            if _database_schema_version(db) < _PLAYLIST_RECIPES_SCHEMA:
+                return None
+            row = db.execute(f'SELECT {_SAVED_RECIPE_COLUMNS} FROM playlist_recipes WHERE name=?', (name,)).fetchone()
+            return None if row is None else _saved_playlist_recipe(row)
 
     def _validate_track_identity(self, track_id, sha256, size):
         if (not isinstance(track_id, str) or not _TRACK_ID_RE.fullmatch(track_id)
