@@ -11,10 +11,11 @@ import unittest
 from tools import explorer_browser_diagnostic as diagnostic
 from tools.explorer_browser_graph_fixture import public_browser_graph_fixture
 from tools.explorer_browser_routes import public_routes
+from tests.support.explorer_diagnostics_page import SCENE, SNAPSHOT, diagnostics_url, snapshot_is
 
 
 POSE = """() => {
- const c=forceGraph.camera(), t=forceGraph.controls();
+ const forceGraph=window.explorerDiagnostics.scene().graph, c=forceGraph.camera(), t=forceGraph.controls();
  return {position:c.position.toArray(),target:t.target.toArray(),up:c.up.toArray(),
  quaternion:c.quaternion.toArray(),zoom:c.zoom,
  settings:Object.fromEntries(['enabled','staticMoving','dynamicDampingFactor',
@@ -48,14 +49,14 @@ class PendingSearchManualOrbitBrowserTests(unittest.TestCase):
                         if '/api/tracks/public-' in request.url else None)
                 page.route('**/api/current', lambda route: pending.append(route))
                 release.set()
-                page.goto(url, wait_until='domcontentloaded')
-                page.wait_for_function("graphLoadState.status==='ready' && forceGraph.graphData().nodes.length===12")
+                page.goto(diagnostics_url(url), wait_until='domcontentloaded')
+                page.wait_for_function(snapshot_is("s.graphStatus==='ready'") + ' && ' + SCENE + '.graphData.nodes.length===12')
                 page.locator('#track-search').fill('Public synthetic')
                 page.locator('#tracks tbody tr button').first.wait_for()
                 # Allow the vendor's initial renderer/camera setup before manual pose.
                 page.wait_for_timeout(1000)
                 page.evaluate("""() => {
-                  const c=forceGraph.camera(),t=forceGraph.controls();
+                  const forceGraph=window.explorerDiagnostics.scene().graph, c=forceGraph.camera(),t=forceGraph.controls();
                   Object.assign(t,{enabled:true,staticMoving:true,minDistance:350,maxDistance:600});
                   const direction=c.position.clone().sub(t.target).normalize();
                   c.position.copy(t.target).add(direction.multiplyScalar(450));
@@ -67,11 +68,11 @@ class PendingSearchManualOrbitBrowserTests(unittest.TestCase):
                 before = page.evaluate(POSE)
                 # This click invokes the actual button.onclick registered by renderTracks.
                 page.locator('#tracks tbody tr button').first.click()
-                page.wait_for_function('pendingSelectionOperation!==null')
+                page.wait_for_function(snapshot_is('s.selectionPending'))
                 self.assertEqual(len(pending), 1)
                 evidence['post'] = json.loads(pending[0].request.post_data)
                 self.assertEqual(evidence['post']['track_id'], 'public-00000')
-                box = page.evaluate('forceGraph.renderer().domElement.getBoundingClientRect().toJSON()')
+                box = page.evaluate(SCENE + '.graph.renderer().domElement.getBoundingClientRect().toJSON()')
                 x, y = box['x'] + box['width']/2, box['y'] + box['height']/2
                 page.mouse.move(x, y)
                 page.mouse.down()
@@ -91,13 +92,15 @@ class PendingSearchManualOrbitBrowserTests(unittest.TestCase):
                 self.assertLessEqual(radius, 600)
                 pending[0].fulfill(status=200, content_type='application/json', body=json.dumps(
                     {'current_track_id':'public-00000','history':[],'selection_epoch':0}))
-                page.wait_for_function("state.current_track_id==='public-00000' && pendingSelectionOperation===null && document.getElementById('detail').getAttribute('aria-busy')==='false' && selectedNodeHalo.trackId==='public-00000'")
+                page.wait_for_function(snapshot_is("s.currentTrackId==='public-00000' && !s.selectionPending")
+                                       + " && document.getElementById('detail').getAttribute('aria-busy')==='false'"
+                                       + " && " + SCENE + ".halo?.trackId==='public-00000'")
                 page.wait_for_timeout(1000)
                 final = page.evaluate(POSE)
                 evidence.update(final=final, detail=page.locator('#detail').inner_text(),
-                                halo=page.evaluate('selectedNodeHalo.trackId'),
-                                camera_focus_active=page.evaluate('cameraFocusFrame!==null'),
-                                webgl=page.evaluate("!!forceGraph.renderer().getContext().getParameter(forceGraph.renderer().getContext().VERSION)"))
+                                halo=page.evaluate(SCENE + '.halo.trackId'),
+                                camera_focus_active=page.evaluate(SNAPSHOT + '.cameraFocusActive'),
+                                webgl=page.evaluate("(gl=>!!gl.getParameter(gl.VERSION))(" + SCENE + ".graph.renderer().getContext())"))
                 self.assertTrue(evidence['webgl'])
                 evidence['detail_requests'] = detail_requests
                 self.assertEqual(detail_requests, [url + 'api/tracks/public-00000'])

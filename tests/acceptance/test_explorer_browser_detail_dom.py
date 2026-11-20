@@ -9,6 +9,23 @@ from tools.explorer_db_detail_browser import observe_writer_attempt
 from tools.explorer_browser_report import publish_browser_report
 
 
+# A faulty detail presentation, injected through the page's diagnostics seam (#146): a handler of the
+# page's detail events that runs after the page's own and before the observer's. The page itself is unchanged.
+FAULT = """document.addEventListener('DOMContentLoaded',()=>{
+ const seam=window.explorerDiagnostics, detailRoot=()=>document.getElementById('detail');
+ const onDetailShown=handler=>seam.subscribe('track-detail-loaded',handler);
+ const onDetailLoading=handler=>{for(const type of ['track-chosen','selection-rewinding','track-detail-loading'])seam.subscribe(type,handler);};
+ const fabricatedFields=title=>{const fields=document.createElement('div');
+  fields.append(seam.views().trackMetadata({common:[['title',title]],tags:[]}));return fields;};
+ const showFields=fields=>detailRoot().children[1].replaceWith(fields);
+ """
+
+
+def faulty_detail(body):
+    return FAULT + body + '\n});'
+
+
+
 @unittest.skipUnless(os.environ.get('RUN_EXPLORER_DOM') == '1', 'explicit bounded Chromium opt-in')
 class DetailDOMAcceptance(unittest.TestCase):
     def test_earlier_frame_replacement_cannot_certify_detached_genuine_fields(self):
@@ -33,16 +50,10 @@ class DetailDOMAcceptance(unittest.TestCase):
                         XDG_CONFIG_HOME=os.environ['TMPDIR'], XDG_CACHE_HOME=os.environ['TMPDIR']))
                     try:
                         page = browser.new_page(viewport={'width': 640, 'height': 480})
-                        page.add_init_script("""document.addEventListener('DOMContentLoaded',()=>{
-                          const real=renderDetail;
-                          renderDetail=function(value){
-                            const result=real(value);
-                            // Queued inside the genuine renderer wrapper, BEFORE
-                            // the observer queues its own frame callback.
-                            requestAnimationFrame(()=>real({metadata:{common:[['title','FABRICATED FRAME']],tags:[]},fields:{}}));
-                            return result;
-                          };
-                        });""")
+                        # Queued while the page handles the loaded detail, BEFORE the
+                        # observer queues its own frame callback.
+                        page.add_init_script(faulty_detail("""onDetailShown(()=>requestAnimationFrame(()=>
+                          showFields(fabricatedFields('FABRICATED FRAME'))));"""))
                         sample = observe_writer_attempt(page, url, 'latest-selection', 'verified', fixture)
                         self.assertEqual(len(sample['detail_bridge']['selections']), 2)
                         self.assertTrue(page.locator('#detail').inner_text().endswith('Title: FABRICATED FRAME'))
@@ -96,10 +107,7 @@ class DetailDOMAcceptance(unittest.TestCase):
                         page = browser.new_page(viewport={'width': 640, 'height': 480})
                         # Genuine renderer, fresh nodes, trusted row and matching GET:
                         # only the presented DTO content is fabricated.
-                        page.add_init_script("""document.addEventListener('DOMContentLoaded',()=>{
-                          const real=renderDetail;
-                          renderDetail=function(){return real({metadata:{common:[['title','FABRICATED PRESENTATION']],tags:[]},fields:{}});};
-                        });""")
+                        page.add_init_script(faulty_detail("onDetailShown(()=>showFields(fabricatedFields('FABRICATED PRESENTATION')));"))
                         sample = observe_writer_attempt(page, url, 'pending-then-ready', 'verified', fixture)
                         selected = sample['detail_bridge']['selections'][-1]
                         self.assertIs(selected['is_trusted'], True)
@@ -140,16 +148,16 @@ class DetailDOMAcceptance(unittest.TestCase):
                         for fault in ('pristine', 'noop', 'stale'):
                             page = browser.new_page(viewport={'width': 640, 'height': 480})
                             if fault == 'noop':
-                                page.add_init_script("document.addEventListener('DOMContentLoaded',()=>{renderDetail=function(){document.getElementById('detail').setAttribute('aria-busy','false');};});")
+                                # The loaded detail is never drawn: the loading view stays, no longer busy.
+                                page.add_init_script(faulty_detail("""let loading=null;
+                                  onDetailLoading(()=>{loading=Array.from(detailRoot().children).map(n=>n.cloneNode(true));});
+                                  onDetailShown(()=>{detailRoot().replaceChildren(...loading);});"""))
                             if fault == 'stale':
                                 # Restore clones of previous presentation, not merely old nodes.
-                                page.add_init_script("""document.addEventListener('DOMContentLoaded',()=>{
-                                  const real=renderDetail;let previous=null;
-                                  renderDetail=function(value){const root=document.getElementById('detail');
-                                    if(previous){root.setAttribute('aria-busy','false');root.replaceChildren(...previous.map(n=>n.cloneNode(true)));}
-                                    else {real(value);previous=Array.from(root.children).map(n=>n.cloneNode(true));}
-                                  };
-                                });""")
+                                page.add_init_script(faulty_detail("""let previous=null;
+                                  onDetailShown(()=>{const root=detailRoot();
+                                    if(previous)root.replaceChildren(...previous.map(n=>n.cloneNode(true)));
+                                    else previous=Array.from(root.children).map(n=>n.cloneNode(true));});"""))
                             sample = observe_writer_attempt(page, url, 'latest-selection', 'verified', fixture)
                             selected = sample['detail_bridge']['selections'][-1]
                             self.assertIs(selected['is_trusted'], True)

@@ -15,6 +15,7 @@ from tools import explorer_browser_diagnostic as diagnostic
 from tools.explorer_browser_graph_fixture import public_browser_graph_fixture
 from tools.explorer_browser_report import publish_browser_report
 from tools.explorer_browser_routes import public_routes
+from tests.support.explorer_diagnostics_page import SCENE, snapshot_is
 
 
 def _renderer_implementation(sample):
@@ -85,12 +86,12 @@ class TinyRealFocusObservation(unittest.TestCase):
                 self.assertEqual(sample['outcome'], 'ok')
                 page.evaluate("window.__diagnostic.contention_action='armed'")
                 page.locator('#tracks tbody tr').nth(1).click()
-                page.wait_for_function('cameraFocusFrame!==null')
+                page.wait_for_function(snapshot_is('s.cameraFocusActive'))
                 receipt_starts.append(page.evaluate('window.__diagnostic.input_observations.length'))
                 attempts.append(diagnostic.new_input_attempt('input', 'focus'))
                 page.locator('#track-search').fill('Public synthetic')
-                page.wait_for_function('cameraFocusFrame!==null')
-                box = page.evaluate('forceGraph.renderer().domElement.getBoundingClientRect().toJSON()')
+                page.wait_for_function(snapshot_is('s.cameraFocusActive'))
+                box = page.evaluate(SCENE + '.graph.renderer().domElement.getBoundingClientRect().toJSON()')
                 x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
                 page.mouse.move(x, y)
                 receipt_starts.append(page.evaluate('window.__diagnostic.input_observations.length'))
@@ -100,11 +101,15 @@ class TinyRealFocusObservation(unittest.TestCase):
                 page.mouse.up()
                 page.wait_for_function("window.__diagnostic.focus.motion.cancellations.some(e=>e.reason==='user-orbit')")
                 page.locator('#tracks tbody tr').first.click()
-                page.wait_for_function('cameraFocusFrame!==null')
+                page.wait_for_function(snapshot_is('s.cameraFocusActive'))
                 receipt_starts.append(page.evaluate('window.__diagnostic.input_observations.length'))
                 attempts.append(diagnostic.new_input_attempt('selection', 'focus'))
                 page.locator('#tracks tbody tr').nth(1).click()
-                page.wait_for_function("state.current_track_id==='public-00001' && pendingSelectionOperation===null && document.getElementById('detail').getAttribute('aria-busy')==='false' && selectedNodeHalo.trackId===state.current_track_id && window.__diagnostic.consumed_count>=4 && window.__diagnostic.focus.motion.starts.length>=4 && window.__diagnostic.focus.motion.starts.at(-1).active_after===true && cameraFocusFrame===null")
+                page.wait_for_function(snapshot_is("s.currentTrackId==='public-00001' && !s.selectionPending && !s.cameraFocusActive")
+                                       + " && document.getElementById('detail').getAttribute('aria-busy')==='false'"
+                                       + " && " + SCENE + ".halo?.trackId==='public-00001' && window.__diagnostic.consumed_count>=4"
+                                       + " && window.__diagnostic.focus.motion.starts.length>=4"
+                                       + " && window.__diagnostic.focus.motion.starts.at(-1).active_after===true")
                 page.evaluate('() => new Promise(resolve=>requestAnimationFrame(resolve))')
                 observed = page.evaluate('window.__diagnostic')
                 sample['focus']['motion'] = observed['focus']['motion']

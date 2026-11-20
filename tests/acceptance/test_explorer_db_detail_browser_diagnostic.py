@@ -262,7 +262,7 @@ class RealWriterPackagedBrowserBridge(unittest.TestCase):
         def inject_unrelated_detail(page, *args, **kwargs):
             page.add_init_script("""document.addEventListener('click', event => {
                 if (event.target.closest('#tracks tbody tr')) queueMicrotask(() => {
-                    fetch('/api/tracks/' + encodeURIComponent(trackSummaryPage.tracks[1].handle));
+                    fetch('/api/tracks/' + encodeURIComponent(document.querySelectorAll('#tracks tbody tr')[1].dataset.trackId));
                 });
             }, true);""")
             return observe_attempt(page, *args, **kwargs)

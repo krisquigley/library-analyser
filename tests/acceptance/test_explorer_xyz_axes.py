@@ -5,6 +5,16 @@ import unittest
 from pathlib import Path
 
 from tests.support.explorer_app_bundle import explorer_app_script
+from tests.support.explorer_diagnostics_page import GRAPH, SCENE, diagnostics_url, snapshot_is
+
+LABELS = "document.querySelectorAll('.graph-axis-label')"
+# The axes as the page shows them: label text and screen placement in the DOM, the axis meshes in the scene (#146).
+SHOWN_AXES = """() => {
+  const graph = window.explorerDiagnostics.scene().graph, labels = [...document.querySelectorAll('.graph-axis-label')];
+  const groups = graph.scene().children.filter(c => c.name === 'mood-xyz-axes');
+  return {labels: labels.map(l => l.textContent), screen: labels[0].style.transform, sceneCount: groups.length,
+    axes: groups[0].children.map(o => ({name: o.name, position: o.position.toArray()})), nodes: graph.graphData().nodes.length};
+}"""
 
 APP_JS = explorer_app_script(Path(__file__).resolve().parents[2] / 'music_analyzer/frameworks/explorer/assets/app.js')
 
@@ -64,36 +74,32 @@ class GraphAxesBrowserTests(unittest.TestCase):
                     page = browser.new_page(viewport={'width': 1280, 'height': 900})
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
-                    page.goto(f'http://127.0.0.1:{server.server_port}/')
-                    page.wait_for_function('graphAxes && graphAxes.group.labels.length === 6')
-                    before = page.evaluate('''() => ({labels: graphAxes.group.labels.map(l=>l.textContent),
-                      axes: graphAxes.group.children.map(o=>({name:o.name,position:o.position.toArray()})),
-                      sceneCount:forceGraph.scene().children.filter(c=>c.name==='mood-xyz-axes').length,
-                      screen:graphAxes.group.labels[0].style.transform,
-                      nodes:forceGraph.graphData().nodes.length})''')
+                    page.goto(diagnostics_url(f'http://127.0.0.1:{server.server_port}/'))
+                    page.wait_for_function(f"{LABELS}.length === 6 && !!{SCENE}.graph")
+                    before = page.evaluate(SHOWN_AXES)
                     self.assertEqual(before['nodes'], 2)
                     self.assertEqual(before['sceneCount'], 1)
                     self.assertEqual(before['labels'][::2], ['X valence (native)', 'Y arousal (native)', 'Z BPM'])
-                    page.evaluate('() => {forceGraph.cameraPosition({x:900,y:1200,z:4300},{x:100,y:60,z:4450},0);return true}')
-                    page.wait_for_function('graphAxes.group.labels[0].style.transform !== '+repr(before['screen']))
+                    page.evaluate(f'() => {{{SCENE}.graph.cameraPosition({{x:900,y:1200,z:4300}},{{x:100,y:60,z:4450}},0);return true}}')
+                    page.wait_for_function(f'{LABELS}[0].style.transform !== ' + repr(before['screen']))
                     page.locator('#selected-mood').select_option('relaxing')
-                    page.wait_for_function("graphModel.selectedMood === 'relaxing'")
-                    after = page.evaluate('''() => ({axes:graphAxes.group.children.map(o=>({name:o.name,position:o.position.toArray()})),
-                       sceneCount:forceGraph.scene().children.filter(c=>c.name==='mood-xyz-axes').length,
-                       nodes:forceGraph.graphData().nodes.length, screen:graphAxes.group.labels[0].style.transform})''')
+                    page.wait_for_function(f"{GRAPH}.model.selectedMood === 'relaxing'")
+                    after = page.evaluate(SHOWN_AXES)
                     self.assertEqual(after['axes'], before['axes'])
                     self.assertEqual(after['sceneCount'], 1)
                     self.assertEqual(after['nodes'], 2)
                     self.assertNotEqual(after['screen'], before['screen'])
                     # Click the actual rendered node screen coordinate; axis meshes must not intercept.
-                    page.evaluate('() => {const n=forceGraph.graphData().nodes[0];forceGraph.cameraPosition({x:n.x,y:n.y,z:n.z+500},{x:n.x,y:n.y,z:n.z},0);return true}')
+                    page.evaluate(f'() => {{const g={SCENE}.graph, n=g.graphData().nodes[0];'
+                                  'g.cameraPosition({x:n.x,y:n.y,z:n.z+500},{x:n.x,y:n.y,z:n.z},0);return true}')
                     page.wait_for_timeout(500)
-                    point = page.evaluate('''() => {const n=forceGraph.graphData().nodes[0];return forceGraph.graph2ScreenCoords(n.x,n.y,n.z)}''')
+                    point = page.evaluate(f'() => {{const g={SCENE}.graph, n=g.graphData().nodes[0];'
+                                          'return g.graph2ScreenCoords(n.x,n.y,n.z)}')
                     page.evaluate('document.querySelectorAll("details").forEach(d=>d.open=false)')
                     page.mouse.move(point['x'],point['y'])
                     page.wait_for_timeout(250)
                     page.mouse.click(point['x'], point['y'])
-                    page.wait_for_function('(state.current_track_id||"") === '+repr(ids[0]), timeout=4000)
+                    page.wait_for_function(snapshot_is('(s.currentTrackId||"") === ' + repr(ids[0])), timeout=4000)
                     self.assertFalse(errors, errors)
                     browser.close()
             finally:
