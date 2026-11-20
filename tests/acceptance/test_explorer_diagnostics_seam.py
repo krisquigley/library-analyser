@@ -24,7 +24,7 @@ const context = page('?diagnostics');
 const diagnostics = context.explorerDiagnostics;
 assert.deepEqual(JSON.parse(JSON.stringify(diagnostics.snapshot())), {
   currentTrackId: null, selectionEpoch: null, history: [], graphStatus: 'idle', cameraFocusActive: false, pendingCameraTrackId: null,
-  selectionPending: false, trackSearchStatus: 'idle'});
+  selectionPending: false, trackSearchStatus: 'idle', trackResultCount: 0});
 for (const type of ['track-chosen', 'selection-accepted', 'camera-focus-started', 'camera-focus-cancelled',
   'camera-focus-finished', 'graph-ready', 'graph-rendering-paused', 'track-page-loaded', 'playlist-downloaded']) {
   assert.ok(diagnostics.eventTypes().includes(type), type);
@@ -34,6 +34,7 @@ const stop = diagnostics.observe('graph-model-building', {before: () => timed.pu
 assert.equal(typeof stop, 'function');
 for (const type of ['graph-model-building', 'graph-model-built']) assert.ok(diagnostics.eventTypes().includes(type), type);
 assert.deepEqual(Object.keys(diagnostics.scene()).sort(), ['findSceneObject', 'graph', 'graphData', 'graphObjectTrackId', 'halo']);
+assert.deepEqual(Object.keys(diagnostics.views()).sort(), ['detailField', 'trackMetadata']);
 vm.runInContext('explorerDiagnostics = null', context);
 assert.equal(context.explorerDiagnostics, diagnostics, 'the page cannot replace its seam');
 assert.ok(!Object.keys(context).includes('explorerDiagnostics'), 'the seam is not enumerable');

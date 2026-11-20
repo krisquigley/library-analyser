@@ -15,6 +15,7 @@ import unittest
 from tools import explorer_browser_diagnostic as diagnostic
 from tests.support.explorer_camera_harness import VENDOR
 from tests.support.explorer_camera_harness import ASSETS
+from tests.support.fake_explorer_diagnostics import FAKE_EXPLORER_DIAGNOSTICS
 
 
 class _ReadbackCaptured(Exception):
@@ -63,7 +64,7 @@ def _node():
 
 def _run_readback(setup=''):
     """Execute production callback; setup may alter real scene objects/public camera."""
-    source = VENDOR + r'''
+    source = VENDOR + FAKE_EXPLORER_DIAGNOSTICS + r'''
 const THREE=vendor.THREE;
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(60,800/600,1,100);
@@ -91,12 +92,15 @@ function findSceneObject(root,predicate) {
   return null;
 }
 function graphObjectTrackId(object){return object.userData?.trackId||null;}
+// The page as its diagnostics seam (#146) shows it; a setup may change what the page holds.
+const page={currentTrackId:'public-00000',graphData:{nodes,links:[]},halo:{mesh:halo,trackId:'public-00000'},
+  graph:{scene:()=>scene,camera:()=>camera,controls:()=>controls,renderer:()=>renderer,
+    graph2ScreenCoords:()=>({x:400,y:300})}};
 const context={console,Uint8Array,performance:{now:()=>10},
   requestAnimationFrame:callback=>{callback(10);return 1;},
-  state:{current_track_id:'public-00000'},pendingSelectionOperation:null,renderedGraphData:{nodes,links:[]},
-  selectedNodeHalo:{mesh:halo,trackId:'public-00000'},findSceneObject,graphObjectTrackId,
-  forceGraph:{scene:()=>scene,camera:()=>camera,controls:()=>controls,renderer:()=>renderer,
-    graph2ScreenCoords:()=>({x:400,y:300})},
+  explorerDiagnostics:fakeExplorerDiagnostics({
+    snapshot:()=>({currentTrackId:page.currentTrackId,selectionPending:false}),
+    scene:()=>({graph:page.graph,graphData:page.graphData,halo:page.halo,findSceneObject,graphObjectTrackId})}),
   __diagnostic:{milestones_ms:{},requests:[],consumed_count:1}};
 context.window=context;
 SETUP
@@ -178,7 +182,7 @@ addNode('public-00002',1000,0,0);
 addNode('public-00003',0,0,30);
 addNode('public-00004',0,0,0).visible=false;
 nodes.push({id:'public-00005',x:0,y:0,z:0});
-context.renderedGraphData.links=[{source:'public-00000',target:'public-00002'}];
+page.graphData.links=[{source:'public-00000',target:'public-00002'}];
 '''
         for change, expected in (('', 1), ("scene.children.find(o=>o.userData.trackId==='public-00002').position.x=0;", 2)):
             with self.subTest(expected=expected):

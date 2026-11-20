@@ -77,14 +77,41 @@ platform versions, fixture hashes/counts and sample count. Fresh browsers are
 navigation and comparisons stay within the same browser sample. Request elapsed
 ends at fetch headers, not body completion. The `verified` observer consumes one
 body via text, separates body/decode, JSON parse, UTF-8 encoding/hash verification,
-buildMoodGraphModel and scene submission start/end timestamps. The model span
-covers that function only, not all downstream filter preparation or loading-state
-work before nextFrame/renderMap. Gaps remain unattributed; subtracting isolated
+graph model and scene submission start/end timestamps. The model span runs from
+the `graph-model-building` event to the dispatch of `graph-model-built`, so it
+includes publishing the first event and ends a little later than the old wrapper
+around `buildMoodGraphModel` did; it does not cover downstream filter preparation
+or loading-state work before the scene renders. Gaps remain unattributed; subtracting isolated
 spans cannot establish full CPU/GPU attribution. Verification adds
 observer overhead; model duration excludes that verification, but neither is an
-uninstrumented production timing. The scene interval wraps synchronous renderMap
-work inclusively (signatures, copies, layout, mood strip and graphData submission);
+uninstrumented production timing. The scene interval covers the page's handling of
+`graph-render-due` inclusively (signatures, copies, layout, mood strip and graphData submission);
 it is not isolated graphData or GPU timing. No cloned or second body is consumed.
+
+### How the page is observed (#146)
+
+The tools open the page at `/?diagnostics`, which installs its read-only
+`window.explorerDiagnostics` seam, and observe only through that seam and the
+network. They wrap and replace no page function and read no page variable:
+
+- `subscribe(type, handler)` hears a page event; `observe(type, {before, after})`
+  runs just before and just after the page's own handlers of one dispatch, which
+  is what the milestones time;
+- `snapshot()` is a frozen copy of the page state the waits need (current track,
+  selection epoch and pending selection, graph and track-search status, result
+  count, whether a camera arc is in flight);
+- `scene()` hands over the live graph, its data and the selected-node halo for
+  the projection readback; `views()` draws detached detail elements, for the
+  writer bridge to compare with what the page shows.
+
+| Milestone | Observed at |
+|---|---|
+| model start / end | before `graph-model-building` / before `graph-model-built` is dispatched |
+| scene start / end | before / after `graph-render-due` is handled |
+| selection intent | before `track-chosen` is handled |
+| selection feedback | after `track-chosen`, `selection-rewinding` or `track-detail-loading` |
+| detail painted | after `track-detail-loaded` is handled |
+| focus start | `camera-focus-started` |
 
 The observer-light `native-json` mode uses native response.json and records its
 inclusive start/end. Separate body/decode and parse timings are unavailable;
@@ -222,8 +249,15 @@ separate two-action input/selection contention gate.
 browser-performance clock and literal `active_after` state. A call or active
 frame after a call is not completion, progress quality or smoothness evidence.
 Partial `focus.motion.cancellations` retain fixed `user-orbit`, `new-selection`,
-`new-focus` or `unclassified` reasons and browser-performance timestamps.
-`unclassified` retains uncertainty rather than inventing a user-action cause. Cancellation is not completion,
+`new-focus` or `unclassified` reasons and browser-performance timestamps. The
+reason comes from the cause the page puts on its `camera-focus-cancelled` event:
+`listener-orbit` is reported as `user-orbit`, `new-selection` and `new-focus` as
+themselves, and any other cause (a reframe, reload, filter, replaced controls or
+camera failure) as `unclassified`. Only an arc in flight is cancelled with an
+event. Cancellations after the server accepts a selection, and from a graph pick,
+are now `new-selection`; the old stack-based wrappers left them `unclassified`.
+`active_after` is read once the call that started the arc has returned.
+`unclassified` is not a user-action cause. Cancellation is not completion,
 intermediate smoothness, latency acceptance, or proof that a pending host input
 was received. Host intent and browser receipt/frame clocks remain distinct.
 Supplied reports retain timeout/failure outcomes, allowlist focus labels/numbers,

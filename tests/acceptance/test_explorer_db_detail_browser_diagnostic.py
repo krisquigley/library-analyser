@@ -24,6 +24,7 @@ from unittest.mock import Mock, patch
 import unittest
 
 from music_explorer.frameworks.explorer.server import create_server
+from tools.explorer_browser_routes import diagnostics_url
 from tools.explorer_browser_diagnostic import (collect, failed_setup_attempt,
                                                publish_browser_report, require_memory_bound)
 from tools.explorer_fixture_inspection import fingerprint_sqlite_files
@@ -296,15 +297,17 @@ class RealWriterPackagedBrowserBridge(unittest.TestCase):
                                             'BLOCKED: Chromium WebGL unavailable, not behavioral RED')
                             page.set_default_timeout(10000)
                             page.add_init_script(_DETAIL_PROBE)
-                            page.goto(url, wait_until='domcontentloaded')
-                            page.wait_for_function("state.selection_epoch!=null && graphLoadState.status==='ready'")
+                            page.goto(diagnostics_url(url), wait_until='domcontentloaded')
+                            page.wait_for_function("(s=>s.selectionEpoch!=null && s.graphStatus==='ready')"
+                                                   "(window.explorerDiagnostics.snapshot())")
                             initial = page.evaluate("window.__dbBridge.requests.filter(r=>r.route==='/api/tracks/summary').length")
                             page.evaluate(_WRAP_DETAIL)
                             page.locator('#track-search').fill('Synthetic')
-                            page.wait_for_function("trackSummaryStatus==='ready' && trackSummaryPage.tracks.length>1")
-                            intended = page.evaluate('trackSummaryPage.tracks[0].handle')
+                            page.wait_for_function("(s=>s.trackSearchStatus==='ready' && s.trackResultCount>1)"
+                                                   "(window.explorerDiagnostics.snapshot())")
+                            intended = page.evaluate("document.querySelector('#tracks tbody tr').dataset.trackId")
                             page.locator('#tracks tbody tr').first.click()
-                            page.wait_for_function("pendingSelectionOperation===null && document.getElementById('detail').getAttribute('aria-busy')==='false' && window.__dbBridge.detail_next_frame_ms!=null")
+                            page.wait_for_function("!window.explorerDiagnostics.snapshot().selectionPending && document.getElementById('detail').getAttribute('aria-busy')==='false' && window.__dbBridge.detail_next_frame_ms!=null")
                             observed = page.evaluate('window.__dbBridge')
                             # Actual successful requests go through packaged handlers/repository.
                             posts = [r for r in observed['requests'] if r['method'] == 'POST' and r['route'] == '/api/current']
@@ -391,10 +394,11 @@ _DETAIL_PROBE = r"""(() => {
  document.addEventListener('click',e=>{if(e.target.closest('#tracks tbody tr')){d.receipt_ms=performance.now();d.is_trusted=e.isTrusted;}},true);
 })();"""
 
+# Observed through the page's opt-in diagnostics seam (#146): when its detail events have been handled.
 _WRAP_DETAIL = r"""() => {
- const d=window.__dbBridge, loading=renderDetailLoading, detail=renderDetail;
- renderDetailLoading=function(){const value=loading.apply(this,arguments);d.loading_dom_ms=performance.now();
-  requestAnimationFrame(()=>{d.loading_frame_ms=performance.now();d.loading_frame_was_busy=document.getElementById('detail').getAttribute('aria-busy')==='true';});return value;};
- renderDetail=function(value){const result=detail.apply(this,arguments);d.dom_handle=value.handle;
-  d.detail_dom_ready_ms=performance.now();requestAnimationFrame(()=>d.detail_next_frame_ms=performance.now());return result;};
+ const d=window.__dbBridge, seam=window.explorerDiagnostics;
+ for(const type of ['track-chosen','selection-rewinding','track-detail-loading'])seam.observe(type,{after:()=>{d.loading_dom_ms=performance.now();
+  requestAnimationFrame(()=>{d.loading_frame_ms=performance.now();d.loading_frame_was_busy=document.getElementById('detail').getAttribute('aria-busy')==='true';});}});
+ seam.observe('track-detail-loaded',{after:event=>{d.dom_handle=event.detail.handle;
+  d.detail_dom_ready_ms=performance.now();requestAnimationFrame(()=>d.detail_next_frame_ms=performance.now());}});
 }"""

@@ -1,6 +1,7 @@
 """RED contracts for outward observer telemetry; no responsiveness budgets.
 
-Node runs the real probe and the entrypoint decoration supplied by observe().
+Node runs the real probe and the entrypoint decoration supplied by observe(), against a page that
+publishes its work through a stand-in for its diagnostics seam (#146).
 The controlled clock measures observer boundaries, not browser/GPU performance.
 """
 import importlib.util
@@ -11,6 +12,7 @@ import subprocess
 from threading import Event
 import unittest
 
+from tests.support.fake_explorer_diagnostics import FAKE_EXPLORER_DIAGNOSTICS
 from tools import explorer_browser_diagnostic as diagnostic
 from tools.explorer_browser_report import publish_browser_report
 
@@ -61,6 +63,7 @@ def _run_observer(action):
     source = r'''
 const vm = require('node:vm');
 let tick = 0, observer, frames = [], bodyReads = 0;
+const seam = fakeExplorerDiagnostics({snapshot:()=>({cameraFocusActive:false})});
 const graph = {nodes:[{id:'private-node'}],links:[],unpositioned:[]};
 const context = {
   URL, Uint8Array, console,
@@ -77,10 +80,11 @@ const context = {
   crypto:{subtle:{async digest(name,bytes){tick+=7;return new Uint8Array(32).buffer;}}},
   fetch:async()=>({ok:true,status:200,headers:{get:()=>null},
     async text(){bodyReads++;tick+=10;return JSON.stringify(graph);}}),
-  buildMoodGraphModel(value){tick+=11;return value;},
-  renderMap(){tick+=13;},
-  renderDetail(){}, renderDetailLoading(){}, setCurrent(){},
-  animateCameraFocus(){tick+=17;}
+  explorerDiagnostics:seam,
+  // The page's own work, as its events carry it, with an explicit cost on the clock.
+  buildMoodGraphModel(value){seam.publish({type:'graph-model-building'});tick+=11;seam.publish({type:'graph-model-built'});return value;},
+  renderMap(){seam.publish({type:'graph-render-due'},()=>{tick+=13;});},
+  animateCameraFocus(){seam.publish({type:'camera-focus-started',focusGeneration:1},()=>{tick+=17;});}
 };
 context.window=context;
 vm.createContext(context);
@@ -92,7 +96,7 @@ function advanceFrames(time){tick=time;const ready=frames;frames=[];for(const ca
   console.log(JSON.stringify({diagnostic:context.__diagnostic,body_reads:bodyReads,tick}));
 })().catch(error=>{console.error(error.stack);process.exitCode=1;});
 '''
-    source = source.replace('PROBE', json.dumps(probe)).replace('DECORATION', json.dumps(decoration))
+    source = FAKE_EXPLORER_DIAGNOSTICS + source.replace('PROBE', json.dumps(probe)).replace('DECORATION', json.dumps(decoration))
     source = source.replace('ACTION', action)
     completed = subprocess.run([node, '-e', source], capture_output=True, text=True, timeout=10)
     if completed.returncode != 0:

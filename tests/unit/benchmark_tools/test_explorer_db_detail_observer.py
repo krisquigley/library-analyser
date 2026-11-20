@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import Mock
 from tools import explorer_db_detail_browser as observer
+from tests.support.fake_explorer_diagnostics import FAKE_EXPLORER_DIAGNOSTICS
 
 
 class WriterObserverTests(unittest.TestCase):
@@ -127,7 +128,7 @@ class WriterObserverTests(unittest.TestCase):
                                         {'manifest': {}})
         calls = [str(c) for c in page.mock_calls]
         settled = next(i for i, c in enumerate(calls) if 'wait_for_function' in c
-                       and "graphLoadState.status==='ready'" in c and 'cameraFocusFrame===null' in c)
+                       and "s.graphStatus==='ready'" in c and '!s.cameraFocusActive' in c)
         typed = next(i for i, c in enumerate(calls) if ".fill('Synthetic')" in c)
         self.assertLess(settled, typed)
         page.route.assert_not_called()
@@ -195,7 +196,7 @@ class WriterObserverTests(unittest.TestCase):
                                                    'verified', {'manifest': {}})
         self.assertIs(sample.get('graph_fault_injected'), False)
 
-    def test_repeated_loading_calls_preserve_first_dom_and_next_frame_observation(self):
+    def test_repeated_loading_events_preserve_first_dom_and_next_frame_observation(self):
         import json
         import shutil
         import subprocess
@@ -208,12 +209,13 @@ class WriterObserverTests(unittest.TestCase):
         global.window={__dbBridge:{selections:[{sequence:1}]}};
         global.document={getElementById:()=>({getAttribute:()=> 'false'})};
         global.requestAnimationFrame=callback=>frames.push(callback);
-        global.renderDetailLoading=()=>null;global.renderDetail=()=>null;
+        const seam=window.explorerDiagnostics=fakeExplorerDiagnostics();
         (WRAPPER)();
-        renderDetailLoading();const first=window.__dbBridge.selections[0].loading_dom_ms;
-        renderDetailLoading();frames.forEach(callback=>callback());
+        seam.publish({type:'track-chosen'});const first=window.__dbBridge.selections[0].loading_dom_ms;
+        seam.publish({type:'track-detail-loading'});frames.forEach(callback=>callback());
         console.log(JSON.stringify({first,selected:window.__dbBridge.selections[0],frames:frames.length}));
         """.replace('WRAPPER', observer.WRAP_DETAIL)
+        script = FAKE_EXPLORER_DIAGNOSTICS + script
         result = subprocess.run([node, '-e', script], capture_output=True, text=True,
                                 timeout=5, check=True)
         observed = json.loads(result.stdout)

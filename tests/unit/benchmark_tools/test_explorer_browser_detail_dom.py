@@ -3,6 +3,7 @@ import json
 import subprocess
 import unittest
 from tools.explorer_db_detail_browser import DETAIL_RENDERED, PROBE, WRAP_DETAIL
+from tests.support.fake_explorer_diagnostics import FAKE_EXPLORER_DIAGNOSTICS
 from tests.unit.benchmark_tools.test_explorer_browser_native_json_observation import node_executable
 
 
@@ -10,6 +11,7 @@ class DetailDOMPolicy(unittest.TestCase):
     def test_frame_evidence_rejects_replaced_detached_and_moved_nodes(self):
         script = r'''
 const vm=require('vm'), wrap=WRAP;
+FAKE
 const make=(tagName,textContent='')=>({tagName,textContent,isConnected:true,
  checkVisibility:()=>true,getBoundingClientRect:()=>({width:10,height:10,left:1,right:11,top:1,bottom:11}),
  matches:()=>true});
@@ -22,9 +24,11 @@ for(const fault of ['pristine','replaced-fields','replaced-root','detached-root'
  global.document={getElementById:()=>live,querySelectorAll:()=>[{dataset:{trackId:s.intended_handle}}]};
  global.innerWidth=640;global.innerHeight=480;
  global.requestAnimationFrame=callback=>queue.push(callback);
- global.window={__dbBridge:{selections:[s]},__dbDetailContentMatches:(sequence,node)=>{compared=node;return true;}};
- global.renderDetailLoading=()=>{};
- global.renderDetail=()=>{
+ const seam=fakeExplorerDiagnostics();
+ global.window={__dbBridge:{selections:[s]},__dbDetailContentMatches:(sequence,node)=>{compared=node;return true;},
+  explorerDiagnostics:seam};
+ // The page shows the loaded detail as it handles its track-detail-loaded event.
+ const showDetail=()=>seam.publish({type:'track-detail-loaded'},()=>{
   rendered=fields();rendered.parentElement=live;live.children[1]=rendered;
   requestAnimationFrame(()=>{
    if(fault==='replaced-fields'){rendered.isConnected=false;live.children[1]=fields();live.children[1].parentElement=live;}
@@ -32,13 +36,13 @@ for(const fault of ['pristine','replaced-fields','replaced-root','detached-root'
    if(fault==='detached-root'){live.isConnected=false;rendered.isConnected=false;}
    if(fault==='moved-fields'){rendered.parentElement=root();}
   });
- };
- vm.runInThisContext('('+wrap+')()');renderDetail();while(queue.length)queue.shift()();
+ });
+ vm.runInThisContext('('+wrap+')()');showDetail();while(queue.length)queue.shift()();
  results.push({fault,presented:s.detail_presented,ready:s.detail_dom_ready_ms!=null,
   frame:s.detail_next_frame_ms!=null,comparedLive:compared===live.children[1],identity:s.dom_identity_matches});
 }
 console.log(JSON.stringify(results));
-'''.replace('WRAP', json.dumps(WRAP_DETAIL))
+'''.replace('WRAP', json.dumps(WRAP_DETAIL)).replace('FAKE', FAKE_EXPLORER_DIAGNOSTICS)
         result = subprocess.run([node_executable(), '-e', script], capture_output=True,
                                 text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -62,8 +66,8 @@ global.window={fetch:async()=>({ok:true,status:200,text:async()=>JSON.stringify(
  handle:'private-handle',metadata:{title:'private-original'},fields:{bpm:{value:123}}})})};
 global.location={href:'http://localhost/'};
 global.document={addEventListener(){},createElement:make};
-global.renderTrackMetadata=value=>JSON.parse(JSON.stringify(value));
-global.renderDetailField=(name,value)=>({name,...value});
+const renderTrackMetadata=value=>JSON.parse(JSON.stringify(value));
+window.explorerDiagnostics={views:()=>({trackMetadata:renderTrackMetadata,detailField:(name,value)=>({name,...value})})};
 vm.runInThisContext(PROBE);
 (async()=>{
  const d=window.__dbBridge,selection={sequence:1,intended_handle:'private-handle'};

@@ -69,7 +69,7 @@ hidden.add(addNode('public-00001',0,0,0));
         self.assertIsNone(result['sample']['focus']['projection']['mesh']['diameter_px'])
 
     def test_missing_halo_mesh_is_unavailable_without_losing_readback(self):
-        result = _run_readback('context.selectedNodeHalo.mesh=null;')
+        result = _run_readback('page.halo.mesh=null;')
         self.assertEqual(result['sample']['focus']['projection']['status'], 'unavailable')
         self.assertIsNotNone(result['sample']['milestones_ms']['graph_post_focus_readback'])
 
@@ -80,7 +80,7 @@ hidden.add(addNode('public-00001',0,0,0));
         self.assertEqual(result['outcome'], 'invalid_response')
 
     def test_missing_node_or_selected_halo_retains_readback(self):
-        for setup in ('nodes.length=0;', 'context.selectedNodeHalo=null;'):
+        for setup in ('nodes.length=0;', 'page.halo=null;'):
             with self.subTest(setup=setup):
                 sample = _run_readback(setup)['sample']
                 self.assertEqual(sample['focus']['projection']['status'], 'unavailable')
