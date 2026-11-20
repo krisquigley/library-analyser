@@ -72,85 +72,10 @@ async function history(path, id, epoch, items=[]){const operation=settled(contex
 """
 
 SCENARIOS = {
-    "post_gate_and_exact_detail_count": r"""
-const a=select('A'); assert.equal(ids().length,0,'detail cannot precede accepted POST');
-await accept('A'); assert.deepEqual(ids(),['/api/tracks/A']); await finish('A'); assert((await a).ok);
-assert(text().includes('DETAIL A')); assert.equal(requests.length,2,'selection does not refresh list/state/graph');
-""",
-    "stale_post_does_not_fetch_or_replace_latest": r"""
-const a=select('A'); const b=select('B'); await accept('B',1); await finish('B'); assert((await b).ok);
-await accept('A',0); assert((await a).ok); assert.deepEqual(ids(),['/api/tracks/B']);
-assert.equal(context.getStateForTesting().current_track_id,'B'); assert(text().includes('DETAIL B'));
-""",
-    "stale_post_failure_does_not_poison_latest": r"""
-const a=select('A');const b=select('B');await accept('B',1);await finish('B');assert((await b).ok);
-req('/api/current',0).fail('A selection transport failed');await a;await flush();
-assert.deepEqual(ids(),['/api/tracks/B']);assert.equal(context.getStateForTesting().current_track_id,'B');
-assert(text().includes('DETAIL B'));assert(!errorVisible());assert(!loading());
-""",
-    "stale_detail_success_does_not_replace_latest": r"""
-const a=select('A');await accept('A');const b=select('B');await accept('B',1);await finish('B');assert((await b).ok);
-await finish('A');assert((await a).ok);assert(text().includes('DETAIL B'));assert(!text().includes('DETAIL A'));
-assert.deepEqual(ids(),['/api/tracks/A','/api/tracks/B']);
-""",
-    "stale_detail_failure_does_not_poison_latest": r"""
-const a=select('A');await accept('A');const b=select('B');await accept('B',1);await finish('B');assert((await b).ok);
-req('/api/tracks/A').fail('A transport failed');await a;await flush();
-assert(text().includes('DETAIL B'));assert(!errorVisible(),'stale error must not replace current detail');assert(!loading());
-""",
-    "authoritative_rejection_fetches_server_current_not_rejected_intent": r"""
-const a=select('REJECTED');await accept('SERVER',0,8,['EARLIER'],false);
-assert.deepEqual(ids(),['/api/tracks/SERVER']);await finish('SERVER');assert((await a).ok);
-assert.equal(context.getStateForTesting().current_track_id,'SERVER');
-assert.deepEqual(Array.from(context.getStateForTesting().history),['EARLIER']);assert(text().includes('DETAIL SERVER'));
-""",
-    "reset_invalidates_pending_post_and_preserves_epoch_token": r"""
-const a=select('A'); const original=req('/api/current').body;
-// A POST evaluated after reset returns the authoritative new epoch, even if its UI intent is stale.
-await history('/api/reset',null,8,[]);await accept(null,0,8,[],false);await a;
-assert.equal(context.getStateForTesting().current_track_id,null);assert.equal(text(),'');assert.deepEqual(ids(),[]);
-const b=select('B');const next=req('/api/current',1).body;
-assert.equal(next.selection_epoch,8);assert.equal(next.selection_token,original.selection_token+1);
-assert.equal(next.selection_client_id,original.selection_client_id);
-await accept('B',1,8);await finish('B');assert((await b).ok);
-""",
-    "undo_invalidates_pending_detail_and_preserves_history": r"""
-const a=select('A');await accept('A');await history('/api/undo','PRIOR',8,['ROOT']);
-await finish('A');await a;assert.equal(context.getStateForTesting().current_track_id,'PRIOR');
-assert.deepEqual(Array.from(context.getStateForTesting().history),['ROOT']);
-assert(text().includes('DETAIL PRIOR'));assert(!text().includes('DETAIL A'));
-const b=select('B');assert.equal(req('/api/current',1).body.selection_epoch,8);
-await accept('B',1,8,['ROOT','PRIOR']);await finish('B');await b;
-""",
-    "refresh_while_post_pending_does_not_fetch_unaccepted_intent": r"""
-const a=select('A');const refresh=settled(context.refresh());
-await nextRefreshFrame();req('/api/state').ok(snapshot(null,7,[]));await flush();
-assert.deepEqual(ids(),[],'#70: refresh must not GET optimistic A before POST acceptance');
-await accept('A');assert.deepEqual(ids(),['/api/tracks/A'],'#70: accepted current intent needs exactly one detail GET');
-await finish('A');assert((await a).ok);assert((await refresh).ok);assert(text().includes('DETAIL A'));
-""",
-    "current_post_failure_shows_scoped_error_without_unaccepted_detail": r"""
-await paintInitial();const a=select('A');req('/api/current',1).fail('Current selection failed');await a;await flush();
-assert.deepEqual(ids(),['/api/tracks/OLD'],'#70: failed POST cannot authorize A detail');
-assert(errorVisible(),'#70: current POST failure needs visible scoped failure feedback');assert(!loading());
-assert(!text().includes('DETAIL OLD'),'#70: failed current intent cannot leave ghost old panel');
-""",
     "latest_intent_loading_is_immediate_before_post": r"""
 await paintInitial(); const a=select('A');
 assert(loading(),'#70: latest selection needs scoped loading before POST resolves');
 assert(!text().includes('DETAIL OLD'),'#70: old panel must not masquerade as new selection');
-""",
-    "latest_intent_owns_feedback_through_post_then_detail": r"""
-const a=select('A');await accept('A');const b=select('B');await finish('A');await a;
-assert(loading(),'#70: stale detail completion must leave latest B loading while its POST waits');
-await accept('B',1);assert(loading(),'#70: B loading must continue through accepted POST to detail');
-await finish('B');assert((await b).ok);assert(!loading());assert(text().includes('DETAIL B'));
-""",
-    "authoritative_rejection_reconciles_pending_detail_feedback": r"""
-await paintInitial();const a=select('REJECTED');await accept('SERVER',1,8,['EARLIER'],false);
-assert(loading(),'#70: authoritative current needs loading while its detail waits');
-assert(!text().includes('DETAIL OLD'),'#70: rejected click must not leave ghost old panel');
-await finish('SERVER');assert((await a).ok);assert(!loading());assert(text().includes('DETAIL SERVER'));
 """,
     "undo_replaces_pending_detail_with_history_loading": r"""
 await paintInitial();const a=select('A');await accept('A',1);

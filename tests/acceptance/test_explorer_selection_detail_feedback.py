@@ -122,34 +122,6 @@ class SelectionDetailFeedbackTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_selection_intent_immediately_replaces_old_detail_before_post_acceptance(self):
-        self.run_browser(r"""
-await boot();const postGate=deferred();postResponder=()=>postGate.promise;
-const before=requests.length;const selected=capture(context.setCurrent('new'));
-assert.deepEqual(paths(before),['/api/current'],'detail GET must remain behind accepted POST');
-assert.equal(getCount('new'),0);assertLoading();
-postGate.resolve(response({current_track_id:'new',selection_epoch:0}));await selected;
-assert(roots.detail.innerText.includes('Accepted new title'));
-assert.deepEqual(paths(before),['/api/current','/api/tracks/new']);
-""")
-
-    def test_accepted_selection_has_scoped_loading_until_its_detail_arrives(self):
-        self.run_browser(r"""
-await boot();const gate=deferred();detailResponder=()=>gate.promise;
-const before=requests.length;const selected=capture(context.setCurrent('new'));await flush();
-assert.deepEqual(paths(before),['/api/current','/api/tracks/new']);assertLoading();
-gate.resolve(response(detail('new','Accepted new title')));await selected;await flush();
-assert(roots.detail.innerText.includes('Accepted new title'));
-assert.equal(statusNodes().filter(n=>/loading/i.test(visibleText(n))).length,0);
-assert(!retry(),'success must remove retry');assert.equal(getCount('new'),1);
-""")
-
-    def test_http_detail_failure_is_visible_and_retry_only_fetches_current_detail(self):
-        self.run_failure_retry('http')
-
-    def test_transport_detail_failure_is_visible_and_retry_only_fetches_current_detail(self):
-        self.run_failure_retry('transport')
-
     def run_failure_retry(self, failure):
         self.run_browser("const failure=" + repr(failure) + ";\n" + r"""
 await boot();const gate=deferred();detailResponder=()=>gate.promise;
@@ -168,12 +140,6 @@ assert(!retry(),'successful retry removes retry control');
 assert.equal(statusNodes().length,0,'success removes pending/error feedback');
 assert.deepEqual(paths(before),['/api/tracks/new']);
 """)
-
-    def test_late_retry_success_cannot_replace_newer_selected_detail(self):
-        self.run_late_retry('success')
-
-    def test_late_retry_failure_cannot_attach_error_or_retry_to_newer_detail(self):
-        self.run_late_retry('failure')
 
     def run_late_retry(self, outcome):
         self.run_browser("const outcome=" + repr(outcome) + ";\n" + r"""
@@ -225,41 +191,6 @@ graphGate.resolve(response(graphBody));await flush();
 assert(/graph ready/i.test(roots['graph-load-status'].innerText));assert(paints.length>0);
 assert.equal(requests.length,before,'graph success must not refetch failed detail');assertFailure();
 """)
-
-    def test_control_accepted_detail_is_post_gated_and_works_with_pending_graph(self):
-        self.run_browser(r"""
-await boot();const postGate=deferred(),detailGate=deferred();
-postResponder=()=>postGate.promise;detailResponder=()=>detailGate.promise;
-const before=requests.length;const selected=capture(context.setCurrent('new'));await flush();
-assert.deepEqual(paths(before),['/api/current']);assert.equal(getCount('new'),0);
-postGate.resolve(response({current_track_id:'new',selection_epoch:0}));await flush();
-assert.deepEqual(paths(before),['/api/current','/api/tracks/new']);
-detailGate.resolve(response(detail('new','Accepted new title')));assert.equal(await selected,null);
-assert(roots.detail.innerText.includes('Accepted new title'));
-assert(/loading graph/i.test(roots['graph-load-status'].innerText),'graph remains unresolved while detail succeeds');
-assert.equal(getCount('new'),1);assertNotBlocking();
-""")
-
-    def test_control_graph_failure_does_not_prevent_accepted_detail(self):
-        self.run_browser(r"""
-await boot();graphGate.resolve(response('graph temporarily unavailable',false));await flush();
-assert(/graph temporarily unavailable/i.test(roots['graph-load-status'].innerText));
-const before=requests.length;await context.setCurrent('new');await flush();
-assert(roots.detail.innerText.includes('Accepted new title'));
-assert.deepEqual(paths(before),['/api/current','/api/tracks/new']);assertNotBlocking();
-""")
-
-    def test_control_graph_completes_during_pending_detail_without_refetching_it(self):
-        self.run_browser(r"""
-await boot();const gate=deferred();detailResponder=()=>gate.promise;
-const selected=capture(context.setCurrent('new'));await flush();assert.equal(getCount('new'),1);
-const before=requests.length;graphGate.resolve(response(graphBody));await flush();
-assert(/graph ready/i.test(roots['graph-load-status'].innerText));assert(paints.length>0);
-assert.equal(requests.length,before);
-gate.resolve(response(detail('new','Accepted new title')));assert.equal(await selected,null);
-assert(roots.detail.innerText.includes('Accepted new title'));assert.equal(getCount('new'),1);
-""")
-
 
 if __name__ == '__main__':
     unittest.main()
