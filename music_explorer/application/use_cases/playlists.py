@@ -3,7 +3,7 @@ from collections import defaultdict
 from math import isfinite
 
 from music_explorer.application.dto.playlists import M3UPlaylist, PlaylistRecipe
-from music_explorer.domain.energy_plan import ArcSegment, EnergyPlan, EnergyRange
+from music_explorer.domain.energy_plan import BY_DURATION, BY_TRACK_COUNT, ArcSegment, EnergyPlan, EnergyRange
 from music_explorer.domain.harmonic_mixing import HarmonicMixing, usable_key
 from music_explorer.domain.mood_hold import MoodHold
 from music_explorer.domain.percentile_rank import percentile_ranks
@@ -55,18 +55,18 @@ class GenerateBpmGraphM3UPlaylist:
                 related[edge.a].append((edge.b, float(edge.score)))
                 related[edge.b].append((edge.a, float(edge.score)))
 
-        plan, hold = self._energy_plan_and_mood_hold(candidates, recipe)
+        plan, hold = self._energy_plan_and_mood_hold(candidates, recipe, goal)
         walk = walk_playlist(start_track_id, walk_tracks, related, goal,
                              rank_transition=_ranking(harmonic_mixing, plan, hold))
         warning = None if walk.complete else _shortfall(goal)
         content = '#EXTM3U\n' + ''.join(candidates[track_id].path + '\n' for track_id in walk.track_ids)
         return M3UPlaylist(content, walk.track_ids, warning)
 
-    def _energy_plan_and_mood_hold(self, candidates, recipe):
+    def _energy_plan_and_mood_hold(self, candidates, recipe, goal):
         mood_hold = recipe.mood_hold
         if not recipe.energy_plan and not mood_hold:
             return None, None
-        segments = tuple(_arc_segment(arc) for arc in recipe.energy_plan)  # rejects a bad arc before any read
+        segments = tuple(_arc_segment(arc, goal) for arc in recipe.energy_plan)  # rejects a bad arc before any read
         evidence = self.repository.playlist_mood_evidence(mood_hold or None)
         arousal, mood = {}, {}
         for track_id, track in candidates.items():
@@ -79,7 +79,7 @@ class GenerateBpmGraphM3UPlaylist:
                 mood[track_id] = item.mood_score
         if mood_hold and not mood:
             raise ValueError(f"No eligible track has a score for the mood '{mood_hold}'")
-        plan = EnergyPlan(segments, percentile_ranks(arousal)) if segments else None
+        plan = EnergyPlan(segments, percentile_ranks(arousal), _timeline(goal)) if segments else None
         hold = MoodHold(percentile_ranks(mood)) if mood_hold else None
         return plan, hold
 
@@ -131,8 +131,17 @@ def _key(track, harmonic_mixing):
                       minimum_strength=harmonic_mixing.minimum_key_strength)
 
 
-def _arc_segment(arc):
-    return ArcSegment(arc.shape, EnergyRange.of(low=arc.energy_low, high=arc.energy_high))
+# Until arcs carry their own lengths, the one arc spans the whole playlist.
+def _arc_segment(arc, goal):
+    return ArcSegment(arc.shape, _playlist_span(goal), EnergyRange.of(low=arc.energy_low, high=arc.energy_high))
+
+
+def _playlist_span(goal):
+    return goal.seconds if isinstance(goal, DurationGoal) else goal.count
+
+
+def _timeline(goal):
+    return BY_DURATION if isinstance(goal, DurationGoal) else BY_TRACK_COUNT
 
 
 def _harmonic_mixing(recipe):
@@ -145,17 +154,33 @@ def _ranking(harmonic_mixing, plan, hold):
     if harmonic_mixing is None and plan is None and hold is None:
         return by_relation_score
 
+    planned = _PlannedTargets(plan)
+
     def rank(walk, to_track, relation_score, position):
         score = relation_score
         if harmonic_mixing is not None:
             previous = walk[-1]
             score = harmonic_mixing.transition_score(score, previous.key, to_track.key, previous.bpm, to_track.bpm)
         if plan is not None:
-            score += plan.adjustment(walk, to_track.track_id, position)
+            score += plan.miss(to_track.track_id, planned.after(walk))
         if hold is not None:
             score += hold.adjustment(to_track.track_id)
         return score
     return rank
+
+
+class _PlannedTargets:
+    """The plan's target for the next track, worked out once for each walk the search ranks candidates after."""
+
+    def __init__(self, plan):
+        self.plan = plan
+        self.walk = None
+        self.target = None
+
+    def after(self, walk):
+        if walk is not self.walk:
+            self.walk, self.target = walk, self.plan.target_after(walk)
+        return self.target
 
 
 def _finite_bound(value, name):

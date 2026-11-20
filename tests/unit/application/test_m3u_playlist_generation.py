@@ -248,8 +248,22 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         self.assertEqual('b', self._second_track(self._energy_repo(a_b=0.85, a_c=0.85, b_overrides=('energy',)),
                                                  energy_plan=(EnergyArcRequest('steady'),)))
 
+    def test_a_dip_sinks_towards_the_low_end_where_a_rise_climbs(self):
+        # #137: over four tracks the second sits a third of the way into the arc. From a (1/3),
+        # a dip heads for 0.2, nearest d (0); a rise heads for about 0.5, nearest c (2/3).
+        repo = _FakePlaylistRepository(
+            tracks=self._energy_repo()._tracks, edges=(_edge('a', 'c', 0.9), _edge('a', 'd', 0.8)))
+
+        def second(shape):
+            recipe = PlaylistRecipe(start_track_id='a', bpm_min=100, bpm_max=130, length=4,
+                                    energy_plan=(EnergyArcRequest(shape),))
+            return _load_use_case_class()(repo).execute(recipe).track_ids[1]
+
+        self.assertEqual('d', second('dip'))
+        self.assertEqual('c', second('rise'))
+
     def test_an_unknown_arc_shape_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'steady, rise, fall or peak'):
+        with self.assertRaisesRegex(ValueError, 'steady, rise, fall, peak or dip'):
             self._second_track(self._energy_repo(), energy_plan=(EnergyArcRequest('wave'),))
 
     def _mood_repo(self, *, b_overrides=()):
