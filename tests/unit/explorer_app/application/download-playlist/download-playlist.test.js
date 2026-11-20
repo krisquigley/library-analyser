@@ -36,6 +36,34 @@ test('editing the draft publishes the edited draft', () => {
   assert.deepEqual(published, [{type: 'playlist-draft-edited', draft: playlistDownload.draft()}]);
 });
 
+test('each arc command edits the draft chain and publishes the edited draft', () => {
+  const {playlistDownload, published} = harness();
+  playlistDownload.addArc();
+  playlistDownload.addArc();
+  playlistDownload.editArc(1, {shape: 'fall', length: '8'});
+  playlistDownload.moveArc(1, -1);
+  playlistDownload.removeArc(1);
+  assert.deepEqual(playlistDownload.draft().energyArcs, [{shape: 'fall', length: '8', low: '', high: ''}]);
+  assert.equal(published.length, 5);
+  assert.ok(published.every(event => event.type === 'playlist-draft-edited'));
+  assert.equal(published.at(-1).draft, playlistDownload.draft());
+});
+
+test('a refused arc command changes nothing and publishes nothing', () => {
+  const {playlistDownload, published} = harness();
+  assert.throws(() => playlistDownload.removeArc(0), /no arc at place 0/);
+  assert.deepEqual([playlistDownload.draft().energyArcs, published], [[], []]);
+});
+
+test('the download sends the arc chain in the draft unit', async () => {
+  const {playlistDownload, requests} = harness();
+  playlistDownload.edit({arcLengthUnit: 'minutes'});
+  playlistDownload.addArc();
+  playlistDownload.editArc(0, {length: '30'});
+  await playlistDownload.download('track-start');
+  assert.deepEqual([requests[0].length, requests[0].energyPlan[0].length], [{arcs: 'minutes'}, '30']);
+});
+
 test('a download requests the drafted recipe, saves the file and says so', async () => {
   const {playlistDownload, requests, saved, published} = harness();
   playlistDownload.edit({bpmMin: '120', bpmMax: '128'});

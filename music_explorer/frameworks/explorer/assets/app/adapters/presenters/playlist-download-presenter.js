@@ -1,13 +1,14 @@
-// What the Download M3U controls show for the draft and each download event (#146).
+// What the Download M3U controls and the energy arc editor show for the draft and each download event (#146, #137).
 
-import {energyRangeApplies, minimumKeyStrengthApplies} from '../../domain/playlist-draft.js';
+import {arcsSetTheLength, minimumKeyStrengthApplies} from '../../domain/playlist-draft.js';
 
-const ENERGY_ARC_CHOICES = Object.freeze([
-  ['none', 'No energy arc'], ['steady', 'Steady energy'], ['rise', 'Rising energy'], ['fall', 'Falling energy'],
+const ARC_SHAPE_CHOICES = Object.freeze([
+  ['steady', 'Steady energy'], ['rise', 'Rising energy'], ['fall', 'Falling energy'],
   ['peak', 'Energy peak'], ['dip', 'Energy dip']]);
+const ARC_LENGTH_UNIT_CHOICES = Object.freeze([['tracks', 'Tracks'], ['minutes', 'Minutes']]);
 
 const PLAYLIST_EVENT_VIEWS = Object.freeze({
-  'playlist-draft-edited': event => draftApplicability(event.draft),
+  'playlist-draft-edited': event => draftView(event.draft),
   'playlist-download-started': () => ({downloadDisabled: true}),
   'playlist-downloaded': event => ({downloadDisabled: false, status: {
     text: event.warning ? `M3U downloaded. Warning: ${event.warning}` : 'M3U downloaded.', urgent: false}}),
@@ -18,9 +19,10 @@ const PLAYLIST_EVENT_VIEWS = Object.freeze({
 export function playlistControlsViewModel({draft, downloadState, moods}) {
   return {
     values: draft,
-    ...draftApplicability(draft),
+    ...draftView(draft),
     downloadDisabled: downloadState === 'downloading',
-    arcChoices: ENERGY_ARC_CHOICES.map(choice => [...choice]),
+    arcShapeChoices: ARC_SHAPE_CHOICES.map(choice => [...choice]),
+    arcLengthUnitChoices: ARC_LENGTH_UNIT_CHOICES.map(choice => [...choice]),
     moodChoices: [['', 'No mood hold'], ...moods.map(mood => [mood, `Hold mood: ${mood}`])],
   };
 }
@@ -33,6 +35,15 @@ export function presentRejectedPlaylistInput(message) {
   return {status: {text: message, urgent: true}};
 }
 
-function draftApplicability(draft) {
-  return {minimumKeyStrengthDisabled: !minimumKeyStrengthApplies(draft), energyRangeDisabled: !energyRangeApplies(draft)};
+function draftView(draft) {
+  return {
+    minimumKeyStrengthDisabled: !minimumKeyStrengthApplies(draft),
+    arcs: draft.energyArcs.map((arc, place) => arcRow(arc, place, draft.energyArcs.length)),
+    arcLengthPlaceholder: draft.arcLengthUnit,
+    lengthDisabled: arcsSetTheLength(draft),
+  };
+}
+
+function arcRow({shape, length, low, high}, place, total) {
+  return {shape, length, low, high, canMoveEarlier: place > 0, canMoveLater: place < total - 1};
 }

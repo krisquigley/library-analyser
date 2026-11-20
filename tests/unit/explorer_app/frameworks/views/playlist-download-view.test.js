@@ -1,4 +1,4 @@
-// Issue #146: the Download M3U controls on screen, and the listener's input they report.
+// Issues #146 and #137: the Download M3U controls and the energy arc editor on screen, and the input they report.
 import {test, beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {playlistDownloadView} from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/views/playlist-download-view.js';
@@ -7,15 +7,22 @@ import {byTag, descendants, fakeElement, installFakeDocument} from '../fake-docu
 beforeEach(() => { installFakeDocument([]); });
 
 const VALUES = Object.freeze({bpmMin: '', bpmMax: '', count: '10', durationMinutes: '', harmonicMixing: true,
-  minimumKeyStrength: '0.5', energyArc: 'none', energyLow: '', energyHigh: '', moodHold: ''});
-const viewModel = (changes = {}) => ({values: VALUES, minimumKeyStrengthDisabled: false, energyRangeDisabled: true,
-  downloadDisabled: false, arcChoices: [['none', 'No energy arc'], ['rise', 'Rising energy']],
+  minimumKeyStrength: '0.5', arcLengthUnit: 'tracks', moodHold: ''});
+const DRAFT = Object.freeze({...VALUES, energyArcs: []});
+const ARC = Object.freeze({shape: 'rise', length: '', low: '', high: '', canMoveEarlier: false, canMoveLater: false});
+const viewModel = (changes = {}) => ({values: DRAFT, minimumKeyStrengthDisabled: false, lengthDisabled: false,
+  arcs: [], arcLengthPlaceholder: 'tracks', downloadDisabled: false,
+  arcShapeChoices: [['rise', 'Rising energy'], ['peak', 'Energy peak']],
+  arcLengthUnitChoices: [['tracks', 'Tracks'], ['minutes', 'Minutes']],
   moodChoices: [['', 'No mood hold'], ['happy', 'Hold mood: happy']], ...changes});
 
 function mounted(changes) {
-  const heard = {edited: [], downloads: []};
+  const heard = {edited: [], downloads: [], arcs: []};
   const view = playlistDownloadView({onControlsEdited: values => heard.edited.push(values),
-    onDownloadRequested: values => heard.downloads.push(values)});
+    onDownloadRequested: values => heard.downloads.push(values),
+    onArcAdded: () => heard.arcs.push(['add']), onArcRemoved: place => heard.arcs.push(['remove', place]),
+    onArcMoved: (place, offset) => heard.arcs.push(['move', place, offset]),
+    onArcEdited: (place, fields) => heard.arcs.push(['edit', place, fields])});
   const panel = fakeElement('section');
   view.mount(panel, viewModel(changes));
   const byId = id => descendants(panel).find(node => node.id === id);
@@ -56,23 +63,77 @@ test('harmonic mixing is a tick box, with its minimum key strength in its valid 
   assert.ok(text().includes('Min key strength (0.0–1.0)'));
 });
 
-test('the energy arc and mood hold offer their choices, the moods coming from the graph', () => {
+test('the mood hold offers its choices, the moods coming from the graph', () => {
   const {byId} = mounted();
-  const [arc, mood] = [byId('m3u-arc'), byId('m3u-mood')];
-  assert.deepEqual(arc.children.map(option => [option.value, option.textContent]), [['none', 'No energy arc'], ['rise', 'Rising energy']]);
+  const mood = byId('m3u-mood');
   assert.deepEqual(mood.children.map(option => [option.value, option.textContent]), [['', 'No mood hold'], ['happy', 'Hold mood: happy']]);
-  assert.deepEqual([arc.value, mood.value], ['none', '']);
+  assert.equal(mood.value, '');
 });
 
-test('the energy range has its valid range, and is enabled only while an arc applies', () => {
-  const {view, byId, text} = mounted();
-  const [low, high] = [byId('m3u-energy-low'), byId('m3u-energy-high')];
-  assert.deepEqual([low.type, low.min, low.max, low.step, low.value, low.placeholder, low.disabled],
-    ['number', '0', '1', '0.05', '', '0.1', true]);
-  assert.deepEqual([high.placeholder, high.disabled], ['0.9', true]);
-  assert.ok(text().includes('Energy low (0.0–1.0)') && text().includes('Energy high (0.0–1.0)'));
-  view.show({energyRangeDisabled: false, minimumKeyStrengthDisabled: true});
-  assert.deepEqual([low.disabled, high.disabled, byId('m3u-min-key-strength').disabled], [false, false, true]);
+test('the arc editor starts empty, with one Length in choice and an Add button', () => {
+  const {heard, byId, text} = mounted();
+  const [unit, rows, add] = [byId('m3u-arc-unit'), byId('m3u-arc-rows'), byId('m3u-add-arc')];
+  assert.deepEqual(unit.children.map(option => [option.value, option.textContent]), [['tracks', 'Tracks'], ['minutes', 'Minutes']]);
+  assert.deepEqual([unit.value, rows.children, add.textContent], ['tracks', [], 'Add energy arc']);
+  assert.ok(text().includes('Energy arcs') && text().includes('Length in'));
+  add.onclick();
+  assert.deepEqual(heard.arcs, [['add']]);
+  unit.value = 'minutes';
+  unit.onchange();
+  assert.deepEqual(heard.edited, [{...VALUES, arcLengthUnit: 'minutes'}]);
+});
+
+test('each arc row has its shape, length and energy range, and reports the whole row when edited', () => {
+  const {heard, byId} = mounted({arcs: [ARC, {...ARC, shape: 'peak', length: '6', high: '0.9', canMoveEarlier: true}],
+    arcLengthPlaceholder: 'minutes'});
+  assert.equal(byId('m3u-arc-rows').children.length, 2);
+  const [shape, length, low, high] = ['shape', 'length', 'low', 'high'].map(field => byId(`m3u-arc-${field}-1`));
+  assert.deepEqual([shape.value, length.value, low.value, high.value], ['peak', '6', '', '0.9']);
+  assert.deepEqual([length.type, length.min, length.placeholder, length.getAttribute('aria-label')],
+    ['number', '0', 'minutes', 'Arc 2 length in minutes']);
+  assert.deepEqual([low.min, low.max, low.step, low.placeholder, high.placeholder], ['0', '1', '0.05', '0.1', '0.9']);
+  assert.equal(shape.getAttribute('aria-label'), 'Arc 2 shape');
+  low.value = '0.3';
+  low.onchange();
+  assert.deepEqual(heard.arcs, [['edit', 1, {shape: 'peak', length: '6', low: '0.3', high: '0.9'}]]);
+});
+
+test('an arc row moves earlier or later only where it can, and can be removed', () => {
+  const {heard, byId} = mounted({arcs: [{...ARC, canMoveLater: true}, {...ARC, canMoveEarlier: true}]});
+  assert.deepEqual([byId('m3u-arc-earlier-0').disabled, byId('m3u-arc-later-0').disabled], [true, false]);
+  assert.deepEqual([byId('m3u-arc-earlier-1').disabled, byId('m3u-arc-later-1').disabled], [false, true]);
+  byId('m3u-arc-later-0').onclick();
+  byId('m3u-arc-earlier-1').onclick();
+  byId('m3u-arc-remove-1').onclick();
+  assert.deepEqual(heard.arcs, [['move', 0, 1], ['move', 1, -1], ['remove', 1]]);
+  assert.equal(byId('m3u-arc-remove-1').getAttribute('aria-label'), 'Remove arc 2');
+});
+
+test('an edited chain of the same size updates its rows in place, keeping the focused field', () => {
+  const {view, byId} = mounted({arcs: [ARC, ARC]});
+  const focused = byId('m3u-arc-low-1');
+  view.show({arcs: [{...ARC, shape: 'peak', canMoveLater: true}, {...ARC, low: '0.2', canMoveEarlier: true}],
+    arcLengthPlaceholder: 'minutes'});
+  assert.equal(byId('m3u-arc-low-1'), focused);
+  assert.deepEqual([byId('m3u-arc-shape-0').value, focused.value, byId('m3u-arc-length-0').placeholder],
+    ['peak', '0.2', 'minutes']);
+  assert.deepEqual([byId('m3u-arc-later-0').disabled, byId('m3u-arc-earlier-1').disabled], [false, false]);
+});
+
+test('adding or removing an arc redraws the rows', () => {
+  const {view, byId} = mounted({arcs: [ARC]});
+  view.show({arcs: [ARC, {...ARC, shape: 'peak'}], arcLengthPlaceholder: 'tracks'});
+  assert.deepEqual([byId('m3u-arc-rows').children.length, byId('m3u-arc-shape-1').value], [2, 'peak']);
+  view.show({arcs: [], arcLengthPlaceholder: 'tracks'});
+  assert.deepEqual(byId('m3u-arc-rows').children, []);
+});
+
+test("the track count and duration are disabled while the arcs' lengths set the playlist's", () => {
+  const {view, byId} = mounted({lengthDisabled: true});
+  assert.deepEqual([byId('m3u-count').disabled, byId('m3u-duration').disabled], [true, true]);
+  view.show({lengthDisabled: false, minimumKeyStrengthDisabled: true});
+  assert.deepEqual([byId('m3u-count').disabled, byId('m3u-duration').disabled, byId('m3u-min-key-strength').disabled],
+    [false, false, true]);
 });
 
 test('the status is polite text, and urgent for a failure, never markup', () => {
@@ -93,4 +154,44 @@ test('the button is disabled while a download is in flight, and nothing is shown
   view.show({downloadDisabled: true});
   assert.equal(byId('download-m3u').disabled, true);
   assert.equal(byTag(byId('m3u-download-controls'), 'legend')[0].textContent, 'Download M3U');
+});
+
+test("composed with the real controller and use case, the arc editor's input reaches the M3U address", async () => {
+  const root = '../../../../../music_explorer/frameworks/explorer/assets/app';
+  const {createPlaylistDownload} = await import(`${root}/application/download-playlist/download-playlist.js`);
+  const {playlistDownloadController} = await import(`${root}/adapters/controllers/playlist-download-controller.js`);
+  const {playlistControlsViewModel, presentPlaylistDownloadEvent} = await import(`${root}/adapters/presenters/playlist-download-presenter.js`);
+  const {playlistDownloadQuery} = await import(`${root}/adapters/gateways/playlist-download-query.js`);
+  const addresses = [];
+  const explorerApi = {downloadPlaylist: async recipe => {
+    addresses.push(playlistDownloadQuery(recipe));
+    return {filename: 'a.m3u', contents: '', contentType: 'audio/x-mpegurl', warning: ''};
+  }};
+  let view;
+  const eventBus = {publish: event => view.show(presentPlaylistDownloadEvent(event)), subscribe() {}};
+  const playlistDownload = createPlaylistDownload({explorerApi, playlistFile: {save() {}}, eventBus});
+  const controller = playlistDownloadController({playlistDownload, currentTrackId: () => 'start', rejectInput() {}});
+  view = playlistDownloadView({onControlsEdited: controller.controlsEdited, onDownloadRequested: controller.downloadRequested,
+    onArcAdded: controller.arcAdded, onArcRemoved: controller.arcRemoved, onArcMoved: controller.arcMoved,
+    onArcEdited: controller.arcEdited});
+  const panel = fakeElement('section');
+  view.mount(panel, playlistControlsViewModel({draft: playlistDownload.draft(), downloadState: 'idle', moods: []}));
+  const byId = id => descendants(panel).find(node => node.id === id);
+
+  byId('m3u-arc-unit').value = 'minutes';
+  byId('m3u-arc-unit').onchange();
+  byId('m3u-add-arc').onclick();
+  byId('m3u-add-arc').onclick();
+  byId('m3u-arc-length-0').value = '20';
+  byId('m3u-arc-length-0').onchange();
+  byId('m3u-arc-shape-1').value = 'peak';
+  byId('m3u-arc-length-1').value = '15';
+  byId('m3u-arc-length-1').onchange();
+  assert.deepEqual([byId('m3u-count').disabled, byId('m3u-arc-length-1').placeholder], [true, 'minutes']);
+  byId('m3u-bpm-min').value = '120';
+  byId('m3u-bpm-max').value = '128';
+  await byId('download-m3u').onclick();
+
+  assert.deepEqual(addresses, ['/api/playlists/m3u?start=start&bpm_min=120&bpm_max=128&min_key_strength=0.5'
+    + '&arc=rise&arc=peak&arc_minutes=20&arc_minutes=15']);
 });
