@@ -316,7 +316,7 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
             self.assertEqual(response.read().decode('utf-8'), f'#EXTM3U\n{self.first_path}\n{self.second_path}\n')
 
     def test_download_m3u_endpoint_rejects_an_unknown_arc_or_unscored_mood_as_json_400(self):
-        cases = [({'arc': 'wave'}, 'steady, rise, fall or peak'),
+        cases = [({'arc': 'wave'}, 'steady, rise, fall, peak or dip'),
                  ({'mood': 'calm'}, "No eligible track has a score for the mood 'calm'"),
                  ({'arc': 'rise', 'energy_high': '1.5'}, 'Energy low and high must be between 0.0 and 1.0'),
                  ({'arc': 'rise', 'energy_low': '0.8', 'energy_high': '0.4'}, 'Energy low must be below energy high'),
