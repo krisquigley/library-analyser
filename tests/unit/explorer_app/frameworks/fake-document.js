@@ -10,6 +10,8 @@ export function fakeElement(tagName) {
     removeAttribute(name) { attributes.delete(name); },
     append(...nodes) { this.children.push(...nodes); },
     replaceChildren(...nodes) { this.children = nodes; },
+    replaceChild(node, old) { this.children = this.children.map(child => (child === old ? node : child)); },
+    focus() { this.focused = true; },
   };
 }
 

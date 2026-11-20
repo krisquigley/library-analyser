@@ -163,14 +163,6 @@ assert.equal(graphRequests().length,1,'refresh, undo and reset retain the succes
 assertNoInitialList();assertGraphRendered();
 """)
 
-    def test_baseline_control_existing_graph_path_renders_v3_fixture(self):
-        """Positive control calls the existing loader, not a RED workaround."""
-        self.run_browser(r"""
-boot();await flush();assertNoInitialList();
-if(!graphRequests().length){const manual=context.document.getElementById('load-graph');assert(manual,'baseline manual graph control exists');manual.onclick();}
-await flush();assertStartupGraph();graphGate.resolve(response(graphDto));await flush();assertGraphRendered();
-""")
-
     def test_ready_reload_control_requests_only_graph_and_preserves_m3u(self):
         self.run_browser(r"""
 boot();await flush();assertStartupGraph();graphGate.resolve(response(graphDto));await flush();assertGraphRendered();

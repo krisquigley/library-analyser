@@ -64,3 +64,10 @@ test('while the detail loads, and when it fails, the panel says so', () => {
   assert.deepEqual(trackDetailFailureViewModel(new Error('Unknown track')), {alert: 'Unable to load current track detail: Unknown track'});
   assert.deepEqual(trackDetailFailureViewModel('offline'), {alert: 'Unable to load current track detail: offline'});
 });
+
+test('the detail leaves out the reasons the evidence is provisional', () => {
+  const detail = trackDetailViewModel({reasons: ['genres: provisional, uncalibrated scores', 'energy: uncertainty'],
+    metadata: {common: [['title', 'A']], tags: []}, fields: {}});
+  assert.deepEqual([detail.heading, detail.metadata.lines, detail.fields], ['Current Track', ['Title: A'], []]);
+  assert.ok(!JSON.stringify(detail).includes('provisional') && !JSON.stringify(detail).includes('uncertainty'));
+});

@@ -71,3 +71,20 @@ test('the tracked mood is the one asked for while the graph offers it, else the 
   assert.equal(moodToTrack('', model), 'relaxing');
   assert.equal(moodToTrack('heavy', {availableMoods: [], selectedMood: ''}), '');
 });
+
+test('a track carries its own genre threshold, and the default where it has none', () => {
+  const indexed = moodGraphModel({...GRAPH, positioned: [{...GRAPH.positioned[0], genre_threshold: 0.4}, GRAPH.positioned[1]]},
+    {genreThresholdApplies: true});
+  assert.deepEqual(indexed.nodes.map(node => node.genreThreshold), [0.4, 0.1]);
+});
+
+test('a genre no track scores above 0.1 is not offered', () => {
+  const model = moodGraphModel({...GRAPH, positioned: [positioned('quiet', {valence: 0.5, arousal: 0.5,
+    genres: [['jazz', 0.1], ['folk', 0.05], ['ambient', 0.11]]})]});
+  assert.deepEqual(model.genreOptions, ['ambient']);
+});
+
+test('tracking another mood leaves every node where it was', () => {
+  const place = model => model.nodes.map(node => [node.id, node.x, node.y, node.z, node.fx, node.fy, node.fz]);
+  assert.deepEqual(place(moodGraphModel({...GRAPH, selected_mood: 'sad', available_moods: ['happy', 'sad']})), place(moodGraphModel(GRAPH)));
+});
