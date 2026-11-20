@@ -12,8 +12,8 @@ import shutil
 import subprocess
 import unittest
 
-from tests.acceptance.test_explorer_selection_camera_integration import (
-    ASSETS, FIXTURE, ROOT, replace_fixture_seam)
+from tests.support.explorer_camera_harness import ASSETS, FIXTURE, ROOT
+from tests.support.explorer_camera_harness import replace_fixture_seam
 
 VENDOR_LOOP = '''
   if(key==='pauseAnimation') return ()=>{loop.push('pause'); loop.running=false; return graph;};

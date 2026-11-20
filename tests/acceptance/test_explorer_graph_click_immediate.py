@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.acceptance.test_explorer_selection_camera_integration import ASSETS, FIXTURE, ROOT
+from tests.support.explorer_camera_harness import ASSETS, FIXTURE, ROOT
 
 
 HELPERS = r'''

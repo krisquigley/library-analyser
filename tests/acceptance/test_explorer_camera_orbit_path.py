@@ -3,61 +3,8 @@ import shutil
 import subprocess
 import unittest
 
-from tests.acceptance.test_explorer_camera_vendor_cancellation import real_vendor_fixture
-from tests.acceptance.test_explorer_selection_camera_integration import ASSETS, ROOT
-
-
-def trackball_fixture():
-    fixture = real_vendor_fixture()
-    replacements = (
-        ('Group:oO,THREE:Ak,', 'Group:oO,THREE:Ak,Trackball:cU,'),
-        ('const vendorControls=Object.assign(new vendor.THREE.PerspectiveCamera(),\n'
-         '  {enabled:true,target:new vendor.THREE.Vector3()});',
-         'const vendorControls=new vendor.Trackball(vendorCamera);'),
-        ('vendorState.tweenGroup.update(time);}',
-         'vendorState.tweenGroup.update(time); controls.update();}'),
-    )
-    for before, after in replacements:
-        if fixture.count(before) != 1:
-            raise AssertionError('Trackball fixture seam changed: ' + before)
-        fixture = fixture.replace(before, after, 1)
-    return fixture
-
-
-FINITE_WHEEL_PAN = r'''
-function wheelAndPanToRadius(radius) {
-  controls.target.set(0,0,0);
-  camera.position.set(500,500,500);
-  camera.up.set(0,1,0);
-  controls.update();
-  let count=0;
-  for(;count<10000;count++) {
-    controls._onMouseWheel({deltaMode:0,deltaY:120,preventDefault(){}});
-    controls.update();
-    assert.ok(camera.position.toArray().every(Number.isFinite),'actual wheel remains finite');
-    if(Math.hypot(...camera.position.toArray())>=radius) break;
-  }
-  assert.ok(count<10000,'bounded wheel reproduction reaches requested finite scale');
-  // Finish wheel damping before panning, using only the actual bundled update.
-  for(let i=0;i<200;i++) controls.update();
-  Object.assign(controls.screen,{left:0,top:0,width:800,height:600});
-  controls._onMouseDown({button:2,pageX:400,pageY:300});
-  controls._onMouseMove({pageX:500,pageY:350});
-  controls.update();
-  controls._onMouseUp();
-  for(let i=0;i<200;i++) controls.update();
-  // Public static mode flushes residual pan damping without replacing controls.
-  controls.staticMoving=true; controls.update(); controls.staticMoving=false;
-  assert.ok([...camera.position.toArray(),...controls.target.toArray(),
-    ...camera.up.toArray(),...camera.quaternion.toArray()].every(Number.isFinite),
-    'actual wheel and pan produce an entirely finite rendered start pose');
-  assert.ok(Math.hypot(...controls.target.toArray())>radius/100,
-    'actual right-button pan moves target to the huge finite scale');
-  assert.ok(Number.isFinite(camera.position.distanceTo(controls.target)),
-    'astronomical input stops before bundled squared-radius overflow');
-  console.log('ACTUAL_FINITE_WHEEL_PAN',count,pose());
-}
-'''
+from tests.support.explorer_camera_harness import ASSETS, ROOT
+from tests.support.explorer_camera_harness import FINITE_WHEEL_PAN, trackball_fixture
 
 
 class CameraOrbitPathTests(unittest.TestCase):

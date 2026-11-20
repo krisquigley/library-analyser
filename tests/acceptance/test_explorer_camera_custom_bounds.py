@@ -9,9 +9,9 @@ import shutil
 import subprocess
 import unittest
 
-from tests.acceptance.test_explorer_camera_orbit_path import FINITE_WHEEL_PAN, trackball_fixture
-from tests.acceptance.test_explorer_camera_unflushed_damping import INPUTS
-from tests.acceptance.test_explorer_selection_camera_integration import ASSETS, ROOT
+from tests.support.explorer_camera_harness import FINITE_WHEEL_PAN, trackball_fixture
+from tests.support.explorer_camera_harness import INPUTS
+from tests.support.explorer_camera_harness import ASSETS, ROOT
 
 
 BOUNDED_FOCUS = r'''

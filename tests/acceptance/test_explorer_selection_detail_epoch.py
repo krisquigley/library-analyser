@@ -7,9 +7,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from tests.acceptance.test_explorer_selection_detail_races import (
-    ASSETS, HARNESS, NODE, ROOT,
-)
+from tests.support.explorer_detail_harness import ASSETS, HARNESS, NODE, ROOT
 
 PRE_RESET_POST = r"""
 const a=select('A');
