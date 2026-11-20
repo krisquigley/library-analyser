@@ -41,9 +41,15 @@ test('a draft becomes the recipe for the selected start track', () => {
     bpmMin: '120', bpmMax: '128', durationMinutes: '45', energyArc: 'rise', energyHigh: '0.7', moodHold: 'happy'});
   assert.deepEqual(playlistRecipeOf(draft, 'track-start'), {
     startTrackId: 'track-start', bpmMin: '120', bpmMax: '128', length: {durationMinutes: '45'},
-    harmonicMixing: true, minimumKeyStrength: '0.5', energyArc: {shape: 'rise', low: null, high: '0.7'},
+    harmonicMixing: true, minimumKeyStrength: '0.5', energyPlan: [{shape: 'rise', low: null, high: '0.7', length: null}],
     moodHold: 'happy',
   });
+});
+
+test('a draft without an arc has no energy plan, and its one arc spans the playlist', () => {
+  assert.deepEqual(playlistRecipeOf(EMPTY_PLAYLIST_DRAFT, 'a').energyPlan, []);
+  const dip = playlistRecipeOf(editPlaylistDraft(EMPTY_PLAYLIST_DRAFT, {energyArc: 'dip', count: '12'}), 'a');
+  assert.deepEqual([dip.energyPlan, dip.length], [[{shape: 'dip', low: null, high: null, length: null}], {count: '12'}]);
 });
 
 test('a draft without a start track has no recipe', () => {

@@ -14,7 +14,7 @@ test('the controls show the draft, its choices and which inputs apply', () => {
     energyRangeDisabled: false,
     downloadDisabled: false,
     arcChoices: [['none', 'No energy arc'], ['steady', 'Steady energy'], ['rise', 'Rising energy'],
-      ['fall', 'Falling energy'], ['peak', 'Energy peak']],
+      ['fall', 'Falling energy'], ['peak', 'Energy peak'], ['dip', 'Energy dip']],
     moodChoices: [['', 'No mood hold'], ['happy', 'Hold mood: happy']],
   });
 });
