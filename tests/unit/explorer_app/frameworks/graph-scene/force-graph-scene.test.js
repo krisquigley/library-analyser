@@ -2,11 +2,11 @@
 import {test, afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, graphContainer, graphDimensions,
-  selectedTrackNodeSize,
+  configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, fitGraphToElement, graphContainer,
+  graphDimensions, observeElementResize, selectedTrackNodeSize,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/graph-scene/force-graph-scene.js';
 
-afterEach(() => { delete globalThis.document; delete globalThis.getComputedStyle; });
+afterEach(() => { delete globalThis.document; delete globalThis.getComputedStyle; delete globalThis.ResizeObserver; delete globalThis.window; });
 
 // A ForceGraph stand-in that records every setting, as the vendor's chainable API takes them.
 function recordingGraph() {
@@ -141,4 +141,29 @@ test('without WebGL the graph is drawn flat on a canvas in the visible container
   const [canvas] = container.children;
   assert.deepEqual([container.children.length, canvas.tagName, canvas.parentElement, canvas.id], [1, 'CANVAS', container, 'map']);
   assert.deepEqual(arcs, [[300 + 72, 200 - 108, 5], [300 + 252, 200 - 180, 9]]);
+});
+
+test('the graph is fitted to its element and reports the size it took', () => {
+  const sizes = [];
+  const graph = {width(value) { sizes.push(['width', value]); return this; }, height(value) { sizes.push(['height', value]); return this; }};
+  assert.deepEqual(fitGraphToElement(graph, {clientWidth: 640, clientHeight: 480}), {width: 640, height: 480});
+  assert.deepEqual(sizes, [['width', 640], ['height', 480]]);
+});
+
+test('a resize of the element, its panel or the window is reported', () => {
+  const observed = [], listeners = [];
+  let report;
+  globalThis.ResizeObserver = class { constructor(callback) { report = callback; } observe(element) { observed.push(element); } };
+  globalThis.window = {addEventListener: (type, listener) => listeners.push([type, listener])};
+  const panel = {id: 'panel'}, element = {id: 'graph', parentElement: panel};
+  let resized = 0;
+  observeElementResize(element, () => { resized += 1; });
+  assert.deepEqual(observed, [element, panel]);
+  assert.deepEqual(listeners.map(([type]) => type), ['resize']);
+  report(); listeners[0][1]();
+  assert.equal(resized, 2);
+});
+
+test('without ResizeObserver or a window, nothing is observed', () => {
+  observeElementResize({parentElement: null}, () => assert.fail('never called'));
 });
