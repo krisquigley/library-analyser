@@ -7,6 +7,7 @@ import {browserPlaylistFile} from './app/frameworks/browser-playlist-file.js';
 import {createInMemoryEventBus} from './app/frameworks/in-memory-event-bus.js';
 import {createGraphRendering} from './app/application/render-graph/render-graph.js';
 import {forceGraphRenderer, graphViewPose, observeGraphInput} from './app/frameworks/graph-scene/force-graph-rendering.js';
+import {createSelectedNodeHalo, findSceneObject, graphObjectTrackId} from './app/frameworks/graph-scene/selected-node-halo.js';
 import {playlistDownloadView} from './app/frameworks/views/playlist-download-view.js';
 import {displayNumber} from './app/domain/display-number.js';
 import {applyMoodGraphFilters, EMPTY_GRAPH_CONTROLS, passesGraphFilters} from './app/domain/graph-filters.js';
@@ -44,7 +45,7 @@ let renderedGraphSignature=null;
 let renderedGraphData={nodes:[],links:[]};
 let graphResizeObserver=null;
 let graphAxes=null;
-let selectedNodeHalo=null;
+const nodeHalo=createSelectedNodeHalo();
 let graphAxesAnimating=false;
 let pendingGraphAxisSpec=[];
 let selectedGraphControls=EMPTY_GRAPH_CONTROLS;
@@ -229,87 +230,7 @@ function disposeGraphAxes(group){
   if(group.labels) for(const label of group.labels) label.remove();
 }
 
-function disposeSelectedNodeHalo(){
-  const halo=selectedNodeHalo&&selectedNodeHalo.mesh;
-  if(!halo){selectedNodeHalo=null;return;}
-  if(halo.parent&&typeof halo.parent.remove==='function') halo.parent.remove(halo);
-  else if(selectedNodeHalo.scene&&typeof selectedNodeHalo.scene.remove==='function') selectedNodeHalo.scene.remove(halo);
-  if(halo.geometry&&typeof halo.geometry.dispose==='function') halo.geometry.dispose();
-  if(halo.material&&typeof halo.material.dispose==='function') halo.material.dispose();
-  halo.disposed=true;
-  selectedNodeHalo=null;
-}
-function graphObjectTrackId(obj){
-  const data=obj&&(obj.__data||obj.userData||{});
-  return data.id||data.trackId||data.track_id||(data.node&&data.node.id)||null;
-}
-function updateHaloPosition(halo,node,selectedMesh){
-  const sourcePosition=selectedMesh&&selectedMesh.position;
-  const x=Number.isFinite(sourcePosition&&sourcePosition.x)?sourcePosition.x:node.x;
-  const y=Number.isFinite(sourcePosition&&sourcePosition.y)?sourcePosition.y:node.y;
-  const z=Number.isFinite(sourcePosition&&sourcePosition.z)?sourcePosition.z:node.z;
-  if(halo.position&&typeof halo.position.set==='function') halo.position.set(x,y,z); else halo.position={x,y,z};
-}
-function sceneChildren(root){return root&&Array.isArray(root.children)?root.children:[];}
-function findSceneObject(root,predicate){
-  if(!root) return null;
-  if(predicate(root)) return root;
-  for(const child of sceneChildren(root)){const found=findSceneObject(child,predicate); if(found) return found;}
-  return null;
-}
-function selectedHaloRadius(mesh){
-  const geometry=mesh&&mesh.geometry;
-  const base=geometry&&(Number.isFinite(geometry.radius)?geometry.radius:(geometry.parameters&&Number.isFinite(geometry.parameters.radius)?geometry.parameters.radius:1));
-  const scale=mesh&&mesh.scale;
-  const scalar=scale&&(Number.isFinite(scale.value)?scale.value:(Number.isFinite(scale.x)?Math.max(scale.x,scale.y||scale.x,scale.z||scale.x):1));
-  return Math.max(1,(base||1)*(scalar||1))*1.3;
-}
-function makeFallbackHalo(node){
-  return {name:'selected-node-halo',userData:{role:'selected-node-halo',trackId:node.id},geometry:{radius:1.3,dispose(){this.disposed=true;}},material:{color:'#f8f7ff',transparent:true,opacity:0.25,depthWrite:false,depthTest:false,dispose(){this.disposed=true;}},position:{set(x,y,z){this.x=x;this.y=y;this.z=z;}},scale:{setScalar(value){this.value=value;}},raycast(){}};
-}
-function createSelectedNodeHalo(graph,scene,node,selectedMesh){
-  const three=selectedMesh&&selectedMesh.__THREE;
-  const Geometry=(three&&three.SphereGeometry)||(selectedMesh&&selectedMesh.geometry&&selectedMesh.geometry.constructor);
-  const Material=(three&&three.MeshBasicMaterial)||(selectedMesh&&selectedMesh.material&&selectedMesh.material.constructor);
-  const Mesh=(three&&three.Mesh)||((selectedMesh&&selectedMesh.constructor));
-  const realThreeScene=scene&&(scene.isScene||scene.type==='Scene');
-  let halo;
-  if(Geometry&&Material&&Mesh){
-    const radius=selectedHaloRadius(selectedMesh);
-    halo=new Mesh(new Geometry(radius,32,16),new Material({color:node.color==='#f8f7ff'?'#ffcc66':'#f8f7ff',transparent:true,opacity:0.25,depthWrite:false,depthTest:false}));
-    halo.name='selected-node-halo';
-    halo.userData={...(halo.userData||{}),role:'selected-node-halo',trackId:node.id};
-    halo.raycast=()=>{};
-  }else if(realThreeScene) return null;
-  else halo=makeFallbackHalo(node);
-  updateHaloPosition(halo,node,selectedMesh);
-  scene.add(halo);
-  selectedNodeHalo={graph,scene,mesh:halo,trackId:node.id,nodeMesh:selectedMesh||null};
-  return halo;
-}
-function cachedSelectedNodeMesh(graph,scene,selectedId){
-  if(!selectedNodeHalo||selectedNodeHalo.graph!==graph||selectedNodeHalo.scene!==scene||selectedNodeHalo.trackId!==selectedId) return null;
-  const halo=selectedNodeHalo.mesh;
-  if(!halo||halo.disposed||halo.parent===null) return null;
-  const mesh=selectedNodeHalo.nodeMesh;
-  if(!mesh||mesh.disposed||mesh.parent===null) return null;
-  return mesh;
-}
-function syncSelectedNodeHalo(graph,data){
-  if(!graph||typeof graph.scene!=='function'){disposeSelectedNodeHalo();return null;}
-  const selectedId=state.current_track_id;
-  const nodes=(data&&data.nodes)||(visibleGraph&&visibleGraph.nodes)||[];
-  const selectedNode=selectedId?nodes.find(n=>n.id===selectedId):null;
-  const scene=graph.scene();
-  if(!selectedNode||!scene||typeof scene.add!=='function'){disposeSelectedNodeHalo();return null;}
-  const cachedMesh=cachedSelectedNodeMesh(graph,scene,selectedId);
-  if(cachedMesh){updateHaloPosition(selectedNodeHalo.mesh,selectedNode,cachedMesh);return selectedNodeHalo.mesh;}
-  if(selectedNodeHalo&&selectedNodeHalo.graph===graph&&selectedNodeHalo.trackId===selectedId) disposeSelectedNodeHalo();
-  const selectedMesh=findSceneObject(scene,obj=>obj!==scene && graphObjectTrackId(obj)===selectedId && obj.name!=='selected-node-halo' && !(obj.userData&&obj.userData.role==='selected-node-halo') && obj.geometry && obj.material);
-  if(selectedNodeHalo&&selectedNodeHalo.graph===graph&&selectedNodeHalo.trackId===selectedId){updateHaloPosition(selectedNodeHalo.mesh,selectedNode,selectedMesh);selectedNodeHalo.nodeMesh=selectedMesh||null;return selectedNodeHalo.mesh;}
-  disposeSelectedNodeHalo();
-  return createSelectedNodeHalo(graph,scene,selectedNode,selectedMesh);
-}
+function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||(visibleGraph&&visibleGraph.nodes)||[],state.current_track_id);}
 // Vendor bundles THREE privately. Reuse constructors of its rendered node mesh, so
 // scene objects share that exact THREE instance without a second dependency/global.
 function syncGraphAxes(graph,spec,element){
@@ -317,8 +238,7 @@ function syncGraphAxes(graph,spec,element){
   if(graphAxes && graphAxes.graph===graph && graphAxes.signature===signature) return graphAxes.group;
   const scene=graph.scene();
   if(!spec.length){disposeGraphAxes(graphAxes?.group);graphAxes=null;return null;}
-  const findNode=obj=>obj.__graphObjType==='node' && obj.geometry && obj.material ? obj : sceneChildren(obj).map(findNode).find(Boolean);
-  const sample=findNode(scene);
+  const sample=findSceneObject(scene,obj=>obj.__graphObjType==='node' && obj.geometry && obj.material);
   if(!sample){disposeGraphAxes(graphAxes?.group);graphAxes=null;return null;} // Objects may arrive one frame after graphData().
   disposeGraphAxes(graphAxes?.group);
   const group=new scene.constructor();
@@ -479,7 +399,7 @@ function focusPendingCameraSelection(graphRendered=false){
   }
 }
 function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,state.current_track_id),moodStrip.width()));}
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){disposeSelectedNodeHalo(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true); graphRendering.wake();} else {disposeSelectedNodeHalo();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){nodeHalo.clear(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true); graphRendering.wake();} else {nodeHalo.clear();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
 function replaceCanvasWithGraphElement(){const old=document.getElementById('map'); const div=document.createElement('div'); div.id='graph3d'; if(old) old.replaceWith(div); return div;}
 function renderCanvasFallback(data,container){let canvas=document.getElementById('map'); if(!canvas&&container){canvas=(container.children||[]).find(child=>child.tagName==='CANVAS')||document.createElement('canvas'); canvas.id='map'; if(!canvas.parentElement){if(typeof container.replaceChildren==='function') container.replaceChildren(canvas); else if(typeof container.append==='function') container.append(canvas);}} if(!canvas) canvas=document.createElement('canvas'); const size=graphDimensions(canvas); canvas.width=size.width; canvas.height=size.height; const ctx=canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#fafafa'; ctx.fillRect(0,0,canvas.width,canvas.height); for(const n of data.nodes){ctx.beginPath(); ctx.arc(canvas.width/2+n.fx,canvas.height/2-n.fy,n.id===state.current_track_id?9:5,0,Math.PI*2); ctx.fillStyle=n.color; ctx.fill();}}
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
@@ -501,5 +421,5 @@ if(typeof module!=='undefined'){module.exports={refresh,updateSelectedTrackVisua
 // A setter rebinds the module's own function, so a wrapper is called exactly as before. Each name
 // goes as its feature moves into app/ and its tests move with it.
 function exposeForBrowserTests(readers, writers){for(const [name,get] of Object.entries(readers)){if(name in globalThis) continue; Object.defineProperty(globalThis,name,{get,set:writers[name],configurable:true});}}
-exposeForBrowserTests({state:()=>state,graphModel:()=>graphModel,visibleGraph:()=>visibleGraph,forceGraph:()=>forceGraph,framedGraphLayout:()=>framedGraphLayout,renderedGraphData:()=>renderedGraphData,graphAxes:()=>graphAxes,selectedNodeHalo:()=>selectedNodeHalo,pendingSelectionOperation:()=>pendingSelectionOperation,pendingCameraSelection:()=>pendingCameraSelection,cameraFocusFrame:()=>cameraFocusFrame,trackSummaryPage:()=>trackSummaryPage,trackSummaryStatus:()=>trackSummaryStatus,graphLoadState:()=>graphLoadState,text:()=>text,renderDetailLoading:()=>renderDetailLoading,setCurrent:()=>setCurrent,renderTracks:()=>renderTracks,renderDetailField:()=>renderDetailField,renderTrackMetadata:()=>renderTrackMetadata,renderDetail:()=>renderDetail,buildMoodGraphModel:()=>buildMoodGraphModel,buildMoodStrip:()=>buildMoodStrip,graphAxisSpec:()=>graphAxisSpec,graphObjectTrackId:()=>graphObjectTrackId,findSceneObject:()=>findSceneObject,syncSelectedNodeHalo:()=>syncSelectedNodeHalo,syncGraphAxes:()=>syncGraphAxes,cancelCameraFocus:()=>cancelCameraFocus,animateCameraFocus:()=>animateCameraFocus,renderMap:()=>renderMap,setStateForTesting:()=>setStateForTesting},
+exposeForBrowserTests({state:()=>state,graphModel:()=>graphModel,visibleGraph:()=>visibleGraph,forceGraph:()=>forceGraph,framedGraphLayout:()=>framedGraphLayout,renderedGraphData:()=>renderedGraphData,graphAxes:()=>graphAxes,selectedNodeHalo:()=>nodeHalo.current(),pendingSelectionOperation:()=>pendingSelectionOperation,pendingCameraSelection:()=>pendingCameraSelection,cameraFocusFrame:()=>cameraFocusFrame,trackSummaryPage:()=>trackSummaryPage,trackSummaryStatus:()=>trackSummaryStatus,graphLoadState:()=>graphLoadState,text:()=>text,renderDetailLoading:()=>renderDetailLoading,setCurrent:()=>setCurrent,renderTracks:()=>renderTracks,renderDetailField:()=>renderDetailField,renderTrackMetadata:()=>renderTrackMetadata,renderDetail:()=>renderDetail,buildMoodGraphModel:()=>buildMoodGraphModel,buildMoodStrip:()=>buildMoodStrip,graphAxisSpec:()=>graphAxisSpec,graphObjectTrackId:()=>graphObjectTrackId,findSceneObject:()=>findSceneObject,syncSelectedNodeHalo:()=>syncSelectedNodeHalo,syncGraphAxes:()=>syncGraphAxes,cancelCameraFocus:()=>cancelCameraFocus,animateCameraFocus:()=>animateCameraFocus,renderMap:()=>renderMap,setStateForTesting:()=>setStateForTesting},
   {buildMoodGraphModel:value=>{buildMoodGraphModel=value;},renderMap:value=>{renderMap=value;},renderDetail:value=>{renderDetail=value;},renderDetailLoading:value=>{renderDetailLoading=value;},setCurrent:value=>{setCurrent=value;},animateCameraFocus:value=>{animateCameraFocus=value;},cancelCameraFocus:value=>{cancelCameraFocus=value;}});
