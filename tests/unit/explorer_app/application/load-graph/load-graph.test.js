@@ -29,19 +29,19 @@ function harness({loadMoodGraph, session = memorySession(), nextFrame = async ()
 }
 
 test('the event types are the ones the use case publishes', () => {
-  assert.deepEqual(GRAPH_LOAD_EVENT_TYPES, ['graph-controls-edited', 'graph-load-started', 'graph-model-built',
+  assert.deepEqual(GRAPH_LOAD_EVENT_TYPES, ['graph-controls-edited', 'graph-load-started', 'graph-model-building', 'graph-model-built',
     'graph-render-due', 'graph-ready', 'graph-load-failed', 'graph-filters-applied']);
 });
 
-test('a load fetches the graph for the tracked mood, builds it, renders it and is ready', async () => {
+test('a load fetches the graph for the tracked mood, says when it builds the model, renders it and is ready', async () => {
   const {graphLoad, session, requests, published, types} = harness();
   await graphLoad.load();
   assert.deepEqual(requests, ['']);
-  assert.deepEqual(types(), ['graph-load-started', 'graph-model-built', 'graph-render-due', 'graph-ready']);
-  assert.deepEqual(published.map(event => event.loadState), ['loading', 'rendering', 'rendering', 'ready']);
+  assert.deepEqual(types(), ['graph-load-started', 'graph-model-building', 'graph-model-built', 'graph-render-due', 'graph-ready']);
+  assert.deepEqual(published.map(event => event.loadState), ['loading', 'loading', 'rendering', 'rendering', 'ready']);
   assert.equal(session.read().model, MODEL);
   assert.equal(session.read().controls.mood, 'relaxing', 'the graph own mood is tracked when none was asked for');
-  assert.deepEqual(published[1].visible.nodes.map(n => n.id), ['slow', 'fast']);
+  assert.deepEqual(published[2].visible.nodes.map(n => n.id), ['slow', 'fast']);
 });
 
 test('the graph is rendered only after the next frame', async () => {
@@ -49,10 +49,10 @@ test('the graph is rendered only after the next frame', async () => {
   const {graphLoad, types} = harness({nextFrame: () => new Promise(resolve => { frame = resolve; })});
   const loading = graphLoad.load();
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(types(), ['graph-load-started', 'graph-model-built']);
+  assert.deepEqual(types(), ['graph-load-started', 'graph-model-building', 'graph-model-built']);
   frame();
   await loading;
-  assert.deepEqual(types().slice(2), ['graph-render-due', 'graph-ready']);
+  assert.deepEqual(types().slice(3), ['graph-render-due', 'graph-ready']);
 });
 
 test('a failed load says why and passes the error on', async () => {
@@ -71,7 +71,8 @@ test('a newer load supersedes an older one, which then publishes nothing more', 
   await newer;
   answers[0]({});
   await older;
-  assert.deepEqual(types(), ['graph-load-started', 'graph-load-started', 'graph-model-built', 'graph-render-due', 'graph-ready']);
+  assert.deepEqual(types(), ['graph-load-started', 'graph-load-started', 'graph-model-building', 'graph-model-built',
+    'graph-render-due', 'graph-ready']);
 });
 
 test('a superseded load that fails stays quiet', async () => {

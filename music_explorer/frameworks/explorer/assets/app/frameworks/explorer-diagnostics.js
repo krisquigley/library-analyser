@@ -1,6 +1,6 @@
 // The opt-in diagnostics seam (#146, owner decision A): what the #86 timing tools and the composition tests
 // observe, in place of reaching into the page's variables. It is off unless the page address has `diagnostics`.
-// Events are heard through the page's own buses; the state is a frozen copy; the scene is handed over live,
+// Events are heard, or their handling timed, through the page's own buses; the state is a frozen copy; the scene is handed over live,
 // because the timing tools measure the renderer itself. Nothing here can change the page.
 
 export function diagnosticsRequested(search) {
@@ -15,12 +15,15 @@ export function createExplorerDiagnostics({buses, snapshot, scene}) {
       busByType.set(type, bus);
     }
   }
+  function busFor(type) {
+    if (!busByType.has(type)) throw new Error(`No diagnostics event: ${type}`);
+    return busByType.get(type);
+  }
+
   return Object.freeze({
     eventTypes: () => [...busByType.keys()],
-    subscribe(type, handler) {
-      if (!busByType.has(type)) throw new Error(`No diagnostics event: ${type}`);
-      return busByType.get(type).subscribe(type, handler);
-    },
+    subscribe: (type, handler) => busFor(type).subscribe(type, handler),
+    observe: (type, observer) => busFor(type).observeDispatch(type, observer),
     snapshot: () => frozenCopy(snapshot()),
     scene,
   });

@@ -23,12 +23,16 @@ for (const search of [null, '', '?track=a']) {
 const context = page('?diagnostics');
 const diagnostics = context.explorerDiagnostics;
 assert.deepEqual(JSON.parse(JSON.stringify(diagnostics.snapshot())), {
-  currentTrackId: null, history: [], graphStatus: 'idle', cameraFocusActive: false, pendingCameraTrackId: null,
+  currentTrackId: null, selectionEpoch: null, history: [], graphStatus: 'idle', cameraFocusActive: false, pendingCameraTrackId: null,
   selectionPending: false, trackSearchStatus: 'idle'});
 for (const type of ['track-chosen', 'selection-accepted', 'camera-focus-started', 'camera-focus-cancelled',
   'camera-focus-finished', 'graph-ready', 'graph-rendering-paused', 'track-page-loaded', 'playlist-downloaded']) {
   assert.ok(diagnostics.eventTypes().includes(type), type);
 }
+const timed = [];
+const stop = diagnostics.observe('graph-model-building', {before: () => timed.push('before'), after: () => timed.push('after')});
+assert.equal(typeof stop, 'function');
+for (const type of ['graph-model-building', 'graph-model-built']) assert.ok(diagnostics.eventTypes().includes(type), type);
 assert.deepEqual(Object.keys(diagnostics.scene()).sort(), ['findSceneObject', 'graph', 'graphData', 'graphObjectTrackId', 'halo']);
 vm.runInContext('explorerDiagnostics = null', context);
 assert.equal(context.explorerDiagnostics, diagnostics, 'the page cannot replace its seam');
