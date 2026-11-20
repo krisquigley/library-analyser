@@ -13,7 +13,7 @@ class MusicExplorerPackagingAndCompatibilityTests(unittest.TestCase):
         package_assets = resources.files('music_explorer.frameworks.explorer.assets')
         app_js = package_assets.joinpath('app.js').read_text(encoding='utf-8')
         style = package_assets.joinpath('style.css').read_text(encoding='utf-8')
-        self.assertIn('buildMoodStrip', app_js)
+        self.assertIn('renderMoodStrip', app_js)
         self.assertIn('gauge', style.lower())
         self.assertTrue(package_assets.joinpath('vendor/3d-force-graph/3d-force-graph.min.js').is_file())
 
