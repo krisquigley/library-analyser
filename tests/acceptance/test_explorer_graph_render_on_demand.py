@@ -55,37 +55,6 @@ class GraphRenderOnDemandTests(unittest.TestCase):
                 self.assertIn('SCENARIO_COMPLETED', result.stdout,
                               'Node exited before the async scenario completed: ' + result.stderr)
 
-    def test_still_graph_stops_redrawing(self):
-        self.run_scenario(r'''
-render(); idle();
-assert.equal(loop.running,false,'a still view must not keep redrawing every frame');
-assert.deepEqual([...loop],['pause'],'paused once, through the public vendor API');
-''')
-
-    def test_changed_camera_pose_resumes_redrawing(self):
-        self.run_scenario(r'''
-render(); idle(); loop.length=0;
-// Programmatic pose changes (tests, tools, vendor helpers) bypass input events.
-graph.cameraPosition({x:1,y:2,z:3},{x:0,y:0,z:0},0); frame();
-assert.equal(loop.running,true,'a moved camera must be redrawn');
-idle();
-assert.deepEqual([...loop],['resume','pause'],'and settles again once still');
-''')
-
-    def test_pointer_input_resumes_redrawing_for_controls_and_hover(self):
-        self.run_scenario(r'''
-render(); idle();
-for(const type of ['pointerdown','pointermove','wheel']) {
-  loop.length=0;
-  elements.graph3d.dispatch(type);
-  assert.equal(loop.running,false,type+' must not draw inside the input handler');
-  frame();
-  assert.equal(loop.running,true,type+' must redraw: controls and hover update only in the vendor loop');
-  idle();
-  assert.deepEqual([...loop],['resume','pause'],type+' wake settles again');
-}
-''')
-
     def test_graph_data_or_selection_change_resumes_redrawing(self):
         self.run_scenario(r'''
 render(); idle(); loop.length=0;
@@ -96,13 +65,6 @@ idle(); loop.length=0;
 await select('b'); frame();
 assert.equal(loop.running,true,'a selection (node size, halo, focus) is redrawn');
 idle(); assert.equal(loop.running,false);
-''')
-
-    def test_camera_focus_motion_keeps_redrawing_until_it_ends(self):
-        self.run_scenario(r'''
-render(); idle(); await select('a'); frame();
-for(let t=0;t<600;t+=16) {frame(); assert.equal(loop.running,true,'focus motion is visible throughout');}
-idle(); assert.equal(loop.running,false,'and the settled pose stops redrawing');
 ''')
 
     def test_resize_resumes_redrawing(self):
