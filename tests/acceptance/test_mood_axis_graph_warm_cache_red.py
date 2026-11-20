@@ -13,7 +13,7 @@ from urllib.request import urlopen
 
 from music_analyzer.frameworks.cli.main import main
 from music_analyzer.frameworks.explorer.server import create_server
-from tests.acceptance.test_explorer_3d_graph_assets import create_three_track_graph_db
+from tests.support.three_track_graph_db import create_three_track_graph_db
 
 
 def _run_cli(argv):
