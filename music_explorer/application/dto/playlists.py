@@ -40,19 +40,23 @@ class EnergyArcRequest:
     """One arc of an energy plan, as the listener asked for it.
 
     Energy low and high are levels on the 0-1 rank scale; None leaves that
-    end of the range unset.
+    end of the range unset. An arc lasts a number of tracks or of minutes
+    (#137); a single arc without either spans the whole playlist.
     """
     shape: str
     energy_low: float | None = None
     energy_high: float | None = None
+    tracks: object = None
+    minutes: object = None
 
 
 @dataclass(frozen=True)
 class PlaylistRecipe:
     """Everything a playlist is generated from (#135).
 
-    Its length is a number of tracks or a duration in minutes. Harmonic
-    mixing is on unless turned off; an empty energy plan means no arc.
+    Its length is a number of tracks or a duration in minutes, or, when the
+    energy plan's arcs have lengths, their sum. Harmonic mixing is on unless
+    turned off; an empty energy plan means no arc.
     """
     start_track_id: str
     bpm_min: object

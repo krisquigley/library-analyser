@@ -315,6 +315,24 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
         with self._get('/api/playlists/m3u?' + query) as response:
             self.assertEqual(response.read().decode('utf-8'), f'#EXTM3U\n{self.first_path}\n{self.second_path}\n')
 
+    def _chain_query(self, arcs):
+        return urlencode([('start_track_id', self.first), ('bpm_min', '119'), ('bpm_max', '125'), *arcs])
+
+    def test_download_m3u_endpoint_accepts_a_chain_of_arcs_whose_lengths_set_the_playlist(self):
+        # Issue #137: arcs repeat in order, a blank keeps each arc's place in the range lists.
+        query = self._chain_query([('arc', 'rise'), ('arc', 'fall'), ('arc_tracks', '1'), ('arc_tracks', '1'),
+                                   ('energy_low', ''), ('energy_low', '0.2'), ('energy_high', '0.7'), ('energy_high', '')])
+        with self._get('/api/playlists/m3u?' + query) as response:
+            self.assertEqual(response.read().decode('utf-8'), f'#EXTM3U\n{self.first_path}\n{self.second_path}\n')
+
+    def test_download_m3u_endpoint_rejects_a_chain_whose_lists_do_not_line_up_as_json_400(self):
+        query = self._chain_query([('arc', 'rise'), ('arc', 'fall'), ('arc_tracks', '1'), ('energy_low', '0.2')])
+        with self.assertRaises(HTTPError) as raised:
+            self._get('/api/playlists/m3u?' + query)
+
+        self.assertEqual(raised.exception.code, 400)
+        self.assertIn('Give each arc its own', json.loads(raised.exception.read().decode('utf-8'))['error'])
+
     def test_download_m3u_endpoint_rejects_an_unknown_arc_or_unscored_mood_as_json_400(self):
         cases = [({'arc': 'wave'}, 'steady, rise, fall, peak or dip'),
                  ({'mood': 'calm'}, "No eligible track has a score for the mood 'calm'"),
