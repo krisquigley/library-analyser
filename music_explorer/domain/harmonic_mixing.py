@@ -69,12 +69,16 @@ class HarmonicMixing:
             return 0.0
         return KEY_ADJUSTMENT if keys_compatible(from_key, to_key) else -KEY_ADJUSTMENT
 
-    def _bpm_step_penalty(self, from_bpm, to_bpm):
+    def bpm_step_smooth(self, from_bpm, to_bpm):
+        """Whether a tempo step stays within the tolerance; None without two usable tempos."""
         if not (_number(from_bpm) and _number(to_bpm)) or min(from_bpm, to_bpm) <= 0:
-            return 0.0
+            return None
         step = abs(to_bpm - from_bpm) / min(from_bpm, to_bpm)
         # Rounding keeps a step of exactly the tolerance (100 -> 106) smooth.
-        return BPM_STEP_PENALTY if round(step, 9) > self.bpm_step_tolerance else 0.0
+        return round(step, 9) <= self.bpm_step_tolerance
+
+    def _bpm_step_penalty(self, from_bpm, to_bpm):
+        return BPM_STEP_PENALTY if self.bpm_step_smooth(from_bpm, to_bpm) is False else 0.0
 
 
 def _camelot(key):
