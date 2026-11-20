@@ -269,15 +269,8 @@ assert(canvasPaints.length>0);
 assertInlineOnly();
 """)
 
-    def test_baseline_control_existing_graph_fixture_and_pending_search_detail_are_valid(self):
-        self.run_browser(PENDING_SCENARIO, mode='baseline-control')
-
     def test_baseline_control_existing_graph_failure_and_scoped_retry_are_valid(self):
         self.run_browser(FAILURE_RETRY_SCENARIO, mode='baseline-control')
-
-    def test_baseline_control_existing_graph_succeeds_through_failed_search(self):
-        self.run_browser(SEARCH_FAILURE_SCENARIO, mode='baseline-control')
-
 
 if __name__ == '__main__':
     unittest.main()

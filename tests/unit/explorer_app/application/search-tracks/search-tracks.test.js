@@ -109,3 +109,95 @@ test('an answer for a superseded search is dropped', async () => {
   await loading;
   assert.deepEqual([session.read().searchState, session.read().results.tracks], ['idle', []]);
 });
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return {promise, resolve, reject};
+}
+
+function answeringLater() {
+  const answers = [];
+  const searchTracks = request => { const pending = deferred(); answers.push({request, ...pending}); return pending.promise; };
+  return {answers, searchTracks};
+}
+
+test('clearing the query empties the results at once, before anything settles', async () => {
+  const {trackSearch, session} = harness();
+  await trackSearch.loadPage({query: 'alpha'});
+  trackSearch.queryTyped('   ');
+  assert.deepEqual(session.read().results.tracks, []);
+  assert.equal(session.read().results.nextCursor, null);
+});
+
+test('a new query drops a next page still on its way for the old one', async () => {
+  const {answers, searchTracks} = answeringLater();
+  const {trackSearch, session} = harness({searchTracks});
+  const first = trackSearch.loadPage({query: 'alpha'});
+  answers[0].resolve(page(['a1'], 'c1'));
+  await first;
+  const more = trackSearch.loadMore();
+  const typed = trackSearch.queryTyped('beta');
+  await Promise.resolve();
+  answers[2].resolve(page(['b1']));
+  await typed;
+  answers[1].resolve(page(['a2']));
+  await more;
+  assert.deepEqual(session.read().results.tracks.map(track => track.handle), ['b1']);
+});
+
+test('an answer for the old query cannot show while the new one waits to be asked', async () => {
+  const {answers, searchTracks} = answeringLater();
+  const pause = deferred();
+  const {trackSearch, session} = harness({searchTracks, wait: () => pause.promise});
+  const first = trackSearch.loadPage({query: 'alpha'});
+  const typed = trackSearch.queryTyped('beta');
+  answers[0].resolve(page(['a1']));
+  await first;
+  assert.deepEqual(session.read().results.tracks, []);
+  pause.resolve();
+  await Promise.resolve();
+  answers[1].resolve(page(['b1']));
+  await typed;
+  assert.deepEqual(session.read().results.tracks.map(track => track.handle), ['b1']);
+});
+
+test('a later query wins even when the earlier one answers last', async () => {
+  const {answers, searchTracks} = answeringLater();
+  const {trackSearch, session} = harness({searchTracks});
+  const alpha = trackSearch.queryTyped('alpha');
+  await Promise.resolve();
+  const beta = trackSearch.queryTyped('beta');
+  await Promise.resolve();
+  answers[1].resolve(page(['b1']));
+  await beta;
+  answers[0].resolve(page(['a1']));
+  await alpha;
+  assert.deepEqual(answers.map(answer => answer.request.query), ['alpha', 'beta']);
+  assert.deepEqual(session.read().results.tracks.map(track => track.handle), ['b1']);
+});
+
+test('a failed next page keeps the tracks already shown', async () => {
+  const {answers, searchTracks} = answeringLater();
+  const {trackSearch, session} = harness({searchTracks});
+  const first = trackSearch.loadPage({query: 'alpha'});
+  answers[0].resolve(page(['a1'], 'c1'));
+  await first;
+  const more = trackSearch.loadMore();
+  answers[1].reject(new Error('busy'));
+  await more;
+  assert.equal(session.read().searchState, 'failed');
+  assert.deepEqual(session.read().results.tracks.map(track => track.handle), ['a1']);
+  assert.deepEqual(session.read().failure, {message: 'busy', query: 'alpha', cursor: 'c1', append: true});
+});
+
+test('a failure for a query already cleared stays quiet', async () => {
+  const {answers, searchTracks} = answeringLater();
+  const {trackSearch, session, types} = harness({searchTracks});
+  const first = trackSearch.loadPage({query: 'alpha'});
+  await trackSearch.queryTyped('');
+  answers[0].reject(new Error('late'));
+  await first;
+  assert.equal(session.read().searchState, 'idle');
+  assert.ok(!types().includes('track-search-failed'));
+});
