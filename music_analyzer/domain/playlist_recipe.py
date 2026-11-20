@@ -94,7 +94,7 @@ def _check_format(document):
         raise PlaylistRecipeError(f'This is not a playlist recipe: its format must be "{FORMAT}"')
     version = document.get('version')
     if version != VERSION or isinstance(version, bool):
-        raise PlaylistRecipeError(f'Recipe version {version} is not supported; this analyzer reads version {VERSION}')
+        raise PlaylistRecipeError(f'Recipe version {version} is not supported; only version {VERSION} can be read')
 
 
 def _required(mapping, name, prefix=''):
