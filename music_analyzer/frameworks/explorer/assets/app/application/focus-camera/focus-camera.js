@@ -47,7 +47,9 @@ export function createCameraFocus({focusSession, eventBus}) {
 
   function begin() {
     cancel();
-    return read().focusGeneration;
+    const {focusGeneration} = read();
+    eventBus.publish(cameraFocusEvent('camera-focus-started', {focusGeneration}));
+    return focusGeneration;
   }
 
   function frameScheduled(arc, frame) {
