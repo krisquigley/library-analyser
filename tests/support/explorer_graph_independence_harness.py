@@ -109,13 +109,8 @@ function assertInlineOnly(){
   assert.notEqual(overlay.getAttribute('aria-busy'),'true','graph must not own blocking library busy state');
   assert.equal(search.disabled,false,'search stays enabled');
 }
-async function start(mode='automatic'){
+async function start(){
   boot(); await flush();
-  if(mode==='baseline-control' && graphRequests().length===0){
-    // Exercise the existing real loadGraph path on baseline; never replace it.
-    // When startup becomes automatic, use that request instead so controls stay valid.
-    context.loadGraph().catch(()=>{}); await flush();
-  }
   assert.equal(graphRequests().length,1,'graph must start automatically without a manual click');
   assert.equal(graphRequests()[0].url.searchParams.get('contract'),'v3','preserve graph contract');
 }

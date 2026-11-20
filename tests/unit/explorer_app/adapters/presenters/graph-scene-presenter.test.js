@@ -25,6 +25,11 @@ test('an axis is at least 36 long, and without raw values its references come fr
   assert.deepEqual(graphAxisSpec([]), []);
 });
 
+test('the axes depend on where the nodes are, never on their order', () => {
+  const nodes = [node(0, 10, 100, [-0.5, 0.2, 100]), node(90, 40, 120, [0.75, 0.9, 120])];
+  assert.deepEqual(graphAxisSpec([...nodes].reverse()), graphAxisSpec(nodes));
+});
+
 test('the colour legend gives each native range, or says there is none', () => {
   assert.equal(graphColorLegend({colorRanges: {valence: {min: -0.5, max: 0.75}, arousal: [0.1, 1.9]}}),
     'Color relative to this library: valence blue → orange/red (-0.5 to 0.8 native); arousal dark/dim → bright (0.1 to 1.9 native). Selected node is larger.');
