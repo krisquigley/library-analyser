@@ -1,13 +1,14 @@
 // The opt-in diagnostics seam (#146, owner decision A): what the #86 timing tools and the composition tests
 // observe, in place of reaching into the page's variables. It is off unless the page address has `diagnostics`.
 // Events are heard, or their handling timed, through the page's own buses; the state is a frozen copy; the scene is handed over live,
-// because the timing tools measure the renderer itself. Nothing here can change the page.
+// because the timing tools measure the renderer itself; the views draw detached elements, for a tool to compare
+// with what the page shows. Nothing here can change the page.
 
 export function diagnosticsRequested(search) {
   return new URLSearchParams(search).has('diagnostics');
 }
 
-export function createExplorerDiagnostics({buses, snapshot, scene}) {
+export function createExplorerDiagnostics({buses, snapshot, scene, views}) {
   const busByType = new Map();
   for (const [types, bus] of buses) {
     for (const type of types) {
@@ -26,6 +27,7 @@ export function createExplorerDiagnostics({buses, snapshot, scene}) {
     observe: (type, observer) => busFor(type).observeDispatch(type, observer),
     snapshot: () => frozenCopy(snapshot()),
     scene,
+    views,
   });
 }
 

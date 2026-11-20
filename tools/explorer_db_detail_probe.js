@@ -35,9 +35,10 @@
           if(response.ok&&selected&&r.request_handle===selected.intended_handle&&value.handle===selected.intended_handle) {
             // Snapshot presentation BEFORE returning the DTO to application
             // code, which may replace or mutate its renderer argument.
-            const fields=document.createElement('div');
-            fields.append(renderTrackMetadata(value.metadata));
-            for(const [name,field] of Object.entries(value.fields||{}))fields.append(renderDetailField(name,field));
+            // The page's own views draw the expected presentation, detached, through its diagnostics seam (#146).
+            const views=window.explorerDiagnostics.views(), fields=document.createElement('div');
+            fields.append(views.trackMetadata(value.metadata));
+            for(const [name,field] of Object.entries(value.fields||{}))fields.append(views.detailField(name,field));
             expectedBySelection.set(r.sequence,fields);
           }
         }

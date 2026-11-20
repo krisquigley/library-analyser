@@ -11,10 +11,11 @@ function seam(overrides = {}) {
   const selection = createInMemoryEventBus();
   let state = {currentTrackId: 'a', history: ['b']};
   const sceneObjects = {renderer: {name: 'renderer'}};
+  const viewFunctions = {detailField: () => 'field'};
   const diagnostics = createExplorerDiagnostics({
     buses: [[['camera-focus-started', 'camera-focus-finished'], camera], [['track-chosen'], selection]],
-    snapshot: () => state, scene: () => sceneObjects, ...overrides});
-  return {diagnostics, camera, selection, setState: next => { state = next; }, sceneObjects};
+    snapshot: () => state, scene: () => sceneObjects, views: () => viewFunctions, ...overrides});
+  return {diagnostics, camera, selection, setState: next => { state = next; }, sceneObjects, viewFunctions};
 }
 
 test('the seam is off unless the page address asks for diagnostics', () => {
@@ -52,7 +53,8 @@ test('an event type no bus carries is refused, and two buses cannot claim one ty
   assert.throws(() => seam().diagnostics.subscribe('graph-ready', () => {}), /No diagnostics event: graph-ready/);
   assert.throws(() => seam().diagnostics.observe('graph-ready', {}), /No diagnostics event: graph-ready/);
   const bus = createInMemoryEventBus();
-  assert.throws(() => createExplorerDiagnostics({buses: [[['a'], bus], [['a'], bus]], snapshot: () => ({}), scene: () => ({})}),
+  assert.throws(() => createExplorerDiagnostics({buses: [[['a'], bus], [['a'], bus]], snapshot: () => ({}), scene: () => ({}),
+    views: () => ({})}),
     /Two buses carry the event a/);
 });
 
@@ -66,14 +68,15 @@ test('a snapshot is a frozen copy of the state now: changing it changes nothing,
   assert.deepEqual([first.currentTrackId, diagnostics.snapshot().currentTrackId], ['a', 'c']);
 });
 
-test('the scene is handed over live, for the timing tools to measure', () => {
-  const {diagnostics, sceneObjects} = seam();
+test('the scene is handed over live, for the timing tools to measure, and the views that draw detached elements', () => {
+  const {diagnostics, sceneObjects, viewFunctions} = seam();
   assert.equal(diagnostics.scene(), sceneObjects);
+  assert.equal(diagnostics.views(), viewFunctions);
   assert.ok(Object.isFrozen(diagnostics));
 });
 
 test('installing puts a read-only seam on the page only when it is asked for', () => {
-  const options = {buses: [], snapshot: () => ({}), scene: () => ({})};
+  const options = {buses: [], snapshot: () => ({}), scene: () => ({}), views: () => ({})};
   const page = {};
   assert.equal(installExplorerDiagnostics(page, '', options), null);
   assert.equal('explorerDiagnostics' in page, false);

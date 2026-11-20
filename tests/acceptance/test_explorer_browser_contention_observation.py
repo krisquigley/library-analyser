@@ -36,8 +36,7 @@ def _active_body_predicate(script):
 const vm=require('node:vm'), predicate=JSON.parse(process.argv[1]);
 const values=[null,120].map(end=>{
   const milestones_ms={graph_body_start:100,graph_body_end:end};
-  const context={window:{__diagnostic:{milestones_ms}},
-                 graphLoadState:{status:end===null?'loading':'ready'}};
+  const context={window:{__diagnostic:{milestones_ms}}};
   context.__diagnostic=context.window.__diagnostic;
   vm.createContext(context);
   const value=vm.runInContext('('+predicate+')',context);
@@ -116,7 +115,7 @@ class ControlledPage:
             self.body_end = None
             self.active_phase = 'body'
             self.log.append('body-consumption-active')
-        if "graphLoadState.status==='ready'" in script:
+        if "s.graphStatus==='ready'" in script:
             self.log.append('wait-graph-ready')
 
     def locator(self, selector):

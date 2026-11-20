@@ -17,6 +17,7 @@ import unittest
 
 from tools import explorer_browser_diagnostic as diagnostic
 from tools.explorer_browser_report import publish_browser_report
+from tests.support.fake_explorer_diagnostics import FAKE_EXPLORER_DIAGNOSTICS
 from tests.unit.benchmark_tools.test_explorer_browser_phase_attribution import _observer_scripts
 from tests.unit.benchmark_tools.test_explorer_focus_projection_observation import _run_readback
 
@@ -58,10 +59,10 @@ class _ReadbackReplay:
 
 
 def _motion_observation():
-    """Actual probe/decorator, with explicit adapter event doubles.
+    """Actual probe/decorator, against a page that publishes its camera events through a seam double.
 
-    Underlying cancellation calls are a harness preflight, not an assertion
-    that this fake reproduces browser orbit behavior or animation quality.
+    The cancellations are a harness preflight, not an assertion that this fake
+    reproduces browser orbit behavior or animation quality.
     """
     probe, decoration = _observer_scripts()
     source = r'''
@@ -70,6 +71,11 @@ let tick=0, frames=[], listeners={}, cancellations=[];
 const controls={target:{x:0,y:0,z:0},
   addEventListener(type,callback){(listeners[type]??=[]).push(callback);},
   removeEventListener(){}};
+// The page as its diagnostics seam (#146) shows it: the listener's orbit and a new selection cancel the arc
+// in flight, and the cancellation event says why.
+let focusActive=false;
+const seam=fakeExplorerDiagnostics({snapshot:()=>({cameraFocusActive:focusActive}),
+  scene:()=>({graph:{controls:()=>controls}})});
 const context={URL,Uint8Array,location:{href:'http://owned.invalid/'},
   performance:{now:()=>tick},
   requestAnimationFrame:callback=>{frames.push(callback);return frames.length;},
@@ -77,31 +83,27 @@ const context={URL,Uint8Array,location:{href:'http://owned.invalid/'},
   PerformanceObserver:class{observe(){}},
   document:{addEventListener(type,callback){(listeners['document-'+type]??=[]).push(callback);}},
   fetch:async()=>{},
-  buildMoodGraphModel(){},renderMap(){},renderDetail(){},renderDetailLoading(){},
-  cameraFocusFrame:null,forceGraph:{controls:()=>controls},
-  animateCameraFocus(){context.cameraFocusFrame=1;},
-  cancelCameraFocus(){cancellations.push(tick);context.cameraFocusFrame=null;},
-  setCurrent(){context.cancelCameraFocus();}
-};
+  explorerDiagnostics:seam};
+function cancel(cause){if(!focusActive)return;cancellations.push(tick);focusActive=false;
+  seam.publish({type:'camera-focus-cancelled',frame:1,cause});}
+function focus(){cancel('new-focus');seam.publish({type:'camera-focus-started',focusGeneration:tick});focusActive=true;}
 context.window=context;vm.createContext(context);
-// Existing runtime's controls-start cancellation adapter seam.
-controls.addEventListener('start',()=>context.cancelCameraFocus());
+controls.addEventListener('start',()=>cancel('listener-orbit'));
 vm.runInContext(PROBE,context);
 vm.runInContext('('+DECORATION+')()',context);
 context.__diagnostic.milestones_ms.graph_scene_end=5;
 context.__diagnostic.contention_action='armed';
-tick=10;context.animateCameraFocus();
+tick=10;focus();
 tick=20;
 for(const callback of listeners['document-input'])callback({type:'input',isTrusted:true});
-// Orbit starts while the first motion is owned; latest selection cancels the
-// second. Existing boundary calls occurred; observation must not lose them.
+// Orbit starts while the first motion is owned; latest selection cancels the second.
 tick=30;for(const callback of listeners.start)callback({type:'start'});
-tick=40;context.animateCameraFocus();
-tick=50;context.setCurrent();
+tick=40;focus();
+tick=50;cancel('new-selection');
 console.log(JSON.stringify({diagnostic:context.__diagnostic,cancellations,
-  camera_focus_frame:context.cameraFocusFrame}));
+  camera_focus_frame:focusActive?1:null}));
 '''
-    source = source.replace('PROBE', json.dumps(probe)).replace('DECORATION', json.dumps(decoration))
+    source = FAKE_EXPLORER_DIAGNOSTICS + source.replace('PROBE', json.dumps(probe)).replace('DECORATION', json.dumps(decoration))
     completed = subprocess.run([_node(), '-e', source], capture_output=True,
                                text=True, timeout=10)
     if completed.returncode:
@@ -114,7 +116,7 @@ class BrowserFocusObservationContracts(unittest.TestCase):
         cases = (
             ('controls.minDistance=200;controls.maxDistance=250;', 800, 600, 60, 'observed'),
             ('box.width=600;box.height=800;camera.aspect=600/800;camera.fov=75;'
-             'context.forceGraph.controls=()=>null;', 600, 800, 75, 'unavailable'),
+             'page.graph.controls=()=>null;', 600, 800, 75, 'unavailable'),
         )
         for setup, width, height, fov, status in cases:
             with self.subTest(controls=status):
@@ -158,7 +160,7 @@ class BrowserFocusObservationContracts(unittest.TestCase):
 
     def test_wrong_halo_identity_or_unavailable_projection_cannot_report_focus_success(self):
         cases = (
-            ('context.selectedNodeHalo.trackId="public-00001";', 'wrong selected halo identity'),
+            ('page.halo.trackId="public-00001";', 'wrong selected halo identity'),
             ('camera.fov=NaN;', 'nonfinite camera projection'),
         )
         for setup, reason in cases:

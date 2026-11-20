@@ -7,6 +7,8 @@ Observer text/parse/hash work perturbs timing; next-frame is not physical paint.
 import json
 from pathlib import Path
 
+from tools.explorer_browser_routes import diagnostics_url
+
 PROBE = Path(__file__).with_name('explorer_db_detail_probe.js')
 PHASES = ('request_id', 'request_ms', 'headers_ms', 'body_ms', 'parse_ms', 'status')
 SELECTION_TIMES = ('receipt_ms', 'loading_dom_ms', 'loading_frame_ms',
@@ -33,15 +35,16 @@ DETAIL_RENDERED = """(intended, before, previous, previousText, previousHandle,
   // not evidence of a new selection. This comparison remains entirely in-page.
   return !(previousHandle&&previousHandle!==intended&&fields.textContent===previousText);
 }"""
+# Observe the detail's handling through the page's opt-in diagnostics seam (#146): the moments its events'
+# handling begins and ends. Nothing of the page is wrapped.
 WRAP_DETAIL = """() => {
- const presented=(""" + DETAIL_RENDERED + """), d=window.__dbBridge,
-  loading=renderDetailLoading, detail=renderDetail;
- let previous=null, previousText=null, previousHandle=null;
- renderDetailLoading=function(){const result=loading.apply(this,arguments), s=d.selections.at(-1);
+ const presented=(""" + DETAIL_RENDERED + """), d=window.__dbBridge, seam=window.explorerDiagnostics;
+ let previous=null, previousText=null, previousHandle=null, before=null;
+ for(const type of ['track-chosen','selection-rewinding','track-detail-loading'])seam.observe(type,{after:()=>{const s=d.selections.at(-1);
   if(s&&s.loading_dom_ms==null){s.loading_dom_ms=performance.now();requestAnimationFrame(()=>{
-   s.loading_frame_ms=performance.now();s.loading_frame_was_busy=document.getElementById('detail').getAttribute('aria-busy')==='true';});}return result;};
- renderDetail=function(){const root=document.getElementById('detail'), before=root.children[1],
-  result=detail.apply(this,arguments), s=d.selections.at(-1), ready=performance.now(), renderedFields=root.children[1];
+   s.loading_frame_ms=performance.now();s.loading_frame_was_busy=document.getElementById('detail').getAttribute('aria-busy')==='true';});}}});
+ seam.observe('track-detail-loaded',{before:()=>{before=document.getElementById('detail').children[1];},after:()=>{
+  const root=document.getElementById('detail'), s=d.selections.at(-1), ready=performance.now(), renderedFields=root.children[1];
   if(s){requestAnimationFrame(()=>{
    // Earlier frame callbacks may replace or move the genuine rendered nodes.
    // All evidence and history concern this SAME live frame-time subtree;
@@ -58,8 +61,9 @@ WRAP_DETAIL = """() => {
    // Keep live structural history even after a content mismatch, so a later
    // clone cannot evade the conservative equal-content exclusion.
    if(structurePresented){previous=fields;previousText=fields.textContent;previousHandle=s.intended_handle;}
-  });}return result;};
+  });}}});
 }"""
+SNAPSHOT = 'window.explorerDiagnostics.snapshot()'
 
 
 def bridge_observation(raw, fixture):
@@ -147,11 +151,11 @@ def _request_outcome(record, scenario, fault_injected):
 
 
 def _select(page, index):
-    intended = page.evaluate(f'trackSummaryPage.tracks[{index}].handle')
+    intended = page.evaluate(f"document.querySelectorAll('#tracks tbody tr')[{index}].dataset.trackId")
     page.evaluate('(handle)=>window.__dbBridge.intended_handle=handle', intended)
     sequence = page.evaluate('window.__dbBridge.selections.length+1')
     page.locator('#tracks tbody tr').nth(index).click()
-    page.wait_for_function("sequence => pendingSelectionOperation===null && "
+    page.wait_for_function("sequence => !" + SNAPSHOT + ".selectionPending && "
                            "document.getElementById('detail').getAttribute('aria-busy')==='false' && "
                            "(window.__dbBridge.selections.find(s=>s.sequence===sequence)?.detail_presented!=null || "
                            "window.__dbBridge.requests.some(r=>r.sequence===sequence && r.method==='POST' && r.status>=400))",
@@ -191,31 +195,32 @@ def observe_writer_attempt(page, url, scenario, observer_mode, fixture, wait_tim
             page.route('**/api/current', fail_once, times=1)
         if scenario == 'detail-timeout':
             page.route('**/api/tracks/sha256*', fail_once, times=1)
-        page.goto(url, wait_until='domcontentloaded')
-        page.wait_for_function("state.selection_epoch!=null && typeof renderDetail==='function'")
+        page.goto(diagnostics_url(url), wait_until='domcontentloaded')
+        page.wait_for_function("window.explorerDiagnostics && " + SNAPSHOT + ".selectionEpoch!=null")
         page.evaluate("window.__dbBridge.initial_summary_requests=window.__dbBridge.requests.filter(r=>r.route==='/api/tracks/summary').length")
         page.evaluate(WRAP_DETAIL)
         if scenario == 'graph-settled':
             # Keep graph startup and its framing motion outside the selection timing.
-            page.wait_for_function("graphLoadState.status==='ready' && forceGraph && cameraFocusFrame===null")
+            page.wait_for_function("(s=>s.graphStatus==='ready' && !s.cameraFocusActive)(" + SNAPSHOT + ")"
+                                   " && window.explorerDiagnostics.scene().graph")
         page.locator('#track-search').fill('Synthetic')
         if scenario == 'search-failure':
-            page.wait_for_function("trackSummaryStatus==='error'")
+            page.wait_for_function(SNAPSHOT + ".trackSearchStatus==='error'")
             page.get_by_role('button', name='Retry search').click()
-        page.wait_for_function("trackSummaryStatus==='ready' && trackSummaryPage.tracks.length>1")
+        page.wait_for_function("(s=>s.trackSearchStatus==='ready' && s.trackResultCount>1)(" + SNAPSHOT + ")")
         _select(page, 0)
         if scenario == 'rejected-post':
             raise RuntimeError('classified injected rejection')
         if scenario in ('latest-selection', 'graph-failure-retry'):
             _select(page, 1)
         if scenario == 'graph-failure-retry':
-            page.wait_for_function("graphLoadState.status==='error'")
+            page.wait_for_function(SNAPSHOT + ".graphStatus==='error'")
             page.get_by_role('button', name='Retry graph').click()
             page.evaluate('window.__dbBridge.graph_retry_count=1')
-        page.wait_for_function("graphLoadState.status==='ready' && forceGraph && "
+        page.wait_for_function(SNAPSHOT + ".graphStatus==='ready' && window.explorerDiagnostics.scene().graph && "
                                "window.__dbBridge.graph_sha256!=null")
         page.evaluate("""() => {
-          const gl=forceGraph.renderer().getContext(), d=window.__dbBridge;
+          const gl=window.explorerDiagnostics.scene().graph.renderer().getContext(), d=window.__dbBridge;
           const debug=gl.getExtension('WEBGL_debug_renderer_info');
           const implementation=debug?String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)).toLowerCase():'';
           d.webgl_context={api_version:gl instanceof WebGL2RenderingContext?'webgl2':'webgl1',

@@ -1,4 +1,5 @@
-// External observation only: packaged application bytes remain unchanged.
+// External observation only: packaged application bytes remain unchanged. The page is observed through its
+// opt-in diagnostics seam (`?diagnostics`, #146) and the network; nothing of the page is wrapped or replaced.
 (() => {
   const observerMode=window.__diagnosticObserverMode==='native-json'?'native-json':'verified';
   const milestones={navigation:0};
@@ -71,69 +72,30 @@
       return response;
     }catch(error){record.elapsed_ms=now()-start;throw error;}
   };
-  // Install only at the outward decoration seam, after packaged functions exist.
+  // Observe the focus through the page's opt-in diagnostics seam (#146): the page's own events, never its
+  // functions. A cancellation event is published only for an arc in flight, and says why it was cancelled.
   // No poses, bounds, durations, controls, or runtime cancellation rules change.
+  const CANCELLATION_REASONS={'new-selection':'new-selection','new-focus':'new-focus','listener-orbit':'user-orbit'};
   d.installFocusObservation=function(){
     if(d.focus?.motion)return;
     d.focus={...(d.focus||{}),motion:{starts:[],cancellations:[]}};
-    if(typeof cancelCameraFocus!=='function'||typeof cameraFocusFrame==='undefined')return;
-    let reason=null, pendingUnclassified=null;
-    const observedControls=new WeakSet();
-    const withReason=(label,call)=>{const previous=reason;reason=label;try{return call();}finally{reason=previous;}};
-    const cancel=cancelCameraFocus;
-    cancelCameraFocus=function(){
-      const active=cameraFocusFrame!=null, at=now();
-      if(!active){
-        // An idle cancellation cannot attribute an earlier plain cancellation.
-        // Also undo a tentative label if our start observer ran first.
-        if(pendingUnclassified?.reason==='user-orbit')pendingUnclassified.reason='unclassified';
-        pendingUnclassified=null;
-      }
-      const value=cancel.apply(this,arguments);
-      if(active&&cameraFocusFrame==null){
-        const label=arguments[0]?.type==='start'?'user-orbit':(reason||'unclassified');
-        const record={reason:label,at_ms:at,clock:'browser-performance'};
-        d.focus.motion.cancellations.push(record);
-        pendingUnclassified=label==='unclassified'?record:null;
-        // Only the current synchronous dispatch can supply a discarded cause;
-        // a later event with the same quantized clock must not reuse it.
-        if(pendingUnclassified)Promise.resolve().then(()=>{
-          if(pendingUnclassified===record)pendingUnclassified=null;
-        });
-      }
-      return value;
-    };
-    function watchControls(){
-      const controls=typeof forceGraph!=='undefined'&&forceGraph?.controls?.();
-      if(!controls?.addEventListener||observedControls.has(controls))return;
-      observedControls.add(controls);
-      controls.addEventListener('start',()=>{
-        // An adapter may discard the event argument before invoking cancellation.
-        // Correlate only an actual cancellation in this synchronous dispatch
-        // (pendingUnclassified is cleared at the next microtask). Do not compare
-        // clocks: performance.now() can tick between listeners of one dispatch.
-        // Never label an idle start, completion, or arbitrary cancellation orbit.
-        if(pendingUnclassified&&cameraFocusFrame==null){
-          pendingUnclassified.reason='user-orbit';
-        }
-      });
-    }
-    const select=setCurrent;
-    setCurrent=function(){pendingUnclassified=null;return withReason('new-selection',()=>select.apply(this,arguments));};
-    const focus=animateCameraFocus;
-    animateCameraFocus=function(){
-      pendingUnclassified=null;watchControls();
+    const seam=window.explorerDiagnostics;
+    if(!seam)return;
+    seam.subscribe('camera-focus-cancelled',event=>{
+      d.focus.motion.cancellations.push({reason:CANCELLATION_REASONS[event.cause]||'unclassified',at_ms:now(),clock:'browser-performance'});
+    });
+    seam.subscribe('camera-focus-started',()=>{
       const start={at_ms:now(),clock:'browser-performance',active_after:null};
       d.focus.motion.starts.push(start);
-      const value=withReason('new-focus',()=>focus.apply(this,arguments));
-      start.active_after=cameraFocusFrame!=null;
-      watchControls();return value;
-    };
-    watchControls();
+      // The arc schedules its first frame in the same call that started it.
+      Promise.resolve().then(()=>{start.active_after=seam.snapshot().cameraFocusActive;});
+    });
   };
+  const seamSnapshot=()=>window.explorerDiagnostics?.snapshot();
+  const seamGraph=()=>window.explorerDiagnostics?.scene().graph;
   function phase(){
     const m=d.milestones_ms;
-    if(typeof cameraFocusFrame!=='undefined'&&cameraFocusFrame!=null)return 'focus';
+    if(seamSnapshot()?.cameraFocusActive)return 'focus';
     for(const name of ['body','json','verification','model','scene'])if(m['graph_'+name+'_start']!=null&&m['graph_'+name+'_end']==null)return name;
     if(m.graph_native_json_start!=null&&m.graph_native_json_end==null)return 'native-json';
     return m.graph_scene_end!=null?'after-scene':'pending';
@@ -150,7 +112,7 @@
   }
   document.addEventListener('input',receipt,true);
   document.addEventListener('pointerdown',event=>{
-    const canvas=typeof forceGraph!=='undefined'&&forceGraph?.renderer?.()?.domElement;
+    const canvas=seamGraph()?.renderer?.()?.domElement;
     if(d.contention_action&&canvas&&event.target===canvas)receipt(event);
   },true);
   document.addEventListener('click',event=>{if(d.contention_action)receipt(event);},true);

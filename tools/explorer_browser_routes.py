@@ -4,7 +4,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import json
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
+
+
+def diagnostics_url(url):
+    """The Explorer page at this address with its opt-in diagnostics seam switched on (#146)."""
+    parts = urlsplit(url)
+    return urlunsplit(parts._replace(query='&'.join(filter(None, (parts.query, 'diagnostics')))))
 
 ASSETS = Path(__file__).resolve().parents[1] / 'music_explorer/frameworks/explorer/assets'
 
