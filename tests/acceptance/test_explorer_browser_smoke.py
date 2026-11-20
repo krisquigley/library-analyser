@@ -9,6 +9,14 @@ import unittest
 
 from tests.acceptance.test_explorer_server import create_db
 from music_analyzer.frameworks.explorer.server import create_server
+from tests.support.explorer_diagnostics_page import GRAPH, SCENE, diagnostics_url, snapshot_is
+
+# What the graph shows, read through the diagnostics seam (#146): ids, positions, edges, framing and the first score.
+SHOWN_GRAPH = """() => {
+  const {model, layout} = window.explorerDiagnostics.graph(), end = value => typeof value === 'object' ? value.id : value;
+  return {ids: model.nodes.map(n => n.id), positions: model.nodes.map(n => [n.x, n.y, n.z]),
+    edges: model.links.map(l => [end(l.source), end(l.target)]), layout, score: model.nodes[0].moodScore.raw};
+}"""
 
 
 @unittest.skipUnless(os.environ.get('RUN_BROWSER_SMOKE') == '1', 'opt-in Playwright Chromium smoke')
@@ -31,9 +39,9 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     page = browser.new_page()
                     requests = []
                     page.on('request', lambda request: requests.append(request.url))
-                    page.goto(f'http://127.0.0.1:{server.server_port}/')
+                    page.goto(diagnostics_url(f'http://127.0.0.1:{server.server_port}/'))
                     page.wait_for_function("document.querySelector('#selected-mood').options.length > 1")
-                    page.wait_for_function('graphModel.nodes.length === 2 && !!forceGraph')
+                    page.wait_for_function(f'{GRAPH}.model.nodes.length === 2 && !!{SCENE}.graph')
                     graph_requests = [url for url in requests if '/api/mood-axis-graph' in url]
                     self.assertEqual(len(graph_requests), 1, 'startup automatically requests graph once')
                     self.assertIn('contract=v3', graph_requests[0])
@@ -43,29 +51,31 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     # The accepted selection owns one timed focus motion; a programmatic
                     # pose set during it is overwritten by the next frame. Compare the
                     # mood change against a settled camera, not that motion.
-                    page.wait_for_function('pendingCameraSelection===null && cameraFocusFrame===null')
-                    before = page.evaluate("""() => {
-                        forceGraph.cameraPosition({x:99,y:88,z:777},{x:20,y:30,z:40},0);
-                        return {ids:graphModel.nodes.map(n=>n.id), positions:graphModel.nodes.map(n=>[n.x,n.y,n.z]),
-                          edges:graphModel.links.map(l=>[typeof l.source==='object'?l.source.id:l.source,typeof l.target==='object'?l.target.id:l.target]), camera:forceGraph.cameraPosition(),
-                          layout:framedGraphLayout, score:graphModel.nodes[0].moodScore.raw};
-                    }""")
+                    page.wait_for_function(snapshot_is('s.pendingCameraTrackId===null && !s.cameraFocusActive'))
+                    page.evaluate(f'() => {{{SCENE}.graph.cameraPosition({{x:99,y:88,z:777}},{{x:20,y:30,z:40}},0);return true}}')
+                    before = page.evaluate(SHOWN_GRAPH)
                     page.wait_for_timeout(150)
-                    before['camera'] = page.evaluate('forceGraph.cameraPosition()')
+                    before['camera'] = page.evaluate(f'{SCENE}.graph.cameraPosition()')
                     page.locator('#selected-mood').select_option('relaxing')
-                    page.wait_for_function("graphModel.selectedMood === 'relaxing'")
-                    after = page.evaluate("""() => ({ids:graphModel.nodes.map(n=>n.id),
-                        positions:graphModel.nodes.map(n=>[n.x,n.y,n.z]), edges:graphModel.links.map(l=>[typeof l.source==='object'?l.source.id:l.source,typeof l.target==='object'?l.target.id:l.target]),
-                        camera:forceGraph.cameraPosition(), layout:framedGraphLayout,
-                        score:graphModel.nodes[0].moodScore.raw, strip:buildMoodStrip(visibleGraph,state.current_track_id)})""")
+                    page.wait_for_function(f"{GRAPH}.model.selectedMood === 'relaxing'")
+                    after = page.evaluate(SHOWN_GRAPH)
+                    after['camera'] = page.evaluate(f'{SCENE}.graph.cameraPosition()')
+                    after['readouts'] = page.evaluate("""() => {
+                        const picker=document.getElementById('mood-strip-picker'), readouts=[];
+                        for(let index=0;index<=Number(picker.max);index++){
+                          picker.value=String(index);picker.dispatchEvent(new Event('input'));
+                          readouts.push(document.getElementById('mood-strip-value').textContent);
+                        }
+                        return readouts;
+                    }""")
                     self.assertEqual(before['ids'], ids[:2])
                     for key in ('ids', 'positions', 'edges', 'camera', 'layout'):
                         self.assertEqual(before[key], after[key], key)
                     self.assertNotEqual(before['score'], after['score'])
                     self.assertEqual(after['positions'][1][2] - after['positions'][0][2], 144)
-                    self.assertEqual(after['strip'][0]['score'], 0.2)
+                    self.assertTrue(any('0.2 / 1' in readout for readout in after['readouts']), after['readouts'])
                     self.assertTrue(all(url.startswith(f'http://127.0.0.1:{server.server_port}/') for url in requests))
-                    self.assertEqual(page.url, f'http://127.0.0.1:{server.server_port}/')
+                    self.assertEqual(page.url, f'http://127.0.0.1:{server.server_port}/?diagnostics')
                     browser.close()
             finally:
                 server.shutdown(); server.server_close()
