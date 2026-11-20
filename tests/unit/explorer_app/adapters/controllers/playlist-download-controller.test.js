@@ -26,7 +26,7 @@ test('invalid control values are rejected with a message and never reach the dra
     [{count: 10}, 'Track count must be a number'],
     [{energyHigh: 'Infinity'}, 'Energy high must be a number'],
     [{harmonicMixing: 'yes'}, 'Harmonic mixing must be on or off'],
-    [{energyArc: 'zigzag'}, 'Energy arc must be one of: none, steady, rise, fall, peak'],
+    [{energyArc: 'zigzag'}, 'Energy arc must be one of: none, steady, rise, fall, peak, dip'],
     [{moodHold: 3}, 'Mood hold must be text'],
     [{tempo: '120'}, 'Unknown playlist control: tempo'],
   ];

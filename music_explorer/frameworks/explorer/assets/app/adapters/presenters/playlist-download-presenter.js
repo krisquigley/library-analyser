@@ -4,7 +4,7 @@ import {energyRangeApplies, minimumKeyStrengthApplies} from '../../domain/playli
 
 const ENERGY_ARC_CHOICES = Object.freeze([
   ['none', 'No energy arc'], ['steady', 'Steady energy'], ['rise', 'Rising energy'], ['fall', 'Falling energy'],
-  ['peak', 'Energy peak']]);
+  ['peak', 'Energy peak'], ['dip', 'Energy dip']]);
 
 const PLAYLIST_EVENT_VIEWS = Object.freeze({
   'playlist-draft-edited': event => draftApplicability(event.draft),
