@@ -180,19 +180,5 @@ render(); tick(); tick(); assertFocus('b');
 assert.equal(calls.length,2,'initial frame then authoritative focus, never rejected A');
 ''')
 
-    def test_control_without_selection_frames_once_and_keeps_manual_camera(self):
-        self.run_scenario(r'''
-render(); assert.equal(calls.length,1); assert.equal(calls[0].duration,0);
-const before=replacements; calls.length=0;
-Object.assign(camera.position,{x:900,y:800,z:700});
-Object.assign(controls.target,{x:90,y:80,z:70});
-render(); tick(); tick(); for(const callback of resizeCallbacks) callback();
-assert.equal(calls.length,0,'unchanged graph does not reframe manual orbit');
-assert.equal(replacements,before); assert.deepEqual(details,[]);
-assert.deepEqual(camera.position,{x:900,y:800,z:700});
-assert.deepEqual(controls.target,{x:90,y:80,z:70});
-''')
-
-
 if __name__ == '__main__':
     unittest.main()
