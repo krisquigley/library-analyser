@@ -32,7 +32,7 @@ class CameraUnflushedDampingTests(unittest.TestCase):
 
     def test_unflushed_left_drag_mouseup_focus_has_no_rotation_after_700ms(self):
         self.run_scenario(r'''
-render(); manualStart(); unflushedOrbit();
+await render(); manualStart(); unflushedOrbit();
 const start=renderedPose();
 await select('a');
 assertRenderedStable(renderedPose(),start,'left drag selection preserves start');
@@ -60,7 +60,7 @@ for(const {time,pose} of observations) {
 
     def test_new_dynamic_manual_orbit_works_after_left_drag_focus_finishes(self):
         self.run_scenario(r'''
-render(); manualStart(); unflushedOrbit();
+await render(); manualStart(); unflushedOrbit();
 await select('a'); advance(0);
 for(let time=16;time<=1200;time+=16) advance(time);
 assertEndpoint('before fresh manual orbit');
@@ -83,7 +83,7 @@ for(let time=1232;time<=2000;time+=16) {
 
     def test_unflushed_left_drag_supersession_settles_only_latest_focus(self):
         self.run_scenario(r'''
-render(); manualStart(); unflushedOrbit();
+await render(); manualStart(); unflushedOrbit();
 await select('a'); advance(0);
 for(let time=16;time<=160;time+=16) advance(time);
 const moving=renderedPose();
@@ -105,7 +105,7 @@ assert.deepEqual(details,['a','b'],'selection details remain independent of focu
 
     def test_unflushed_wheel_finishes_at_exact_target_and_radius(self):
         self.run_scenario(r'''
-render(); manualStart(); unflushedWheel();
+await render(); manualStart(); unflushedWheel();
 await select('a'); advance(0);
 for(const time of [5,100,350,695]) {advance(time); assertBounds();}
 advance(700); assertEndpoint('wheel deadline');
@@ -118,7 +118,7 @@ for(const time of [900,1200,2000]) {
 
     def test_unflushed_pan_mouseup_then_focus_finishes_exactly(self):
         self.run_scenario(r'''
-render(); manualStart(); unflushedPan();
+await render(); manualStart(); unflushedPan();
 await select('a'); advance(0);
 for(const time of [5,100,350,695]) {advance(time); assertBounds();}
 advance(700); assertEndpoint('pan deadline');
@@ -138,7 +138,7 @@ for(const time of [900,1200,2000]) {
         self.assertEqual(FINITE_WHEEL_PAN.count(drain), 1)
         unflushed = FINITE_WHEEL_PAN.replace(drain, '', 1)
         self.run_scenario(unflushed + r'''
-render(); wheelAndPanToRadius(5e153);
+await render(); wheelAndPanToRadius(5e153);
 controls.minDistance=0.25; controls.maxDistance=1e155;
 await select('a');
 for(const time of [0,100,350,695,700,900,1200,2000]) {
@@ -164,7 +164,7 @@ assert.deepEqual(pose(),completed,'exceptional pan cannot resume after completio
             for blocked in (False, True):
                 with self.subTest(input=input_name, blocked=blocked):
                     self.run_scenario(r'''
-render(); manualStart(); INPUT();
+await render(); manualStart(); INPUT();
 // Pending input exists before blocked flags are set; settlement must drain it
 // even when the user's public settings would normally suppress that input.
 const config={staticMoving:BLOCKED,dynamicDampingFactor:0.37,rotateSpeed:1.3,zoomSpeed:1.7,panSpeed:0.6,
@@ -200,7 +200,7 @@ assertBounds();
         for input_name in ('unflushedWheel', 'unflushedPan'):
             with self.subTest(input=input_name):
                 self.run_scenario(r'''
-render(); manualStart(); INPUT();
+await render(); manualStart(); INPUT();
 const start=pose(), radius=camera.position.distanceTo(controls.target);
 await select('a');
 assert.deepEqual(pose(),start,'ordinary start is not rebased on selection');
@@ -215,7 +215,7 @@ assertBounds();
         for input_name in ('unflushedWheel', 'unflushedPan'):
             with self.subTest(input=input_name):
                 self.run_scenario(r'''
-render(); manualStart(); INPUT();
+await render(); manualStart(); INPUT();
 await select('a'); advance(0); advance(100);
 // Static manual interaction avoids confusing legitimate new orbit inertia with
 // a stale focus write; the unflushed pre-focus inputs above remain dynamic.

@@ -9,7 +9,7 @@ class GraphClickAuthorityTests(unittest.TestCase):
 
     def test_click_uses_mounted_geometry_and_cancels_queued_search_before_post(self):
         self.run_scenario(r'''
-render(); configureView(); calls.length=0;
+await render(); configureView(); calls.length=0;
 await searchButton('a').onclick(); await flush();
 assert.equal(calls.length,0,'search animation is queued but has not run');
 let resolvePost, postPose;
@@ -34,12 +34,12 @@ assert.deepEqual(details,['a','b']); assertHalo('b');
         for action in ('undo', 'reset', 'replacement'):
             with self.subTest(action=action):
                 self.run_scenario("const action=" + repr(action) + r''';
-render(); configureView(); calls.length=0;
+await render(); configureView(); calls.length=0;
 let resolvePost;
 postHook=()=>new Promise(resolve=>{resolvePost=resolve;});
 const pending=clickHandler(b);
 if(action==='replacement') {
-  render(model([node('a',0.8,0.7,0.6),node('b',0.6,0.4,0.2)]));
+  await render(model([node('a',0.8,0.7,0.6),node('b',0.6,0.4,0.2)]));
 } else {
   historyHook=()=>({current_track_id:action==='undo'?'a':null,history:[],selection_epoch:1});
   await history('/api/'+action);
@@ -54,10 +54,11 @@ if(action!=='replacement') assert.deepEqual(details,loaded,'history supersedes g
 
     def test_render_gap_uses_mounted_coordinates_not_pending_layout(self):
         self.run_scenario(r'''
-render(); configureView(); calls.length=0;
+await render(); configureView(); calls.length=0;
 const before=pose();
-context.pendingLayout=model([node('a',0.8,0.7,0.6),node('b',0.6,0.4,0.2)]);
-run("setVisibleGraphForTesting(pendingLayout); graphLoadState={...graphLoadState,status:'rendering'}");
+// A replacement graph has arrived and waits for its render frame: the mounted layout is still the old one.
+await receiveGraph(model([node('a',0.8,0.7,0.6),node('b',0.6,0.4,0.2)]));
+assert.equal(seam.snapshot().graphStatus,'rendering','the replacement waits for its frame');
 let resolvePost; postHook=()=>new Promise(resolve=>{resolvePost=resolve;});
 const pending=clickHandler(b);
 assertImmediate(before,b);
@@ -68,16 +69,12 @@ assert.deepEqual(pose(),translated(before,b),'acceptance cannot focus unmounted 
     def test_unrepresentable_translation_skips_pose_and_adapter_error_keeps_selection(self):
         self.run_scenario(r'''
 const enormous=node('enormous'); Object.assign(enormous,{fx:1e100,fy:1e100,fz:1e100});
-render(model([a,b,enormous])); configureView(); calls.length=0;
+await render(model([a,b,enormous])); configureView(); calls.length=0;
 const before=pose();
 await clickHandler(enormous); await flush(); tick(); tick();
 assert.deepEqual(pose(),before,'finite but degenerate translated pose is not usable geometry');
 assert.equal(calls.length,0); assert.deepEqual(details,['enormous']);
-context.brokenGraph=new Proxy(graph,{get(target,key){
-  if(key==='cameraPosition') return ()=>{throw new Error('fixture camera unavailable');};
-  return Reflect.get(target,key);
-}});
-run('forceGraph=brokenGraph');
+cameraFailure=new Error('fixture camera unavailable');
 let pending; assert.doesNotThrow(()=>{pending=clickHandler(a);});
 await pending; await flush(); tick(); tick();
 assert.deepEqual(details,['enormous','a'],'adapter failure cannot revoke accepted detail');

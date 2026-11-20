@@ -1,6 +1,13 @@
-"""The camera tests' shared Node harness for the Explorer app: fixture, vendored graph library and recorded inputs (#146)."""
+"""The camera tests' shared Node harness for the Explorer app: fixture, vendored graph library and recorded inputs (#146).
+
+The page starts as in a browser, at ``?diagnostics``. A test shows a graph by answering the page's graph
+request (``render``), chooses a listed track by clicking its row (``select``), uses undo and reset by their
+buttons (``history``) and picks a node through the 3D graph's click handler. The page is observed through its
+diagnostics seam (``seam``), the fake DOM, its requests and the 3D graph's boundary.
+"""
 from pathlib import Path
 from tests.support.explorer_app_bundle import explorer_app_script
+from tests.support.explorer_page_harness import FAKE_DOM
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,18 +33,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const frames = [], calls = [], requests = [], details = [];
 let fixtureClock=0;
-class Element {
-  constructor(tag='div') { this.tagName=tag.toUpperCase(); this.children=[];
-    this.style={}; this.dataset={}; this.clientWidth=800; this.clientHeight=600; }
-  append(...children) { for(const child of children) {this.children.push(child); child.parentElement=this;} }
-  replaceChildren(...children) { this.children=[]; this.append(...children); }
-  setAttribute(key,value) {this[key]=value;}
-  removeAttribute(key) {delete this[key];}
-  getBoundingClientRect() {return {width:800,height:600,left:0,top:0};}
-}
-const elements = {graph3d:new Element(), detail:new Element()};
-const document = {getElementById:id=>elements[id]||null,
-  createElement:tag=>new Element(tag), querySelectorAll:()=>[]};
+''' + FAKE_DOM + r'''
 const scene = {children:[], add(child){this.children.push(child); child.parent=this;},
   remove(child){this.children=this.children.filter(c=>c!==child); child.parent=null;}};
 class Geometry {constructor(radius){this.parameters={radius};} dispose(){} }
@@ -66,6 +62,7 @@ const graph = new Proxy({}, {get(_target,key) {
     return graph;
   };
   if(key==='cameraPosition') return (position,target,duration)=>{
+    if(cameraFailure) throw cameraFailure;
     if(!position) return {...camera.position};
     calls.push({position:{...position},target:{...target},duration,at:fixtureClock});
     Object.assign(camera.position,position); Object.assign(controls.target,target);
@@ -76,15 +73,25 @@ const graph = new Proxy({}, {get(_target,key) {
 }});
 const resizeCallbacks=[];
 class ResizeObserver {constructor(callback){resizeCallbacks.push(callback);} observe(){} }
-let graphHook=null;
-let postHook=null, historyHook=null, authoritativeSnapshot={current_track_id:null,history:[],selection_epoch:0};
+let graphHook=null, answerGraph=null, cameraFailure=null;
+let postHook=null, historyHook=null, historyGate=null, authoritativeSnapshot={current_track_id:null,history:[],selection_epoch:0};
 let clickHandler=null;
-const context=vm.createContext({console,URLSearchParams,setTimeout,clearTimeout,
+// The tracks a test chooses from the list; their rows are listed once, by a real search, at startup.
+const LISTED=['a','b','unpositioned','missing','bad'];
+const pendingTimers=[];
+const storage=new Map();
+const context=vm.createContext({console,URL,URLSearchParams,document,
+  location:{search:'?diagnostics',href:'http://127.0.0.1/?diagnostics'},
+  sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,String(value))},
+  setTimeout:callback=>{pendingTimers.push(callback);return pendingTimers.length;},clearTimeout(){},
   requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},performance:{now:()=>fixtureClock},ResizeObserver,
   ForceGraph3D:()=>()=>graph,
-  fetch:async(path,options)=>{
+  fetch:async(path,options={})=>{
     requests.push({path,options});
-    if(path.startsWith('/api/mood-axis-graph') && graphHook) return graphHook();
+    const url=new URL(path,'http://127.0.0.1/');
+    if(url.pathname==='/api/mood-axis-graph') return graphHook?graphHook():new Promise(resolve=>{answerGraph=resolve;});
+    if(url.pathname==='/api/tracks/summary')
+      return {ok:true,json:async()=>({tracks:LISTED.map(id=>({handle:id,title:id,artist:'fixture'})),metadata:{track_count:LISTED.length},next_cursor:null})};
     if(path==='/api/current') {
       const id=JSON.parse(options.body).track_id;
       if(postHook) return postHook(id);
@@ -92,37 +99,77 @@ const context=vm.createContext({console,URLSearchParams,setTimeout,clearTimeout,
     }
     if(path==='/api/undo'||path==='/api/reset') {
       assert.equal(options.method,'POST');
+      if(historyGate) return historyGate(path);
       authoritativeSnapshot=historyHook(path);
       return {ok:true,json:async()=>authoritativeSnapshot};
     }
     if(path==='/api/state') return {ok:true,json:async()=>authoritativeSnapshot};
     if(path.startsWith('/api/tracks/')) {
       const id=decodeURIComponent(path.slice('/api/tracks/'.length)); details.push(id);
-      return {ok:true,json:async()=>({metadata:{title:'Detail '+id},fields:{}})};
+      return {ok:true,json:async()=>({handle:id,metadata:{common:[['title','Detail '+id]],tags:[]},fields:{}})};
     }
     throw new Error('Unexpected fixture request: '+path);
   }});
-// Compile the complete unmodified asset; no document yet means no startup I/O.
+// The complete unmodified asset starts as in a browser, at ?diagnostics; tests observe it through its seam.
 vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context,{filename:process.argv[1]});
-context.document=document;
-const run=code=>vm.runInContext(code,context);
-const select=id=>run(`setCurrent(${JSON.stringify(id)})`);
+const seam=context.explorerDiagnostics;
+const flush=async()=>{for(let i=0;i<60;i++) await Promise.resolve();};
+// Startup's own frames and timers, run without moving the camera clock.
+async function startupWork(){for(let round=0;round<6;round++){await flush();for(const callback of pendingTimers.splice(0)) callback();
+  for(const callback of frames.splice(0)) if(callback) callback(fixtureClock);}await flush();}
+async function startup(){
+  await startupWork();
+  const search=byId('track-search'); search.value='fixture'; search.oninput();
+  await startupWork();
+  assert.deepEqual(document.querySelectorAll('#tracks tbody tr').map(row=>row.dataset.trackId),LISTED,'startup lists the fixture tracks');
+  requests.length=0;
+}
+// Display coordinates are the page's own: normalized position times the graph scale, computed as it does.
+const DISPLAY=value=>value*180*2;
 function node(id,x=0.25,y=-0.4,z=0.6) {
-  return {id,label:id,x:x*200,y:y*200,z:z*200,fx:x*200,fy:y*200,fz:z*200,color:'#123456',
-    bpm:120,genres:[['ambient',0.8]],moodScore:null,
-    axis:{x:{raw:x,normalized:x,scale:'test'},y:{raw:y,normalized:y,scale:'test'},
-      z:{raw:z,normalized:z,label:'test',scale:'test'}}};
+  const [nx,ny,nz]=[x,y,z].map(value=>value*200/360);
+  return {id,label:id,x:DISPLAY(nx),y:DISPLAY(ny),z:DISPLAY(nz),fx:DISPLAY(nx),fy:DISPLAY(ny),fz:DISPLAY(nz),color:'#123456',
+    bpm:120,genres:[['ambient',0.8]],moodScore:null,normalized:{x:nx,y:ny,z:nz},
+    axis:{x:{raw:x,normalized:nx,scale:'test'},y:{raw:y,normalized:ny,scale:'test'},
+      z:{raw:z,normalized:nz,label:'test',scale:'test'}}};
 }
 const a=node('a'), b=node('b',-0.7,0.8,0.2);
 function model(nodes=[a,b]) {return {nodes,links:[],unpositioned:[],availableMoods:[],
   selectedMood:'',metadata:{},genreOptions:['ambient']};}
-function render(data=model(),full=data) {
-  context.fixtureModel=data; context.fixtureFullModel=full;
-  run("graphLoadState={...graphLoadState,status:'rendering'}; setGraphModelForTesting(fixtureFullModel); setVisibleGraphForTesting(fixtureModel); renderMap(fixtureModel); graphLoadState={...graphLoadState,status:'ready'}");
+// A node a test moved by hand keeps its display coordinate: its normalized value is derived from it.
+const normalizedOf=(n,key)=>DISPLAY(n.normalized?.[key])===n['f'+key]?n.normalized[key]:n['f'+key]/360;
+function graphBody(data) {
+  const index=new Map(data.nodes.map((n,i)=>[n.id,i]));
+  return {dto_version:'mood-axis-graph-indexed-v1',selected_mood:data.selectedMood||'',available_moods:data.availableMoods||[],
+    axis:[{key:'x',label:'X',scale:'test'},{key:'y',label:'Y',scale:'test'},{key:'z',label:'Z',scale:'test'}],
+    nodes:data.nodes.map(n=>[n.id,n.label,n.axis?.x?.raw??0,normalizedOf(n,'x'),n.axis?.y?.raw??0,normalizedOf(n,'y'),
+      n.axis?.z?.raw??0,normalizedOf(n,'z'),n.bpm??120,null,[[0,0.8]],[]]),
+    links:(data.links||[]).map(l=>[index.get(l.source?.id??l.source),index.get(l.target?.id??l.target),l.score??0.5]),
+    unpositioned:(data.unpositioned||[]).map(u=>[u.id??u.track_id,u.label??u.id??u.track_id,[]]),
+    genre_labels:['ambient'],reason_text:[],explanation_table:[],provenance_table:[],metadata:{graph_status:{state:'ready'}}};
 }
+// The page receives this graph: it answers the page's graph request, asking for a reload first if none is
+// waiting. The page builds the graph's model and waits for a frame to draw it.
+async function receiveGraph(data=model()) {
+  if(!answerGraph) { byId('reload-graph').onclick(); await flush(); }
+  assert.ok(answerGraph,'the page asked for the graph');
+  const answer=answerGraph; answerGraph=null;
+  answer({ok:true,status:200,json:async()=>graphBody(data)});
+  await flush();
+}
+// The page shows this graph: it receives it, then draws it in the next frame.
+async function render(data=model()) {
+  await receiveGraph(data);
+  for(const callback of frames.splice(0)) if(callback) callback(fixtureClock);
+  await flush();
+  assert.equal(seam.snapshot().graphStatus,'ready','the page shows the graph');
+}
+// Choosing a listed track: the listener clicks its row; the page posts the choice at once.
+function row(id){const found=document.querySelectorAll('#tracks tbody tr').find(item=>item.dataset.trackId===id);assert.ok(found,'a listed row for '+id);return found;}
+const select=id=>Promise.resolve(row(id).querySelector('button').onclick());
 function tick() {fixtureClock+=700; const pending=frames.splice(0); for(const callback of pending) callback(fixtureClock);}
 async function history(path) {
-  const promise=run(`applyHistorySelection(${JSON.stringify(path.replace("/api/",""))})`);
+  const promise=Promise.resolve(byId(path==='/api/undo'?'undo':'reset').onclick());
   // Flush the bounded microtask/nextFrame chain used by real refresh().
   for(let i=0;i<20;i++) {await Promise.resolve(); tick();}
   await promise;
@@ -155,6 +202,7 @@ function assertFocus(id) {
   }
 }
 (async()=>{
+await startup();
 '''
 
 

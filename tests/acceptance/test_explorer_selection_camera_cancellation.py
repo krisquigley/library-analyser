@@ -54,7 +54,7 @@ function advance(milliseconds) {
 }
 function cameraSnapshot(){return {position:{...camera.position},target:{...controls.target}};}
 async function startA() {
-  render(); calls.length=0;
+  await render(); calls.length=0;
   const before=cameraSnapshot();
   await select('a'); tick(); advance(120);
   assert.notDeepEqual(cameraSnapshot(),before,'control: focus actually progresses before cancellation');
@@ -90,7 +90,7 @@ class SelectionCameraCancellationTests(unittest.TestCase):
 
     def test_focus_after_clock_advance_takes_full_700ms(self):
         self.run_scenario(r'''
-render(); advance(2000);
+await render(); advance(2000);
 const before=cameraSnapshot();
 await select('b'); tick();
 assert.deepEqual(cameraSnapshot(),before,'focus starts at current nonzero clock, not clock origin');
@@ -108,7 +108,7 @@ assert.equal(transitions.length,0,'adapter owns RAF duration, never vendor timed
     def test_clock_and_cancel_raf_seam_after_elapsed_time(self):
         self.run_scenario(r'''
 await startA();
-assert.equal(run('performance.now()'),fixtureClock,'performance and RAF share one elapsed clock');
+assert.equal(context.performance.now(),fixtureClock,'performance and RAF share one elapsed clock');
 assert.equal(typeof context.cancelAnimationFrame,'function','fixture exposes cancellation boundary');
 assert.ok(frames.length>0,'inflight focus has a pending RAF');
 const pendingFocus=frames[frames.length-1];
@@ -135,7 +135,7 @@ await startA();
 const afterA=cameraSnapshot();
 historyHook=()=>({current_track_id:null,history:[],selection_epoch:1});
 await history('/api/reset');
-assert.equal(run('getStateForTesting().current_track_id'),null);
+assert.equal(seam.snapshot().currentTrackId,null);
 advance(120); advance(900);
 assert.deepEqual(cameraSnapshot(),afterA,'reset must stop A, not merely clear pending focus');
 ''')
@@ -157,10 +157,9 @@ await pending;
         self.run_scenario(r'''
 await startA();
 const afterA=cameraSnapshot();
-const originalFetch=context.fetch;
 let resolveReset;
-context.fetch=(path,options)=>path==='/api/reset'?new Promise(resolve=>{resolveReset=resolve;}):originalFetch(path,options);
-const pending=run("applyHistorySelection('reset')");
+historyGate=()=>new Promise(resolve=>{resolveReset=resolve;});
+const pending=Promise.resolve(byId('reset').onclick());
 advance(120); advance(900);
 assert.deepEqual(cameraSnapshot(),afterA,'reset intent cancels A while its POST is still pending');
 authoritativeSnapshot={current_track_id:null,history:[],selection_epoch:1};

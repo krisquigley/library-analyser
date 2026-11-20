@@ -44,10 +44,7 @@ function assertImmediate(before,node) {
 function accept(id) {return {ok:true,json:async()=>({current_track_id:id,history:[],selection_epoch:0})};}
 async function flush() {for(let i=0;i<12;i++) await Promise.resolve();}
 function searchButton(id) {
-  elements.tracks=new Element(); context.searchTracks=[{handle:id,title:id,artist:'fixture'}];
-  run('renderTracks(searchTracks)');
-  const table=elements.tracks.children[0], tbody=table.children[2];
-  const button=tbody.children[0].children[0].children[0];
+  const button=row(id).querySelector('button');
   assert.equal(typeof button.onclick,'function','real search row wires selection');
   return button;
 }
@@ -98,7 +95,7 @@ class GraphClickImmediateTests(unittest.TestCase):
         self.assertEqual(FIXTURE.count(seam), 1)
         fixture = FIXTURE.replace(seam, "if(key==='controls') return undefined;", 1)
         self.run_scenario(r'''
-assert.doesNotThrow(()=>render(),'render must tolerate a graph adapter without controls');
+await assert.doesNotReject(()=>render(),'render must tolerate a graph adapter without controls');
 assert.equal(liveData.nodes.length,2,'topology still mounts without the optional camera adapter');
 await clickHandler(b); await flush(); tick(); tick();
 assert.deepEqual(details,['b'],'missing controls must not prevent accepted detail'); assertHalo('b');
@@ -106,7 +103,7 @@ assert.deepEqual(details,['b'],'missing controls must not prevent accepted detai
 
     def test_real_controls_start_cancels_focus_while_search_post_is_pending(self):
         self.run_scenario(r'''
-render(); configureView(); calls.length=0;
+await render(); configureView(); calls.length=0;
 assert.equal(typeof controlListeners.get('start'),'function','real controls observer remains installed');
 let resolvePost; postHook=()=>new Promise(resolve=>{resolvePost=resolve;});
 const pending=searchButton('b').onclick();
@@ -120,7 +117,7 @@ assert.deepEqual(details,['b']); assertHalo('b');
 
     def test_click_centers_synchronously_while_post_pending_without_replay_and_search_animates(self):
         self.run_scenario(r'''
-render(); configureView(); calls.length=0;
+await render(); configureView(); calls.length=0;
 const before=pose(), original=liveData, count=replacements;
 let resolvePost;
 postHook=()=>new Promise(resolve=>{resolvePost=resolve;});
@@ -150,7 +147,7 @@ assert.equal(camera.zoom,3.25); assertHalo('a');
 
     def test_latest_click_search_and_orbit_ownership_ignore_out_of_order_posts(self):
         self.run_scenario(r'''
-render(); configureView(); calls.length=0;
+await render(); configureView(); calls.length=0;
 // Independent baseline-green control runs before any new-behavior assertion.
 await searchButton('a').onclick(); await flush();
 assert.equal(calls.length,0,'accepted search waits for animation frame');
@@ -187,7 +184,7 @@ assert.deepEqual(details,['b','a','b','b'],'only owned acceptances load detail')
 
     def test_rejected_post_keeps_clicked_view_without_unaccepted_detail_or_replay(self):
         self.run_scenario(r'''
-render(); configureView(); calls.length=0;
+await render(); configureView(); calls.length=0;
 let resolvePost; postHook=()=>new Promise(resolve=>{resolvePost=resolve;});
 const before=pose(), pending=clickHandler(a);
 const clicked=translated(before,a), count=calls.length;
@@ -197,7 +194,7 @@ assert.deepEqual(details,[],'rejected A never authorizes an A detail GET');
 assert.equal(calls.length,count,'rejection never replays focus');
 assert.deepEqual(pose(),clicked,'rejection leaves locally centered user view intact');
 function textContent(element) {return [element.textContent||'',...element.children.map(textContent)].join(' ');}
-assert.match(textContent(elements.detail),/selection rejected|409|failed/i,'selection error is reported');
+assert.match(textContent(byId('detail')),/selection rejected|409|failed/i,'selection error is reported');
 // A later accepted click owns both detail and halo, even after the failed intent.
 postHook=id=>Promise.resolve(accept(id)); const nextBefore=pose();
 const next=clickHandler(b); assertImmediate(nextBefore,b); await next; await flush(); tick(); tick();
@@ -208,7 +205,7 @@ assert.deepEqual(details,['b']); assertHalo('b');
         self.run_scenario(r'''
 const bad=node('bad',NaN,0.2,Infinity), origin=node('origin',0,0,0);
 const data=model([a,b,bad,origin]); data.unpositioned=[{track_id:'unpositioned'}];
-render(data); configureView(); calls.length=0;
+await render(data); configureView(); calls.length=0;
 const before=pose(), requestCount=requests.length;
 for(const invalid of [null,undefined,{}]) {
   let pending; assert.doesNotThrow(()=>{pending=clickHandler(invalid);},'invalid pick must not throw from real handler');

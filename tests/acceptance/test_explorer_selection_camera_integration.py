@@ -9,7 +9,17 @@ import unittest
 from tests.support.explorer_camera_harness import ASSETS, FIXTURE, ROOT
 
 
-# Explicit adapter boundary shared by immediate and elapsed-time camera fixtures.
+# The listener's graph filters, set and read through their controls once the graph's genres are offered.
+FILTERS = r'''
+function setFilters({bpmMin,bpmMax,genres}) {
+  byId('bpm-min').value=String(bpmMin); byId('bpm-max').value=String(bpmMax); byId('bpm-max').onchange();
+  const choice=byId('genre-filter');
+  for(const option of choice.options) option.selected=genres.includes(option.value);
+  choice.onchange();
+}
+const shownFilters=()=>JSON.stringify({bpmMin:byId('bpm-min').value,bpmMax:byId('bpm-max').value,
+  genres:byId('genre-filter').selectedOptions.map(option=>option.value)});
+'''
 
 
 class SelectionCameraIntegrationTests(unittest.TestCase):
@@ -18,7 +28,7 @@ class SelectionCameraIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(node, 'Node required: RED must not be accepted via skipped tests')
         for asset in ASSETS:
             with self.subTest(asset=str(asset)):
-                script = FIXTURE + scenario + '\n})().then(()=>console.log("SCENARIO_COMPLETED")).catch(error=>{console.error(error);process.exitCode=1;});'
+                script = FIXTURE + FILTERS + scenario + '\n})().then(()=>console.log("SCENARIO_COMPLETED")).catch(error=>{console.error(error);process.exitCode=1;});'
                 result = subprocess.run([node, '-e', script, str(asset)], cwd=ROOT,
                                         capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -27,7 +37,7 @@ class SelectionCameraIntegrationTests(unittest.TestCase):
 
     def test_positioned_result_animates_to_display_position_and_marks_halo(self):
         self.run_scenario(r'''
-render(); const original=liveData; const count=replacements; calls.length=0;
+await render(); const original=liveData; const count=replacements; calls.length=0;
 await select('a'); tick(); tick();
 assert.deepEqual(details,['a'],'selection requests only its detail');
 assert.equal(replacements,count,'selection must not replace graphData');
@@ -45,7 +55,7 @@ resolveA({ok:true,json:async()=>({current_track_id:'a',history:[],selection_epoc
 await first;
 assert.deepEqual(details,['b'],'stale A acceptance cannot fetch A detail');
 assert.equal(calls.length,0,'pending selection cannot focus before graph exists');
-render(); tick(); tick();
+await render(); tick(); tick();
 assert.equal(calls[0].duration,0,'initial whole-layout framing precedes animated focus');
 assertFocus('b');
 assert.equal(calls.length,2,'only framing and latest focus, never an A focus');
@@ -53,13 +63,14 @@ assert.equal(calls.length,2,'only framing and latest focus, never an A focus');
 
     def test_replacement_reload_defers_latest_focus_until_new_graph_is_rendered(self):
         self.run_scenario(r'''
-render(); const oldGraph=liveData; const before=replacements; calls.length=0;
-run("setGraphControlsForTesting({bpmMin:100,bpmMax:140,genres:['ambient']})");
-const filters=JSON.stringify(run('getGraphControlsForTesting()'));
+await render(); setFilters({bpmMin:100,bpmMax:140,genres:['ambient']}); await flush();
+assert.equal(liveData.nodes.length,2,'both tracks pass the filters');
+const oldGraph=liveData; const before=replacements; calls.length=0;
+const filters=shownFilters();
 let resolveGraph;
 graphHook=()=>new Promise(resolve=>{resolveGraph=resolve;});
-const reload=run('loadGraph()');
-assert.equal(run('graphLoadState.status'),'loading');
+const reload=Promise.resolve(byId('reload-graph').onclick());
+assert.equal(seam.snapshot().graphStatus,'loading');
 await select('a'); await select('b'); tick();
 assert.deepEqual(details,['a','b'],'detail stays usable during reload');
 assert.strictEqual(liveData,oldGraph,'old instance stays rendered while request pending');
@@ -73,7 +84,7 @@ resolveGraph({ok:true,json:async()=>({dto_version:'mood-axis-graph-indexed-v1',
   links:[],unpositioned:[],genre_labels:['ambient'],reason_text:[],
   explanation_table:[],provenance_table:[],metadata:{graph_status:{state:'ready'}}})});
 for(let i=0;i<20;i++) await Promise.resolve();
-assert.equal(run('graphLoadState.status'),'rendering','replacement waits for a render frame');
+assert.equal(seam.snapshot().graphStatus,'rendering','replacement waits for a render frame');
 await select('a'); await select('b');
 assert.equal(animated().length,0,'latest focus also waits across DTO-to-render frame gap');
 assert.equal(replacements,before,'new DTO is not rendered yet');
@@ -82,20 +93,20 @@ assert.equal(replacements,before+1,'replacement topology rendered on same graph 
 assert.equal(calls[0].duration,0,'new layout framing precedes selected focus');
 assertFocus('b');
 assert.notDeepEqual(animated()[0].target,{x:b.fx,y:b.fy,z:b.fz},'focus uses replacement coordinates');
-assert.equal(JSON.stringify(run('getGraphControlsForTesting()')),filters,'reload focus preserves active filters');
-assert.equal(elements.detail['aria-busy'],'false');
+assert.equal(shownFilters(),filters,'reload focus preserves active filters');
+assert.equal(byId('detail').getAttribute('aria-busy'),'false');
 assert.equal(calls.length,2,'one new framing and one latest focus only');
 ''')
 
     def test_consumed_focus_preserves_manual_orbit_on_frames_mood_refresh_and_resize(self):
         self.run_scenario(r'''
-render(); calls.length=0; await select('a'); tick(); tick(); assertFocus('a');
+await render(); calls.length=0; await select('a'); tick(); tick(); assertFocus('a');
 const before=replacements; calls.length=0;
 Object.assign(camera.position,{x:901,y:802,z:703});
 Object.assign(controls.target,{x:91,y:82,z:73});
 tick(); tick();
 const mood=model([a,b].map(n=>({...n,moodScore:{raw:0.8,label:'calm'}})));
-render(mood); tick(); for(const callback of resizeCallbacks) callback(); tick();
+await render(mood); tick(); for(const callback of resizeCallbacks) callback(); tick();
 assert.equal(calls.length,0,'consumed focus never steals manual orbit');
 assert.deepEqual(camera.position,{x:901,y:802,z:703});
 assert.deepEqual(controls.target,{x:91,y:82,z:73});
@@ -106,30 +117,28 @@ assert.equal(replacements,before,'mood-only update does not replace topology');
         self.run_scenario(r'''
 const bad=node('bad',NaN,0.2,Infinity);
 const data=model([a,b,bad]); data.unpositioned=[{track_id:'unpositioned'}];
-render(data); calls.length=0;
+await render(data); calls.length=0;
 for(const id of ['missing','unpositioned','bad']) {await select(id); tick();}
 assert.deepEqual(details,['missing','unpositioned','bad']);
 assert.equal(calls.length,0,'absent or invalid coordinates never move the camera');
-assert.equal(elements.detail['aria-busy'],'false','detail completes independently');
+assert.equal(byId('detail').getAttribute('aria-busy'),'false','detail completes independently');
 ''')
 
     def test_hidden_node_preserves_filters_and_still_loads_detail_without_focus(self):
         self.run_scenario(r'''
-context.fullModel=model();
-run("setGraphControlsForTesting({bpmMin:130,bpmMax:150,genres:['ambient']})");
-const filters=JSON.stringify(run('getGraphControlsForTesting()'));
-const filtered=run('applyMoodGraphFilters(fullModel,getGraphControlsForTesting())');
-assert.equal(filtered.nodes.length,0,'fixture proves the selected node is hidden');
-render(filtered,context.fullModel); calls.length=0; await select('a'); tick(); tick();
+await render(); setFilters({bpmMin:130,bpmMax:150,genres:['ambient']}); await flush();
+const filters=shownFilters();
+assert.equal(liveData.nodes.length,0,'the filters hide the selected node');
+const shown=replacements; calls.length=0; await select('a'); tick(); tick();
 assert.deepEqual(details,['a'],'hidden nodes still get independent current detail');
 assert.equal(calls.length,0,'hidden nodes must not trigger focus or clear filters');
-assert.equal(JSON.stringify(run('getGraphControlsForTesting()')),filters);
-assert.equal(replacements,1,'selection cannot repopulate filtered topology');
+assert.equal(shownFilters(),filters);
+assert.equal(replacements,shown,'selection cannot repopulate filtered topology');
 ''')
 
     def test_graph_click_uses_selection_detail_and_immediate_translation(self):
         self.run_scenario(r'''
-render(); calls.length=0;
+await render(); calls.length=0;
 assert.equal(typeof clickHandler,'function','real renderMap wires graph picking');
 const before={...camera.position}, target={...controls.target};
 const pending=clickHandler(liveData.nodes.find(n=>n.id==='b'));
@@ -148,7 +157,7 @@ await select('a');
 historyHook=()=>({current_track_id:'b',history:[],selection_epoch:0});
 await history('/api/undo');
 assert.deepEqual(details,['a','b'],'undo keeps selected detail behavior');
-render(); tick(); tick(); assertFocus('b');
+await render(); tick(); tick(); assertFocus('b');
 assert.equal(calls.length,2,'no stale pending A focus after undo');
 ''')
 
@@ -161,10 +170,10 @@ historyHook=()=>({current_track_id:null,history:[],selection_epoch:1});
 await history('/api/reset');
 resolveA({ok:true,json:async()=>({current_track_id:'a',history:[],selection_epoch:0})});
 await first;
-render(); tick(); tick();
+await render(); tick(); tick();
 assert.deepEqual(details,[],'reset invalidates stale acceptance and detail');
-assert.equal(run('getStateForTesting().current_track_id'),null);
-assert.equal(run('getStateForTesting().selection_epoch'),1);
+assert.equal(seam.snapshot().currentTrackId,null);
+assert.equal(seam.snapshot().selectionEpoch,1);
 assert.equal(calls.length,1,'only initial framing after reset');
 assert.equal(animated().length,0,'no stale selected focus after reset');
 assert.ok(!scene.children.some(c=>c.userData?.role==='selected-node-halo'));
@@ -176,7 +185,7 @@ postHook=()=>Promise.resolve({ok:true,json:async()=>({current_track_id:'b',histo
   selection_epoch:0,selection_accepted:false})});
 await select('a');
 assert.deepEqual(details,['b'],'rejected A reconciles to authoritative B detail');
-render(); tick(); tick(); assertFocus('b');
+await render(); tick(); tick(); assertFocus('b');
 assert.equal(calls.length,2,'initial frame then authoritative focus, never rejected A');
 ''')
 

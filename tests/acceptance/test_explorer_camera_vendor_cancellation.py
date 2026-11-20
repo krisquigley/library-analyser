@@ -28,7 +28,7 @@ class CameraVendorCancellationTests(unittest.TestCase):
 
     def test_missing_selection_cancels_motion_without_later_vendor_overwrite(self):
         self.run_scenario(r'''
-render(); await select('a'); advance(0); advance(100);
+await render(); await select('a'); advance(0); advance(100);
 const moving=pose();
 await select('missing');
 const stopped=pose();
@@ -42,7 +42,7 @@ assert.deepEqual(details,['a','missing'],'detail remains independent');
     def test_unpositioned_selection_cancels_both_camera_and_target(self):
         self.run_scenario(r'''
 const data=model(); data.unpositioned=[{track_id:'unpositioned'}];
-render(data); await select('a'); advance(0); advance(100);
+await render(data); await select('a'); advance(0); advance(100);
 const stopped=pose();
 await select('unpositioned'); advance(200); advance(800); advance(1200);
 assert.deepEqual(pose(),stopped,'unpositioned selection cancels both real vendor write paths');
@@ -52,7 +52,7 @@ assert.equal(vendorState.tweenGroup.getAll().length,0);
 
     def test_user_orbit_start_cancels_motion_and_preserves_manual_pose(self):
         self.run_scenario(r'''
-render(); await select('a'); advance(0); advance(100);
+await render(); await select('a'); advance(0); advance(100);
 controls.dispatchEvent({type:'start'});
 camera.position.set(901,802,703); controls.target.set(91,82,73);
 const manual=pose();
@@ -63,7 +63,7 @@ assert.equal(vendorState.tweenGroup.getAll().length,0);
 
     def test_reset_cancels_motion_and_preserves_manual_pose_past_old_deadline(self):
         self.run_scenario(r'''
-render(); await select('a'); advance(0); advance(100);
+await render(); await select('a'); advance(0); advance(100);
 historyHook=()=>({current_track_id:null,history:[],selection_epoch:1});
 await history('/api/reset');
 camera.position.set(901,802,703); controls.target.set(91,82,73);
@@ -75,7 +75,7 @@ assert.equal(vendorState.tweenGroup.getAll().length,0);
 
     def test_new_selection_is_smooth_and_finishes_only_at_latest_target(self):
         self.run_scenario(r'''
-render(); await select('a'); advance(0); const initial=pose(); advance(100);
+await render(); await select('a'); advance(0); const initial=pose(); advance(100);
 assert.notDeepEqual(pose().position,initial.position,'focus moves over time');
 await select('b'); advance(100); advance(200);
 assert.notDeepEqual(pose().target,{x:b.fx,y:b.fy,z:b.fz},'latest focus is not an immediate jump');
