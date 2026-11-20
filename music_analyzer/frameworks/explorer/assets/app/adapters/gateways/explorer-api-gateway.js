@@ -1,6 +1,7 @@
 // The ExplorerApi port over fetch (#146). A refusal's JSON {error} body is read for its message (#149, #152, #155, #158).
 
-import {playlistDownloadQuery} from './playlist-download-query.js';
+import {playlistDownloadQuery, playlistPreviewQuery} from './playlist-download-query.js';
+import {playlistPreviewFrom} from './playlist-preview-dto.js';
 
 const DEFAULT_PLAYLIST_FILENAME = 'library-graph-playlist.m3u';
 const DEFAULT_PLAYLIST_TYPE = 'audio/x-mpegurl;charset=utf-8';
@@ -21,6 +22,9 @@ export function fetchExplorerApi(fetchResource) {
         contentType: header(response, 'content-type') || DEFAULT_PLAYLIST_TYPE,
         warning: header(response, 'X-Music-Explorer-Playlist-Warning') || '',
       };
+    },
+    async previewPlaylist(recipe) {
+      return playlistPreviewFrom(await answer(await fetchResource(playlistPreviewQuery(recipe)), 'Playlist preview failed'));
     },
     async loadMoodGraph(mood) {
       const response = await fetchResource(moodGraphPath(mood));

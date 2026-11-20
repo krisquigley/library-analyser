@@ -5,6 +5,7 @@ import {createPlaylistDownload} from '../../../../../music_explorer/frameworks/e
 import {
   PLAYLIST_DOWNLOAD_EVENT_TYPES,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/application/download-playlist/playlist-download-events.js';
+import {EMPTY_PLAYLIST_DRAFT} from '../../../../../music_explorer/frameworks/explorer/assets/app/domain/playlist-draft.js';
 
 function recordingBus() {
   const published = [];
@@ -20,9 +21,23 @@ function harness({downloadPlaylist, save = () => {}} = {}) {
     return {filename: 'journey.m3u', contents: '#EXTM3U\n', contentType: 'audio/x-mpegurl', warning: ''};
   })};
   const playlistFile = {save: file => { save(file); saved.push(file); }};
-  const playlistDownload = createPlaylistDownload({explorerApi, playlistFile, eventBus});
-  return {playlistDownload, requests, saved, published: eventBus.published};
+  const playlistDraft = draftSession();
+  const playlistDownload = createPlaylistDownload({explorerApi, playlistFile, playlistDraft, eventBus});
+  return {playlistDownload, playlistDraft, requests, saved, published: eventBus.published};
 }
+
+function draftSession() {
+  let current = {draft: EMPTY_PLAYLIST_DRAFT};
+  return {read: () => current, write(changes) { current = {...current, ...changes}; }};
+}
+
+test('the draft is kept in the playlist draft session, where the preview reads it (#138)', () => {
+  const {playlistDownload, playlistDraft} = harness();
+  playlistDownload.edit({count: '25'});
+  assert.equal(playlistDraft.read().draft.count, '25');
+  playlistDraft.write({draft: {...playlistDraft.read().draft, count: '30'}});
+  assert.equal(playlistDownload.draft().count, '30');
+});
 
 test('the event types are the ones the use case publishes', () => {
   assert.deepEqual(PLAYLIST_DOWNLOAD_EVENT_TYPES,
@@ -90,7 +105,7 @@ test('without a start track the download fails without a request', async () => {
   assert.deepEqual(requests, []);
   assert.deepEqual(published, [
     {type: 'playlist-download-started'},
-    {type: 'playlist-download-failed', message: 'Select a start track before downloading M3U'},
+    {type: 'playlist-download-failed', message: 'Select a start track first'},
   ]);
 });
 

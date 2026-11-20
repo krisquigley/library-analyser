@@ -14,7 +14,7 @@ test('a track-count playlist with the defaults', () => {
 
 test('a start track is required', () => {
   for (const startTrackId of [undefined, null, '']) {
-    assert.throws(() => playlistRecipe({...controls, startTrackId}), /Select a start track before downloading M3U/);
+    assert.throws(() => playlistRecipe({...controls, startTrackId}), /Select a start track first/);
   }
 });
 
