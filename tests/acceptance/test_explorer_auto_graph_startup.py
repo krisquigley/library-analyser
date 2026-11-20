@@ -146,7 +146,7 @@ assertNoInitialList();assert.equal(graphRequests().length,1,'rendering success d
     def test_refresh_undo_and_reset_do_not_duplicate_pending_startup_graph(self):
         self.run_browser(r"""
 boot();await flush();assertStartupGraph();
-await context.refresh();await roots.undo.onclick();await roots.reset.onclick();await flush();
+await roots['loading-retry'].onclick();await roots.undo.onclick();await roots.reset.onclick();await flush();
 assert(requests.filter(r=>r.url.pathname==='/api/state').length>1,'refresh exercised the state boundary');
 for(const action of ['undo','reset'])assert(requests.some(r=>r.url.pathname==='/api/'+action&&r.options.method==='POST'),'history control exercised: '+action);
 assert.equal(graphRequests().length,1,'refresh, undo and reset must not restart an in-flight automatic graph');
@@ -156,7 +156,7 @@ assertNoInitialList();graphGate.resolve(response(graphDto));await flush();assert
     def test_refresh_undo_and_reset_do_not_reload_ready_startup_graph(self):
         self.run_browser(r"""
 boot();await flush();assertStartupGraph();graphGate.resolve(response(graphDto));await flush();assertGraphRendered();
-await context.refresh();await roots.undo.onclick();await roots.reset.onclick();await flush();
+await roots['loading-retry'].onclick();await roots.undo.onclick();await roots.reset.onclick();await flush();
 assert(requests.filter(r=>r.url.pathname==='/api/state').length>1,'refresh exercised the state boundary');
 for(const action of ['undo','reset'])assert(requests.some(r=>r.url.pathname==='/api/'+action&&r.options.method==='POST'),'history control exercised: '+action);
 assert.equal(graphRequests().length,1,'refresh, undo and reset retain the successful graph rather than redownloading it');
