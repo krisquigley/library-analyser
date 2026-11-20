@@ -2,6 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {moodGraphModel, moodNodeColor, moodToTrack} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/mood-graph.js';
+import {applyMoodGraphFilters, EMPTY_GRAPH_CONTROLS} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/graph-filters.js';
 
 const axis = (raw, normalized) => ({label: 'axis', raw, normalized});
 
@@ -87,4 +88,15 @@ test('a genre no track scores above 0.1 is not offered', () => {
 test('tracking another mood leaves every node where it was', () => {
   const place = model => model.nodes.map(node => [node.id, node.x, node.y, node.z, node.fx, node.fy, node.fz]);
   assert.deepEqual(place(moodGraphModel({...GRAPH, selected_mood: 'sad', available_moods: ['happy', 'sad']})), place(moodGraphModel(GRAPH)));
+});
+
+test('a node keeps its colour when another mood is tracked, and when filters drop other tracks', () => {
+  const model = moodGraphModel(GRAPH);
+  const otherMood = moodGraphModel({...GRAPH, selected_mood: 'heavy',
+    positioned: GRAPH.positioned.map(track => ({...track, z: {...track.z, raw: 0.9, normalized: 0.9, label: 'heavy'}}))});
+  assert.deepEqual(otherMood.nodes.map(node => node.color), model.nodes.map(node => node.color));
+  const faster = moodGraphModel({...GRAPH, positioned: [GRAPH.positioned[0], {...GRAPH.positioned[1], bpm: 140}]});
+  const [, loud] = faster.nodes;
+  const kept = applyMoodGraphFilters(faster, {...EMPTY_GRAPH_CONTROLS, bpmMin: 130});
+  assert.deepEqual(kept.nodes.map(node => [node.id, node.color]), [[loud.id, loud.color]]);
 });

@@ -1,5 +1,6 @@
 // Issue #146: what the vendored 3d-force-graph camera does, which the graph scene's camera code works around.
 import {test} from 'node:test';
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {loadVendoredGraph, vendoredGraphScene} from './vendored-graph.js';
 
@@ -33,4 +34,11 @@ test('with the controls disabled, the vendor setter looks at the point but leave
   const rendered = camera.quaternion.clone();
   controls.update();
   assert.ok(camera.quaternion.angleTo(rendered) > 0.01, 'the next Trackball update turns back to the stale target');
+});
+
+test('the vendor multiplies the global link opacity by each link colour\'s alpha, so the colour carries the relatedness', () => {
+  const bundle = readFileSync(new URL('../../../../../music_explorer/frameworks/explorer/assets/vendor/3d-force-graph/3d-force-graph.min.js',
+    import.meta.url), 'utf8');
+  assert.ok(bundle.includes('e.linkOpacity*mf(c)'));
+  assert.ok(bundle.includes('linkColor:{default:"color"}'));
 });

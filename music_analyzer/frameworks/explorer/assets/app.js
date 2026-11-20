@@ -9,6 +9,7 @@ import {createGraphRendering} from './app/application/render-graph/render-graph.
 import {forceGraphRenderer, graphViewPose, observeGraphInput} from './app/frameworks/graph-scene/force-graph-rendering.js';
 import {createSelectedNodeHalo, findSceneObject, graphObjectTrackId} from './app/frameworks/graph-scene/selected-node-halo.js';
 import {createCameraControlsWatch, setCameraFocusPose, settleCameraFocusInput, showCameraArcPose} from './app/frameworks/graph-scene/camera-focus-scene.js';
+import {configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, graphContainer, graphDimensions, selectedTrackNodeSize} from './app/frameworks/graph-scene/force-graph-scene.js';
 import {playlistDownloadView} from './app/frameworks/views/playlist-download-view.js';
 import {displayNumber} from './app/domain/display-number.js';
 import {applyMoodGraphFilters, EMPTY_GRAPH_CONTROLS, passesGraphFilters} from './app/domain/graph-filters.js';
@@ -41,12 +42,12 @@ let state={current_track_id:null};
 let graphModel={nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]};
 let visibleGraph={nodes:[],links:[],unpositioned:[]};
 let forceGraph=null;
-let framedGraphLayout=null;
-let renderedGraphSignature=null;
-let renderedGraphData={nodes:[],links:[]};
 let graphResizeObserver=null;
 let graphAxes=null;
 const nodeHalo=createSelectedNodeHalo();
+const graphDataMount=createGraphDataMount({onReplaced:()=>nodeHalo.clear()});
+// A new layout is framed at once; cancelling first keeps a focus arc from overwriting the frame.
+const graphFraming=createGraphFraming({onReframe:()=>cancelCameraFocus()});
 let graphAxesAnimating=false;
 let pendingGraphAxisSpec=[];
 let selectedGraphControls=EMPTY_GRAPH_CONTROLS;
@@ -164,11 +165,11 @@ function abortStaleRefresh(refreshToken,selectionToken){
   if(selectionToken!==trackSelection.generation()){clearLoading(refreshToken); return true;}
   return false;
 }
-function selectedNodeValue(n){return n.id===state.current_track_id?4:1;}
+const selectedNodeValue=selectedTrackNodeSize(()=>state.current_track_id);
 function updateSelectedTrackVisuals(){
   if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===state.current_track_id?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
   if(forceGraph){graphRendering.wake(); forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,visibleGraph); focusPendingCameraSelection();}
-  else if(visibleGraph.nodes.length) renderCanvasFallback(visibleGraph);
+  else if(visibleGraph.nodes.length) drawCanvasFallback(visibleGraph,null,state.current_track_id);
   renderMoodStrip(visibleGraph);
 }
 function renderDetailLoading(){trackDetail.showLoading(trackDetailLoadingViewModel());}
@@ -221,7 +222,6 @@ function canvasPoint(e,rect,canvas){const cw=canvas.clientWidth||rect.width, ch=
 function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
 // Raw selected-label means, never display-normalized z or camera coordinates.
 function buildMoodStrip(data, selectedId){return moodStripMarks(data.nodes,selectedId).map(mark=>({...mark,description:moodMarkDescription(mark)}));}
-function graphDimensions(elem){const parent=elem&&elem.parentElement; const style=parent&&typeof getComputedStyle==='function'?getComputedStyle(parent):null; const trim=style?['paddingLeft','paddingRight','borderLeftWidth','borderRightWidth'].reduce((sum,name)=>sum+(parseFloat(style[name])||0),0):0; const width=Math.max(1,Math.floor(((parent&&parent.clientWidth)||elem.clientWidth||900)-trim)); const height=Math.max(1,Math.floor(elem.clientHeight||1040)); return {width,height};}
 function updateGraphSize(elem,graph){if(!elem||!graph) return {width:0,height:0}; const size=graphDimensions(elem); graph.width(size.width).height(size.height); graphRendering.wake(); return size;}
 function observeGraphResize(elem){if(graphResizeObserver||!elem) return; const resize=()=>updateGraphSize(elem,forceGraph); if(typeof ResizeObserver!=='undefined'){graphResizeObserver=new ResizeObserver(resize); graphResizeObserver.observe(elem); if(elem.parentElement) graphResizeObserver.observe(elem.parentElement);} if(typeof window!=='undefined') window.addEventListener('resize',resize);}
 function disposeGraphAxes(group){
@@ -314,7 +314,7 @@ function selectGraphNode(picked){
   cameraFocus.request(null);
   // A replacement can be visible-but-not-mounted during loadGraph's frame gap.
   const node=visibleGraph.nodes.some(n=>n.id===id)
-    ?renderedGraphData.nodes.find(n=>n.id===id):null;
+    ?graphDataMount.current().nodes.find(n=>n.id===id):null;
   if(forceGraph && node){
     try {
       const controls=forceGraph.controls(), from=forceGraph.cameraPosition();
@@ -336,7 +336,7 @@ function focusPendingCameraSelection(graphRendered=false){
   // Existing instances still show the old layout while a replacement loads.
   // Only renderMap may consume focus before the load state becomes ready.
   if(!graphRendered && graphLoadState.status!=='ready') return;
-  if(!forceGraph || framedGraphLayout===null || cameraFocus.peek()==null) return;
+  if(!forceGraph || graphFraming.layout()===null || cameraFocus.peek()==null) return;
   const id=cameraFocus.take(state.current_track_id);
   if(id===null) return;
   const node=visibleGraph.nodes.find(n=>n.id===id);
@@ -358,9 +358,7 @@ function focusPendingCameraSelection(graphRendered=false){
   }
 }
 function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,state.current_track_id),moodStrip.width()));}
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=document.getElementById('graph3d')||replaceCanvasWithGraphElement(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=ForceGraph3D()(elem).enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel).nodeColor(n=>n.color).nodeVal(selectedNodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(relatednessLinkColor).linkWidth(l=>1+Math.max(0,Number(l.score)||0)); forceGraph.onNodeClick(selectGraphNode); observeGraphResize(elem); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); const signature=JSON.stringify([data.nodes.map(n=>[n.id,n.x,n.y,n.z]),data.links.map(l=>[l.source,l.target,l.score])]); if(signature!==renderedGraphSignature){nodeHalo.clear(); renderedGraphData={nodes:data.nodes.map(n=>Object.assign({},n,{fx:n.fx,fy:n.fy,fz:n.fz})),links:data.links.map(l=>Object.assign({},l))}; forceGraph.graphData(renderedGraphData); renderedGraphSignature=signature;} else {const live=new Map(data.nodes.map(n=>[n.id,n])); for(const node of renderedGraphData.nodes){const updated=live.get(node.id); if(updated){node.moodScore=updated.moodScore; node.axis=updated.axis;}}} syncSelectedNodeHalo(forceGraph,data); forceGraph.numDimensions(3); forceGraph.d3AlphaDecay(1); forceGraph.d3VelocityDecay(1); const layout=JSON.stringify(data.nodes.map(n=>JSON.stringify([n.id,n.x,n.y,n.z])).sort()); if(layout!==framedGraphLayout){const frame=graphCameraFrame(data.nodes,size,forceGraph.camera().fov); /* Synchronize the orbit target even when bundled controls are disabled. */ cancelCameraFocus(); setCameraFocusPose(forceGraph,frame.position,frame.target); framedGraphLayout=layout;} focusPendingCameraSelection(true); graphRendering.wake();} else {nodeHalo.clear();renderCanvasFallback(data,elem);} renderMoodStrip(data);}
-function replaceCanvasWithGraphElement(){const old=document.getElementById('map'); const div=document.createElement('div'); div.id='graph3d'; if(old) old.replaceWith(div); return div;}
-function renderCanvasFallback(data,container){let canvas=document.getElementById('map'); if(!canvas&&container){canvas=(container.children||[]).find(child=>child.tagName==='CANVAS')||document.createElement('canvas'); canvas.id='map'; if(!canvas.parentElement){if(typeof container.replaceChildren==='function') container.replaceChildren(canvas); else if(typeof container.append==='function') container.append(canvas);}} if(!canvas) canvas=document.createElement('canvas'); const size=graphDimensions(canvas); canvas.width=size.width; canvas.height=size.height; const ctx=canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#fafafa'; ctx.fillRect(0,0,canvas.width,canvas.height); for(const n of data.nodes){ctx.beginPath(); ctx.arc(canvas.width/2+n.fx,canvas.height/2-n.fy,n.id===state.current_track_id?9:5,0,Math.PI*2); ctx.fillStyle=n.color; ctx.fill();}}
+function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphModel.nodes.length?graphModel.nodes:data.nodes);const elem=graphContainer(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode}); observeGraphResize(elem); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=updateGraphSize(elem,forceGraph); graphDataMount.mount(forceGraph,data); syncSelectedNodeHalo(forceGraph,data); graphFraming.frame(forceGraph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();} else {nodeHalo.clear();drawCanvasFallback(data,elem,state.current_track_id);} renderMoodStrip(data);}
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
 function clearGraphFilters(){return graphLoad.clearFilters();}
 function buildGraphControls(root){graphFilterControls.mount(root);}
@@ -380,5 +378,5 @@ if(typeof module!=='undefined'){module.exports={refresh,updateSelectedTrackVisua
 // A setter rebinds the module's own function, so a wrapper is called exactly as before. Each name
 // goes as its feature moves into app/ and its tests move with it.
 function exposeForBrowserTests(readers, writers){for(const [name,get] of Object.entries(readers)){if(name in globalThis) continue; Object.defineProperty(globalThis,name,{get,set:writers[name],configurable:true});}}
-exposeForBrowserTests({state:()=>state,graphModel:()=>graphModel,visibleGraph:()=>visibleGraph,forceGraph:()=>forceGraph,framedGraphLayout:()=>framedGraphLayout,renderedGraphData:()=>renderedGraphData,graphAxes:()=>graphAxes,selectedNodeHalo:()=>nodeHalo.current(),pendingSelectionOperation:()=>pendingSelectionOperation,pendingCameraSelection:()=>pendingCameraSelection,cameraFocusFrame:()=>cameraFocusFrame,trackSummaryPage:()=>trackSummaryPage,trackSummaryStatus:()=>trackSummaryStatus,graphLoadState:()=>graphLoadState,text:()=>text,renderDetailLoading:()=>renderDetailLoading,setCurrent:()=>setCurrent,renderTracks:()=>renderTracks,renderDetailField:()=>renderDetailField,renderTrackMetadata:()=>renderTrackMetadata,renderDetail:()=>renderDetail,buildMoodGraphModel:()=>buildMoodGraphModel,buildMoodStrip:()=>buildMoodStrip,graphAxisSpec:()=>graphAxisSpec,graphObjectTrackId:()=>graphObjectTrackId,findSceneObject:()=>findSceneObject,syncSelectedNodeHalo:()=>syncSelectedNodeHalo,syncGraphAxes:()=>syncGraphAxes,cancelCameraFocus:()=>cancelCameraFocus,animateCameraFocus:()=>animateCameraFocus,renderMap:()=>renderMap,setStateForTesting:()=>setStateForTesting},
+exposeForBrowserTests({state:()=>state,graphModel:()=>graphModel,visibleGraph:()=>visibleGraph,forceGraph:()=>forceGraph,framedGraphLayout:()=>graphFraming.layout(),renderedGraphData:()=>graphDataMount.current(),graphAxes:()=>graphAxes,selectedNodeHalo:()=>nodeHalo.current(),pendingSelectionOperation:()=>pendingSelectionOperation,pendingCameraSelection:()=>pendingCameraSelection,cameraFocusFrame:()=>cameraFocusFrame,trackSummaryPage:()=>trackSummaryPage,trackSummaryStatus:()=>trackSummaryStatus,graphLoadState:()=>graphLoadState,text:()=>text,renderDetailLoading:()=>renderDetailLoading,setCurrent:()=>setCurrent,renderTracks:()=>renderTracks,renderDetailField:()=>renderDetailField,renderTrackMetadata:()=>renderTrackMetadata,renderDetail:()=>renderDetail,buildMoodGraphModel:()=>buildMoodGraphModel,buildMoodStrip:()=>buildMoodStrip,graphAxisSpec:()=>graphAxisSpec,graphObjectTrackId:()=>graphObjectTrackId,findSceneObject:()=>findSceneObject,syncSelectedNodeHalo:()=>syncSelectedNodeHalo,syncGraphAxes:()=>syncGraphAxes,cancelCameraFocus:()=>cancelCameraFocus,animateCameraFocus:()=>animateCameraFocus,renderMap:()=>renderMap,setStateForTesting:()=>setStateForTesting},
   {buildMoodGraphModel:value=>{buildMoodGraphModel=value;},renderMap:value=>{renderMap=value;},renderDetail:value=>{renderDetail=value;},renderDetailLoading:value=>{renderDetailLoading=value;},setCurrent:value=>{setCurrent=value;},animateCameraFocus:value=>{animateCameraFocus=value;},cancelCameraFocus:value=>{cancelCameraFocus=value;}});
