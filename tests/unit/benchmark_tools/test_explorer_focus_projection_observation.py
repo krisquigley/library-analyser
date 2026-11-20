@@ -13,8 +13,8 @@ from threading import Event
 import unittest
 
 from tools import explorer_browser_diagnostic as diagnostic
-from tests.acceptance.test_explorer_camera_vendor_cancellation import VENDOR
-from tests.acceptance.test_explorer_selection_camera_integration import ASSETS
+from tests.support.explorer_camera_harness import VENDOR
+from tests.support.explorer_camera_harness import ASSETS
 
 
 class _ReadbackCaptured(Exception):

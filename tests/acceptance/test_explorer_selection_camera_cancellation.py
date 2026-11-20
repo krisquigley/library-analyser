@@ -9,9 +9,8 @@ import shutil
 import subprocess
 import unittest
 
-from tests.acceptance.test_explorer_selection_camera_integration import (
-    ASSETS, FIXTURE, ROOT, FRAME_CLOCK_SEAM, replace_fixture_seam,
-)
+from tests.support.explorer_camera_harness import ASSETS, FIXTURE, ROOT
+from tests.support.explorer_camera_harness import FRAME_CLOCK_SEAM, replace_fixture_seam
 
 
 TIMED_FIXTURE = replace_fixture_seam(FIXTURE,

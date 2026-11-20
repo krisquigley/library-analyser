@@ -6,7 +6,7 @@ The semantics are inspectable here; actual assistive-technology speech is not me
 import subprocess
 import unittest
 
-from tests.acceptance.test_explorer_auto_graph_independence import HARNESS, NODE, ROOT
+from tests.support.explorer_graph_independence_harness import HARNESS, NODE, ROOT
 from tests.support.explorer_app_bundle import explorer_app_script
 
 

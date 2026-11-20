@@ -3,8 +3,8 @@ import shutil
 import subprocess
 import unittest
 
-from tests.acceptance.test_explorer_camera_orbit_path import trackball_fixture
-from tests.acceptance.test_explorer_selection_camera_integration import ASSETS, ROOT
+from tests.support.explorer_camera_harness import trackball_fixture
+from tests.support.explorer_camera_harness import ASSETS, ROOT
 
 
 SEARCH = r'''

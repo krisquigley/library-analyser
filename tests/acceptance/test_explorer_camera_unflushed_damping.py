@@ -8,70 +8,9 @@ import shutil
 import subprocess
 import unittest
 
-from tests.acceptance.test_explorer_camera_orbit_path import (
-    FINITE_WHEEL_PAN, trackball_fixture,
-)
-from tests.acceptance.test_explorer_selection_camera_integration import ASSETS, ROOT
-
-
-INPUTS = r'''
-function manualStart() {
-  controls.target.set(120,-80,30);
-  camera.position.set(400,-240,180);
-  camera.up.set(0.2,1,0.3).normalize();
-  controls.minDistance=0.25; controls.maxDistance=2000;
-  Object.assign(controls.screen,{left:0,top:0,width:800,height:600});
-  controls.update();
-}
-function unflushedWheel() {
-  controls._onMouseWheel({deltaMode:0,deltaY:120,preventDefault(){}});
-  controls.update();
-  // No further update: dynamic zoom remains outstanding at selection time.
-}
-function unflushedPan() {
-  controls._onMouseDown({button:2,pageX:400,pageY:300});
-  controls._onMouseMove({pageX:500,pageY:350});
-  controls.update();
-  controls._onMouseUp();
-  // No damping drain between mouseup and focus.
-}
-function unflushedOrbit() {
-  assert.equal(controls.staticMoving,false,'left drag uses default dynamic damping');
-  controls._onMouseDown({button:0,pageX:400,pageY:300});
-  controls._onMouseMove({pageX:500,pageY:350});
-  controls.update();
-  controls._onMouseUp();
-  // Select immediately after mouseup: no static mode or damping pre-drain.
-}
-function renderedPose() {
-  return {position:camera.position.clone(),target:controls.target.clone(),
-    up:camera.up.clone(),quaternion:camera.quaternion.clone()};
-}
-function assertRenderedStable(actual,expected,label) {
-  assert.ok(actual.position.distanceTo(expected.position)<1e-9,`${label}: stable position`);
-  assert.ok(actual.target.distanceTo(expected.target)<1e-9,`${label}: stable target`);
-  assert.ok(actual.up.distanceTo(expected.up)<1e-10,`${label}: stable up`);
-  assert.ok(actual.quaternion.toArray().every((value,index)=>
-    Math.abs(value-expected.quaternion.toArray()[index])<1e-10),`${label}: stable quaternion`);
-}
-function assertRadialEndpoint(node,label) {
-  const length=Math.hypot(node.fx,node.fy,node.fz);
-  assert.ok(length>0,'radial endpoint fixture uses a non-origin node');
-  const expected=new vendor.THREE.Vector3(node.fx+100*node.fx/length,
-    node.fy+100*node.fy/length,node.fz+100*node.fz/length);
-  assert.ok(camera.position.distanceTo(expected)<1e-9,`${label}: exact radial camera position`);
-}
-function assertBounds() {
-  assert.equal(controls.minDistance,0.25,'manual minimum remains unchanged');
-  assert.equal(controls.maxDistance,2000,'manual maximum remains unchanged');
-}
-function assertEndpoint(label) {
-  assert.deepEqual(pose().target,{x:a.fx,y:a.fy,z:a.fz},`${label}: exact node target`);
-  assert.ok(Math.abs(camera.position.distanceTo(controls.target)-100)<1e-9,
-    `${label}: exact focus radius100`);
-  assertBounds();
-}
-'''
+from tests.support.explorer_camera_harness import FINITE_WHEEL_PAN, trackball_fixture
+from tests.support.explorer_camera_harness import ASSETS, ROOT
+from tests.support.explorer_camera_harness import INPUTS
 
 
 class CameraUnflushedDampingTests(unittest.TestCase):
