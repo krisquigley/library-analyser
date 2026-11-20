@@ -11,6 +11,7 @@ import subprocess
 from music_analyzer.application.use_cases.check_integrity import CheckIntegrity
 from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner
 from music_analyzer.interface_adapters.presenters.integrity import present_integrity
+from music_analyzer.frameworks.cli.playlist_recipes import COMMAND, add_playlist_recipe_commands, run_playlist_recipe_command
 from music_analyzer.application.use_cases.analyze_batch import AnalyzeBatch
 from music_analyzer.infrastructure.persistence.batch import SQLiteBatchQueue
 from music_analyzer.infrastructure.analysis.embedding_cache import FileEmbeddingCache
@@ -172,7 +173,8 @@ def _integrity_requested(argv):
     # the integrity command. Unknown integrity options still get safe errors.
     values = iter(argv)
     other_commands = {'doctor', 'models', 'scan', 'status', 'analyze', 'show', 'reaggregate',
-                      'list', 'override', 'export', 'explorer', 'graph', 'prepare-projection'}
+                      'list', 'override', 'export', 'explorer', 'graph', 'prepare-projection',
+                      'playlist-recipe'}
     root_value_options = ('--database', '--config', '--model-directory')
     for token in values:
         option, separator, value = token.partition('=')
@@ -257,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument('track_id', metavar='TRACK_ID')
         command.add_argument('field', choices=('bpm', 'key', 'genres', 'mood', 'instruments', 'energy'))
         if name == 'set': command.add_argument('value')
+    add_playlist_recipe_commands(commands, add_configuration_options)
     export = commands.add_parser('export', help='Export all catalogue review records; new output path required.')
     add_configuration_options(export)
     export.add_argument('--format', choices=('json', 'csv', 'markdown'), required=True)
@@ -319,6 +322,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 output = present_review(review.show(args.track_id, getattr(args, 'threshold', None)), args.json)
             ready = True
+        elif args.command == COMMAND:
+            return run_playlist_recipe_command(args, load_settings(**overrides).database)
         elif args.command == 'doctor':
             report = build_doctor(**overrides).execute()
             output = present_doctor(report, as_json=args.json)

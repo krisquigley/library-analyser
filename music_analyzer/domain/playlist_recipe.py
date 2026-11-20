@@ -214,3 +214,8 @@ def _arc(arc, prefix):
 
 def _optional_fraction(value, name):
     return None if value is None else _fraction(value, name)
+
+
+def missing_start_track(start_track_id: str) -> str:
+    """Why a saved recipe cannot be used once its start track has left the analysis database."""
+    return f'Its start track {start_track_id} is not in the analysis database'
