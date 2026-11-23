@@ -17,6 +17,7 @@ _MAJOR_NAMES = ('C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B')
 _MINOR_NAMES = ('Cm', 'C#m', 'Dm', 'Ebm', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'Bbm', 'Bm')
 _SCALE_WORDS = {'major': 'major', 'minor': 'minor', 'm': 'minor', '': 'major'}
 UNKNOWN_BPM = 0.0
+UNKNOWN_FILE_TYPE = '?'
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,24 @@ class TrackLocation:
     location: str
     filename: str
     directory: str
+
+
+@dataclass(frozen=True)
+class MixxxTrack:
+    """One row of the new library file: where the track is, what it is, and its tempo and key."""
+    location: TrackLocation
+    filesize: int
+    title: str
+    artist: str
+    album: str
+    duration: float
+    bpm: float
+    key: MixxxKey
+    file_type: str
+
+
+class MixxxExportError(ValueError):
+    """The export cannot be made as asked; the message says what to change."""
 
 
 def mixxx_key(tonic, scale) -> MixxxKey:
@@ -73,3 +92,12 @@ def track_location(path: str) -> TrackLocation:
         raise ValueError('A track location must be an absolute path to a file')
     directory, filename = path.rsplit('/', 1)
     return TrackLocation(path, filename, directory or '/')
+
+
+def mixxx_file_type(filename: str) -> str:
+    """The file type Mixxx records (its lowercase extension, "aif" spelt "aiff" since revision 39), or its "?"."""
+    stem, dot, extension = filename.rpartition('.')
+    extension = extension.lower()
+    if not dot or not stem or not extension or len(extension) > 8:
+        return UNKNOWN_FILE_TYPE
+    return 'aiff' if extension == 'aif' else extension

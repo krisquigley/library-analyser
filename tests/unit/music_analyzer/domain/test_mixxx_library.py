@@ -6,7 +6,7 @@ The values follow Mixxx 2.5's own encoding (schema revision 39): `key_id` is the
 import unittest
 
 from music_analyzer.domain.mixxx_library import (
-    MixxxKey, mixxx_bpm, mixxx_key, mixxx_key_from_text, track_location)
+    MixxxKey, mixxx_bpm, mixxx_file_type, mixxx_key, mixxx_key_from_text, track_location)
 
 
 class MixxxKeyTests(unittest.TestCase):
@@ -58,6 +58,15 @@ class TrackLocationTests(unittest.TestCase):
             with self.subTest(path=path):
                 with self.assertRaises(ValueError):
                     track_location(path)
+
+
+class MixxxFileTypeTests(unittest.TestCase):
+    def test_the_file_type_is_the_lowercase_extension_and_aif_is_aiff(self):
+        cases = [('a.FLAC', 'flac'), ('a.mp3', 'mp3'), ('a.aif', 'aiff'), ('a.AIFF', 'aiff'), ('a.m4a', 'm4a'),
+                 ('noextension', '?'), ('.hidden', '?'), ('a.waytoolongext', '?')]
+        for filename, expected in cases:
+            with self.subTest(filename=filename):
+                self.assertEqual(expected, mixxx_file_type(filename))
 
 
 if __name__ == '__main__':
