@@ -105,5 +105,33 @@ assert.deepEqual([status.textContent, status.getAttribute('role')], ['Recipe exp
 ''')
 
 
+    def test_a_saved_recipe_is_listed_on_request_and_loaded_with_its_start_track_current(self):
+        self.run_scenario(r'''
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/playlist-recipes'] = r => r.respond({recipes: [
+  {name: 'Warm-up', updated_at: '2026-11-20T10:00:00Z', problem: null},
+  {name: 'Old', updated_at: '2026-11-01T10:00:00Z', problem: 'Its start track z is not an available track'}]});
+routes['/api/playlist-recipes/load'] = r => r.respond({name: r.url.searchParams.get('name'), recipe: {
+  format: 'playlist-recipe', version: 1, start_track_id: 'a', bpm: {min: 118, max: 126}, length: {tracks: 12},
+  harmonic_mixing: {enabled: false, minimum_key_strength: 0.5}, energy_plan: [], mood_hold: null}});
+await settle(6);
+assert.equal(requests.filter(r => r.path.startsWith('/api/playlist-recipes')).length, 0, 'nothing is listed unasked');
+await press('saved-recipes-list'); await settle(2);
+assert.deepEqual(byId('saved-recipe-choice').children.map(option => [option.value, option.disabled]), [['Warm-up', false], ['Old', true]]);
+heard.length = 0;
+await press('saved-recipe-load'); await settle(2);
+assert.equal(request('/api/playlist-recipes/load').url.searchParams.get('name'), 'Warm-up');
+assert.deepEqual(heard.filter(type => type.startsWith('saved-recipe')), ['saved-recipe-loading', 'saved-recipe-loaded']);
+assert.ok(heard.includes('track-chosen'), heard.join(' '));
+assert.deepEqual(['m3u-bpm-min', 'm3u-bpm-max', 'm3u-count'].map(id => byId(id).value), ['118', '126', '12']);
+assert.equal(byId('m3u-harmonic').checked, false);
+assert.equal(byId('saved-recipe-status').textContent, 'Loaded Warm-up.');
+await settle(4); await untilCameraSettles();
+assert.equal(request('/api/current').body.track_id, 'a', 'owner decision A (#139): the start track becomes current');
+assert.equal(seam.snapshot().currentTrackId, 'a');
+assert.ok(byId('detail').innerText.includes('Track a'), 'its detail is shown');
+''')
+
+
 if __name__ == '__main__':
     unittest.main()

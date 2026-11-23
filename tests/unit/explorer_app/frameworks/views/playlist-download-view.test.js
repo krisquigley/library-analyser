@@ -198,3 +198,13 @@ test("composed with the real controller and use case, the arc editor's input rea
   assert.deepEqual(addresses, ['/api/playlists/m3u?start=start&bpm_min=120&bpm_max=128&min_key_strength=0.5'
     + '&arc=rise&arc=peak&arc_minutes=20&arc_minutes=15']);
 });
+
+test('a loaded draft replaces every control value, harmonic mixing as a tick (#139)', () => {
+  const {view, byId} = mounted();
+  const values = {...VALUES, bpmMin: '118', bpmMax: '126', count: '12', harmonicMixing: false, minimumKeyStrength: '0.7',
+    arcLengthUnit: 'minutes', moodHold: 'happy'};
+  view.show({values});
+  assert.deepEqual(['m3u-bpm-min', 'm3u-bpm-max', 'm3u-count', 'm3u-min-key-strength', 'm3u-arc-unit', 'm3u-mood']
+    .map(id => byId(id).value), ['118', '126', '12', '0.7', 'minutes', 'happy']);
+  assert.equal(byId('m3u-harmonic').checked, false);
+});

@@ -31,6 +31,11 @@ export function presentPlaylistDownloadEvent(event) {
   return PLAYLIST_EVENT_VIEWS[event.type](event);
 }
 
+// A draft that replaced the one in the controls, such as a loaded saved recipe (#139): its values are shown too.
+export function presentLoadedPlaylistDraft(draft) {
+  return {values: draft, ...draftView(draft)};
+}
+
 export function presentRejectedPlaylistInput(message) {
   return {status: {text: message, urgent: true}};
 }

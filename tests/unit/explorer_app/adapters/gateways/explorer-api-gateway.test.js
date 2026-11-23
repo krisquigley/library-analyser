@@ -190,3 +190,37 @@ test('a refused preview fails with the server message, not its JSON', async () =
     headers: {'content-type': 'application/json'}}));
   await assert.rejects(api.previewPlaylist(RECIPE), {message: 'bpm bounds must be ordered'});
 });
+
+test('saved recipes are listed by name, with when each was saved and what stops it loading (#139)', async () => {
+  const {api, requests} = gatewayAnswering(response({headers: {'content-type': 'application/json'}, body: JSON.stringify({recipes: [
+    {name: 'Warm-up', updated_at: '2026-11-20T10:00:00Z', problem: null},
+    {name: 'Old', updated_at: '2026-11-01T10:00:00Z', problem: 'Its start track t is not an available track'}]})}));
+  assert.deepEqual(await api.listSavedPlaylistRecipes(), [
+    {name: 'Warm-up', updatedAt: '2026-11-20T10:00:00Z', problem: null},
+    {name: 'Old', updatedAt: '2026-11-01T10:00:00Z', problem: 'Its start track t is not an available track'}]);
+  assert.deepEqual(requests, ['/api/playlist-recipes']);
+});
+
+test('a saved recipe is loaded by name, and a list or recipe shaped wrongly is refused whole (#139)', async () => {
+  const recipe = {format: 'playlist-recipe', version: 1};
+  const loading = gatewayAnswering(response({headers: {'content-type': 'application/json'},
+    body: JSON.stringify({name: 'Warm up & go', recipe})}));
+  assert.deepEqual(await loading.api.loadSavedPlaylistRecipe('Warm up & go'), {name: 'Warm up & go', recipe});
+  assert.deepEqual(loading.requests, ['/api/playlist-recipes/load?name=Warm+up+%26+go']);
+  const cases = [
+    ['listSavedPlaylistRecipes', {recipes: 'none'}, 'Invalid saved recipe list: recipes must be a list'],
+    ['listSavedPlaylistRecipes', {recipes: [{name: 3, updated_at: 'x', problem: null}]}, 'Invalid saved recipe list: recipe 1 name must be text'],
+    ['listSavedPlaylistRecipes', {recipes: [{name: 'a', updated_at: 'x', problem: 4}]}, 'Invalid saved recipe list: recipe 1 problem must be text or null'],
+    ['loadSavedPlaylistRecipe', {name: 'a', recipe: []}, 'Invalid saved recipe: recipe must be a JSON object'],
+  ];
+  for (const [operation, body, message] of cases) {
+    const {api} = gatewayAnswering(response({headers: {'content-type': 'application/json'}, body: JSON.stringify(body)}));
+    await assert.rejects(api[operation]('a'), {message});
+  }
+});
+
+test('a recipe that cannot be loaded fails with the server message (#139)', async () => {
+  const {api} = gatewayAnswering(response({ok: false, headers: {'content-type': 'application/json'},
+    body: '{"error":"No saved recipe named \\"a\\""}'}));
+  await assert.rejects(api.loadSavedPlaylistRecipe('a'), {message: 'No saved recipe named "a"'});
+});
