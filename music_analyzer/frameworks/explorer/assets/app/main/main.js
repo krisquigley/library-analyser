@@ -11,9 +11,14 @@ import {PLAYLIST_RECIPE_EXPORT_EVENT_TYPES} from '../application/export-playlist
 import {playlistRecipeExportController} from '../adapters/controllers/playlist-recipe-export-controller.js';
 import {presentPlaylistRecipeExportEvent} from '../adapters/presenters/playlist-recipe-export-presenter.js';
 import {playlistRecipeExportView} from '../frameworks/views/playlist-recipe-export-view.js';
+import {createSavedRecipeLoad} from '../application/load-saved-recipe/load-saved-recipe.js';
+import {SAVED_RECIPE_EVENT_TYPES} from '../application/load-saved-recipe/saved-recipe-events.js';
+import {savedRecipeController} from '../adapters/controllers/saved-recipe-controller.js';
+import {presentRejectedSavedRecipeInput, presentSavedRecipeEvent, savedRecipesViewModel} from '../adapters/presenters/saved-recipe-presenter.js';
+import {savedRecipeView} from '../frameworks/views/saved-recipe-view.js';
 import {playlistDownloadController} from '../adapters/controllers/playlist-download-controller.js';
 import {fetchExplorerApi} from '../adapters/gateways/explorer-api-gateway.js';
-import {playlistControlsViewModel, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
+import {playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
 import {browserPlaylistFile} from '../frameworks/browser-playlist-file.js';
 import {createInMemoryEventBus} from '../frameworks/in-memory-event-bus.js';
 import {createGraphRendering} from '../application/render-graph/render-graph.js';
@@ -81,6 +86,13 @@ const playlistRecipeExport=createPlaylistRecipeExport({playlistDraft:playlistDra
 const recipeExportControls=playlistRecipeExportController({playlistRecipeExport,currentTrackId});
 const recipeExportPanel=playlistRecipeExportView({onExportRequested:()=>recipeExportControls.exportRequested()});
 for(const type of PLAYLIST_RECIPE_EXPORT_EVENT_TYPES) playlistEvents.subscribe(type,event=>recipeExportPanel.show(presentPlaylistRecipeExportEvent(event)));
+const savedRecipes=createSavedRecipeLoad({explorerApi,playlistDraft:playlistDraftSession,eventBus:playlistEvents});
+const savedRecipeControls=savedRecipeController({savedRecipes,rejectInput:message=>savedRecipePanel.show(presentRejectedSavedRecipeInput(message))});
+const savedRecipePanel=savedRecipeView({onListRequested:()=>savedRecipeControls.listRequested(),onLoadRequested:name=>savedRecipeControls.loadRequested(name)});
+for(const type of SAVED_RECIPE_EVENT_TYPES) playlistEvents.subscribe(type,event=>savedRecipePanel.show(presentSavedRecipeEvent(event)));
+playlistEvents.subscribe('saved-recipe-loaded',event=>playlistControlsView.show(presentLoadedPlaylistDraft(event.draft)));
+// A loaded recipe starts from its own track (owner decision A, #139): it becomes the current track.
+playlistEvents.subscribe('saved-recipe-loaded',event=>setCurrent(event.startTrackId));
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
 const cameraFocusSession=createInMemorySession({pendingTrackId:null,frame:null,viewIntent:0,focusGeneration:0});
 // Render on demand (#86): the vendor loop would otherwise redraw WebGL every frame, even when nothing moves.
@@ -149,7 +161,7 @@ async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose
 function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId()}));}
 function loadGraph(){return graphLoad.load();}
 
-function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]})); playlistPreviewPanel.mount(panel,playlistPreviewViewModel()); recipeExportPanel.mount(panel);}
+function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]})); playlistPreviewPanel.mount(panel,playlistPreviewViewModel()); recipeExportPanel.mount(panel); savedRecipePanel.mount(panel,savedRecipesViewModel());}
 function renderInitialDetail(){trackDetail.showNone();}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}
 function renderTrackMetadata(metadata){return trackDetail.metadata(trackMetadataViewModel(metadata));}
@@ -220,5 +232,5 @@ function buildControls(){const root=document.getElementById('controls'); buildGr
 function buildGraphControls(root){graphFilterControls.mount(root);}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); libraryLoading.mount(); buildControls(); renderTracks([]); graphStatusDisplay.show(GRAPH_IDLE_STATUS); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
-installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
+installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[SAVED_RECIPE_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
 function diagnosticSnapshot(){const {snapshot,selectionState}=selectionSession.read(); const camera=cameraFocusSession.read(); return {currentTrackId:snapshot.current_track_id??null,selectionEpoch:snapshot.selection_epoch??null,history:snapshot.history||[],graphStatus:graphState().loadState==='failed'?'error':graphState().loadState,cameraFocusActive:camera.frame!=null,pendingCameraTrackId:camera.pendingTrackId,selectionPending:awaitingServer(selectionState),trackSearchStatus:trackSearchSession.read().searchState==='failed'?'error':trackSearchSession.read().searchState,trackResultCount:trackSearchSession.read().results.tracks.length};}

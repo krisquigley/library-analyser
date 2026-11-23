@@ -2,6 +2,7 @@
 
 import {playlistDownloadQuery, playlistPreviewQuery} from './playlist-download-query.js';
 import {playlistPreviewFrom} from './playlist-preview-dto.js';
+import {savedPlaylistRecipeFrom, savedPlaylistRecipesFrom} from './saved-playlist-recipe-dto.js';
 
 const DEFAULT_PLAYLIST_FILENAME = 'library-graph-playlist.m3u';
 const DEFAULT_PLAYLIST_TYPE = 'audio/x-mpegurl;charset=utf-8';
@@ -25,6 +26,13 @@ export function fetchExplorerApi(fetchResource) {
     },
     async previewPlaylist(recipe) {
       return playlistPreviewFrom(await answer(await fetchResource(playlistPreviewQuery(recipe)), 'Playlist preview failed'));
+    },
+    async listSavedPlaylistRecipes() {
+      return savedPlaylistRecipesFrom(await answer(await fetchResource('/api/playlist-recipes'), 'Saved recipe list failed'));
+    },
+    async loadSavedPlaylistRecipe(name) {
+      const path = '/api/playlist-recipes/load?' + new URLSearchParams({name}).toString();
+      return savedPlaylistRecipeFrom(await answer(await fetchResource(path), 'Saved recipe failed to load'));
     },
     async loadMoodGraph(mood) {
       const response = await fetchResource(moodGraphPath(mood));

@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  PlaylistRecipeDocumentError, playlistRecipeDocument,
+  PlaylistRecipeDocumentError, playlistDraftOfRecipe, playlistRecipeDocument,
 } from '../../../../music_explorer/frameworks/explorer/assets/app/domain/playlist-recipe-document.js';
 import {EMPTY_PLAYLIST_DRAFT} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/playlist-draft.js';
 
@@ -48,6 +48,45 @@ test('a draft that cannot be a recipe says why', () => {
   ];
   for (const [given, start, message] of cases) {
     assert.throws(() => playlistRecipeDocument(given, start), error => error instanceof PlaylistRecipeDocumentError
+      && error.message === message, message);
+  }
+});
+
+test('a saved recipe becomes the draft and start track it was exported from', () => {
+  const drafts = [
+    draft(),
+    draft({durationMinutes: '45', harmonicMixing: false, minimumKeyStrength: '0.7', moodHold: 'relaxed',
+      energyArcs: [arc('rise', {high: '0.8'})]}),
+    draft({energyArcs: [arc('rise', {length: '6'}), arc('dip', {length: '4', low: '0.1'})]}),
+    draft({arcLengthUnit: 'minutes', energyArcs: [arc('peak', {length: '12.5'})]}),
+  ];
+  for (const given of drafts) {
+    const document = playlistRecipeDocument(given, 'track-1');
+    const loaded = playlistDraftOfRecipe(document);
+    assert.equal(loaded.startTrackId, 'track-1');
+    assert.deepEqual(playlistRecipeDocument(loaded.draft, 'track-1'), document);
+  }
+});
+
+test('a loaded recipe shows its numbers as entered text, with blanks for what it leaves unset', () => {
+  const {draft: loaded} = playlistDraftOfRecipe({format: 'playlist-recipe', version: 1, start_track_id: 't',
+    bpm: {min: 120, max: 128.5}, length: {minutes: 45}, harmonic_mixing: {enabled: true, minimum_key_strength: 0.5},
+    energy_plan: [{shape: 'fall', energy_low: null, energy_high: 0.4}], mood_hold: null});
+  assert.deepEqual(loaded, {...EMPTY_PLAYLIST_DRAFT, bpmMin: '120', bpmMax: '128.5', durationMinutes: '45',
+    energyArcs: [{shape: 'fall', length: '', low: '', high: '0.4'}]});
+});
+
+test('a document that is not a version 1 recipe is refused', () => {
+  const recipe = playlistRecipeDocument(draft(), 't');
+  const cases = [
+    [null, 'This is not a playlist recipe'],
+    [{...recipe, format: 'm3u'}, 'This is not a playlist recipe'],
+    [{...recipe, version: 2}, 'Recipe version 2 is not supported; only version 1 can be read'],
+    [{...recipe, bpm: {min: '120', max: 128}}, 'The recipe\'s bpm.min must be a number'],
+    [{...recipe, energy_plan: [{shape: 'spiral'}]}, 'The recipe\'s arc 1 shape is not one the panel offers'],
+  ];
+  for (const [document, message] of cases) {
+    assert.throws(() => playlistDraftOfRecipe(document), error => error instanceof PlaylistRecipeDocumentError
       && error.message === message, message);
   }
 });

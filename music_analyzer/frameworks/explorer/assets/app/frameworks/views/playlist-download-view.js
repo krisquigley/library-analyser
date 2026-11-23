@@ -15,6 +15,7 @@ export function playlistDownloadView({onControlsEdited, onDownloadRequested, ...
 
   function show(update) {
     if (!mounted) return;
+    if (update.values) showControlValues(mounted.controls, update.values);
     disableControl(mounted.controls.minimumKeyStrength, update.minimumKeyStrengthDisabled);
     disableControl(mounted.controls.count, update.lengthDisabled);
     disableControl(mounted.controls.durationMinutes, update.lengthDisabled);
@@ -66,6 +67,13 @@ function playlistControlElements(viewModel) {
       'Every energy arc length is in this unit'),
     moodHold: playlistSelect(ids.moodHold, viewModel.moodChoices, values.moodHold, 'Prefer tracks stronger in this mood'),
   };
+}
+
+function showControlValues(controls, values) {
+  for (const [name, control] of Object.entries(controls)) {
+    if (name === 'harmonicMixing') control.checked = values.harmonicMixing;
+    else control.value = values[name];
+  }
 }
 
 function playlistControlValues(controls) {

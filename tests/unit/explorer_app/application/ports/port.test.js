@@ -12,7 +12,7 @@ import {CLOCK, DELAYS, FRAMES} from '../../../../../music_explorer/frameworks/ex
 import {GRAPH_RENDERER} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/graph-renderer.js';
 
 test('the ports name the operations their adapters provide', () => {
-  assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'previewPlaylist', 'loadMoodGraph', 'searchTracks', 'chooseCurrentTrack', 'applyHistory',
+  assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'previewPlaylist', 'listSavedPlaylistRecipes', 'loadSavedPlaylistRecipe', 'loadMoodGraph', 'searchTracks', 'chooseCurrentTrack', 'applyHistory',
     'loadTrackDetail', 'loadLibraryState']);
   assert.deepEqual(SELECTIONS.operations, ['chooseCurrentTrack', 'applyHistory', 'loadTrackDetail', 'loadLibraryState']);
   assert.deepEqual([TRACK_SEARCHES.name, TRACK_SEARCHES.operations], ['ExplorerApi', ['searchTracks']]);

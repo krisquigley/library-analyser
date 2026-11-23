@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  playlistControlsViewModel, presentPlaylistDownloadEvent, presentRejectedPlaylistInput,
+  playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/playlist-download-presenter.js';
 import {
   EMPTY_PLAYLIST_DRAFT, addDraftArc, editDraftArc, editPlaylistDraft,
@@ -68,4 +68,12 @@ test('download events update the button and the status', () => {
 test('a rejected control value is an urgent status', () => {
   assert.deepEqual(presentRejectedPlaylistInput('Min BPM must be a number'),
     {status: {text: 'Min BPM must be a number', urgent: true}});
+});
+
+test('a loaded draft shows its values in the controls, with its arcs and what they disable (#139)', () => {
+  const loaded = editDraftArc(addDraftArc(editPlaylistDraft(EMPTY_PLAYLIST_DRAFT, {bpmMin: '118', harmonicMixing: false})), 0,
+    {length: '6'});
+  const view = presentLoadedPlaylistDraft(loaded);
+  assert.equal(view.values, loaded);
+  assert.deepEqual([view.minimumKeyStrengthDisabled, view.lengthDisabled, view.arcs.length], [true, true, 1]);
 });

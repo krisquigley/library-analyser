@@ -1,7 +1,9 @@
-// The drafted playlist as a version 1 recipe file (#139), which `music-analyzer playlist-recipe save` checks and stores.
+// The drafted playlist as a version 1 recipe file (#139), which `music-analyzer playlist-recipe save` checks and stores,
+// and a saved recipe back as a draft and its start track.
 // Entered text becomes numbers here; the ranges are the analyzer's to check, with its own messages.
 
-import {arcsSetTheLength} from './playlist-draft.js';
+import {ARC_SHAPES} from './energy-arc-chain.js';
+import {EMPTY_PLAYLIST_DRAFT, arcsSetTheLength} from './playlist-draft.js';
 import {DEFAULT_MINIMUM_KEY_STRENGTH, DEFAULT_TRACK_COUNT} from './playlist-recipe.js';
 
 const RECIPE_FORMAT = 'playlist-recipe';
@@ -19,6 +21,43 @@ export function playlistRecipeDocument(draft, startTrackId) {
       minimum_key_strength: recipeNumber(enteredText(draft.minimumKeyStrength) || DEFAULT_MINIMUM_KEY_STRENGTH, 'Min key strength')},
     energy_plan: recipeEnergyPlan(draft),
     mood_hold: draft.moodHold || null};
+}
+
+// The server sends recipes in their canonical form; this checks only what the draft needs.
+export function playlistDraftOfRecipe(document) {
+  if (document?.format !== RECIPE_FORMAT) refuseRecipe('This is not a playlist recipe');
+  if (document.version !== RECIPE_VERSION) {
+    refuseRecipe(`Recipe version ${document.version} is not supported; only version ${RECIPE_VERSION} can be read`);
+  }
+  const arcs = document.energy_plan ?? [];
+  const unit = arcs.some(arc => arc.minutes != null) ? 'minutes' : 'tracks';
+  const length = document.length ?? {};
+  const harmonic = document.harmonic_mixing ?? {};
+  return {startTrackId: document.start_track_id, draft: Object.freeze({...EMPTY_PLAYLIST_DRAFT,
+    bpmMin: savedNumber(document.bpm?.min, 'bpm.min'), bpmMax: savedNumber(document.bpm?.max, 'bpm.max'),
+    count: length.tracks == null ? EMPTY_PLAYLIST_DRAFT.count : savedNumber(length.tracks, 'length.tracks'),
+    durationMinutes: optionalSavedNumber(length.minutes, 'length.minutes'),
+    harmonicMixing: harmonic.enabled !== false,
+    minimumKeyStrength: harmonic.minimum_key_strength == null ? EMPTY_PLAYLIST_DRAFT.minimumKeyStrength
+      : savedNumber(harmonic.minimum_key_strength, 'harmonic_mixing.minimum_key_strength'),
+    arcLengthUnit: unit,
+    energyArcs: Object.freeze(arcs.map((arc, place) => savedArc(arc, unit, `arc ${place + 1}`))),
+    moodHold: document.mood_hold ?? ''})};
+}
+
+function savedArc(arc, unit, label) {
+  if (!ARC_SHAPES.includes(arc?.shape)) refuseRecipe(`The recipe's ${label} shape is not one the panel offers`);
+  return Object.freeze({shape: arc.shape, length: optionalSavedNumber(arc[unit], `${label} length`),
+    low: optionalSavedNumber(arc.energy_low, `${label} energy_low`), high: optionalSavedNumber(arc.energy_high, `${label} energy_high`)});
+}
+
+function optionalSavedNumber(value, label) {
+  return value == null ? '' : savedNumber(value, label);
+}
+
+function savedNumber(value, label) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) refuseRecipe(`The recipe's ${label} must be a number`);
+  return String(value);
 }
 
 function recipeLength(draft) {
