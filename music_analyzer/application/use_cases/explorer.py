@@ -19,6 +19,7 @@ from music_analyzer.application.use_cases.active_library import active_exclusion
 from music_analyzer.application.use_cases.candidates import _features
 from music_analyzer.domain.projection import DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, _bounded_edges, symmetric_feature_distance
 from music_analyzer.domain.review import FIELDS
+from music_analyzer.domain.mood_evidence import AROUSAL_VALENCE_MODEL, MOOD_THEME_MODEL, has_provenance_model
 
 
 class ListExplorerTracks:
@@ -180,7 +181,7 @@ class _WarmMoodAxisProjection:
         stage = _stage(record, 'mood')
         scores = {}
         provenance = ()
-        if stage is not None and _has_provenance_model(stage.provenance, 'mtg_jamendo_moodtheme-discogs-effnet-1'):
+        if stage is not None and has_provenance_model(stage.provenance, MOOD_THEME_MODEL):
             scores = {label: score for label, score in (_summary_map(record, 'mood', []) or {}).items()
                       if _score01(score)}
             if scores:
@@ -343,7 +344,7 @@ def _axis_node(record, detail, selected_mood):
     energy_stage = _stage(record, 'energy')
     if dict(record.overrides).get('energy') is not None:
         reasons.append('energy: unresolved manual text override')
-    if energy_stage is None or not _has_provenance_model(energy_stage.provenance, 'emomusic-msd-musicnn-2'):
+    if energy_stage is None or not has_provenance_model(energy_stage.provenance, AROUSAL_VALENCE_MODEL):
         reasons.append('energy: incompatible model/scale for fixed valence/arousal axis')
     valence = energy.get('valence') if energy else None
     arousal = energy.get('arousal') if energy else None
@@ -358,7 +359,7 @@ def _axis_node(record, detail, selected_mood):
     selected_score = mood.get(selected_mood) if mood and selected_mood else None
     mood_score = None
     if (selected_score is not None and _score01(selected_score) and mood_stage is not None
-            and _has_provenance_model(mood_stage.provenance, 'mtg_jamendo_moodtheme-discogs-effnet-1')):
+            and has_provenance_model(mood_stage.provenance, MOOD_THEME_MODEL)):
         mood_score = AxisValue(selected_mood, selected_score, selected_score, 'sigmoid-score-[0,1]', mood_stage.provenance)
     energy_prov = energy_stage.provenance
     return MoodAxisNode(
@@ -476,13 +477,6 @@ def _norm01(value):
 
 def _score01(value):
     return isfinite(value) and 0.0 <= value <= 1.0
-
-
-def _has_provenance_model(provenance, model_id):
-    explicit_models = [value for key, value in provenance if key == 'model']
-    if explicit_models:
-        return all(value == model_id for value in explicit_models)
-    return any(key == model_id for key, _value in provenance)
 
 
 def _genre_threshold(record):

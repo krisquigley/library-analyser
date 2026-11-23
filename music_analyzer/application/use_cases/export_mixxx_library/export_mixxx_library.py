@@ -19,13 +19,13 @@ from music_analyzer.application.use_cases.active_library import active_exclusion
 from music_analyzer.domain.mixxx_library import (
     MixxxExportError, MixxxTrack, mixxx_bpm, mixxx_file_type, mixxx_key, mixxx_key_from_text, track_location)
 from music_analyzer.domain.mood_colour import MOOD_QUADRANTS, mood_quadrant
+from music_analyzer.domain.mood_evidence import AROUSAL_VALENCE_MODEL, has_provenance_model
 from music_analyzer.domain.percentile_rank import percentile_ranks
 
 NO_COLOURS = ''
 MOOD_QUADRANT_COLOURS = 'mood-quadrant'
 COLOURINGS = (NO_COLOURS, MOOD_QUADRANT_COLOURS)
 NO_COLOUR = 'no colour'
-AROUSAL_VALENCE_MODEL = 'emomusic-msd-musicnn-2'
 
 
 @dataclass(frozen=True)
@@ -116,18 +116,11 @@ def _valence_arousal(track):
     if overrides.get('energy') is not None or overrides.get('mood') is not None:
         return None
     stage = next((stage for stage in track.run.stages if stage.stage == 'energy'), None)
-    if stage is None or stage.summary is None or not _from_model(stage.provenance, AROUSAL_VALENCE_MODEL):
+    if stage is None or stage.summary is None or not has_provenance_model(stage.provenance, AROUSAL_VALENCE_MODEL):
         return None
     means = dict(zip(stage.summary.labels, stage.summary.mean))
     valence, arousal = means.get('valence'), means.get('arousal')
     return (float(valence), float(arousal)) if _finite(valence) and _finite(arousal) else None
-
-
-def _from_model(provenance, model_id):
-    explicit = [value for key, value in provenance if key == 'model']
-    if explicit:
-        return all(value == model_id for value in explicit)
-    return any(key == model_id for key, _value in provenance)
 
 
 def _finite(value):
