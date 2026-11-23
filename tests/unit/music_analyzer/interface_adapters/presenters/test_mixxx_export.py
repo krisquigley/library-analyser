@@ -2,9 +2,9 @@
 import unittest
 
 from music_analyzer.application.use_cases.export_mixxx_library.export_mixxx_library import (
-    MixxxLibraryExported, MixxxLibraryExportPlanned)
+    MixxxLibraryExportPlan, MixxxLibraryExported, MixxxLibraryExportPlanned)
 from music_analyzer.interface_adapters.presenters.mixxx_export import (
-    present_mixxx_export_planned, present_mixxx_exported, present_skipped_tracks)
+    present_mixxx_export_planned, present_mixxx_exported, present_mood_colours, present_skipped_tracks)
 
 
 class MixxxExportPresenterTests(unittest.TestCase):
@@ -21,6 +21,14 @@ class MixxxExportPresenterTests(unittest.TestCase):
         self.assertEqual('Skipped t1: Not analysed yet\nSkipped t2: No available catalogue location',
                          present_skipped_tracks((('t1', 'Not analysed yet'), ('t2', 'No available catalogue location'))))
         self.assertEqual('', present_skipped_tracks(()))
+
+
+    def test_the_mood_colours_say_how_many_tracks_get_each_and_over_which_population(self):
+        plan = MixxxLibraryExportPlan('/x', (), (), 3, (('upbeat (high arousal, high valence)', 2), ('no colour', 2)))
+        self.assertEqual('Mood-quadrant colours, relative to the 3 exported tracks with valence and arousal '
+                         '(provisional, uncalibrated scores):\n'
+                         '  upbeat (high arousal, high valence): 2\n  no colour: 2', present_mood_colours(plan))
+        self.assertEqual('', present_mood_colours(MixxxLibraryExportPlan('/x', (), ())))
 
 
 if __name__ == '__main__':

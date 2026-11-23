@@ -599,6 +599,7 @@ exists, whatever it is, is refused and left untouched.
 music-analyzer --database /tmp/analysis.sqlite export-mixxx --output /tmp/new-mixxxdb.sqlite --dry-run
 music-analyzer --database /tmp/analysis.sqlite export-mixxx --output /tmp/new-mixxxdb.sqlite
 music-analyzer --database /tmp/analysis.sqlite export-mixxx --output /tmp/two.sqlite --track TRACK_ID --track TRACK_ID
+music-analyzer --database /tmp/analysis.sqlite export-mixxx --output /tmp/coloured.sqlite --colour mood-quadrant
 ```
 
 - **Tracks:** every active analysed track, or only the `--track` IDs given (each once,
@@ -609,7 +610,25 @@ music-analyzer --database /tmp/analysis.sqlite export-mixxx --output /tmp/two.sq
   the file type, and the BPM and key. A manual `bpm` or `key` override wins over the
   detected value (`key` overrides read as `A minor`, `Am`, `C#m` or `Bb`). The key is
   written as Mixxx's `key_id` and its text; anything unknown is left empty (BPM 0.0, no
-  key). Colours, crates and playlists are not exported.
+  key). Crates and playlists are not exported.
+- **Mood colours (`--colour mood-quadrant`, #134):** each track is coloured by its mood
+  quadrant, so Mixxx's colour column shows the mood at a glance:
+
+  | Arousal | Valence | Colour |
+  |---|---|---|
+  | above the median | above the median | upbeat: yellow `#F8D200` |
+  | above | below | tense: red `#C50A08` |
+  | below | above | calm: green `#32BE44` |
+  | below | below | sombre: blue `#0044FF` |
+
+  The median is taken over the exported tracks whose valence and arousal come from the
+  `emomusic-msd-musicnn-2` model, using percentile mid-ranks (the Explorer's rule), so the
+  colours are **relative to the tracks in this export**: export a different set and a track
+  can change colour. The scores are provisional and uncalibrated. A track has no colour when it has no such
+  evidence, has a manual `energy` or `mood` override, or sits exactly on the median of
+  either axis (a lone track always does). The output, including `--dry-run`, states how
+  many tracks the ranks were taken over and how many got each colour. Without the option,
+  no track is coloured.
 - **Writing:** `--dry-run` prints the plan and writes nothing. Otherwise the destination is
   reserved with an exclusive create, the library is written to a temporary file beside it
   and moved into place only when complete, so a failure leaves nothing behind. The

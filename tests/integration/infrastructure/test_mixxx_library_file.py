@@ -11,7 +11,7 @@ from music_analyzer.infrastructure.mixxx.library_file import SqliteMixxxLibraryF
 
 TRACKS = (
     MixxxTrack(track_location('/music/Synthetic/One.flac'), 1234, 'One', 'Artist', 'Album', 301.5, 124.0,
-               MixxxKey(22, 'Am'), 'flac'),
+               MixxxKey(22, 'Am'), 'flac', 0xF8D200),
     MixxxTrack(track_location('/music/Synthetic/Two.mp3'), 99, '', '', '', 12.0, 0.0, MixxxKey(0, ''), 'mp3'),
 )
 
@@ -46,7 +46,7 @@ class SqliteMixxxLibraryFileTests(unittest.TestCase):
                          'b.header_parsed, b.color FROM library b JOIN track_locations l ON l.id = b.location ORDER BY b.id')
         self.assertEqual([
             ('/music/Synthetic/One.flac', 'One.flac', '/music/Synthetic', 1234, 0, 0, 'One', 'Artist', 'Album', 301.5,
-             124.0, 'Am', 22, 'flac', 0, 1, None),
+             124.0, 'Am', 22, 'flac', 0, 1, 0xF8D200),
             ('/music/Synthetic/Two.mp3', 'Two.mp3', '/music/Synthetic', 99, 0, 0, '', '', '', 12.0, 0.0, '', 0, 'mp3',
              0, 1, None),
         ], rows)

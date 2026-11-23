@@ -6,17 +6,24 @@ from music_analyzer.application.dto.catalogue import TrackMetadata
 from music_analyzer.application.dto.review import StoredTrack
 from music_analyzer.application.use_cases.export_mixxx_library.export_mixxx_library import (
     ExportMixxxLibrary, ExportMixxxLibraryRequest, MixxxLibraryExported, MixxxLibraryExportPlanned)
+from music_analyzer.application.use_cases.export_mixxx_library.export_mixxx_library import MOOD_QUADRANT_COLOURS
+from music_analyzer.domain.analysis import ScoreSummary
 from music_analyzer.domain.mixxx_library import MixxxExportError, MixxxKey
+from music_analyzer.domain.mood_colour import CALM, SOMBRE, TENSE, UPBEAT
 
 DESTINATION = '/exports/new-mixxx.sqlite'
 PROBED = TrackMetadata(duration_seconds=200.0, duration_source='mutagen')
 
 
 def analysed(track_id, *, bpm=124.0, key=('A', 'minor'), location=None, overrides=(), duration=300.0,
-             status='completed', common=(('title', 'Synthetic Title'), ('artist', ('Artist One', 'Artist Two')),
+             status='completed', mood=None, mood_model='emomusic-msd-musicnn-2', common=(('title', 'Synthetic Title'), ('artist', ('Artist One', 'Artist Two')),
                                          ('album', 'Synthetic Album'))):
     stages = (StageResult('bpm', (), '', (('bpm', bpm), ('confidence', 3.0))),
               StageResult('key', (), '', (('key', key[0]), ('scale', key[1]), ('strength', 0.8))))
+    if mood is not None:
+        valence, arousal = mood
+        summary = ScoreSummary(('valence', 'arousal'), (valence, arousal), (valence, arousal), (valence, arousal), 1.0)
+        stages += (StageResult('energy', (('model', mood_model),), '', summary=summary),)
     locations = (location,) if location is not None else (f'/music/{track_id}.flac',)
     if location == '':
         locations = ()
@@ -124,6 +131,49 @@ class ExportMixxxLibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(MixxxExportError, 'No active analysed track'):
             use_case.export(ExportMixxxLibraryRequest(DESTINATION))
         self.assertEqual([], library_export.created)
+
+
+class MoodQuadrantColourTests(unittest.TestCase):
+    def colours(self, *tracks, request=ExportMixxxLibraryRequest(DESTINATION, (), MOOD_QUADRANT_COLOURS)):
+        use_case, _, _ = export_with(*tracks)
+        plan = use_case.export(request)
+        return plan, {track.location.filename.removesuffix('.flac'): track.color for track in plan.tracks}
+
+    def test_each_track_is_coloured_by_its_quadrant_among_the_exported_tracks(self):
+        plan, colours = self.colours(analysed('upbeat', mood=(6.0, 6.5)), analysed('tense', mood=(3.0, 7.0)),
+                                     analysed('middle', mood=(4.5, 5.0)), analysed('calm', mood=(7.0, 2.0)),
+                                     analysed('sombre', mood=(2.0, 3.0)))
+        self.assertEqual({'upbeat': UPBEAT.rgb, 'tense': TENSE.rgb, 'middle': None, 'calm': CALM.rgb,
+                          'sombre': SOMBRE.rgb}, colours)
+        self.assertEqual(5, plan.colour_population)
+        self.assertEqual(((UPBEAT.name, 1), (TENSE.name, 1), (CALM.name, 1), (SOMBRE.name, 1), ('no colour', 1)),
+                         plan.colour_counts)
+
+    def test_unknown_incompatible_or_overridden_mood_gets_no_colour_and_is_left_out_of_the_ranks(self):
+        plan, colours = self.colours(
+            analysed('high', mood=(6.0, 6.0)), analysed('low', mood=(1.0, 1.0)), analysed('none'),
+            analysed('other-model', mood=(9.0, 9.0), mood_model='another-model'),
+            analysed('energy-override', mood=(9.0, 9.0), overrides=(('energy', 'high'),)),
+            analysed('mood-override', mood=(9.0, 9.0), overrides=(('mood', 'happy'),)),
+            analysed('nan', mood=(float('nan'), 1.0)))
+        self.assertEqual({'high': UPBEAT.rgb, 'low': SOMBRE.rgb, 'none': None, 'other-model': None,
+                          'energy-override': None, 'mood-override': None, 'nan': None}, colours)
+        self.assertEqual(2, plan.colour_population)
+
+    def test_a_lone_track_sits_at_the_median_and_gets_no_colour(self):
+        _, colours = self.colours(analysed('alone', mood=(5.0, 5.0)))
+        self.assertEqual({'alone': None}, colours)
+
+    def test_without_the_colour_option_no_track_is_coloured(self):
+        plan, colours = self.colours(analysed('a', mood=(6.0, 6.0)), analysed('b', mood=(1.0, 1.0)),
+                                     request=ExportMixxxLibraryRequest(DESTINATION))
+        self.assertEqual({'a': None, 'b': None}, colours)
+        self.assertEqual((0, ()), (plan.colour_population, plan.colour_counts))
+
+    def test_an_unknown_colouring_is_refused(self):
+        use_case, _, _ = export_with(analysed('a'))
+        with self.assertRaisesRegex(MixxxExportError, 'mood-quadrant'):
+            use_case.preview(ExportMixxxLibraryRequest(DESTINATION, (), 'rainbow'))
 
 
 if __name__ == '__main__':

@@ -6,12 +6,13 @@ existing destination, so a Mixxx database is never opened.
 import argparse
 
 from music_analyzer.application.use_cases.export_mixxx_library.export_mixxx_library import (
-    ExportMixxxLibrary, ExportMixxxLibraryRequest, MixxxLibraryExported, MixxxLibraryExportPlanned)
+    MOOD_QUADRANT_COLOURS, NO_COLOURS, ExportMixxxLibrary, ExportMixxxLibraryRequest, MixxxLibraryExported,
+    MixxxLibraryExportPlanned)
 from music_analyzer.infrastructure.event_bus import InProcessEventBus
 from music_analyzer.infrastructure.mixxx.library_file import SqliteMixxxLibraryFile
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
 from music_analyzer.interface_adapters.presenters.mixxx_export import (
-    present_mixxx_export_planned, present_mixxx_exported, present_skipped_tracks)
+    present_mixxx_export_planned, present_mixxx_exported, present_mood_colours, present_skipped_tracks)
 
 COMMAND = 'export-mixxx'
 
@@ -23,6 +24,9 @@ def add_mixxx_export_command(commands, add_configuration_options):
                         help='The new library file to create; an existing path is refused.')
     export.add_argument('--track', action='append', default=[], type=_nonblank, metavar='TRACK_ID',
                         help='Export only this track; repeat for more. Default: every active analysed track.')
+    export.add_argument('--colour', choices=(MOOD_QUADRANT_COLOURS,), default=NO_COLOURS,
+                        help='Colour each track by its mood quadrant (arousal x valence, split at the median of the '
+                             'exported tracks). Default: no colours.')
     export.add_argument('--dry-run', action='store_true', help='Report what would be exported and write nothing.')
 
 
@@ -31,8 +35,10 @@ def run_mixxx_export_command(args, database: str) -> int:
     events.subscribe(MixxxLibraryExportPlanned, lambda event: print(present_mixxx_export_planned(event)))
     events.subscribe(MixxxLibraryExported, lambda event: print(present_mixxx_exported(event)))
     use_case = ExportMixxxLibrary(SQLiteAnalysisRepository(database), SqliteMixxxLibraryFile(), events)
-    request = ExportMixxxLibraryRequest(args.output, tuple(args.track))
+    request = ExportMixxxLibraryRequest(args.output, tuple(args.track), args.colour)
     plan = use_case.preview(request) if args.dry_run else use_case.export(request)
+    if plan.colour_counts:
+        print(present_mood_colours(plan))
     if plan.skipped:
         print(present_skipped_tracks(plan.skipped))
     return 0

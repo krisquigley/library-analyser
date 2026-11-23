@@ -86,7 +86,7 @@ def _write_track(database, track):
     # header_parsed=1: the row already holds the file's tags, so Mixxx keeps our BPM and key rather than
     # re-reading them from the file over the listener's overrides.
     database.execute(
-        'INSERT INTO library (location, title, artist, album, duration, bpm, key, key_id, filetype, mixxx_deleted, '
-        'played, header_parsed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1)',
+        'INSERT INTO library (location, title, artist, album, duration, bpm, key, key_id, filetype, color, '
+        'mixxx_deleted, played, header_parsed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1)',
         (location_id, track.title, track.artist, track.album, track.duration, track.bpm, track.key.text,
-         track.key.key_id, track.file_type))
+         track.key.key_id, track.file_type, track.color))
