@@ -137,6 +137,11 @@ class ExplorerAppBoundaryTests(unittest.TestCase):
         self.assertIn('<script type="module" src="/app/main/main.js"></script>', (ASSETS / 'index.html').read_text(encoding='utf-8'))
         self.assertEqual([], sorted(path.name for path in ASSETS.glob('*.js')))
 
+    def test_the_composition_root_keeps_no_mutable_binding(self):
+        # AGENTS.md: no global mutable state. State lives in sessions and state machines the use cases own.
+        source = (APP / 'main/main.js').read_text(encoding='utf-8')
+        self.assertEqual([], re.findall(r'^\s*(?:let|var)\s+[\w$]+', source, re.M))
+
     def test_only_javascript_modules_live_in_the_app_tree(self):
         others = [path.relative_to(APP).as_posix() for path in APP.rglob('*')
                   if path.is_file() and path.suffix != '.js' and path.name not in ('.gitkeep', 'package.json')]
