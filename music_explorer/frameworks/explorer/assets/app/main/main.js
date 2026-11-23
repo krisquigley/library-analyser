@@ -1,5 +1,11 @@
 import {createPlaylistDownload} from '../application/download-playlist/download-playlist.js';
 import {PLAYLIST_DOWNLOAD_EVENT_TYPES} from '../application/download-playlist/playlist-download-events.js';
+import {createPlaylistPreview} from '../application/preview-playlist/preview-playlist.js';
+import {PLAYLIST_PREVIEW_EVENT_TYPES} from '../application/preview-playlist/playlist-preview-events.js';
+import {playlistPreviewController} from '../adapters/controllers/playlist-preview-controller.js';
+import {playlistPreviewViewModel, presentPlaylistPreviewEvent} from '../adapters/presenters/playlist-preview-presenter.js';
+import {playlistPreviewView} from '../frameworks/views/playlist-preview-view.js';
+import {EMPTY_PLAYLIST_DRAFT} from '../domain/playlist-draft.js';
 import {playlistDownloadController} from '../adapters/controllers/playlist-download-controller.js';
 import {fetchExplorerApi} from '../adapters/gateways/explorer-api-gateway.js';
 import {playlistControlsViewModel, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
@@ -57,10 +63,15 @@ let graphAxesAnimating=false;
 let pendingGraphAxisSpec=[];
 const playlistEvents=createInMemoryEventBus();
 const explorerApi=fetchExplorerApi((path,options)=>fetch(path,options));
-const playlistDownload=createPlaylistDownload({explorerApi,playlistFile:browserPlaylistFile(),eventBus:playlistEvents});
+const playlistDraftSession=createInMemorySession({draft:EMPTY_PLAYLIST_DRAFT});
+const playlistDownload=createPlaylistDownload({explorerApi,playlistFile:browserPlaylistFile(),playlistDraft:playlistDraftSession,eventBus:playlistEvents});
 const playlistControls=playlistDownloadController({playlistDownload,currentTrackId,rejectInput:message=>playlistControlsView.show(presentRejectedPlaylistInput(message))});
 const playlistControlsView=playlistDownloadView({onControlsEdited:controls=>playlistControls.controlsEdited(controls),onDownloadRequested:controls=>playlistControls.downloadRequested(controls),onArcAdded:()=>playlistControls.arcAdded(),onArcRemoved:place=>playlistControls.arcRemoved(place),onArcMoved:(place,offset)=>playlistControls.arcMoved(place,offset),onArcEdited:(place,fields)=>playlistControls.arcEdited(place,fields)});
 for(const type of PLAYLIST_DOWNLOAD_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistControlsView.show(presentPlaylistDownloadEvent(event)));
+const playlistPreview=createPlaylistPreview({explorerApi,playlistDraft:playlistDraftSession,eventBus:playlistEvents});
+const playlistPreviewControls=playlistPreviewController({playlistPreview,currentTrackId});
+const playlistPreviewPanel=playlistPreviewView({onPreviewRequested:()=>playlistPreviewControls.previewRequested()});
+for(const type of PLAYLIST_PREVIEW_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistPreviewPanel.show(presentPlaylistPreviewEvent(event)));
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
 const cameraFocusSession=createInMemorySession({pendingTrackId:null,frame:null,viewIntent:0,focusGeneration:0});
 // Render on demand (#86): the vendor loop would otherwise redraw WebGL every frame, even when nothing moves.
@@ -129,7 +140,7 @@ async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose
 function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId()}));}
 function loadGraph(){return graphLoad.load();}
 
-function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]}));}
+function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]})); playlistPreviewPanel.mount(panel,playlistPreviewViewModel());}
 function renderInitialDetail(){trackDetail.showNone();}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}
 function renderTrackMetadata(metadata){return trackDetail.metadata(trackMetadataViewModel(metadata));}
@@ -200,5 +211,5 @@ function buildControls(){const root=document.getElementById('controls'); buildGr
 function buildGraphControls(root){graphFilterControls.mount(root);}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); libraryLoading.mount(); buildControls(); renderTracks([]); graphStatusDisplay.show(GRAPH_IDLE_STATUS); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
-installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
+installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
 function diagnosticSnapshot(){const {snapshot,selectionState}=selectionSession.read(); const camera=cameraFocusSession.read(); return {currentTrackId:snapshot.current_track_id??null,selectionEpoch:snapshot.selection_epoch??null,history:snapshot.history||[],graphStatus:graphState().loadState==='failed'?'error':graphState().loadState,cameraFocusActive:camera.frame!=null,pendingCameraTrackId:camera.pendingTrackId,selectionPending:awaitingServer(selectionState),trackSearchStatus:trackSearchSession.read().searchState==='failed'?'error':trackSearchSession.read().searchState,trackResultCount:trackSearchSession.read().results.tracks.length};}

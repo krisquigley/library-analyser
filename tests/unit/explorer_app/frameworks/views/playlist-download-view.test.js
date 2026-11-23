@@ -2,6 +2,8 @@
 import {test, beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {playlistDownloadView} from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/views/playlist-download-view.js';
+import {createInMemorySession} from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/in-memory-session.js';
+import {EMPTY_PLAYLIST_DRAFT} from '../../../../../music_explorer/frameworks/explorer/assets/app/domain/playlist-draft.js';
 import {byTag, descendants, fakeElement, installFakeDocument} from '../fake-document.js';
 
 beforeEach(() => { installFakeDocument([]); });
@@ -169,7 +171,8 @@ test("composed with the real controller and use case, the arc editor's input rea
   }};
   let view;
   const eventBus = {publish: event => view.show(presentPlaylistDownloadEvent(event)), subscribe() {}};
-  const playlistDownload = createPlaylistDownload({explorerApi, playlistFile: {save() {}}, eventBus});
+  const playlistDraft = createInMemorySession({draft: EMPTY_PLAYLIST_DRAFT});
+  const playlistDownload = createPlaylistDownload({explorerApi, playlistFile: {save() {}}, playlistDraft, eventBus});
   const controller = playlistDownloadController({playlistDownload, currentTrackId: () => 'start', rejectInput() {}});
   view = playlistDownloadView({onControlsEdited: controller.controlsEdited, onDownloadRequested: controller.downloadRequested,
     onArcAdded: controller.arcAdded, onArcRemoved: controller.arcRemoved, onArcMoved: controller.arcMoved,

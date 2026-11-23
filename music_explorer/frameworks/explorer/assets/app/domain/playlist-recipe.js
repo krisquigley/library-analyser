@@ -6,7 +6,7 @@ const DEFAULT_MINIMUM_KEY_STRENGTH = '0.5';
 
 export function playlistRecipe({startTrackId, bpmMin, bpmMax, count, durationMinutes, harmonicMixing = true,
   minimumKeyStrength, energyArcs = [], arcUnit, moodHold}) {
-  if (!startTrackId) throw new Error('Select a start track before downloading M3U');
+  if (!startTrackId) throw new Error('Select a start track first');
   const energyPlan = Object.freeze(energyArcs.map(energyArcOf));
   return Object.freeze({
     startTrackId,
