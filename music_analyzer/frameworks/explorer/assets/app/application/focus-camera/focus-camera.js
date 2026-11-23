@@ -1,6 +1,7 @@
 // The camera's focus on the current track (#146). An accepted selection asks for one focus; the graph takes
 // it once it can show the track, and the arc runs frame by frame. The listener's own camera input claims the
-// view, which ends any request and arc. The scene's Three.js work and frame scheduling stay outside.
+// view, which ends any request and arc. A chosen track claims the view too, and its acceptance asks for focus
+// only while that claim still owns the view. The scene's Three.js work and frame scheduling stay outside.
 
 import {cameraFocusCancelCause, cameraFocusState, nextCameraFocusState} from '../../domain/camera-focus.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
@@ -31,6 +32,17 @@ export function createCameraFocus({focusSession, eventBus}) {
     transition('claim-view', {viewIntent, pendingTrackId: null});
     eventBus.publish(cameraFocusEvent('camera-view-claimed', {viewIntent}));
     return viewIntent;
+  }
+
+  function claimViewForSelection(cause) {
+    focusSession.write({selectionViewIntent: claimView(cause)});
+  }
+
+  function requestForAcceptedSelection(trackId) {
+    const {viewIntent, selectionViewIntent} = read();
+    if (selectionViewIntent !== viewIntent) return false;
+    request(trackId);
+    return true;
   }
 
   function request(trackId) {
@@ -70,7 +82,7 @@ export function createCameraFocus({focusSession, eventBus}) {
   }
 
   return Object.freeze({
-    cancel, claimView, request, take, begin, frameScheduled, frameRan, finished,
+    cancel, claimView, claimViewForSelection, request, requestForAcceptedSelection, take, begin, frameScheduled, frameRan, finished,
     peek: () => read().pendingTrackId,
     viewIntent: () => read().viewIntent,
   });

@@ -5,7 +5,7 @@ import {createCameraFocus} from '../../../../../music_explorer/frameworks/explor
 import {CAMERA_FOCUS_EVENT_TYPES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/focus-camera/camera-focus-events.js';
 
 function harness(initial = {}) {
-  let record = {pendingTrackId: null, frame: null, viewIntent: 0, focusGeneration: 0, ...initial};
+  let record = {pendingTrackId: null, frame: null, viewIntent: 0, selectionViewIntent: 0, focusGeneration: 0, ...initial};
   const session = {read: () => record, write: changes => { record = {...record, ...changes}; }};
   const published = [];
   const focus = createCameraFocus({focusSession: session, eventBus: {publish: event => published.push(event), subscribe() {}}});
@@ -85,4 +85,30 @@ test('an arc in flight is cancelled with its cause; an idle cancel or an unknown
   focus.cancel('graph-filtered');
   assert.deepEqual(published, [{type: 'camera-focus-cancelled', frame: 9, cause: 'camera-failure'}]);
   assert.throws(() => focus.claimView(), /not cancelled for: undefined/);
+});
+
+test('a chosen track claims the view; once accepted it asks for focus while its claim still owns the view', () => {
+  const {focus, published, record} = harness({viewIntent: 2});
+  focus.claimViewForSelection('new-selection');
+  assert.deepEqual([record().viewIntent, record().selectionViewIntent], [3, 3]);
+  published.length = 0;
+  assert.equal(focus.requestForAcceptedSelection('a'), true);
+  assert.equal(focus.peek(), 'a');
+  assert.deepEqual(published.map(event => event.type), ['camera-focus-requested']);
+});
+
+test('an accepted selection asks for nothing once the listener has claimed the view since', () => {
+  const {focus, published} = harness();
+  focus.claimViewForSelection('new-selection');
+  focus.claimView('listener-orbit');
+  published.length = 0;
+  assert.equal(focus.requestForAcceptedSelection('a'), false);
+  assert.deepEqual([focus.peek(), published], [null, []]);
+});
+
+test('an accepted selection that keeps the camera still clears any waiting focus', () => {
+  const {focus} = harness({pendingTrackId: 'old'});
+  focus.claimViewForSelection('new-selection');
+  assert.equal(focus.requestForAcceptedSelection(null), true);
+  assert.equal(focus.peek(), null);
 });

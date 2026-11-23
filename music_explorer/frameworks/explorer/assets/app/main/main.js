@@ -59,18 +59,17 @@ import {GRAPH_RENDERING_EVENT_TYPES} from '../application/render-graph/render-gr
 import {installExplorerDiagnostics} from '../frameworks/explorer-diagnostics.js';
 import {createInMemorySession} from '../frameworks/in-memory-session.js';
 import {createGraphAxes} from '../frameworks/graph-scene/graph-axes.js';
+import {createForceGraphStage} from '../frameworks/graph-scene/force-graph-stage.js';
 import {createLibraryRefresh} from '../application/refresh-library/refresh-library.js';
 import {LIBRARY_REFRESH_EVENT_TYPES} from '../application/refresh-library/library-refresh-events.js';
 import {presentLibraryRefreshEvent} from '../adapters/presenters/library-loading-presenter.js';
 import {libraryLoadingView} from '../frameworks/views/library-loading-view.js';
-let forceGraph=null;
+const graphStage=createForceGraphStage({create:elem=>configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode})});
 const graphAxes=createGraphAxes();
 const nodeHalo=createSelectedNodeHalo();
 const graphDataMount=createGraphDataMount({onReplaced:()=>nodeHalo.clear()});
 // A new layout is framed at once; cancelling first keeps a focus arc from overwriting the frame.
 const graphFraming=createGraphFraming({onReframe:()=>cancelCameraFocus('graph-reframed')});
-let graphAxesAnimating=false;
-let pendingGraphAxisSpec=[];
 const playlistEvents=createInMemoryEventBus();
 const explorerApi=fetchExplorerApi((path,options)=>fetch(path,options));
 const playlistDraftSession=createInMemorySession({draft:EMPTY_PLAYLIST_DRAFT});
@@ -94,13 +93,13 @@ playlistEvents.subscribe('saved-recipe-loaded',event=>playlistControlsView.show(
 // A loaded recipe starts from its own track (owner decision A, #139): it becomes the current track.
 playlistEvents.subscribe('saved-recipe-loaded',event=>setCurrent(event.startTrackId));
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
-const cameraFocusSession=createInMemorySession({pendingTrackId:null,frame:null,viewIntent:0,focusGeneration:0});
+const cameraFocusSession=createInMemorySession({pendingTrackId:null,frame:null,viewIntent:0,selectionViewIntent:0,focusGeneration:0});
 // Render on demand (#86): the vendor loop would otherwise redraw WebGL every frame, even when nothing moves.
 const renderingEvents=createInMemoryEventBus();
-const graphRendering=createGraphRendering({renderer:forceGraphRenderer(()=>forceGraph),eventBus:renderingEvents});
+const graphRendering=createGraphRendering({renderer:forceGraphRenderer(graphStage.current),eventBus:renderingEvents});
 const cameraEvents=createInMemoryEventBus();
 const cameraFocus=createCameraFocus({focusSession:cameraFocusSession,eventBus:cameraEvents});
-const cameraControlsWatch=createCameraControlsWatch({onControlsReplaced:()=>cancelCameraFocus('controls-replaced'),onViewClaimed:()=>invalidateCameraViewIntent('listener-orbit')});
+const cameraControlsWatch=createCameraControlsWatch({onControlsReplaced:()=>cancelCameraFocus('controls-replaced'),onViewClaimed:()=>cameraFocus.claimView('listener-orbit')});
 cameraEvents.subscribe('camera-focus-cancelled',event=>{if(typeof cancelAnimationFrame==='function') cancelAnimationFrame(event.frame);});
 const graphSession=createInMemorySession({loadState:'idle',controls:EMPTY_GRAPH_CONTROLS,
   model:{nodes:[],links:[],unpositioned:[],availableMoods:[],selectedMood:'',metadata:{},genreOptions:[]},visible:{nodes:[],links:[],unpositioned:[]}});
@@ -112,12 +111,12 @@ const graphFilterControls=graphControlsView({onMoodChosen:mood=>graphControls.mo
 const graphStatusDisplay=graphStatusView({onReload:()=>loadGraph().catch(()=>{}),appendPlaylistControls:panel=>appendM3UDownloadControls(panel)});
 function showGraphLoadEvent(event){const status=presentGraphLoadEvent(event); if(status) graphStatusDisplay.show(status);}
 graphEvents.subscribe('graph-controls-edited',event=>graphFilterControls.showValues(graphControlValuesViewModel(event.controls)));
-graphEvents.subscribe('graph-load-started',event=>{invalidateCameraViewIntent('graph-reloaded'); showGraphLoadEvent(event);});
+graphEvents.subscribe('graph-load-started',event=>{cameraFocus.claimView('graph-reloaded'); showGraphLoadEvent(event);});
 graphEvents.subscribe('graph-model-built',event=>{graphFilterControls.showOptions(graphControlOptionsViewModel(event.model,event.controls)); showGraphLoadEvent(event);});
 graphEvents.subscribe('graph-render-due',event=>renderMap(event.visible));
 graphEvents.subscribe('graph-ready',showGraphLoadEvent);
 graphEvents.subscribe('graph-load-failed',showGraphLoadEvent);
-graphEvents.subscribe('graph-filters-applied',event=>{invalidateCameraViewIntent('graph-filtered'); if(event.shown) renderMap(event.visible); showGraphLoadEvent(event);});
+graphEvents.subscribe('graph-filters-applied',event=>{cameraFocus.claimView('graph-filtered'); if(event.shown) renderMap(event.visible); showGraphLoadEvent(event);});
 const trackSearchSession=createInMemorySession({searchState:'idle',results:emptyTrackResults(),failure:null});
 const trackEvents=createInMemoryEventBus();
 const trackSearch=createTrackSearch({explorerApi,trackSession:trackSearchSession,clock:{wait:ms=>new Promise(resolve=>setTimeout(resolve,ms))},eventBus:trackEvents});
@@ -129,10 +128,9 @@ const selectionSession=createInMemorySession({snapshot:{current_track_id:null},e
 function currentTrackId(){return selectionSession.read().snapshot.current_track_id;}
 const selectionEvents=createInMemoryEventBus();
 const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession,eventBus:selectionEvents});
-let selectionViewIntent=0;
-selectionEvents.subscribe('track-chosen',()=>{selectionViewIntent=invalidateCameraViewIntent('new-selection'); renderDetailLoading(); updateSelectedTrackVisuals();});
-selectionEvents.subscribe('selection-rewinding',()=>{selectionViewIntent=invalidateCameraViewIntent('new-selection'); renderDetailLoading();});
-selectionEvents.subscribe('selection-accepted',event=>{if(selectionViewIntent!==cameraFocus.viewIntent()) return; cancelCameraFocus('new-selection'); cameraFocus.request(event.focusCamera?event.trackId:null);});
+selectionEvents.subscribe('track-chosen',()=>{cameraFocus.claimViewForSelection('new-selection'); renderDetailLoading(); updateSelectedTrackVisuals();});
+selectionEvents.subscribe('selection-rewinding',()=>{cameraFocus.claimViewForSelection('new-selection'); renderDetailLoading();});
+selectionEvents.subscribe('selection-accepted',event=>cameraFocus.requestForAcceptedSelection(event.focusCamera?event.trackId:null));
 selectionEvents.subscribe('selection-refused',event=>renderDetailError(event.failure));
 selectionEvents.subscribe('library-selection-changed',event=>{cancelCameraFocus('new-selection'); cameraFocus.request(event.trackId);});
 selectionEvents.subscribe('no-track-selected',()=>{updateSelectedTrackVisuals(); renderInitialDetail();});
@@ -151,7 +149,8 @@ function nextFrame(){return new Promise(resolve=>{if(typeof requestAnimationFram
 const selectedNodeValue=selectedTrackNodeSize(currentTrackId);
 function updateSelectedTrackVisuals(){
   if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===currentTrackId()?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
-  if(forceGraph){graphRendering.wake(); forceGraph.nodeVal(selectedNodeValue); if(typeof forceGraph.refresh==='function') forceGraph.refresh(); syncSelectedNodeHalo(forceGraph,graphState().visible); focusPendingCameraSelection();}
+  const graph=graphStage.current();
+  if(graph){graphRendering.wake(); graph.nodeVal(selectedNodeValue); if(typeof graph.refresh==='function') graph.refresh(); syncSelectedNodeHalo(graph,graphState().visible); focusPendingCameraSelection();}
   else if(graphState().visible.nodes.length) drawCanvasFallback(graphState().visible,null,currentTrackId());
   renderMoodStrip(graphState().visible);
 }
@@ -167,21 +166,20 @@ function renderDetailField(name,field){return trackDetail.field(detailFieldViewM
 function renderTrackMetadata(metadata){return trackDetail.metadata(trackMetadataViewModel(metadata));}
 function renderDetail(detail){trackDetail.show(trackDetailViewModel(detail));}
 function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
-function fitGraph(elem){const size=fitGraphToElement(forceGraph,elem); graphRendering.wake(); return size;}
+function fitGraph(elem){const size=fitGraphToElement(graphStage.current(),elem); graphRendering.wake(); return size;}
 
 function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||graphState().visible.nodes,currentTrackId());}
 function animateGraphAxes(timestamp){
-  if(forceGraph){
-    graphRendering.viewObserved(graphViewPose(forceGraph));
+  const graph=graphStage.current();
+  if(graph){
+    graphRendering.viewObserved(graphViewPose(graph));
     if(graphRendering.drawing()){
-      const viewport=document.getElementById('graph3d'); graphAxes.sync(forceGraph,pendingGraphAxisSpec,viewport); graphAxes.placeLabels(forceGraph,viewport); syncSelectedNodeHalo(forceGraph,graphState().visible);
+      const viewport=document.getElementById('graph3d'); graphAxes.sync(graph,graphStage.axisSpec(),viewport); graphAxes.placeLabels(graph,viewport); syncSelectedNodeHalo(graph,graphState().visible);
       graphRendering.frameDrawn(Number.isFinite(timestamp)?timestamp:performance.now());
     }
   }
   requestAnimationFrame(animateGraphAxes);
 }
-// View ownership outlives a POST or a deferred layout, independently of the RAF timeline.
-function invalidateCameraViewIntent(cause){cancelCameraFocus(cause); return cameraFocus.claimView(cause);}
 // Own the timeline: bundled cameraPosition's timed tweens have no public cancellation.
 function cancelCameraFocus(cause){cameraFocus.cancel(cause);}
 function observeCameraFocusControls(graph){cameraControlsWatch.observe(graph);}
@@ -189,7 +187,7 @@ const cameraFrames=Object.freeze({request:callback=>requestAnimationFrame(callba
 function animateCameraFocus(graph,position,target){
   observeCameraFocusControls(graph);
   cancelCameraFocus('new-focus');
-  animateCameraArc(graph,{position,target},{cameraFocus,frames:cameraFrames,isShown:()=>graph===forceGraph});
+  animateCameraArc(graph,{position,target},{cameraFocus,frames:cameraFrames,isShown:()=>graphStage.shows(graph)});
 }
 // Graph picks own the view immediately; server acceptance still owns detail.
 function selectGraphNode(picked){
@@ -198,14 +196,16 @@ function selectGraphNode(picked){
   cancelCameraFocus('new-selection');
   cameraFocus.request(null);
   const node=mountedPickedNode(id,{visible:graphState().visible.nodes,mounted:graphDataMount.current().nodes});
-  if(forceGraph && node && jumpCameraToPickedNode(forceGraph,node,cameraControlsWatch)==='failed') cancelCameraFocus('camera-failure');
+  const graph=graphStage.current();
+  if(graph && node && jumpCameraToPickedNode(graph,node,cameraControlsWatch)==='failed') cancelCameraFocus('camera-failure');
   return setCurrent(id,{focusCamera:false});
 }
 function focusPendingCameraSelection(graphRendered=false){
   // Existing instances still show the old layout while a replacement loads.
   // Only renderMap may consume focus before the load state becomes ready.
   if(!graphRendered && graphState().loadState!=='ready') return;
-  if(!forceGraph || graphFraming.layout()===null || cameraFocus.peek()==null) return;
+  const graph=graphStage.current();
+  if(!graph || graphFraming.layout()===null || cameraFocus.peek()==null) return;
   const id=cameraFocus.take(currentTrackId());
   if(id===null) return;
   const node=graphState().visible.nodes.find(n=>n.id===id);
@@ -217,20 +217,27 @@ function focusPendingCameraSelection(graphRendered=false){
   // Camera focus is best-effort; it must never block accepted track detail.
   try {
     // Configured orbit bounds take precedence over the nominal display-space radius.
-    const controls=forceGraph.controls();
-    const pose=selectionFocusPose(target,{currentDirection:()=>cameraViewDirection(forceGraph.cameraPosition(),controls.target),minDistance:controls.minDistance,maxDistance:controls.maxDistance});
+    const controls=graph.controls();
+    const pose=selectionFocusPose(target,{currentDirection:()=>cameraViewDirection(graph.cameraPosition(),controls.target),minDistance:controls.minDistance,maxDistance:controls.maxDistance});
     // Skip before settling input; never widen custom bounds to make focus eligible.
-    if(pose) animateCameraFocus(forceGraph,pose.position,pose.target);
+    if(pose) animateCameraFocus(graph,pose.position,pose.target);
   } catch(error) {
     // A camera adapter failure does not revoke an accepted selection.
     cancelCameraFocus('camera-failure');
   }
 }
 function renderMoodStrip(data){moodStrip.show(moodStripViewModel(moodStripMarks(data.nodes,currentTrackId()),moodStrip.width()));}
-function renderMap(data){pendingGraphAxisSpec=graphAxisSpec(graphState().model.nodes.length?graphState().model.nodes:data.nodes);const elem=graphContainer(); if(typeof ForceGraph3D==='function'){if(!forceGraph){forceGraph=configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode}); observeElementResize(elem,()=>fitGraph(elem)); observeGraphInput(elem,()=>graphRendering.wake()); if(!graphAxesAnimating && typeof requestAnimationFrame==='function'){graphAxesAnimating=true;requestAnimationFrame(animateGraphAxes);}} observeCameraFocusControls(forceGraph); const size=fitGraph(elem); graphDataMount.mount(forceGraph,data); syncSelectedNodeHalo(forceGraph,data); graphFraming.frame(forceGraph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();} else {nodeHalo.clear();drawCanvasFallback(data,elem,currentTrackId());} renderMoodStrip(data);}
+function renderMap(data){
+  graphStage.stageAxes(graphAxisSpec(graphState().model.nodes.length?graphState().model.nodes:data.nodes));
+  const elem=graphContainer();
+  if(typeof ForceGraph3D!=='function'){nodeHalo.clear(); drawCanvasFallback(data,elem,currentTrackId()); renderMoodStrip(data); return;}
+  const graph=graphStage.ensure(elem,()=>{observeElementResize(elem,()=>fitGraph(elem)); observeGraphInput(elem,()=>graphRendering.wake()); if(typeof requestAnimationFrame==='function') graphStage.startFrames(requestAnimationFrame,animateGraphAxes);});
+  observeCameraFocusControls(graph); const size=fitGraph(elem); graphDataMount.mount(graph,data); syncSelectedNodeHalo(graph,data); graphFraming.frame(graph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();
+  renderMoodStrip(data);
+}
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
 function buildGraphControls(root){graphFilterControls.mount(root);}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); libraryLoading.mount(); buildControls(); renderTracks([]); graphStatusDisplay.show(GRAPH_IDLE_STATUS); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
-installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[SAVED_RECIPE_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
+installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[SAVED_RECIPE_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:graphStage.current(),graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
 function diagnosticSnapshot(){const {snapshot,selectionState}=selectionSession.read(); const camera=cameraFocusSession.read(); return {currentTrackId:snapshot.current_track_id??null,selectionEpoch:snapshot.selection_epoch??null,history:snapshot.history||[],graphStatus:graphState().loadState==='failed'?'error':graphState().loadState,cameraFocusActive:camera.frame!=null,pendingCameraTrackId:camera.pendingTrackId,selectionPending:awaitingServer(selectionState),trackSearchStatus:trackSearchSession.read().searchState==='failed'?'error':trackSearchSession.read().searchState,trackResultCount:trackSearchSession.read().results.tracks.length};}
