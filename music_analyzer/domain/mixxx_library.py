@@ -48,6 +48,7 @@ class MixxxTrack:
     bpm: float
     key: MixxxKey
     file_type: str
+    color: int | None = None
 
 
 class MixxxExportError(ValueError):

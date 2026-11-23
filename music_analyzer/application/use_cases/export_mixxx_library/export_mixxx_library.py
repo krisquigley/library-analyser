@@ -3,8 +3,13 @@
 Each track's manual overrides win over its detected BPM and key; anything unknown is left empty. Tracks that
 are not in the active library, have no available location or have no completed analysis are skipped, each with
 its reason. The analysis database is only read.
+
+With mood-quadrant colours (#134), each track whose valence and arousal come from the emomusic model, and
+which has no manual energy or mood override, is coloured by its quadrant among those tracks; any other
+track has no colour.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import math
 
 from music_analyzer.application.dto.review import StoredTrack
 from music_analyzer.application.ports.event_bus import EventBus
@@ -13,12 +18,21 @@ from music_analyzer.application.ports.review import ReviewRepository
 from music_analyzer.application.use_cases.active_library import active_exclusion_reason
 from music_analyzer.domain.mixxx_library import (
     MixxxExportError, MixxxTrack, mixxx_bpm, mixxx_file_type, mixxx_key, mixxx_key_from_text, track_location)
+from music_analyzer.domain.mood_colour import MOOD_QUADRANTS, mood_quadrant
+from music_analyzer.domain.percentile_rank import percentile_ranks
+
+NO_COLOURS = ''
+MOOD_QUADRANT_COLOURS = 'mood-quadrant'
+COLOURINGS = (NO_COLOURS, MOOD_QUADRANT_COLOURS)
+NO_COLOUR = 'no colour'
+AROUSAL_VALENCE_MODEL = 'emomusic-msd-musicnn-2'
 
 
 @dataclass(frozen=True)
 class ExportMixxxLibraryRequest:
     destination: str
     track_ids: tuple[str, ...] = ()
+    colours: str = NO_COLOURS
 
 
 @dataclass(frozen=True)
@@ -26,6 +40,8 @@ class MixxxLibraryExportPlan:
     destination: str
     tracks: tuple[MixxxTrack, ...]
     skipped: tuple[tuple[str, str], ...]
+    colour_population: int = 0
+    colour_counts: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,20 +78,60 @@ class ExportMixxxLibrary:
         return plan
 
     def _plan(self, request):
+        if request.colours not in COLOURINGS:
+            raise MixxxExportError(f'Unknown colouring "{request.colours}": the only one is {MOOD_QUADRANT_COLOURS}')
         if self._library_export.occupied(request.destination):
             raise MixxxExportError(f'{request.destination} already exists: the export only creates a new file')
-        tracks, skipped = [], []
+        exported, skipped = [], []
         for track_id in self._chosen_track_ids(request):
             track = self._tracks.read_track(track_id)
             reason = _skip_reason(track)
             if reason:
                 skipped.append((track_id, reason))
             else:
-                tracks.append(_mixxx_track(track))
-        return MixxxLibraryExportPlan(request.destination, tuple(tracks), tuple(skipped))
+                exported.append(track)
+        tracks = tuple(_mixxx_track(track) for track in exported)
+        plan = MixxxLibraryExportPlan(request.destination, tracks, tuple(skipped))
+        return _coloured_by_mood_quadrant(plan, exported) if request.colours == MOOD_QUADRANT_COLOURS else plan
 
     def _chosen_track_ids(self, request):
         return tuple(dict.fromkeys(request.track_ids or tuple(self._tracks.track_ids())))
+
+
+def _coloured_by_mood_quadrant(plan, exported):
+    moods = {index: mood for index, mood in enumerate(map(_valence_arousal, exported)) if mood}
+    valence_levels = percentile_ranks({index: mood[0] for index, mood in moods.items()})
+    arousal_levels = percentile_ranks({index: mood[1] for index, mood in moods.items()})
+    quadrants = [mood_quadrant(valence_levels[index], arousal_levels[index]) if index in moods else None
+                 for index in range(len(exported))]
+    tracks = tuple(replace(track, color=quadrant.rgb if quadrant else None)
+                   for track, quadrant in zip(plan.tracks, quadrants))
+    counts = tuple((quadrant.name, quadrants.count(quadrant)) for quadrant in MOOD_QUADRANTS)
+    return replace(plan, tracks=tracks, colour_population=len(moods),
+                   colour_counts=counts + ((NO_COLOUR, quadrants.count(None)),))
+
+
+def _valence_arousal(track):
+    overrides = dict(track.overrides)
+    if overrides.get('energy') is not None or overrides.get('mood') is not None:
+        return None
+    stage = next((stage for stage in track.run.stages if stage.stage == 'energy'), None)
+    if stage is None or stage.summary is None or not _from_model(stage.provenance, AROUSAL_VALENCE_MODEL):
+        return None
+    means = dict(zip(stage.summary.labels, stage.summary.mean))
+    valence, arousal = means.get('valence'), means.get('arousal')
+    return (float(valence), float(arousal)) if _finite(valence) and _finite(arousal) else None
+
+
+def _from_model(provenance, model_id):
+    explicit = [value for key, value in provenance if key == 'model']
+    if explicit:
+        return all(value == model_id for value in explicit)
+    return any(key == model_id for key, _value in provenance)
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _skip_reason(track: StoredTrack) -> str:
