@@ -20,5 +20,6 @@ include = ["music_analyzer*", "music_explorer*"]
 
 [tool.setuptools.package-data]
 "music_analyzer.infrastructure.models" = ["data/manifest.json", "data/LICENSE"]
+"music_analyzer.infrastructure.mixxx" = ["data/mixxx-2.5-schema.sql", "data/NOTICE", "data/LICENSE.mixxx"]
 "music_analyzer.frameworks.explorer" = ["assets/index.html", "assets/style.css", "assets/vendor/3d-force-graph/3d-force-graph.min.js", "assets/vendor/3d-force-graph/NOTICE", "assets/app/**/*.js"]
 "music_explorer.frameworks.explorer" = ["assets/index.html", "assets/style.css", "assets/vendor/3d-force-graph/3d-force-graph.min.js", "assets/vendor/3d-force-graph/NOTICE", "assets/app/**/*.js"]
