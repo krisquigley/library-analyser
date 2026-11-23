@@ -11,6 +11,7 @@ import subprocess
 from music_analyzer.application.use_cases.check_integrity import CheckIntegrity
 from music_analyzer.infrastructure.persistence.integrity import SQLiteIntegrityScanner
 from music_analyzer.interface_adapters.presenters.integrity import present_integrity
+from music_analyzer.frameworks.cli.mixxx_export import COMMAND as MIXXX_EXPORT_COMMAND, add_mixxx_export_command, run_mixxx_export_command
 from music_analyzer.frameworks.cli.playlist_recipes import COMMAND, add_playlist_recipe_commands, run_playlist_recipe_command
 from music_analyzer.application.use_cases.analyze_batch import AnalyzeBatch
 from music_analyzer.infrastructure.persistence.batch import SQLiteBatchQueue
@@ -174,7 +175,7 @@ def _integrity_requested(argv):
     values = iter(argv)
     other_commands = {'doctor', 'models', 'scan', 'status', 'analyze', 'show', 'reaggregate',
                       'list', 'override', 'export', 'explorer', 'graph', 'prepare-projection',
-                      'playlist-recipe'}
+                      'playlist-recipe', 'export-mixxx'}
     root_value_options = ('--database', '--config', '--model-directory')
     for token in values:
         option, separator, value = token.partition('=')
@@ -264,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
     add_configuration_options(export)
     export.add_argument('--format', choices=('json', 'csv', 'markdown'), required=True)
     export.add_argument('--output', required=True)
+    add_mixxx_export_command(commands, add_configuration_options)
     explorer = commands.add_parser('explorer', help='Compatibility route: start the music-explorer read-only localhost journey explorer.')
     add_configuration_options(explorer)
     explorer.add_argument('--host', default='127.0.0.1', help='Bind host; default 127.0.0.1.')
@@ -324,6 +326,8 @@ def main(argv: list[str] | None = None) -> int:
             ready = True
         elif args.command == COMMAND:
             return run_playlist_recipe_command(args, load_settings(**overrides).database)
+        elif args.command == MIXXX_EXPORT_COMMAND:
+            return run_mixxx_export_command(args, load_settings(**overrides).database)
         elif args.command == 'doctor':
             report = build_doctor(**overrides).execute()
             output = present_doctor(report, as_json=args.json)
