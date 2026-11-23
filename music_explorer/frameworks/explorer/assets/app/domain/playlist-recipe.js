@@ -1,8 +1,8 @@
 // The playlist a listener asks for (#146, #137): what the Download M3U controls describe.
 // Values stay as entered; the server validates them and owns their messages.
 
-const DEFAULT_TRACK_COUNT = '10';
-const DEFAULT_MINIMUM_KEY_STRENGTH = '0.5';
+export const DEFAULT_TRACK_COUNT = '10';
+export const DEFAULT_MINIMUM_KEY_STRENGTH = '0.5';
 
 export function playlistRecipe({startTrackId, bpmMin, bpmMax, count, durationMinutes, harmonicMixing = true,
   minimumKeyStrength, energyArcs = [], arcUnit, moodHold}) {

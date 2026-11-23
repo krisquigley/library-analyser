@@ -6,6 +6,11 @@ import {playlistPreviewController} from '../adapters/controllers/playlist-previe
 import {playlistPreviewViewModel, presentPlaylistPreviewEvent} from '../adapters/presenters/playlist-preview-presenter.js';
 import {playlistPreviewView} from '../frameworks/views/playlist-preview-view.js';
 import {EMPTY_PLAYLIST_DRAFT} from '../domain/playlist-draft.js';
+import {createPlaylistRecipeExport} from '../application/export-playlist-recipe/export-playlist-recipe.js';
+import {PLAYLIST_RECIPE_EXPORT_EVENT_TYPES} from '../application/export-playlist-recipe/playlist-recipe-export-events.js';
+import {playlistRecipeExportController} from '../adapters/controllers/playlist-recipe-export-controller.js';
+import {presentPlaylistRecipeExportEvent} from '../adapters/presenters/playlist-recipe-export-presenter.js';
+import {playlistRecipeExportView} from '../frameworks/views/playlist-recipe-export-view.js';
 import {playlistDownloadController} from '../adapters/controllers/playlist-download-controller.js';
 import {fetchExplorerApi} from '../adapters/gateways/explorer-api-gateway.js';
 import {playlistControlsViewModel, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
@@ -72,6 +77,10 @@ const playlistPreview=createPlaylistPreview({explorerApi,playlistDraft:playlistD
 const playlistPreviewControls=playlistPreviewController({playlistPreview,currentTrackId});
 const playlistPreviewPanel=playlistPreviewView({onPreviewRequested:()=>playlistPreviewControls.previewRequested()});
 for(const type of PLAYLIST_PREVIEW_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistPreviewPanel.show(presentPlaylistPreviewEvent(event)));
+const playlistRecipeExport=createPlaylistRecipeExport({playlistDraft:playlistDraftSession,playlistFile:browserPlaylistFile(),eventBus:playlistEvents});
+const recipeExportControls=playlistRecipeExportController({playlistRecipeExport,currentTrackId});
+const recipeExportPanel=playlistRecipeExportView({onExportRequested:()=>recipeExportControls.exportRequested()});
+for(const type of PLAYLIST_RECIPE_EXPORT_EVENT_TYPES) playlistEvents.subscribe(type,event=>recipeExportPanel.show(presentPlaylistRecipeExportEvent(event)));
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
 const cameraFocusSession=createInMemorySession({pendingTrackId:null,frame:null,viewIntent:0,focusGeneration:0});
 // Render on demand (#86): the vendor loop would otherwise redraw WebGL every frame, even when nothing moves.
@@ -140,7 +149,7 @@ async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose
 function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId()}));}
 function loadGraph(){return graphLoad.load();}
 
-function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]})); playlistPreviewPanel.mount(panel,playlistPreviewViewModel());}
+function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]})); playlistPreviewPanel.mount(panel,playlistPreviewViewModel()); recipeExportPanel.mount(panel);}
 function renderInitialDetail(){trackDetail.showNone();}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}
 function renderTrackMetadata(metadata){return trackDetail.metadata(trackMetadataViewModel(metadata));}
@@ -211,5 +220,5 @@ function buildControls(){const root=document.getElementById('controls'); buildGr
 function buildGraphControls(root){graphFilterControls.mount(root);}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); libraryLoading.mount(); buildControls(); renderTracks([]); graphStatusDisplay.show(GRAPH_IDLE_STATUS); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
-installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
+installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:forceGraph,graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
 function diagnosticSnapshot(){const {snapshot,selectionState}=selectionSession.read(); const camera=cameraFocusSession.read(); return {currentTrackId:snapshot.current_track_id??null,selectionEpoch:snapshot.selection_epoch??null,history:snapshot.history||[],graphStatus:graphState().loadState==='failed'?'error':graphState().loadState,cameraFocusActive:camera.frame!=null,pendingCameraTrackId:camera.pendingTrackId,selectionPending:awaitingServer(selectionState),trackSearchStatus:trackSearchSession.read().searchState==='failed'?'error':trackSearchSession.read().searchState,trackResultCount:trackSearchSession.read().results.tracks.length};}
