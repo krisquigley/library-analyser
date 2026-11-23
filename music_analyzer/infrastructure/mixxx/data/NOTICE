@@ -1,0 +1,15 @@
+Mixxx library schema, used by `music-analyzer export mixxx` (#133) to create a new Mixxx-compatible library file.
+
+File: mixxx-2.5-schema.sql
+Derived from: Mixxx 2.5.6, res/schema.xml
+Source: https://github.com/mixxxdj/mixxx/blob/2.5.6/res/schema.xml
+Tag: 2.5.6, commit 3ebac449e7e5fe2a0186596657696e87ce8b0e56
+schema.xml sha256: adec03baf881f03d34995267ab7418a50eb85d1a72c9ad407ac26be08567320a
+Schema revision: 39 (min_compatible 3)
+License: GPL-2.0-or-later (Mixxx Development Team); the full license is in LICENSE.mixxx
+
+The SQL is the schema that results from running every revision in schema.xml, in order, on an empty
+SQLite database, exactly as Mixxx's schema manager does. It was generated with
+tools/mixxx_schema_snapshot.py and was not edited by hand. No Mixxx database was opened to make it.
+Mixxx copyright (C) 2001-2026 Mixxx Development Team. Preserve this notice and LICENSE.mixxx when
+redistributing.
