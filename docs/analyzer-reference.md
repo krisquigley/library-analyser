@@ -226,8 +226,9 @@ Phase 1 is **not complete**. CPU/RAM
 suitability, Python/Essentia TensorFlow compatibility, FLAC/MP3/M4A decoding and
 all selected models must be validated on the target machine before pinning a
 working inference environment. Experimental analysis, persistence, library scanning
-and review/exports are available as documented below. Pilot/calibration and Mixxx
-integration remain deferred; no Mixxx commands are shipped.
+and review/exports are available as documented below, as is an export to a **new**
+Mixxx library file ([below](#export-to-a-new-mixxx-library-file)). Pilot/calibration
+remains deferred, and nothing reads or writes an existing Mixxx database.
 
 ## Phase 2 backend increment (not the six-attribute acceptance gate)
 
@@ -586,6 +587,42 @@ music-analyzer --database /tmp/analysis.sqlite export --format markdown --output
 Delivery tests use fake inference and disposable catalogues. They are **not independent
 review** or proof of real-model accuracy. No representative pilot/calibration/Mixxx milestone is
 claimed; the bounded real-runtime pilot does not close representative listening gates.
+
+### Export to a new Mixxx library file
+
+`export-mixxx` (#133) creates a **new** library file in Mixxx 2.5's format (schema
+revision 39) from the analysis, so Mixxx can show the tempo and key the analyzer found.
+It never opens, reads or writes an existing Mixxx database: a destination that already
+exists, whatever it is, is refused and left untouched.
+
+```sh
+music-analyzer --database /tmp/analysis.sqlite export-mixxx --output /tmp/new-mixxxdb.sqlite --dry-run
+music-analyzer --database /tmp/analysis.sqlite export-mixxx --output /tmp/new-mixxxdb.sqlite
+music-analyzer --database /tmp/analysis.sqlite export-mixxx --output /tmp/two.sqlite --track TRACK_ID --track TRACK_ID
+```
+
+- **Tracks:** every active analysed track, or only the `--track` IDs given (each once,
+  in order). A track is skipped, with its reason printed, when it is excluded from the
+  active library, has no available location, is not analysed yet, or its latest run did
+  not complete. An export with no track to write is refused.
+- **Fields:** title, artist and album from the file's stored tags, the measured duration,
+  the file type, and the BPM and key. A manual `bpm` or `key` override wins over the
+  detected value (`key` overrides read as `A minor`, `Am`, `C#m` or `Bb`). The key is
+  written as Mixxx's `key_id` and its text; anything unknown is left empty (BPM 0.0, no
+  key). Colours, crates and playlists are not exported.
+- **Writing:** `--dry-run` prints the plan and writes nothing. Otherwise the destination is
+  reserved with an exclusive create, the library is written to a temporary file beside it
+  and moved into place only when complete, so a failure leaves nothing behind. The
+  destination's folder must already exist. The analysis database is only read.
+- **Using it:** Mixxx uses one database per settings folder, so open the file with a
+  separate Mixxx settings folder (chosen with Mixxx's settings-path command-line option,
+  with the file named `mixxxdb.sqlite` inside it); never copy it over the library you
+  already use.
+  The tracks' paths are the ones in the analysis catalogue, so Mixxx must see the files
+  at the same locations.
+- **Schema provenance:** the schema is generated from Mixxx 2.5.6's public `res/schema.xml`
+  by `tools/mixxx_schema_snapshot.py` and ships with its NOTICE and Mixxx's
+  GPL-2.0-or-later licence in `music_analyzer/infrastructure/mixxx/data/`.
 
 ### Personal local explorer
 

@@ -20,7 +20,8 @@ This is **experimental** software, delivered in small tested increments.
 - It never edits audio files or their tags. It writes only its own analysis
   database, model bundles, an embedding cache, temporary decode snapshots
   (removed after use) and the export/projection files you name.
-- There is **no Mixxx integration** yet, and it must never be pointed at a Mixxx database.
+- It can export its analysis to a **new** Mixxx library file (`export-mixxx`), but it
+  must never be pointed at an existing Mixxx database, and refuses any existing path.
 - Model scores are **not calibrated** probabilities or confirmed tags. Real
   inference has only been validated on one pinned runtime in a
   [bounded 14-track pilot](docs/real-pilot.md); listening/accuracy evaluation is open.
