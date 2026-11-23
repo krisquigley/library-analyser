@@ -94,5 +94,16 @@ assert.equal(requests.filter(r => r.path === '/api/playlists/m3u').length, 0, 'a
 ''')
 
 
+    def test_export_recipe_without_a_current_track_says_to_select_one(self):
+        self.run_scenario(r'''
+await settle(6);
+heard.length = 0;
+await press('export-playlist-recipe');
+assert.deepEqual(heard, ['playlist-recipe-export-failed']);
+const status = byId('playlist-recipe-export-status');
+assert.deepEqual([status.textContent, status.getAttribute('role')], ['Recipe export failed: Select a start track first', 'alert']);
+''')
+
+
 if __name__ == '__main__':
     unittest.main()
