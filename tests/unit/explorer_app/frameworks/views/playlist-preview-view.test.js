@@ -4,7 +4,27 @@ import assert from 'node:assert/strict';
 import {playlistPreviewView} from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/views/playlist-preview-view.js';
 import {descendants, fakeElement, installFakeDocument} from '../fake-document.js';
 
-beforeEach(() => { installFakeDocument([]); });
+let drawn;
+beforeEach(() => {
+  installFakeDocument([]);
+  drawn = [];
+  const createElement = globalThis.document.createElement;
+  globalThis.document.createElement = tag => {
+    const made = createElement(tag);
+    if (tag === 'canvas') made.getContext = () => recordingContext(drawn);
+    return made;
+  };
+});
+
+function recordingContext(log) {
+  const record = name => (...args) => log.push([name, ...args]);
+  return {clearRect: record('clear'), beginPath: record('begin'), moveTo: record('move'), lineTo: record('line'),
+    stroke: record('stroke'), setLineDash: record('dash'),
+    set strokeStyle(value) { log.push(['color', value]); }, set lineWidth(value) { log.push(['width', value]); }};
+}
+
+const CHART = Object.freeze({width: 300, height: 80, padding: 8, level: [[[8, 72], [292, 8]]], target: [[[8, 40]], [[150, 8], [292, 8]]],
+  label: 'Energy across 2 tracks'});
 
 const ROW = Object.freeze({place: '1', track: 'Synthetic – Opening', bpm: '120.0', key: '8A', energy: '0.3', target: '0.2',
   transition: 'Start'});
@@ -13,7 +33,8 @@ function mounted() {
   const requests = [];
   const view = playlistPreviewView({onPreviewRequested: () => requests.push('preview')});
   const panel = fakeElement('section');
-  view.mount(panel, {previewDisabled: false, status: {text: '', urgent: false}, rows: []});
+  view.mount(panel, {previewDisabled: false, status: {text: '', urgent: false}, rows: [],
+    chart: {...CHART, level: [], target: [], label: 'No energy to chart yet.'}});
   const byId = id => descendants(panel).find(node => node.id === id);
   const cells = () => byId('playlist-preview-tracks').children.map(row => row.children.map(cell => cell.textContent));
   return {view, requests, byId, cells};
@@ -56,4 +77,18 @@ test('an update without rows keeps the list, and the status and button follow th
 
 test('showing before mounting does nothing', () => {
   assert.doesNotThrow(() => playlistPreviewView({onPreviewRequested() {}}).show({rows: [ROW]}));
+});
+
+test('the energy chart is drawn on a labelled canvas: the target dashed, the reached energy solid', () => {
+  const {view, byId} = mounted();
+  drawn.length = 0;
+  view.show({chart: CHART});
+  const canvas = byId('playlist-energy-chart');
+  assert.deepEqual([canvas.width, canvas.height, canvas.getAttribute('role'), canvas.getAttribute('aria-label')],
+    [300, 80, 'img', 'Energy across 2 tracks']);
+  const moves = drawn.filter(([name]) => name === 'move' || name === 'line').map(step => step.join(' '));
+  assert.deepEqual(moves, ['move 8 40', 'move 150 8', 'line 292 8', 'move 8 72', 'line 292 8']);
+  const dashes = drawn.filter(([name]) => name === 'dash').map(([, pattern]) => pattern);
+  assert.deepEqual(dashes, [[4, 3], []]);
+  assert.equal(drawn[0][0], 'clear');
 });

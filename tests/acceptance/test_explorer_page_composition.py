@@ -88,6 +88,8 @@ assert.deepEqual(cells, [
   ['2', 'Public synthetic – Track a', '121.0', '—', '—', '—', 'Key unknown, +1.0 BPM'],
 ]);
 assert.equal(byId('playlist-preview-status').textContent, '2 tracks. Warning: Only 2 of 10 tracks fit');
+assert.equal(byId('playlist-energy-chart').getAttribute('aria-label'),
+  'Energy across 2 tracks: the arc target (dashed) and the energy each track reaches (solid).');
 assert.equal(requests.filter(r => r.path === '/api/playlists/m3u').length, 0, 'a preview downloads nothing');
 ''')
 
