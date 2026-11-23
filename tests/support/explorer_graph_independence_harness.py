@@ -40,7 +40,8 @@ function deferred(){let resolve; const promise=new Promise(r=>resolve=r); return
 function response(body,ok=true){return {ok,json:async()=>body,text:async()=>String(body)};}
 function page(tracks=[],next_cursor=null){return {tracks,next_cursor,metadata:{track_count:tracks.length}};}
 const canvasPaints=[];
-const canvasContext={clearRect(){},fillRect(){},beginPath(){},arc(...args){canvasPaints.push(args);},fill(){}};
+const canvasContext={clearRect(){},fillRect(){},beginPath(){},arc(...args){canvasPaints.push(args);},fill(){},
+  moveTo(){},lineTo(){},stroke(){},setLineDash(){}};
 const fixtureTrack={handle:'result',title:'Matching title',artist:'Artist'};
 const roots={};
 for(const id of ['tracks','track-search','undo','reset','controls','detail','graph-load-status',

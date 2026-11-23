@@ -2,14 +2,15 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  playlistPreviewViewModel, presentPlaylistPreviewEvent,
+  ENERGY_CHART, playlistEnergyChart, playlistPreviewViewModel, presentPlaylistPreviewEvent,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/playlist-preview-presenter.js';
 
 const track = (fields = {}) => ({trackId: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor',
   camelot: '8A', arousal: 0.4, energyLevel: 0.25, energyTarget: 0.2, ...fields});
 
 test('before any preview the panel offers Preview and shows nothing', () => {
-  assert.deepEqual(playlistPreviewViewModel(), {previewDisabled: false, status: {text: '', urgent: false}, rows: []});
+  assert.deepEqual(playlistPreviewViewModel(), {previewDisabled: false, status: {text: '', urgent: false}, rows: [],
+    chart: playlistEnergyChart([])});
 });
 
 test('while previewing, Preview is disabled and the listener is told', () => {
@@ -27,7 +28,9 @@ test('a preview lists each track with its BPM, key, energy and the step into it'
     ],
     complete: true, warning: null,
   };
-  assert.deepEqual(presentPlaylistPreviewEvent({type: 'playlist-previewed', preview}), {
+  const {chart, ...listed} = presentPlaylistPreviewEvent({type: 'playlist-previewed', preview});
+  assert.deepEqual(chart, playlistEnergyChart(preview.tracks));
+  assert.deepEqual(listed, {
     previewDisabled: false,
     status: {text: '3 tracks.', urgent: false},
     rows: [
@@ -55,5 +58,28 @@ test('a clash and an unknown step are told apart', () => {
 
 test('a failed preview clears the list and alerts the listener', () => {
   assert.deepEqual(presentPlaylistPreviewEvent({type: 'playlist-preview-failed', message: 'bpm bounds must be ordered'}),
-    {previewDisabled: false, status: {text: 'Preview failed: bpm bounds must be ordered', urgent: true}, rows: []});
+    {previewDisabled: false, status: {text: 'Preview failed: bpm bounds must be ordered', urgent: true}, rows: [],
+      chart: playlistEnergyChart([])});
+});
+
+test('the energy chart places each track left to right, energy 0 at the foot and 1 at the head', () => {
+  const {width, height, padding} = ENERGY_CHART;
+  const chart = playlistEnergyChart([track({energyLevel: 0, energyTarget: 1}), track({energyLevel: 1, energyTarget: 0.5})]);
+  const foot = height - padding, head = padding, middle = (foot + head) / 2;
+  assert.deepEqual(chart.level, [[[padding, foot], [width - padding, head]]]);
+  assert.deepEqual(chart.target, [[[padding, head], [width - padding, middle]]]);
+  assert.equal(chart.label, 'Energy across 2 tracks: the arc target (dashed) and the energy each track reaches (solid).');
+});
+
+test('an unknown energy breaks the line instead of inventing a value', () => {
+  const chart = playlistEnergyChart([track({energyLevel: 0.2}), track({energyLevel: null}), track({energyLevel: 0.4}),
+    track({energyLevel: 0.6})]);
+  assert.deepEqual(chart.level.map(segment => segment.length), [1, 2]);
+  assert.deepEqual(playlistEnergyChart([track({energyTarget: null})]).target, []);
+});
+
+test('a single track sits in the middle, and no tracks draw no lines', () => {
+  const [[[x]]] = playlistEnergyChart([track()]).level;
+  assert.equal(x, ENERGY_CHART.width / 2);
+  assert.deepEqual(playlistEnergyChart([]), {...ENERGY_CHART, level: [], target: [], label: 'No energy to chart yet.'});
 });
