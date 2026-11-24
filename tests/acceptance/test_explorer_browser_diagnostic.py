@@ -336,7 +336,7 @@ print('chromium-webgl-ready')
             self.assertNotIn('body', request)
             self.assertIn(request['route'], ('/api/state', '/api/mood-axis-graph',
                           '/api/tracks/summary', '/api/current', '/api/tracks/<id>',
-                          'asset', 'unknown'))
+                          '/api/track-labels', 'asset', 'unknown'))
             self.assertIn(request['outcome'], ('ok', 'http_error', 'timeout',
                                              'connection_error', 'invalid_response'))
         requests = sample['requests']

@@ -4,6 +4,7 @@ import {playlistDownloadQuery, playlistPreviewQuery} from './playlist-download-q
 import {playlistPreviewFrom} from './playlist-preview-dto.js';
 import {savedPlaylistRecipeFrom, savedPlaylistRecipesFrom} from './saved-playlist-recipe-dto.js';
 import {tagWritePreviewFrom, tagWriteReportFrom} from './tag-write-dto.js';
+import {trackLabelsFrom} from './track-labels-dto.js';
 
 const DEFAULT_PLAYLIST_FILENAME = 'library-graph-playlist.m3u';
 const DEFAULT_PLAYLIST_TYPE = 'audio/x-mpegurl;charset=utf-8';
@@ -44,6 +45,10 @@ export function fetchExplorerApi(fetchResource) {
       const body = JSON.stringify({token});
       return tagWriteReportFrom(await answer(await fetchResource('/api/tag-write/apply',
         {method: 'POST', headers: {'Content-Type': 'application/json'}, body}), 'Tag write failed'));
+    },
+    async labelTracks(trackIds) {
+      const params = new URLSearchParams(trackIds.map(trackId => ['track', trackId]));
+      return trackLabelsFrom(await answer(await fetchResource('/api/track-labels?' + params.toString()), 'Track labels failed to load'));
     },
     async loadMoodGraph(mood) {
       const response = await fetchResource(moodGraphPath(mood));

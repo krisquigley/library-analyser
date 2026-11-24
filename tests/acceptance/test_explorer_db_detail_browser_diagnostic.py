@@ -251,7 +251,7 @@ class RealWriterPackagedBrowserBridge(unittest.TestCase):
                         [(r['method'], r['route']) for r in sample['requests']],
                         [('GET', '/api/mood-axis-graph'), ('GET', '/api/state'),
                          ('GET', '/api/tracks/summary'), ('POST', '/api/current'),
-                         ('GET', '/api/tracks/<id>')])
+                         ('GET', '/api/tracks/<id>'), ('GET', '/api/track-labels')])
                     self.assertTrue(all(r['status'] == 200 for r in sample['requests']))
 
     def test_selection_time_unrelated_detail_still_rejects_success(self):

@@ -241,7 +241,7 @@ def publish_browser_report(*, attempts, intervals=(), requests=(), environment=N
             sample['detail_bridge'] = bridge
         if 'requests' in original:
             allowed_routes = ('/api/state', '/api/tracks/summary', '/api/current',
-                              '/api/tracks/<id>', '/api/mood-axis-graph')
+                              '/api/tracks/<id>', '/api/mood-axis-graph', '/api/track-labels')
             observed_requests = original['requests'] if isinstance(original['requests'], list) else []
             safe_requests = []
             for request in observed_requests:

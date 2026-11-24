@@ -198,6 +198,28 @@ await press('reset'); await settle(4);
 assert.deepEqual(colours(), bright, 'clearing the selection restores the graph');
 """)
 
+    def test_the_selected_track_and_its_neighbours_are_labelled_with_title_and_artist(self):
+        self.run_scenario(r"""
+library.push(track('c', 0.5, 0.1, 0.3));
+routes['/api/mood-axis-graph'] = r => r.respond(graphBody(library, {links: [[0, 1, 0.9], [1, 2, 0.8]]}));
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/reset'] = r => r.respond(accepted(null, {epoch: 2}));
+routes['/api/track-labels'] = r => r.respond({labels: r.url.searchParams.getAll('track').map(id => ({track_id: id, title: '<i>Track ' + id + '</i>', artist: 'Public synthetic'}))});
+await settle(6);
+await press('reload-graph'); await settle(6);
+const labels = () => byId('graph3d').children.filter(node => String(node.className).startsWith('graph-track-label'));
+assert.deepEqual(labels(), [], 'no labels before a selection');
+await search('b'); await settle(2);
+await chooseRow('b'); await settle(4); await untilCameraSettles();
+assert.deepEqual(request('/api/track-labels').url.searchParams.getAll('track'), ['b', 'a', 'c'], 'the selected track first, then its neighbours');
+assert.deepEqual(labels().map(label => [label.className, label.textContent]), [
+  ['graph-track-label selected', '<i>Track b</i> — Public synthetic'],
+  ['graph-track-label', '<i>Track a</i> — Public synthetic'], ['graph-track-label', '<i>Track c</i> — Public synthetic']]);
+assert.equal(requests.filter(r => r.path === '/api/track-labels').length, 1, 'asked once per selection');
+await press('reset'); await settle(4);
+assert.deepEqual(labels(), [], 'clearing the selection removes the labels');
+""")
+
     def test_tags_are_previewed_for_the_current_track_and_written_only_when_approved(self):
         self.run_scenario(r"""
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));

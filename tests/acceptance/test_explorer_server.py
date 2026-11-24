@@ -100,6 +100,27 @@ class ExplorerServerTests(unittest.TestCase):
         self.assertEqual(self.get_json('/api/state'), before)
         self.assertEqual(self.post_current(self.first)['current_track_id'], self.first)
 
+    def test_track_labels_name_the_tracks_asked_for_in_order_and_reject_a_bad_request(self):
+        # #243: the graph labels a selection and its neighbours; unknown tracks are left out.
+        from urllib.parse import urlencode
+        labels = self.get_json('/api/track-labels?' + urlencode([('track', self.second), ('track', 'sha256:' + '9' * 64), ('track', self.first)]))
+        self.assertEqual(labels, {'labels': [
+            {'track_id': self.second, 'title': 'Second.flac', 'artist': 'Unknown artist'},
+            {'track_id': self.first, 'title': 'First & Friend.flac', 'artist': 'Unknown artist'}]})
+        for query, error in (('', 'Name at least one track'), ('?track=a&track=a', 'Name each track once')):
+            with self.subTest(query=query):
+                with self.assertRaises(HTTPError) as raised:
+                    self.get_json('/api/track-labels' + query)
+                self.assertEqual(raised.exception.code, 400)
+                self.assertEqual(json.loads(raised.exception.read()), {'error': error})
+
+    def test_an_unexpected_track_label_failure_stays_private(self):
+        with patch.object(standalone_server.LabelTracks, 'execute', side_effect=ValueError('private-label-marker')):
+            with self.assertRaises(HTTPError) as raised:
+                self.get_json('/api/track-labels?track=a')
+            self.assertEqual(raised.exception.code, 500)
+            self.assertEqual(json.loads(raised.exception.read()), {'error': 'Explorer request failed'})
+
     def test_malformed_summary_integer_is_bounded_error_only(self):
         with self.assertRaises(HTTPError) as raised:
             self.get_json('/api/track-summaries?limit=private-input-marker')

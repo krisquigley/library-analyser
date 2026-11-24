@@ -70,6 +70,9 @@ a{color:var(--accent)}
 #graph3d canvas{display:block}
 /* Screen-projected labels follow the 3D rulers; never intercept node picking. */
 .graph-axis-label{position:absolute;left:0;top:0;pointer-events:none;white-space:nowrap;font:600 var(--text-xs)/1.3 var(--font);letter-spacing:.02em;text-shadow:0 1px 3px var(--bg),0 -1px 3px var(--bg),1px 0 3px var(--bg);z-index:2}
+/* #243: title and artist above the selected track and its neighbours; never intercept node picking. */
+.graph-track-label{position:absolute;left:0;top:0;z-index:2;pointer-events:none;white-space:nowrap;padding:var(--space-1) var(--space-2);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--scrim);color:var(--text);font:500 var(--text-xs)/1.2 var(--font)}
+.graph-track-label.selected{z-index:3;border-color:var(--accent);background:var(--surface-raised);font-weight:600}
 
 /* Loading surface */
 .loading-surface{position:fixed;inset:0;z-index:3;display:grid;place-items:center;background:var(--scrim);pointer-events:auto}

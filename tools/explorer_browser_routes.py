@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import json
 import threading
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 
 def diagnostics_url(url):
@@ -102,6 +102,11 @@ def public_routes(fixture, scenario):
                 if scenario in ('latest-selection', 'during-consumption'):
                     tracks.append(dict(track, handle='public-00001', title='Public synthetic 70 node 00001'))
                 return self.json({'tracks': tracks, 'metadata': {}, 'next_cursor': None})
+            if path == '/api/track-labels':
+                # #243: the selected track and its neighbours, labelled from the public synthetic track.
+                handles = parse_qs(urlsplit(self.path).query).get('track', [])
+                return self.json({'labels': [{'track_id': handle, 'title': str(track.get('title', handle)),
+                                              'artist': str(track.get('artist', 'Public synthetic'))} for handle in handles]})
             if path in ('/api/tracks/public-00000', '/api/tracks/public-00001'):
                 return self.json({'metadata': dict(track, handle=path.rsplit('/', 1)[1]), 'fields': {}})
             relative = 'index.html' if path == '/' else path.lstrip('/')

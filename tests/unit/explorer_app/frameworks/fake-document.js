@@ -8,9 +8,10 @@ export function fakeElement(tagName) {
     setAttribute(name, value) { attributes.set(name, String(value)); },
     getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
     removeAttribute(name) { attributes.delete(name); },
-    append(...nodes) { this.children.push(...nodes); },
+    append(...nodes) { for (const node of nodes) if (node && typeof node === 'object') node.parent = this; this.children.push(...nodes); },
     replaceChildren(...nodes) { this.children = nodes; },
     replaceChild(node, old) { this.children = this.children.map(child => (child === old ? node : child)); },
+    remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); this.parent = null; },
     focus() { this.focused = true; },
     get classList() {
       const element = this;
