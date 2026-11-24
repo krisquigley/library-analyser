@@ -73,7 +73,7 @@ function previewRows({tracks, transitions}) {
     place: String(place + 1),
     track: trackName(track),
     bpm: displayNumber(track.bpm),
-    key: track.camelot ?? track.key ?? UNKNOWN,
+    key: track.key ?? UNKNOWN,
     energy: shownNumber(track.energyLevel),
     target: shownNumber(track.energyTarget),
     transition: place === 0 ? 'Start' : stepText(stepInto.get(track.trackId)),
