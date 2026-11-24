@@ -75,6 +75,9 @@ function element(tag) {
     matches(selector) { return matches(this, selector); },
     closest(selector) { for (let node = this; node; node = node.parentElement) if (matches(node, selector)) return node; return null; },
     focus() {}, blur() {}, scrollIntoView() {}, click() { return this.dispatch('click'); },
+    open: false,
+    show() { this.open = true; this.modal = false; }, showModal() { this.open = true; this.modal = true; },
+    close() { this.open = false; this.modal = false; },
   };
   // As in a browser, dataset.trackId is the data-track-id attribute.
   node.dataset = new Proxy({}, {set(values, key, value) {
@@ -111,9 +114,10 @@ const canvasContext = {clearRect() {}, fillRect() {}, beginPath() {}, fill() {},
   arc() {}, save() {}, restore() {}, setLineDash() {}, fillText() {}, measureText: () => ({width: 10})};
 const body = element('body');
 for (const [id, tag] of [['tracks', 'table'], ['track-search', 'input'], ['undo', 'button'], ['reset', 'button'],
-  ['controls', 'div'], ['detail', 'section'], ['graph-load-status', 'div'],
+  ['controls', 'div'], ['playlist-controls', 'div'], ['detail', 'section'], ['graph-load-status', 'div'],
   ['loading-surface', 'div'], ['loading-status', 'div'], ['loading-error', 'div'], ['loading-retry', 'button'],
-  ['graph3d', 'div'], ['map', 'canvas'], ['mood-strip', 'canvas'], ['mood-strip-picker', 'input'], ['mood-strip-value', 'output'], ['tag-write', 'div']]) {
+  ['graph3d', 'div'], ['map', 'canvas'], ['mood-strip', 'canvas'], ['mood-strip-picker', 'input'], ['mood-strip-value', 'output'], ['tag-write', 'div'],
+  ...['library', 'playlist', 'tag-write'].flatMap(tool => [[`open-${tool}`, 'button'], [`${tool}-panel`, 'dialog'], [`close-${tool}`, 'button']])]) {
   const node = element(tag); node.id = id; body.append(node);
 }
 body.querySelector('#tracks').append(element('tbody'));

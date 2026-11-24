@@ -1,5 +1,7 @@
 // The library graph's status panel (#146), with its reload or retry button and, once ready, the playlist controls.
 // While the graph stays ready only the message is replaced, so the playlist controls keep their live state.
+// #233: the status sits in the header and the controls in the playlist modal's #playlist-controls; a page without
+// that host keeps both in the status panel.
 
 export function graphStatusView({onReload, appendPlaylistControls}) {
   function show({status, message}) {
@@ -12,10 +14,12 @@ export function graphStatusView({onReload, appendPlaylistControls}) {
       panel.dataset.graphStatusSignature = signature;
       return;
     }
+    const playlistHost = document.getElementById('playlist-controls') || panel;
     panel.replaceChildren();
+    if (playlistHost !== panel) playlistHost.replaceChildren();
     panel.append(setGraphStatusText(document.createElement('h3'), 'Library graph'), graphStatusMessageElement(status, message));
     if (status === 'error' || status === 'ready') panel.append(graphReloadButton(status, onReload));
-    if (status === 'ready') appendPlaylistControls(panel);
+    if (status === 'ready') appendPlaylistControls(playlistHost);
     else if (status === 'loading' || status === 'rendering') panel.append(graphBusyElement(status));
     panel.dataset.graphStatusSignature = signature;
     panel.dataset.graphLoadStatus = status;

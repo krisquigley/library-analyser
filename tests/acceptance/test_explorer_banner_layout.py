@@ -51,7 +51,7 @@ class ExplorerBannerLayoutTests(unittest.TestCase):
                 assets = ROOT / package / 'frameworks/explorer/assets'
                 elements = BannerElements()
                 elements.feed((assets / 'index.html').read_text())
-                self.assertIn('tracks-panel', elements.parents['loading-surface'])
+                self.assertIn('library-panel', elements.parents['loading-surface'])
                 self.assertLess(elements.order.index('track-search'),
                                 elements.order.index('loading-surface'))
                 self.assertLess(elements.order.index('loading-surface'),

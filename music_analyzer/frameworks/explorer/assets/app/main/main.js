@@ -21,6 +21,11 @@ import {TAG_WRITE_EVENT_TYPES} from '../application/write-tags/tag-write-events.
 import {tagWriteController} from '../adapters/controllers/tag-write-controller.js';
 import {presentRejectedTagWriteInput, presentTagWriteEvent, tagWriteViewModel} from '../adapters/presenters/tag-write-presenter.js';
 import {tagWriteView} from '../frameworks/views/tag-write-view.js';
+import {createToolPanels} from '../application/open-tool-panel/open-tool-panel.js';
+import {TOOL_PANEL_EVENT_TYPES} from '../application/open-tool-panel/tool-panel-events.js';
+import {toolPanelController} from '../adapters/controllers/tool-panel-controller.js';
+import {toolPanelViewModel} from '../adapters/presenters/tool-panel-presenter.js';
+import {toolPanelsView} from '../frameworks/views/tool-panels-view.js';
 import {playlistDownloadController} from '../adapters/controllers/playlist-download-controller.js';
 import {fetchExplorerApi} from '../adapters/gateways/explorer-api-gateway.js';
 import {playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
@@ -98,6 +103,11 @@ playlistEvents.subscribe('saved-recipe-loaded',event=>playlistControlsView.show(
 // A loaded recipe starts from its own track (owner decision A, #139): it becomes the current track.
 playlistEvents.subscribe('saved-recipe-loaded',event=>setCurrent(event.startTrackId));
 // Tags are written only after the listener previews and approves that one action (#132).
+const toolPanelEvents=createInMemoryEventBus();
+const toolPanels=createToolPanels({eventBus:toolPanelEvents});
+const toolPanelControls=toolPanelController({toolPanels,rejectInput:message=>globalThis.console?.warn(message)});
+const toolPanelDisplay=toolPanelsView({onToggleRequested:tool=>toolPanelControls.toggleRequested(tool),onCloseRequested:tool=>toolPanelControls.closeRequested(tool)});
+for(const type of TOOL_PANEL_EVENT_TYPES) toolPanelEvents.subscribe(type,event=>toolPanelDisplay.show(toolPanelViewModel(event)));
 const tagWriteEvents=createInMemoryEventBus();
 const tagWrite=createTagWrite({explorerApi,eventBus:tagWriteEvents});
 const tagWriteControls=tagWriteController({tagWrite,currentTrackId,rejectInput:message=>tagWritePanel.show(presentRejectedTagWriteInput(message))});
@@ -254,7 +264,7 @@ function renderMap(data){
 }
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
 function buildGraphControls(root){graphFilterControls.mount(root);}
-if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); libraryLoading.mount(); buildControls(); mountTagWritePanel(); renderTracks([]); graphStatusDisplay.show(GRAPH_IDLE_STATUS); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
+if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); toolPanelDisplay.mount(); toolPanelControls.toggleRequested('library'); libraryLoading.mount(); buildControls(); mountTagWritePanel(); renderTracks([]); graphStatusDisplay.show(GRAPH_IDLE_STATUS); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
-installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[SAVED_RECIPE_EVENT_TYPES,playlistEvents],[TAG_WRITE_EVENT_TYPES,tagWriteEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:graphStage.current(),graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
+installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[TOOL_PANEL_EVENT_TYPES,toolPanelEvents],[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[SAVED_RECIPE_EVENT_TYPES,playlistEvents],[TAG_WRITE_EVENT_TYPES,tagWriteEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:graphStage.current(),graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField})});
 function diagnosticSnapshot(){const {snapshot,selectionState}=selectionSession.read(); const camera=cameraFocusSession.read(); return {currentTrackId:snapshot.current_track_id??null,selectionEpoch:snapshot.selection_epoch??null,history:snapshot.history||[],graphStatus:graphState().loadState==='failed'?'error':graphState().loadState,cameraFocusActive:camera.frame!=null,pendingCameraTrackId:camera.pendingTrackId,selectionPending:awaitingServer(selectionState),trackSearchStatus:trackSearchSession.read().searchState==='failed'?'error':trackSearchSession.read().searchState,trackResultCount:trackSearchSession.read().results.tracks.length};}

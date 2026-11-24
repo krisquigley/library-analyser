@@ -134,6 +134,30 @@ assert.ok(byId('detail').innerText.includes('Track a'), 'its detail is shown');
 ''')
 
 
+    def test_the_header_opens_one_tool_modal_at_a_time_beside_the_library_drawer(self):
+        self.run_scenario(r"""
+await settle(6);
+assert.deepEqual([byId('library-panel').open, byId('library-panel').modal], [true, false], 'the Library starts open beside the graph');
+assert.equal(byId('open-library').getAttribute('aria-expanded'), 'true');
+heard.length = 0;
+await press('open-playlist');
+assert.deepEqual([byId('playlist-panel').open, byId('playlist-panel').modal], [true, true], 'the playlist generator is a modal');
+await press('open-tag-write');
+assert.equal(byId('playlist-panel').open, false, 'one modal at a time');
+assert.deepEqual([byId('tag-write-panel').open, byId('library-panel').open], [true, true]);
+byId('tag-write-panel').dispatch('cancel'); await flush();
+assert.equal(byId('tag-write-panel').open, false, 'Esc closes the modal');
+await press('open-playlist');
+byId('playlist-panel').dispatch('click'); await flush();
+assert.equal(byId('playlist-panel').open, false, 'a click on the backdrop closes the modal');
+await press('open-playlist'); await press('close-playlist');
+await press('open-library');
+assert.deepEqual([byId('playlist-panel').open, byId('library-panel').open], [false, false]);
+assert.equal(byId('open-library').getAttribute('aria-expanded'), 'false');
+assert.deepEqual(heard.filter(type => type.startsWith('tool-panel')), ['tool-panel-opened', 'tool-panel-closed', 'tool-panel-opened',
+  'tool-panel-closed', 'tool-panel-opened', 'tool-panel-closed', 'tool-panel-opened', 'tool-panel-closed', 'tool-panel-closed']);
+""")
+
     def test_tags_are_previewed_for_the_current_track_and_written_only_when_approved(self):
         self.run_scenario(r"""
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
