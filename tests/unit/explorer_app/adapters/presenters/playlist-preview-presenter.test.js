@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ENERGY_CHART, playlistEnergyChart, playlistPreviewViewModel, presentPlaylistPreviewEvent,
+  ENERGY_CHART, playlistEnergyChart, playlistPreviewViewModel, playlistReadinessViewModel, presentPlaylistPreviewEvent,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/playlist-preview-presenter.js';
 
 const track = (fields = {}) => ({trackId: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor',
@@ -82,4 +82,11 @@ test('a single track sits in the middle, and no tracks draw no lines', () => {
   const [[[x]]] = playlistEnergyChart([track()]).level;
   assert.equal(x, ENERGY_CHART.width / 2);
   assert.deepEqual(playlistEnergyChart([]), {...ENERGY_CHART, level: [], target: [], label: 'No energy to chart yet.'});
+});
+
+test('Preview waits, with the reason, until the recipe is complete, and the missing controls are named (#234)', () => {
+  assert.deepEqual(playlistReadinessViewModel([{control: 'start', reason: 'Select a start track first'},
+    {control: 'bpmMin', reason: 'Enter a minimum BPM'}]),
+  {readiness: {ready: false, reason: 'To preview: select a start track first, enter a minimum BPM.'}, missing: ['start', 'bpmMin']});
+  assert.deepEqual(playlistReadinessViewModel([]), {readiness: {ready: true, reason: ''}, missing: []});
 });

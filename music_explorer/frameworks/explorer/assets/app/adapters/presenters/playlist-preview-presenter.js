@@ -19,6 +19,13 @@ export function playlistPreviewViewModel() {
   return {previewDisabled: false, status: {text: '', urgent: false}, rows: [], chart: playlistEnergyChart([])};
 }
 
+// Preview waits until the recipe is complete, saying what it still needs; the missing controls are flagged (#234).
+export function playlistReadinessViewModel(gaps) {
+  const reasons = gaps.map(gap => gap.reason.charAt(0).toLowerCase() + gap.reason.slice(1));
+  return {readiness: {ready: !gaps.length, reason: gaps.length ? `To preview: ${reasons.join(', ')}.` : ''},
+    missing: gaps.map(gap => gap.control)};
+}
+
 export function presentPlaylistPreviewEvent(event) {
   return PREVIEW_EVENT_VIEWS[event.type](event);
 }

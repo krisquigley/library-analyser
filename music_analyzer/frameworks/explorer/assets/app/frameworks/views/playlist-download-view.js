@@ -23,12 +23,15 @@ export function playlistDownloadView({onControlsEdited, onDownloadRequested, ...
     disableControl(mounted.button, update.downloadDisabled);
     if (update.arcs) arcEditor.show(update.arcs, update.arcLengthPlaceholder);
     if (update.status) showPlaylistStatus(mounted.status, update.status);
+    if (update.missing) flagMissingControls(mounted.controls, update.missing);
   }
 
   function mount(panel, viewModel, finish = panel) {
     const controls = playlistControlElements(viewModel);
     const readControls = () => playlistControlValues(controls);
     for (const control of Object.values(controls)) control.onchange = () => onControlsEdited(readControls());
+    for (const control of TYPED_CONTROLS) controls[control].oninput = () => onControlsEdited(readControls());
+    for (const control of REQUIRED_CONTROLS) markRequired(controls[control]);
     const button = playlistElement('button', {id: 'download-m3u', type: 'button', disabled: viewModel.downloadDisabled});
     setPlaylistText(button, 'Download M3U');
     button.onclick = () => onDownloadRequested(readControls());
@@ -36,7 +39,7 @@ export function playlistDownloadView({onControlsEdited, onDownloadRequested, ...
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     const tempo = playlistStep('playlist-step-tempo', 'Tempo and length');
-    tempo.append(playlistField('BPM range', controls.bpmMin, controls.bpmMax),
+    tempo.append(playlistField('BPM range (required)', controls.bpmMin, controls.bpmMax),
       playlistField('Length', controls.count, controls.durationMinutes),
       playlistField('Harmonic mixing', controls.harmonicMixing),
       playlistField('Min key strength (0.0–1.0)', controls.minimumKeyStrength));
@@ -97,6 +100,22 @@ function playlistSelect(id, choices, current, title) {
   }));
   select.value = choices.some(([value]) => value === current) ? current : choices[0][0];
   return select;
+}
+
+// The controls checked as the listener types (#234), the ones a preview needs, and the gap each one answers for.
+const TYPED_CONTROLS = Object.freeze(['bpmMin', 'bpmMax', 'count', 'durationMinutes']);
+const REQUIRED_CONTROLS = Object.freeze(['bpmMin', 'bpmMax']);
+const CONTROL_GAPS = Object.freeze({bpmMin: 'bpmMin', bpmMax: 'bpmMax', count: 'length', durationMinutes: 'length'});
+
+function markRequired(control) {
+  control.required = true;
+  control.setAttribute('aria-required', 'true');
+}
+
+function flagMissingControls(controls, missing) {
+  for (const [control, gap] of Object.entries(CONTROL_GAPS)) {
+    controls[control].setAttribute('aria-invalid', String(missing.includes(gap)));
+  }
 }
 
 function playlistStep(id, title) {

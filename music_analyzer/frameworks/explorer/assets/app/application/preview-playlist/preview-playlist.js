@@ -1,7 +1,7 @@
 // Previewing the drafted playlist (#138): the tracks the M3U download would hold, walked by the same rule.
 // Only the latest preview is shown; one it overtook is dropped when it answers.
 
-import {playlistRecipeOf} from '../../domain/playlist-draft.js';
+import {playlistDraftGaps, playlistRecipeOf} from '../../domain/playlist-draft.js';
 import {nextPlaylistPreviewState} from '../../domain/playlist-preview.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
 import {PLAYLIST_PREVIEWS} from '../ports/explorer-api.js';
@@ -21,9 +21,15 @@ export function createPlaylistPreview({explorerApi, playlistDraft, eventBus}) {
     eventBus.publish(event);
   }
 
+  function gaps(startTrackId) {
+    return playlistDraftGaps(playlistDraft.read().draft, startTrackId);
+  }
+
   async function preview(startTrackId) {
     const request = ++latest;
     settle('start', playlistPreviewStarted());
+    const missing = gaps(startTrackId);
+    if (missing.length) return settle('fail', playlistPreviewFailed(missing.map(gap => gap.reason).join('. ')));
     try {
       const answer = await explorerApi.previewPlaylist(playlistRecipeOf(playlistDraft.read().draft, startTrackId));
       if (request === latest) settle('succeed', playlistPreviewed(answer));
@@ -32,5 +38,5 @@ export function createPlaylistPreview({explorerApi, playlistDraft, eventBus}) {
     }
   }
 
-  return Object.freeze({previewState: () => previewState, preview});
+  return Object.freeze({previewState: () => previewState, preview, gaps});
 }

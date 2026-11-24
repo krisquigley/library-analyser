@@ -242,3 +242,20 @@ test('#234: each arc is a collapsible row summed up in one line; a new arc opens
   const length = byId('m3u-arc-length-0');
   assert.equal(descendants(byId('m3u-arc-0')).find(node => node.tagName === 'LABEL' && node.htmlFor === length.id)?.textContent, 'Length');
 });
+
+test('the BPM range is marked required, a missing control is flagged, and edits are reported as you type (#234)', () => {
+  const {view, heard, byId, text} = mounted();
+  for (const id of ['m3u-bpm-min', 'm3u-bpm-max']) {
+    assert.equal(byId(id).required, true);
+    assert.equal(byId(id).getAttribute('aria-required'), 'true');
+  }
+  assert.match(text(), /BPM range \(required\)/);
+  view.show({missing: ['bpmMax', 'length']});
+  assert.deepEqual(['m3u-bpm-min', 'm3u-bpm-max', 'm3u-count', 'm3u-duration'].map(id => byId(id).getAttribute('aria-invalid')),
+    ['false', 'true', 'true', 'true']);
+  view.show({missing: []});
+  assert.equal(byId('m3u-bpm-max').getAttribute('aria-invalid'), 'false');
+  byId('m3u-bpm-min').value = '12';
+  byId('m3u-bpm-min').oninput();
+  assert.deepEqual(heard.edited, [{...VALUES, bpmMin: '12'}]);
+});

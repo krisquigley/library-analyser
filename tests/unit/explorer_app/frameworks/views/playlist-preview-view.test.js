@@ -92,3 +92,18 @@ test('the energy chart is drawn on a labelled canvas: the target dashed, the rea
   assert.deepEqual(dashes, [[4, 3], []]);
   assert.equal(drawn[0][0], 'clear');
 });
+
+test('Preview stays disabled with its reason until the recipe is ready, and while a preview runs (#234)', () => {
+  const {view, byId} = mounted();
+  const button = byId('preview-playlist');
+  view.show({readiness: {ready: false, reason: 'To preview: enter a minimum BPM.'}});
+  assert.equal(button.disabled, true);
+  assert.equal(byId('playlist-preview-reason').textContent, 'To preview: enter a minimum BPM.');
+  assert.equal(button.getAttribute('aria-describedby'), 'playlist-preview-reason');
+  view.show({previewDisabled: false});
+  assert.equal(button.disabled, true, 'a finished preview does not enable an incomplete recipe');
+  view.show({readiness: {ready: true, reason: ''}});
+  assert.deepEqual([button.disabled, byId('playlist-preview-reason').textContent], [false, '']);
+  view.show({previewDisabled: true});
+  assert.equal(button.disabled, true, 'busy while previewing');
+});
