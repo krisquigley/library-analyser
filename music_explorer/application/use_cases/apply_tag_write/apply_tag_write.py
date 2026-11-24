@@ -14,8 +14,8 @@ from music_explorer.application.ports.track_tags import OwnedTags, TrackTags, Tr
 from music_explorer.application.tag_change_planning import plan_tag_write
 from music_explorer.domain.tag_write_action import TagWriteActionTransitionError, next_tag_write_action_state
 
-RESCAN_NOTICE = ('Writing tags changes the files, so the analysis no longer matches them: rescan them with '
-                 'music-analyzer scan before analysing or exporting them again.')
+RESCAN_NOTICE = ('Writing tags changes the files: rescan them with music-analyzer scan, which keeps their analysis '
+                 'and overrides because only the tags changed, before analysing or exporting them again.')
 _STALE = 'changed since the preview'
 
 

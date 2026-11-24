@@ -344,6 +344,18 @@ decoding. Other extensions are ignored. Symlink files/directories are skipped; a
 symlink root/ancestor is rejected. Special files are never read. Unicode locations
 remain distinct.
 
+**Tags-only changes (#223).**
+- **Audio identity:** for MP3 and FLAC files, `scan` also records the SHA-256 of the audio between the tag blocks: ID3v2, ID3v1 and APEv2 in MP3; the metadata blocks in FLAC. The audio is never decoded.
+- **What carries over:** a track is still identified by its whole file. So when only a file's tags change, for example after an Explorer tag write (#132), the rescanned file is a new track. `scan` then keeps the evidence when exactly one new track and one departed track share the same audio. A departed track is one whose file is gone but whose analysis or overrides remain. The scan moves, in one transaction:
+  - the analysis runs and manual overrides;
+  - the batch state;
+  - saved playlist recipes that start on the old track.
+
+  The derived graph evidence is rebuilt from the stored stage results, which are never rewritten. The pair is recorded in `track_successions`.
+- **What doesn't:** nothing carries over when the match is ambiguous, when the old file still exists somewhere, or when the new file already has its own analysis or overrides.
+- **Report:** the text output says how many tracks kept their analysis, with a `KEPT old -> new` line for each. The JSON output lists them under `carried_over`.
+- **Repeats:** running `scan` again is safe; whatever was carried over is no longer a candidate.
+
 Track IDs are `sha256:<exact-byte digest>`: identical copies share an ID but retain
 separate location rows. Moving identical bytes preserves the ID; changed bytes
 create a different identity at that path. Different encodings are not merged.
@@ -668,7 +680,7 @@ Open `http://127.0.0.1:8765/` in a browser. Stop it with Ctrl+C in the terminal.
   - A file that changed since it was analysed is skipped.
   - Every file's outcome is reported as written, skipped or failed.
   - Each file is written to a copy that replaces it only when complete. Other tags, pictures and the audio are left as they were.
-- **After a write:** the file's bytes have changed, so its analysis no longer matches it. Rescan it with `music-analyzer scan` (#223 will let a rescan keep the analysis and overrides).
+- **After a write:** the file's bytes have changed, so rescan it with `music-analyzer scan`. Because only its tags changed, the rescan keeps its analysis and overrides (see *Tags-only changes* under `scan`).
 
 The page is search-first: it starts with an empty search sidebar (title/artist search with explicit paging) and loads the 3D mood-axis graph automatically from the persisted graph snapshot, with inline loading/error/retry feedback. You can inspect read-only details, explicitly set/undo/reset the current track, run the five existing candidate controls and export an M3U playlist. If no current graph snapshot exists, the graph reports that `music-analyzer graph build` is needed. If fields are missing, from a noncompleted run, provisional or uncertain, the detail/candidate/map views report or degrade around that missing evidence rather than inventing tags, calibration or playback decisions.
 
