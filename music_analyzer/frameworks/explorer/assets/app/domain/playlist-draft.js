@@ -20,7 +20,16 @@ export function editPlaylistDraft(draft, changes) {
   if (Object.hasOwn(changes, 'arcLengthUnit') && !ARC_LENGTH_UNITS.includes(changes.arcLengthUnit)) {
     throw new PlaylistDraftError('Arc lengths are in tracks or minutes');
   }
-  return Object.freeze({...draft, ...changes});
+  const edited = {...draft, ...changes};
+  return Object.freeze({...edited, ...arcUnitFollowingLength(draft, edited)});
+}
+
+// #256: the arcs are measured the way the playlist is: a duration puts them in minutes, a track count in tracks.
+// A unit the listener chose stands until the length is edited again.
+function arcUnitFollowingLength(before, after) {
+  if (after.arcLengthUnit !== before.arcLengthUnit) return {};
+  const lengthEdited = after.count !== before.count || after.durationMinutes !== before.durationMinutes;
+  return lengthEdited ? {arcLengthUnit: blank(after.durationMinutes) ? 'tracks' : 'minutes'} : {};
 }
 
 export function addDraftArc(draft) {

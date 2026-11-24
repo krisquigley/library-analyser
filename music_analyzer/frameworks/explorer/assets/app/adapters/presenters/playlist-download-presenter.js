@@ -44,7 +44,7 @@ function draftView(draft) {
   return {
     minimumKeyStrengthDisabled: !minimumKeyStrengthApplies(draft),
     arcs: draft.energyArcs.map((arc, place) => arcRow(arc, place, draft)),
-    arcLengthPlaceholder: draft.arcLengthUnit,
+    arcLengthUnit: draft.arcLengthUnit,
     lengthDisabled: arcsSetTheLength(draft),
   };
 }

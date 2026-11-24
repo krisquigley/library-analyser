@@ -8,7 +8,7 @@ import {
   EMPTY_PLAYLIST_DRAFT, addDraftArc, editDraftArc, editPlaylistDraft,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/domain/playlist-draft.js';
 
-const NO_ARCS = {arcs: [], arcLengthPlaceholder: 'tracks', lengthDisabled: false};
+const NO_ARCS = {arcs: [], arcLengthUnit: 'tracks', lengthDisabled: false};
 
 test('the controls show the draft, its choices and which inputs apply', () => {
   const draft = editPlaylistDraft(EMPTY_PLAYLIST_DRAFT, {harmonicMixing: false});
@@ -36,7 +36,7 @@ test('each arc row shows its values and which way it can move', () => {
     {shape: 'rise', length: '', low: '', high: '', canMoveEarlier: true, canMoveLater: false,
       summary: 'Arc 3 · Rising energy · length not set · default energy range'},
   ]);
-  assert.equal(view.arcLengthPlaceholder, 'minutes');
+  assert.equal(view.arcLengthUnit, 'minutes');
 });
 
 test("once an arc has a length, the track count and duration don't apply", () => {
@@ -54,7 +54,7 @@ test('an edited draft shows its arcs and enables only the inputs that apply', ()
     {minimumKeyStrengthDisabled: false, ...NO_ARCS});
   const draft = editDraftArc(addDraftArc(EMPTY_PLAYLIST_DRAFT), 0, {shape: 'dip', length: '5'});
   assert.deepEqual(presentPlaylistDownloadEvent({type: 'playlist-draft-edited', draft}), {
-    minimumKeyStrengthDisabled: false, lengthDisabled: true, arcLengthPlaceholder: 'tracks',
+    minimumKeyStrengthDisabled: false, lengthDisabled: true, arcLengthUnit: 'tracks',
     arcs: [{shape: 'dip', length: '5', low: '', high: '', canMoveEarlier: false, canMoveLater: false,
       summary: 'Arc 1 · Energy dip · 5 tracks · default energy range'}]});
 });

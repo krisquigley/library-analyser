@@ -115,3 +115,22 @@ test('a draft says what it still needs before it can be previewed (#234)', () =>
   assert.deepEqual(playlistDraftGaps(EMPTY_PLAYLIST_DRAFT, null).map(gap => gap.reason),
     ['Select a start track first', 'Enter a minimum BPM', 'Enter a maximum BPM']);
 });
+
+// What the form sends on every edit: each control's value, never the arcs.
+const form = ({energyArcs, ...controls}) => controls;
+
+test("arc lengths follow the playlist's length: a duration measures them in minutes, a track count in tracks (#256)", () => {
+  const byDuration = editPlaylistDraft(EMPTY_PLAYLIST_DRAFT, {...form(EMPTY_PLAYLIST_DRAFT), durationMinutes: '60'});
+  assert.equal(byDuration.arcLengthUnit, 'minutes');
+  assert.equal(editPlaylistDraft(byDuration, {...form(byDuration), durationMinutes: ''}).arcLengthUnit, 'tracks');
+  assert.equal(editPlaylistDraft(byDuration, {...form(byDuration), count: '12'}).arcLengthUnit, 'minutes',
+    'a duration replaces the count, so the arcs stay in minutes');
+});
+
+test('a chosen arc unit stands until the length changes again (#256)', () => {
+  const byDuration = editPlaylistDraft(EMPTY_PLAYLIST_DRAFT, {durationMinutes: '60'});
+  const chosen = editPlaylistDraft(byDuration, {...form(byDuration), arcLengthUnit: 'tracks'});
+  assert.equal(chosen.arcLengthUnit, 'tracks');
+  assert.equal(editPlaylistDraft(chosen, {...form(chosen), bpmMin: '120'}).arcLengthUnit, 'tracks');
+  assert.equal(editPlaylistDraft(chosen, {...form(chosen), durationMinutes: '45'}).arcLengthUnit, 'minutes');
+});

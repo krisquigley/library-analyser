@@ -21,7 +21,8 @@ export function playlistDownloadView({onControlsEdited, onDownloadRequested, ...
     disableControl(mounted.controls.count, update.lengthDisabled);
     disableControl(mounted.controls.durationMinutes, update.lengthDisabled);
     disableControl(mounted.button, update.downloadDisabled);
-    if (update.arcs) arcEditor.show(update.arcs, update.arcLengthPlaceholder);
+    if (update.arcLengthUnit) mounted.controls.arcLengthUnit.value = update.arcLengthUnit;
+    if (update.arcs) arcEditor.show(update.arcs, update.arcLengthUnit);
     if (update.status) showPlaylistStatus(mounted.status, update.status);
     if (update.missing) flagMissingControls(mounted.controls, update.missing);
   }

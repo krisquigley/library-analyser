@@ -13,7 +13,7 @@ const VALUES = Object.freeze({bpmMin: '', bpmMax: '', count: '10', durationMinut
 const DRAFT = Object.freeze({...VALUES, energyArcs: []});
 const ARC = Object.freeze({shape: 'rise', length: '', low: '', high: '', canMoveEarlier: false, canMoveLater: false});
 const viewModel = (changes = {}) => ({values: DRAFT, minimumKeyStrengthDisabled: false, lengthDisabled: false,
-  arcs: [], arcLengthPlaceholder: 'tracks', downloadDisabled: false,
+  arcs: [], arcLengthUnit: 'tracks', downloadDisabled: false,
   arcShapeChoices: [['rise', 'Rising energy'], ['peak', 'Energy peak']],
   arcLengthUnitChoices: [['tracks', 'Tracks'], ['minutes', 'Minutes']],
   moodChoices: [['', 'No mood hold'], ['happy', 'Hold mood: happy']], ...changes});
@@ -87,7 +87,7 @@ test('the arc editor starts empty, with one Length in choice and an Add button',
 
 test('each arc row has its shape, length and energy range, and reports the whole row when edited', () => {
   const {heard, byId} = mounted({arcs: [ARC, {...ARC, shape: 'peak', length: '6', high: '0.9', canMoveEarlier: true}],
-    arcLengthPlaceholder: 'minutes'});
+    arcLengthUnit: 'minutes'});
   assert.equal(byId('m3u-arc-rows').children.length, 2);
   const [shape, length, low, high] = ['shape', 'length', 'low', 'high'].map(field => byId(`m3u-arc-${field}-1`));
   assert.deepEqual([shape.value, length.value, low.value, high.value], ['peak', '6', '', '0.9']);
@@ -115,7 +115,7 @@ test('an edited chain of the same size updates its rows in place, keeping the fo
   const {view, byId} = mounted({arcs: [ARC, ARC]});
   const focused = byId('m3u-arc-low-1');
   view.show({arcs: [{...ARC, shape: 'peak', canMoveLater: true}, {...ARC, low: '0.2', canMoveEarlier: true}],
-    arcLengthPlaceholder: 'minutes'});
+    arcLengthUnit: 'minutes'});
   assert.equal(byId('m3u-arc-low-1'), focused);
   assert.deepEqual([byId('m3u-arc-shape-0').value, focused.value, byId('m3u-arc-length-0').placeholder],
     ['peak', '0.2', 'minutes']);
@@ -124,9 +124,9 @@ test('an edited chain of the same size updates its rows in place, keeping the fo
 
 test('adding or removing an arc redraws the rows', () => {
   const {view, byId} = mounted({arcs: [ARC]});
-  view.show({arcs: [ARC, {...ARC, shape: 'peak'}], arcLengthPlaceholder: 'tracks'});
+  view.show({arcs: [ARC, {...ARC, shape: 'peak'}], arcLengthUnit: 'tracks'});
   assert.deepEqual([byId('m3u-arc-rows').children.length, byId('m3u-arc-shape-1').value], [2, 'peak']);
-  view.show({arcs: [], arcLengthPlaceholder: 'tracks'});
+  view.show({arcs: [], arcLengthUnit: 'tracks'});
   assert.deepEqual(byId('m3u-arc-rows').children, []);
 });
 
@@ -236,7 +236,7 @@ test('#234: each arc is a collapsible row summed up in one line; a new arc opens
     ['SUMMARY', 'Arc 1 · Rising energy · length not set · default energy range']);
   first.open = false;
   view.show({arcs: [{...ARC, summary: 'Arc 1 · Rising energy · 8 tracks · default energy range'}, {...ARC, summary: 'Arc 2'}],
-    arcLengthPlaceholder: 'tracks'});
+    arcLengthUnit: 'tracks'});
   assert.deepEqual([byId('m3u-arc-0').open, byId('m3u-arc-1').open], [false, true]);
   assert.equal(byId('m3u-arc-0').children[0].textContent, 'Arc 1 · Rising energy · 8 tracks · default energy range');
   const length = byId('m3u-arc-length-0');
@@ -258,4 +258,10 @@ test('the BPM range is marked required, a missing control is flagged, and edits 
   byId('m3u-bpm-min').value = '12';
   byId('m3u-bpm-min').oninput();
   assert.deepEqual(heard.edited, [{...VALUES, bpmMin: '12'}]);
+});
+
+test("the arc unit shown follows the draft's, so a duration switches it to minutes (#256)", () => {
+  const {view, byId} = mounted({arcs: [ARC]});
+  view.show({arcs: [ARC], arcLengthUnit: 'minutes'});
+  assert.deepEqual([byId('m3u-arc-unit').value, byId('m3u-arc-length-0').placeholder], ['minutes', 'minutes']);
 });

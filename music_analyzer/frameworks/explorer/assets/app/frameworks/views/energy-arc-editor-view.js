@@ -20,7 +20,7 @@ export function energyArcEditorView({onArcAdded, onArcRemoved, onArcMoved, onArc
     const fieldset = arcElement('fieldset', {id: 'm3u-energy-arcs'});
     fieldset.append(setArcText(document.createElement('legend'), 'Energy arcs'),
       arcLabel(unitControl, 'Length in'), unitControl, rows, add);
-    show(viewModel.arcs, viewModel.arcLengthPlaceholder);
+    show(viewModel.arcs, viewModel.arcLengthUnit);
     return fieldset;
   }
 
