@@ -13,7 +13,7 @@ from tests.integration.infrastructure.test_analysis_schema_adoption_red import l
 
 class AnalysisViewAdoptionTests(unittest.TestCase):
     def test_supported_versions_reject_changed_or_missing_views_without_migration(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             for view in ('active_tracks', 'active_locations'):
                 for change in ('predicate', 'missing'):
                     with self.subTest(version=version, view=view, change=change), tempfile.TemporaryDirectory() as directory:

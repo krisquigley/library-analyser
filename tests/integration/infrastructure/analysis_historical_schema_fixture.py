@@ -146,13 +146,22 @@ SCHEMA_OBJECTS = (
     format_version INTEGER NOT NULL CHECK(format_version >= 1),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""),
+    (12, 'track_streams', """CREATE TABLE track_streams(
+    track_id TEXT PRIMARY KEY REFERENCES tracks(id),
+    audio_sha256 TEXT NOT NULL CHECK(length(audio_sha256) = 64))"""),
+    (12, 'track_successions', """CREATE TABLE track_successions(
+    successor_id TEXT PRIMARY KEY REFERENCES tracks(id),
+    predecessor_id TEXT NOT NULL REFERENCES tracks(id),
+    audio_sha256 TEXT NOT NULL CHECK(length(audio_sha256) = 64),
+    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(successor_id <> predecessor_id))"""),
 )
 
 
 def create_historical_schema(path, version):
     """Create a fresh real version-specific schema; never downgrade a v10 file."""
-    if version not in range(1, 12):
-        raise ValueError('Expected schema version 1 through 11')
+    if version not in range(1, 13):
+        raise ValueError('Expected schema version 1 through 12')
     with closing(sqlite3.connect(path)) as db:
         db.execute('PRAGMA foreign_keys=ON')
         for first_version, name, sql in SCHEMA_OBJECTS:

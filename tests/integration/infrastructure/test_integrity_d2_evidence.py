@@ -121,7 +121,7 @@ class EvidenceCase(unittest.TestCase):
 
 class IntegrityD2EvidenceControls(EvidenceCase):
     def test_genuine_versions_physical_fk_order_and_full_readers(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version):
                 path, ids = self.public(version)
                 with closing(sqlite3.connect(path)) as db:
@@ -144,7 +144,7 @@ class IntegrityD2EvidenceControls(EvidenceCase):
                     self.assertEqual(reader_type(str(path)).track_ids(), ids)
 
     def test_empty_and_legacy_applicability_controls(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'empty.sqlite'
                 create_public_core_database(path, version)

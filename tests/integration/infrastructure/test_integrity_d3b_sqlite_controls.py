@@ -103,7 +103,7 @@ class SQLiteAdmissionControls(unittest.TestCase):
         print(f'RUNTIME python={sys.version.split()[0]} sqlite={sqlite3.sqlite_version}')
 
     def test_genuine_public_versions_6_through_10_same_readonly_snapshot(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / 'public.sqlite'
                 create_public_core_database(path, version)

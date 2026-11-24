@@ -5,7 +5,7 @@ validation: metadata, paginated lists/summaries, keyed detail and active-selecti
 admission. Each repository operation opens a pinned read-only transaction against
 the chosen existing database (`mode=ro`, `query_only`); committed WAL frames remain
 visible. The compatibility guard checks only `application_id` and supported
-`user_version` **6–11** in that same snapshot. It does not enumerate schema
+`user_version` **6–12** in that same snapshot. It does not enumerate schema
 columns/indexes/constraints or run an integrity audit.
 
 This is an intentional writer-first trust policy, not authentication of a file.

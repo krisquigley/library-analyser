@@ -59,7 +59,7 @@ def capture_target_failure(scanner, path):
 
 class IntegrityD1Lifecycle(unittest.TestCase):
     def test_healthy_scope_completion_after_cleanup_keeps_full_scope_omitted(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 create_public_core_database(path, version)

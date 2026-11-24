@@ -10,7 +10,7 @@ A database path must be supplied explicitly. Repeated root/subcommand `--databas
 
 ## What D3 covers — and does not certify
 
-D3 recognizes the existing application ID and true schema versions **6–11**, checks the exact schema contract formerly enforced by the Explorer FULL reader (including its legacy tolerances; D3 now holds the only copy), and examines every core track identity/digest/size and audio-policy row, including missing/orphan audio relationships. D3 retains this full audit contract.
+D3 recognizes the existing application ID and true schema versions **6–12**, checks the exact schema contract formerly enforced by the Explorer FULL reader (including its legacy tolerances; D3 now holds the only copy), and examines every core track identity/digest/size and audio-policy row, including missing/orphan audio relationships. D3 retains this full audit contract.
 All Explorer reads, including graph/candidate/projection/export (R1 + R2), use the
 intentional [scoped read policy](explorer-read-policy.md); readers no longer contain a FULL validator.
 D3 is explicit and is not run as a hidden prerequisite for ordinary reads.
@@ -23,7 +23,7 @@ Wire shape is `report_version=1`, capability is `coverage_revision=D3`, and the 
 
 ## Metadata and retained-stage ownership
 
-On every supported schema6–11, metadata examines every physical track_metadata row,
+On every supported schema6–12, metadata examines every physical track_metadata row,
 including inactive tracks, without a filtering join. Its three JSON documents are
 parsed independently: malformed JSON contributes `metadata_json_invalid`; an
 independently parsed malformed sibling can also contribute
@@ -167,7 +167,7 @@ This diagnostic does not suggest automatic repair. Keep the source and a consist
 
 ## Stored playlist recipes
 
-On v11 the `playlist_recipes` check reads every stored recipe row (#139) and counts one unit of work per row. Each row is checked against the analyzer's own recipe contract (`music_analyzer/domain/playlist_recipe.py`), the same one `playlist-recipe save` applies, so a failing row was changed outside the analyzer. A row can raise each of these at most once:
+On v11 and later the `playlist_recipes` check reads every stored recipe row (#139) and counts one unit of work per row. Each row is checked against the analyzer's own recipe contract (`music_analyzer/domain/playlist_recipe.py`), the same one `playlist-recipe save` applies, so a failing row was changed outside the analyzer. A row can raise each of these at most once:
 
 - `recipe_json_invalid`: the stored recipe is not JSON text.
 - `recipe_contract_invalid`: it is JSON but not a valid version 1 recipe.

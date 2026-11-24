@@ -52,7 +52,7 @@ def execute(scan):
 
 class IntegrityD2EvidenceReportControls(unittest.TestCase):
     def test_independent_inventory_semantic_counts_and_empty_legacy(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             for empty in (False, True):
                 with self.subTest(version=version, empty=empty):
                     scan = evidence_scan(version, empty)
@@ -93,7 +93,7 @@ class IntegrityD2EvidenceReportControls(unittest.TestCase):
 
 class IntegrityD2EvidenceReport(unittest.TestCase):
     def test_atomic_d2_fixed_inventory_noncertificate_and_applicability(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version):
                 scan = evidence_scan(version)
                 report = execute(scan)
@@ -102,7 +102,7 @@ class IntegrityD2EvidenceReport(unittest.TestCase):
                 self.assertEqual((report.report_version, report.required_scope_revision), (1, 'P7-1'))
                 self.assertEqual((report.status, report.exit_code, report.complete), ('incomplete', 4, False))
                 self.assertTrue(report.implemented_scope_complete)
-                self.assertEqual(report.supported_schema_versions, (6, 7, 8, 9, 10, 11))
+                self.assertEqual(report.supported_schema_versions, (6, 7, 8, 9, 10, 11, 12))
                 for c in report.checks:
                     if c.check_id in ('sqlite_physical', 'sqlite_foreign_keys'):
                         self.assertEqual(c.state, 'not_implemented')

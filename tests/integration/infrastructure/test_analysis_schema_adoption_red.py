@@ -79,7 +79,7 @@ class AnalysisSchemaAdoptionRedTests(unittest.TestCase):
         ), (), True))
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA application_id').fetchone(), (APPLICATION_ID,))
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (11,))
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (12,))
             self.assertEqual(tuple(db.execute('SELECT id FROM active_tracks ORDER BY id')),
                              tuple((track_id,) for track_id in self.track_ids))
 
@@ -192,7 +192,7 @@ class AnalysisHistoricalSchemaCompatibilityTests(unittest.TestCase):
         return track_ids
 
     def test_real_supported_versions_migrate_without_losing_historical_rows(self):
-        for version in range(1, 12):
+        for version in range(1, 13):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / 'historical.sqlite'
                 track_ids = self._seed_historical_database(path, version)
@@ -211,17 +211,17 @@ class AnalysisHistoricalSchemaCompatibilityTests(unittest.TestCase):
                 SQLiteAnalysisRepository(str(path))
 
                 after = logical_snapshot(path)
-                self.assertEqual(after[:2], ((APPLICATION_ID,), (11,)))
+                self.assertEqual(after[:2], ((APPLICATION_ID,), (12,)))
                 migrated_rows = dict(after[3])
                 for table, rows in before[3]:
                     self.assertEqual(migrated_rows[table], rows, table)
-                if version == 11:
+                if version == 12:
                     self.assertEqual(after, before)
                 for reader in READERS:
                     self.assertEqual(reader(str(path)).track_ids(), track_ids if version >= 6 else ())
 
     def test_both_readers_accept_real_supported_versions_without_migration(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / 'historical.sqlite'
                 track_ids = self._seed_historical_database(path, version)

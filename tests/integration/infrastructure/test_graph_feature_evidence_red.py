@@ -206,7 +206,7 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
 
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute('PRAGMA application_id').fetchone()[0], APPLICATION_ID)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 11)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 12)
             self.assertEqual(db.execute('SELECT status FROM runs WHERE id=?', (run_id,)).fetchone(), ('completed',))
             self.assertEqual(db.execute('SELECT count(*) FROM stages WHERE run_id=?', (run_id,)).fetchone(), (5,))
             self.assertEqual(db.execute('SELECT value FROM overrides WHERE track_id=? AND field=?', (identity.track_id, 'key')).fetchone(), ('9A',))
@@ -220,7 +220,7 @@ class GraphFeatureEvidencePersistenceRedTests(unittest.TestCase):
         run_id = _complete_graph_relevant_run(repository, identity)
 
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 11)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 12)
             rows = _current_graph_feature_rows(db)
 
         self.assertEqual(len(rows), 1)

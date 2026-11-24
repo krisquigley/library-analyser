@@ -15,14 +15,14 @@ from tests.integration.infrastructure.analysis_historical_schema_fixture import 
 PUBLIC_TRACK_IDS = tuple('sha256:' + digit * 64 for digit in ('1', '2'))
 
 
-def create_public_core_database(path, version=11):
-    """Create true v6-v11 with two eligible public tracks; return their IDs.
+def create_public_core_database(path, version=12):
+    """Create true v6-v12 with two eligible public tracks; return their IDs.
 
     All connections are sequential and closed before return. Callers own their
     temporary path. No private input, triggers, runtime DDL imports or migration.
     """
-    if version not in range(6, 12):
-        raise ValueError('Expected supported schema version 6 through 11')
+    if version not in range(6, 13):
+        raise ValueError('Expected supported schema version 6 through 12')
     create_historical_schema(path, version)
     with closing(sqlite3.connect(path)) as db:
         db.execute('PRAGMA foreign_keys=ON')

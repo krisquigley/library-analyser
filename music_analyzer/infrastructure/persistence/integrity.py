@@ -371,7 +371,7 @@ class SQLiteIntegrityScanner:
             compatibility_complete = True
             if app != 0x4D414E41:
                 findings.append(finding('compatibility', 'application_id_mismatch'))
-            if literal_version not in (6, 7, 8, 9, 10, 11):
+            if literal_version not in (6, 7, 8, 9, 10, 11, 12):
                 findings.append(finding('compatibility', 'schema_version_unsupported'))
             if findings:
                 stop = 'unsupported_database'
@@ -720,7 +720,8 @@ class SQLiteIntegrityScanner:
                 (7, contract._EXPECTED_GRAPH_SCHEMA if version >= 10 else contract._EXPECTED_GRAPH_SCHEMA_LEGACY, contract._EXPECTED_GRAPH_INDEXES),
                 (8, contract._EXPECTED_POSITIONED_GRAPH_SCHEMA, contract._EXPECTED_POSITIONED_GRAPH_INDEXES),
                 (9, contract._EXPECTED_GRAPH_FEATURE_SCHEMA, contract._EXPECTED_GRAPH_FEATURE_INDEXES),
-                (11, contract._EXPECTED_PLAYLIST_RECIPE_SCHEMA, set())):
+                (11, contract._EXPECTED_PLAYLIST_RECIPE_SCHEMA, set()),
+                (12, contract._EXPECTED_TRACK_STREAM_SCHEMA, set())):
             if version >= first_version:
                 schema.update(tables)
                 objects |= {(name, 'table') for name in tables} | indexes

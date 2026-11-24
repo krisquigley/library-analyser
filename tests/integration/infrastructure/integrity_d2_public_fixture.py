@@ -20,7 +20,7 @@ EDGE_COLUMNS = ('source_track_id,target_track_id,score,distance,supported_group_
 STAMP = '2025-01-01 00:00:00'
 
 
-def create_public_graph_database(path, version=11):
+def create_public_graph_database(path, version=12):
     identities = create_public_core_database(path, version)
     with closing(sqlite3.connect(path)) as db:
         db.execute('PRAGMA foreign_keys=ON')

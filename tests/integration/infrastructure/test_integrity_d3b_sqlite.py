@@ -271,7 +271,7 @@ class IntegrityD3bSQLite(CountedAssertions):
         self.assertNotIn('PRIVATE', repr(result))
 
     def test_genuine_supported_healthy_physical_one_and_foreign_keys_zero(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = self.public(td, version)
                 o = MarkerObservation()

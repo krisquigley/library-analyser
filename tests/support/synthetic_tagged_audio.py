@@ -20,3 +20,10 @@ def synthetic_flac(path: Path) -> Path:
     stream_info = (struct.pack('>HH', 4096, 4096) + bytes(6) + stream_info_bits.to_bytes(8, 'big') + bytes(16))
     path.write_bytes(b'fLaC' + bytes([0x80]) + len(stream_info).to_bytes(3, 'big') + stream_info + FLAC_AUDIO)
     return path
+
+
+def with_id3v2(audio: bytes, body: bytes) -> bytes:
+    """The audio behind an ID3v2.4 tag whose body is the given bytes, built without a tag library."""
+    size = len(body)
+    syncsafe = bytes([(size >> 21) & 0x7F, (size >> 14) & 0x7F, (size >> 7) & 0x7F, size & 0x7F])
+    return b'ID3\x04\x00\x00' + syncsafe + body + audio

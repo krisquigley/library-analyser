@@ -708,7 +708,7 @@ Those artifact files are durable JSON snapshots for offline inspection or later 
 ## D3 offline integrity diagnostic
 
 `music-analyzer integrity --database DB [--json]` explicitly checks supported
-schema6–11, core identity/audio rows, v11 stored playlist recipes, metadata, retained stages, v7+ current/historical
+schema6–12, core identity/audio rows, v11+ stored playlist recipes, the v12 track_streams and track_successions tables (by schema only), metadata, retained stages, v7+ current/historical
 graphs, all v9+ compact evidence, and SQLite physical/foreign-key integrity without
 loading configuration or starting analysis/writer services. A fully drained exact
 snapshot diagnostic returns clean0 or corrupt1 with `complete=true`; blocked,
