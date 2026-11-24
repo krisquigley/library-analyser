@@ -83,6 +83,41 @@ test('metadata is one flat list: tag aliases merge, the first of a repeated key 
 test('the current track shows no run diagnostics or graph key', () => {
   const detail = trackDetailViewModel({handle: 'track-1', display_label: 'Alpha.flac', latest_run_status: 'completed',
     available_locations: 1, reasons: ['ready'], warnings: ['diagnostic warning'], diagnostics: {graph: 'key'}, fields: {}});
-  assert.deepEqual(Object.keys(detail).sort(), ['fields', 'heading', 'metadata']);
+  assert.deepEqual(Object.keys(detail).sort(), ['fields', 'heading', 'metadata', 'unavailable']);
   assert.ok(!/completed|diagnostic|Display|graph/i.test(JSON.stringify(detail)), JSON.stringify(detail));
+});
+
+const ENERGY_MODEL = 'emomusic-msd-musicnn-2';
+
+test('key facts lead the detail: BPM, key, the energy axes as measured, and duration; an override wins and says so (#236)', () => {
+  const detail = trackDetailViewModel({metadata: {common: [['title', 'Song']], duration_seconds: 225.4}, fields: {
+    bpm: {automatic: {values: [['bpm', 122.44]]}},
+    key: {manual_text: '9A', typed_override_status: 'resolved', automatic: {values: [['key', '8A']]}},
+    energy: {automatic: {values: [['valence', 0.83], ['arousal', 0.62]], provenance: [[ENERGY_MODEL, '1']]}},
+  }});
+  assert.deepEqual(detail.metadata.keyFacts, [
+    {text: '122.4 BPM', source: 'analysis (raw)'},
+    {text: 'Key 9A', source: 'manual override'},
+    {text: 'Valence 0.8', source: 'Emomusic native regression scale'},
+    {text: 'Arousal 0.6', source: 'Emomusic native regression scale'},
+    {text: '3:45', source: 'audio file'}]);
+  assert.deepEqual(detail.metadata.lines, ['Title: Song']);
+  assert.deepEqual(trackDetailViewModel({metadata: {duration_seconds: 3725}, fields: {}}).metadata.keyFacts,
+    [{text: '1:02:05', source: 'audio file'}]);
+  assert.deepEqual(trackDetailViewModel({fields: {bpm: {automatic: {}}}}).metadata.keyFacts, [], 'nothing known, nothing claimed');
+});
+
+test('fields without usable evidence gather in one Not available line, each keeping its reason (#236)', () => {
+  const detail = trackDetailViewModel({fields: {
+    bpm: {automatic: {values: [['bpm', 120]]}},
+    genres: {automatic: {values: [], provenance: []}, missing_reason: 'not analysed'},
+    mood: {automatic: {values: [['calm', 0.05]], provenance: [[MOOD_MODEL, '1']]}},
+    instruments: {automatic: {}, missing_reason: 'instruments: missing result'},
+    key: {manual_text: 'A', automatic: {}},
+  }});
+  assert.deepEqual(detail.fields.map(field => field.name), ['bpm', 'mood', 'key'], 'weak scores and overrides are evidence');
+  assert.deepEqual(detail.unavailable, {summary: 'Not available: genres, instruments', reasons: [
+    {name: 'genres', text: 'no usable evidence (unsupported or missing model/scale); not analysed'},
+    {name: 'instruments', text: 'no usable evidence (unsupported or missing model/scale); instruments: missing result'}]});
+  assert.equal(trackDetailViewModel({fields: {bpm: {automatic: {values: [['bpm', 120]]}}}}).unavailable, null);
 });

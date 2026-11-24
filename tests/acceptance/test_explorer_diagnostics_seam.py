@@ -34,7 +34,7 @@ const stop = diagnostics.observe('graph-model-building', {before: () => timed.pu
 assert.equal(typeof stop, 'function');
 for (const type of ['graph-model-building', 'graph-model-built']) assert.ok(diagnostics.eventTypes().includes(type), type);
 assert.deepEqual(Object.keys(diagnostics.scene()).sort(), ['findSceneObject', 'graph', 'graphData', 'graphObjectTrackId', 'halo']);
-assert.deepEqual(Object.keys(diagnostics.views()).sort(), ['detailField', 'trackMetadata']);
+assert.deepEqual(Object.keys(diagnostics.views()).sort(), ['detailField', 'trackDetailFields', 'trackMetadata']);
 assert.deepEqual(Object.keys(diagnostics.graph()).sort(), ['layout', 'model', 'visible']);
 assert.ok(Object.isFrozen(diagnostics.graph().model));
 vm.runInContext('explorerDiagnostics = null', context);

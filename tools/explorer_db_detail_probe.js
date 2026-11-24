@@ -36,10 +36,7 @@
             // Snapshot presentation BEFORE returning the DTO to application
             // code, which may replace or mutate its renderer argument.
             // The page's own views draw the expected presentation, detached, through its diagnostics seam (#146).
-            const views=window.explorerDiagnostics.views(), fields=document.createElement('div');
-            fields.append(views.trackMetadata(value.metadata));
-            for(const [name,field] of Object.entries(value.fields||{}))fields.append(views.detailField(name,field));
-            expectedBySelection.set(r.sequence,fields);
+            expectedBySelection.set(r.sequence,window.explorerDiagnostics.views().trackDetailFields(value));
           }
         }
         if(route==='/api/mood-axis-graph'&&response.ok) {

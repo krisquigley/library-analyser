@@ -58,3 +58,40 @@ test('a gauge names its score for assistive technology and turns its needle', ()
   assert.deepEqual([dial.getAttribute('role'), dial.getAttribute('aria-label')], ['img', 'calm: 0.3 out of 1']);
   assert.equal(descendants(gauge).find(node => node.className === 'score-needle').style.transform, 'rotate(-60deg)');
 });
+
+test('key facts are badges above the metadata, each saying where it comes from (#236)', () => {
+  const detail = trackDetailView();
+  detail.show({heading: 'Current Track', metadata: {lines: ['Title: Song'], keyFacts: [{text: '120.0 BPM', source: 'analysis (raw)'}]},
+    fields: [], unavailable: null});
+  const [, list] = roots.detail.children;
+  const [metadata] = list.children;
+  assert.equal(metadata.className, 'field track-metadata');
+  const facts = metadata.children[0];
+  assert.equal(facts.className, 'key-facts');
+  assert.deepEqual(facts.children.map(fact => [fact.className, fact.textContent, fact.title, fact.getAttribute('aria-label')]),
+    [['key-fact', '120.0 BPM', 'analysis (raw)', '120.0 BPM, from analysis (raw)']]);
+  assert.equal(metadata.children[1].textContent, 'Title: Song');
+});
+
+test('fields without usable evidence share one section that expands to each reason (#236)', () => {
+  const detail = trackDetailView();
+  detail.show({heading: 'Current Track', metadata: {lines: []}, fields: [],
+    unavailable: {summary: 'Not available: genres', reasons: [{name: 'genres', text: 'no usable evidence; not analysed'}]}});
+  const [, list] = roots.detail.children;
+  const section = list.children.at(-1);
+  assert.equal(section.className, 'field unavailable-evidence');
+  const [details] = section.children;
+  assert.equal(details.tagName, 'DETAILS');
+  assert.deepEqual(texts(details), ['Not available: genres', 'genres: no usable evidence; not analysed']);
+});
+
+test('the field list is drawn the same way whether shown or asked for by the diagnostics (#236)', () => {
+  const detail = trackDetailView();
+  const viewModel = {heading: 'Current Track', metadata: {lines: ['Title: Song'], keyFacts: [{text: 'Key 8A', source: 'analysis'}]},
+    fields: [{name: 'bpm', items: [{text: '120.0 BPM (raw)'}]}], unavailable: {summary: 'Not available: mood', reasons: []}};
+  const list = detail.fieldList(viewModel);
+  detail.show(viewModel);
+  assert.equal(list.tagName, 'DIV');
+  assert.deepEqual(texts(list), texts(roots.detail.children[1]));
+  assert.deepEqual(list.children.map(section => section.className), ['field track-metadata', 'field', 'field unavailable-evidence']);
+});

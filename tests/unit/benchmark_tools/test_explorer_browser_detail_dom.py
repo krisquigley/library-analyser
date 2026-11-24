@@ -67,7 +67,10 @@ global.window={fetch:async()=>({ok:true,status:200,text:async()=>JSON.stringify(
 global.location={href:'http://localhost/'};
 global.document={addEventListener(){},createElement:make};
 const renderTrackMetadata=value=>JSON.parse(JSON.stringify(value));
-window.explorerDiagnostics={views:()=>({trackMetadata:renderTrackMetadata,detailField:(name,value)=>({name,...value})})};
+// The page draws the whole field list itself (#236); the probe never recomposes it.
+const trackDetailFields=detail=>{const fields=make();fields.append(renderTrackMetadata(detail.metadata));
+ for(const [name,value] of Object.entries(detail.fields||{}))fields.append({name,...value});return fields;};
+window.explorerDiagnostics={views:()=>({trackDetailFields})};
 vm.runInThisContext(PROBE);
 (async()=>{
  const d=window.__dbBridge,selection={sequence:1,intended_handle:'private-handle'};

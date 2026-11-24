@@ -1,4 +1,6 @@
-// What the track detail panel shows (#146): the track's embedded metadata, then each field's evidence.
+// What the track detail panel shows (#146): key facts and the track's embedded metadata, then each field's evidence;
+// fields without usable evidence share one line that still gives each reason (#236). Nothing is invented: a key fact
+// is shown only when its evidence is, and says where it comes from.
 
 import {displayNumber} from '../../domain/display-number.js';
 import {energyEvidence, measuredValue, scoreEvidence} from '../../domain/track-evidence.js';
@@ -12,8 +14,12 @@ const METADATA_ALIASES = Object.freeze({albumartist: 'album_artist', aalbumartis
   disk: 'disc_number', tpos: 'disc_number'});
 
 export function trackDetailViewModel(detail) {
-  return {heading: 'Current Track', metadata: trackMetadataViewModel(detail.metadata),
-    fields: Object.entries(detail.fields || {}).map(([name, field]) => detailFieldViewModel(name, field))};
+  const fields = Object.entries(detail.fields || {});
+  const missing = fields.filter(([name, field]) => !fieldHasEvidence(name, field));
+  return {heading: 'Current Track',
+    metadata: {...trackMetadataViewModel(detail.metadata), keyFacts: trackKeyFacts(detail)},
+    fields: fields.filter(([name, field]) => fieldHasEvidence(name, field)).map(([name, field]) => detailFieldViewModel(name, field)),
+    unavailable: missing.length ? unavailableEvidence(missing) : null};
 }
 
 export function trackDetailLoadingViewModel() {
@@ -50,6 +56,55 @@ export function trackMetadataViewModel(metadata) {
     lines.push(`${METADATA_LABELS[canonical] || key}: ${valueText}`);
   }
   return {lines: lines.length ? lines : ['No embedded textual metadata found']};
+}
+
+function fieldHasEvidence(name, field) {
+  if (field.manual_text != null) return true;
+  const scores = scoreEvidence(name, field);
+  if (scores) return scores.usable && scores.hasValues;
+  if (name === 'energy') return Boolean(energyEvidence(field)?.length);
+  if (name === 'bpm' || name === 'key') return measuredValue(name, field) != null;
+  return false;
+}
+
+function unavailableEvidence(missing) {
+  return {summary: `Not available: ${missing.map(([name]) => name).join(', ')}`,
+    reasons: missing.map(([name, field]) => ({name, text: detailFieldViewModel(name, field).items.map(item => item.text).join('; ')}))};
+}
+
+const ENERGY_FACT_SOURCE = 'Emomusic native regression scale';
+
+function trackKeyFacts({fields = {}, metadata}) {
+  return [bpmFact(fields.bpm), keyFact(fields.key), ...energyFacts(fields.energy), durationFact(metadata?.duration_seconds)]
+    .filter(Boolean);
+}
+
+function bpmFact(field) {
+  if (!field) return null;
+  if (field.manual_text != null) return {text: `${field.manual_text} BPM`, source: 'manual override'};
+  const measured = measuredValue('bpm', field);
+  return measured && {text: `${displayNumber(measured[1])} BPM`, source: 'analysis (raw)'};
+}
+
+function keyFact(field) {
+  if (!field) return null;
+  if (field.manual_text != null) return {text: `Key ${field.manual_text}`, source: 'manual override'};
+  const measured = measuredValue('key', field);
+  return measured && {text: `Key ${measured[1]}`, source: 'analysis'};
+}
+
+function energyFacts(field) {
+  if (!field || field.manual_text != null) return [];
+  return (energyEvidence(field) || []).map(([axis, value]) => ({
+    text: `${axis.charAt(0).toUpperCase()}${axis.slice(1)} ${displayNumber(value)}`, source: ENERGY_FACT_SOURCE}));
+}
+
+function durationFact(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const whole = Math.round(seconds);
+  const [hours, minutes, rest] = [Math.floor(whole / 3600), Math.floor(whole / 60) % 60, whole % 60];
+  const pad = value => String(value).padStart(2, '0');
+  return {text: hours ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${minutes}:${pad(rest)}`, source: 'audio file'};
 }
 
 function evidenceItems(name, field) {
