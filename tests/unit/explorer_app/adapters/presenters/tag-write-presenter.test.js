@@ -3,9 +3,19 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {presentRejectedTagWriteInput, presentTagWriteEvent, tagWriteViewModel} from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/tag-write-presenter.js';
 
-test('the panel starts by inviting a preview, with nothing to write', () => {
+test('the panel starts by inviting a preview, with nothing to write and no playlist to tag yet', () => {
   assert.deepEqual(tagWriteViewModel(), {busy: false, rows: [], skipped: [], report: [], canApply: false,
-    status: {text: 'Preview the BPM and key tags of the selected track before writing them.', urgent: false}});
+    playlistTarget: {available: false, label: 'Previewed playlist (preview one first)'},
+    status: {text: 'Choose the selected track or the previewed playlist, then preview its BPM and key tags.', urgent: false}});
+});
+
+test('a previewed playlist becomes a target to tag, and stops being one when it is cleared', () => {
+  assert.deepEqual(presentTagWriteEvent({type: 'tag-write-playlist-offered', count: 12}),
+    {playlistTarget: {available: true, label: 'Previewed playlist (12 tracks)'}});
+  assert.deepEqual(presentTagWriteEvent({type: 'tag-write-playlist-offered', count: 1}).playlistTarget.label,
+    'Previewed playlist (1 track)');
+  assert.deepEqual(presentTagWriteEvent({type: 'tag-write-playlist-withdrawn'}),
+    {playlistTarget: {available: false, label: 'Previewed playlist (preview one first)'}});
 });
 
 test('a preview lists each change, old to new, and marks replacements', () => {
@@ -43,6 +53,7 @@ test('a failure or a rejected request is told urgently and nothing can be writte
     {status: {text: 'Select a track first', urgent: true}});
 });
 
-test('a discarded preview returns the panel to its start', () => {
-  assert.deepEqual(presentTagWriteEvent({type: 'tag-write-discarded'}), tagWriteViewModel());
+test('a discarded preview returns the panel to its start but keeps the playlist target as it is', () => {
+  const {playlistTarget, ...start} = tagWriteViewModel();
+  assert.deepEqual(presentTagWriteEvent({type: 'tag-write-discarded'}), start);
 });

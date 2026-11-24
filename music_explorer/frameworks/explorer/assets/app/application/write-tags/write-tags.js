@@ -1,17 +1,21 @@
-// Previewing a BPM and key tag write for chosen tracks, then applying exactly that preview, once (#132).
+// Previewing a BPM and key tag write for the selected track or the previewed playlist, then applying exactly that
+// preview, once (#132).
 // The server holds the approval behind a single-use token; the page keeps it only until it is used.
 
 import {nextTagWriteState} from '../../domain/tag-write.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
 import {TAG_WRITES} from '../ports/explorer-api.js';
 import {requirePort} from '../ports/port.js';
-import {tagWriteApplied, tagWriteApplying, tagWriteDiscarded, tagWriteFailed, tagWritePreviewed, tagWritePreviewing} from './tag-write-events.js';
+import {tagWriteApplied, tagWriteApplying, tagWriteDiscarded, tagWriteFailed, tagWritePlaylistOffered, tagWritePlaylistWithdrawn,
+  tagWritePreviewed, tagWritePreviewing} from './tag-write-events.js';
 
 export function createTagWrite({explorerApi, eventBus}) {
   requirePort(TAG_WRITES, explorerApi);
   requirePort(EVENT_BUS, eventBus);
   let state = 'idle';
   let approval = null;
+  let offeredPlaylist = null;
+  let previewedTarget = null;
 
   function move(action, event) {
     state = nextTagWriteState(state, action);
@@ -26,9 +30,23 @@ export function createTagWrite({explorerApi, eventBus}) {
     }
   }
 
-  async function preview({trackIds, policy}) {
+  function previewSelectedTrack({trackId, policy}) {
+    return preview({trackIds: [trackId], policy, target: 'selected-track'});
+  }
+
+  async function previewOfferedPlaylist({policy}) {
+    if (offeredPlaylist === null) {
+      move('preview', tagWritePreviewing([]));
+      move('fail', tagWriteFailed('Preview a playlist first'));
+      return;
+    }
+    await preview({trackIds: offeredPlaylist, policy, target: 'previewed-playlist'});
+  }
+
+  async function preview({trackIds, policy, target}) {
     move('preview', tagWritePreviewing(trackIds));
     approval = null;
+    previewedTarget = target;
     await settle(async () => {
       const previewed = await explorerApi.previewTagWrite({trackIds, policy});
       approval = previewed.token;
@@ -46,12 +64,29 @@ export function createTagWrite({explorerApi, eventBus}) {
     });
   }
 
-  // Only an unapplied preview is discarded: its approval belongs to the track it was made for.
+  // Only an unapplied preview is discarded: its approval belongs to the tracks it was made for.
   function discard() {
     if (state !== 'previewed') return;
     approval = null;
     move('discard', tagWriteDiscarded());
   }
 
-  return Object.freeze({state: () => state, preview, apply, discard});
+  function discardPlaylistPreview() {
+    if (previewedTarget === 'previewed-playlist') discard();
+  }
+
+  function offerPlaylist(trackIds) {
+    discardPlaylistPreview();
+    offeredPlaylist = Object.freeze([...new Set(trackIds)]);
+    eventBus.publish(tagWritePlaylistOffered(offeredPlaylist.length));
+  }
+
+  function withdrawPlaylist() {
+    discardPlaylistPreview();
+    offeredPlaylist = null;
+    eventBus.publish(tagWritePlaylistWithdrawn());
+  }
+
+  return Object.freeze({state: () => state, previewSelectedTrack, previewOfferedPlaylist, apply, discard,
+    offerPlaylist, withdrawPlaylist});
 }

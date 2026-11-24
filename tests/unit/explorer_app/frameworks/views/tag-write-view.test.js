@@ -9,7 +9,7 @@ beforeEach(() => { installFakeDocument([]); });
 
 function mounted() {
   const heard = [];
-  const view = tagWriteView({onPreviewRequested: policy => heard.push(['preview', policy]), onApplyRequested: () => heard.push(['apply'])});
+  const view = tagWriteView({onPreviewRequested: (policy, target) => heard.push(['preview', policy, target]), onApplyRequested: () => heard.push(['apply'])});
   const panel = fakeElement('section');
   view.mount(panel, tagWriteViewModel());
   const byId = id => descendants(panel).find(node => node.id === id);
@@ -21,9 +21,10 @@ test('Preview tags reports the chosen policy; Write these tags is disabled until
   assert.deepEqual(byId('tag-write-policy').children.map(option => option.value), ['fill-empty', 'replace-existing']);
   assert.equal(byId('tag-write-apply').disabled, true);
   byId('tag-write-policy').value = 'replace-existing';
+  byId('tag-write-target').value = 'selected-track';
   byId('tag-write-preview').onclick();
-  assert.deepEqual(heard, [['preview', 'replace-existing']]);
-  assert.equal(byId('tag-write-status').textContent, 'Preview the BPM and key tags of the selected track before writing them.');
+  assert.deepEqual(heard, [['preview', 'replace-existing', 'selected-track']]);
+  assert.equal(byId('tag-write-status').textContent, 'Choose the selected track or the previewed playlist, then preview its BPM and key tags.');
 });
 
 test('a preview shows each change, and Write these tags asks to apply it', () => {
@@ -53,4 +54,17 @@ test('busy disables both buttons, and the per-file report and a failure are show
 
 test('showing before mounting does nothing', () => {
   assert.doesNotThrow(() => tagWriteView({onPreviewRequested() {}, onApplyRequested() {}}).show({busy: true}));
+});
+
+test('the previewed playlist is a target only once one is offered, and its label counts its tracks', () => {
+  const {view, byId} = mounted();
+  const target = byId('tag-write-target');
+  assert.deepEqual(target.children.map(option => [option.value, option.disabled]),
+    [['selected-track', false], ['previewed-playlist', true]]);
+  assert.equal(target.children[1].textContent, 'Previewed playlist (preview one first)');
+  view.show({playlistTarget: {available: true, label: 'Previewed playlist (12 tracks)'}});
+  assert.deepEqual([target.children[1].disabled, target.children[1].textContent], [false, 'Previewed playlist (12 tracks)']);
+  target.value = 'previewed-playlist';
+  view.show({playlistTarget: {available: false, label: 'Previewed playlist (preview one first)'}});
+  assert.equal(target.value, 'selected-track', 'a withdrawn playlist is no longer chosen');
 });

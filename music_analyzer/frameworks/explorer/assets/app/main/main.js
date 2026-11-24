@@ -101,8 +101,11 @@ playlistEvents.subscribe('saved-recipe-loaded',event=>setCurrent(event.startTrac
 const tagWriteEvents=createInMemoryEventBus();
 const tagWrite=createTagWrite({explorerApi,eventBus:tagWriteEvents});
 const tagWriteControls=tagWriteController({tagWrite,currentTrackId,rejectInput:message=>tagWritePanel.show(presentRejectedTagWriteInput(message))});
-const tagWritePanel=tagWriteView({onPreviewRequested:policy=>tagWriteControls.previewRequested(policy),onApplyRequested:()=>tagWriteControls.applyRequested()});
+const tagWritePanel=tagWriteView({onPreviewRequested:(policy,target)=>tagWriteControls.previewRequested(policy,target),onApplyRequested:()=>tagWriteControls.applyRequested()});
 for(const type of TAG_WRITE_EVENT_TYPES) tagWriteEvents.subscribe(type,event=>tagWritePanel.show(presentTagWriteEvent(event)));
+// The latest playlist preview is what "Previewed playlist" tags; a new or failed preview withdraws it first.
+playlistEvents.subscribe('playlist-previewed',event=>tagWriteControls.playlistPreviewed(event.preview.tracks));
+for(const type of ['playlist-preview-started','playlist-preview-failed']) playlistEvents.subscribe(type,()=>tagWriteControls.playlistPreviewCleared());
 const selectionTickets=sessionSelectionTickets({storage:tabSessionStorage(),now:()=>Date.now(),random:()=>Math.random()});
 const cameraFocusSession=createInMemorySession({pendingTrackId:null,frame:null,viewIntent:0,selectionViewIntent:0,focusGeneration:0});
 // Render on demand (#86): the vendor loop would otherwise redraw WebGL every frame, even when nothing moves.
