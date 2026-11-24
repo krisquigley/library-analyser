@@ -6,12 +6,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from mutagen.flac import FLAC, Picture
-from mutagen.id3 import APIC, COMM, ID3, TBPM, TIT2, TKEY
+import importlib.util
 
 from music_explorer.application.ports.track_tags import OwnedTags, TrackTagsError
 from music_explorer.infrastructure.track_tags import MutagenTrackTags
 from tests.support.synthetic_tagged_audio import FLAC_AUDIO, MP3_AUDIO, synthetic_flac, synthetic_mp3
+
+if importlib.util.find_spec('mutagen') is None:
+    raise unittest.SkipTest('mutagen is not installed in the dependency-free test environment')
+
+from mutagen.flac import FLAC, Picture  # noqa: E402
+from mutagen.id3 import APIC, COMM, ID3, TBPM, TIT2, TKEY  # noqa: E402
 
 
 class Mp3TrackTagsTests(unittest.TestCase):
