@@ -23,6 +23,15 @@ from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mo
 from music_explorer.interface_adapters.playlist_recipe_query import playlist_recipe_from_query
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection, ProjectionArtifactError
 from music_explorer.infrastructure.explorer_readonly import AnalysisError, ReadOnlyExplorerSQLiteRepository
+from music_explorer.application.use_cases.apply_tag_write.apply_tag_write import ApplyTagWrite, TagWriteApprovalError
+from music_explorer.application.use_cases.preview_tag_write.preview_tag_write import PreviewTagWrite
+from music_explorer.infrastructure.event_bus import InProcessEventBus
+from music_explorer.infrastructure.file_identity import Sha256FileIdentity
+from music_explorer.infrastructure.tag_write_actions import InMemoryTagWriteActions
+from music_explorer.infrastructure.taggable_tracks import ReadOnlyTaggableTracks
+from music_explorer.infrastructure.track_tags import MutagenTrackTags
+from music_explorer.interface_adapters.tag_write_http import (
+    preview_request_from_query, tag_write_preview_to_http, tag_write_report_to_http)
 from music_analyzer.application.dto.analysis import AnalysisError as AnalyzerAnalysisError
 
 MAX_BODY = 64 * 1024
@@ -68,7 +77,9 @@ _REQUEST_ERRORS = frozenset({
 # the application/domain (candidate controls, mood selection, playlist export).
 # R1 keeps their 400 contract rather than redesigning those validation APIs.
 _POLICY_VALIDATION_PATHS = frozenset({'/api/candidates', '/api/mood-axis-graph', '/api/playlists/m3u', '/api/playlists/preview',
-                                      '/api/playlist-recipes', '/api/playlist-recipes/load'})
+                                      '/api/playlist-recipes', '/api/playlist-recipes/load',
+                                      '/api/tag-write/preview'})
+_FOREIGN_TAG_WRITE = 'Tags can only be written from the Explorer page'
 
 
 def _request_integer(value):
@@ -173,9 +184,19 @@ _STATIC_ASSETS = frozenset({'/style.css', '/vendor/3d-force-graph/3d-force-graph
 # The browser app's ES modules (#146): lower-case, hyphenated names under /app/, never `..`.
 _APP_MODULE = re.compile(r'/app/(?:[a-z0-9-]+/)*[a-z0-9-]+\.js')
 
+def _tag_write_use_cases(repository):
+    tracks, track_tags, actions, events = (ReadOnlyTaggableTracks(repository), MutagenTrackTags(),
+                                           InMemoryTagWriteActions(), InProcessEventBus())
+    return (PreviewTagWrite(tracks, track_tags, actions, events),
+            ApplyTagWrite(tracks, track_tags, Sha256FileIdentity(), actions, events))
+
+
 def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765):
     repository = ReadOnlyExplorerSQLiteRepository(database_path)
     state = ExplorerState(repository)
+    preview_tag_write, apply_tag_write = _tag_write_use_cases(repository)
+    # One approved tag write at a time, so a token can never be spent twice by racing requests.
+    tag_write_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = 'MusicAnalyzerExplorer/0.1'
@@ -200,6 +221,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
             if isinstance(error, (json.JSONDecodeError, UnicodeDecodeError)):
                 return self._json({'error': 'Invalid explorer request'}, HTTPStatus.BAD_REQUEST)
+            if isinstance(error, TagWriteApprovalError):
+                return self._json({'error': message}, HTTPStatus.CONFLICT)
             if isinstance(error, ProjectionArtifactError):
                 # Fixed projection categories (stale, resource limit, shape).
                 return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
@@ -259,6 +282,10 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path == '/api/playlist-recipes/load':
                 name = saved_playlist_recipe_name(parse_qs(parsed.query).get('name', [None])[0])
                 return self._json(_to_json(LoadSavedPlaylistRecipe(repository).execute(name)))
+            if path == '/api/tag-write/preview':
+                preview = preview_tag_write.execute(
+                    preview_request_from_query(parse_qs(parsed.query, keep_blank_values=True)))
+                return self._json(tag_write_preview_to_http(preview))
             if path == '/api/mood-axis-graph':
                 query = parse_qs(parsed.query)
                 contract, contract_error = _parse_mood_axis_graph_contract(parsed.query)
@@ -279,6 +306,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
 
         def _route_post(self):
             parsed = urlparse(self.path)
+            if parsed.path == '/api/tag-write/apply':
+                return self._apply_tag_write()
             if parsed.path not in {'/api/current', '/api/undo', '/api/reset'}:
                 return self._json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
             data = self._body()
@@ -304,6 +333,21 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             else:
                 snapshot = state.reset()
             return self._json(snapshot)
+
+        def _apply_tag_write(self):
+            if not self._from_explorer_page():
+                return self._json({'error': _FOREIGN_TAG_WRITE}, HTTPStatus.FORBIDDEN)
+            token = self._body().get('token')
+            with tag_write_lock:
+                report = apply_tag_write.execute(token)
+            return self._json(tag_write_report_to_http(report))
+
+        def _from_explorer_page(self):
+            # CSRF protection for a localhost server: only the Explorer's own page may approve a write.
+            port = self.server.server_port
+            hosts = {f'127.0.0.1:{port}', f'localhost:{port}'}
+            return (self.headers.get('Host') in hosts
+                    and self.headers.get('Origin') in {f'http://{host}' for host in hosts})
 
         def _body(self):
             length = _request_length(self.headers.get('Content-Length', '0') or '0')
