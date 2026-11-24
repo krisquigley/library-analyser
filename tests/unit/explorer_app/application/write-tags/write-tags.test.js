@@ -20,7 +20,7 @@ function harness(api = {}) {
 
 test('the event types are the ones the use case publishes', () => {
   assert.deepEqual(TAG_WRITE_EVENT_TYPES, ['tag-write-previewing', 'tag-write-previewed', 'tag-write-applying',
-    'tag-write-applied', 'tag-write-failed']);
+    'tag-write-applied', 'tag-write-failed', 'tag-write-discarded']);
 });
 
 test('a preview lists the changes and an apply sends its token once', async () => {
@@ -58,4 +58,19 @@ test('a refused preview or apply is told, and an apply that failed needs a new p
   assert.deepEqual(stale.published.at(-1), {type: 'tag-write-failed',
     message: 'The tags changed since the preview: preview again'});
   await assert.rejects(stale.tagWrite.apply(), /cannot apply while failed/);
+});
+
+test('choosing another track discards an unapplied preview, so its approval cannot be used for the wrong track', async () => {
+  const {tagWrite, published, applied} = harness();
+  tagWrite.discard();
+  assert.deepEqual([published, tagWrite.state()], [[], 'idle'], 'nothing to discard before a preview');
+  await tagWrite.preview({trackIds: ['t1'], policy: 'fill-empty'});
+  tagWrite.discard();
+  assert.deepEqual([published.at(-1), tagWrite.state()], [{type: 'tag-write-discarded'}, 'idle']);
+  await assert.rejects(tagWrite.apply(), /cannot apply while idle/);
+  assert.deepEqual(applied, []);
+  await tagWrite.preview({trackIds: ['t1'], policy: 'fill-empty'});
+  await tagWrite.apply();
+  tagWrite.discard();
+  assert.equal(tagWrite.state(), 'applied', 'a finished write keeps its report on screen');
 });

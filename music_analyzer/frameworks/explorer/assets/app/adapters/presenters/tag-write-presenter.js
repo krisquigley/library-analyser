@@ -11,6 +11,7 @@ const TAG_WRITE_EVENT_VIEWS = Object.freeze({
   'tag-write-applying': () => ({busy: true, canApply: false, status: {text: 'Writing tags…', urgent: false}}),
   'tag-write-applied': event => ({busy: false, canApply: false, rows: [], report: event.outcomes.map(outcomeLine),
     status: {text: appliedText(event), urgent: event.outcomes.some(outcome => outcome.status !== 'written')}}),
+  'tag-write-discarded': () => tagWriteViewModel(),
   'tag-write-failed': event => ({busy: false, canApply: false, status: {text: `Tags not written: ${event.message}`, urgent: true}}),
 });
 

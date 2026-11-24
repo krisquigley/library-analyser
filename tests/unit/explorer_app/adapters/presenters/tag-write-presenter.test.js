@@ -42,3 +42,7 @@ test('a failure or a rejected request is told urgently and nothing can be writte
   assert.deepEqual(presentRejectedTagWriteInput('Select a track first'),
     {status: {text: 'Select a track first', urgent: true}});
 });
+
+test('a discarded preview returns the panel to its start', () => {
+  assert.deepEqual(presentTagWriteEvent({type: 'tag-write-discarded'}), tagWriteViewModel());
+});

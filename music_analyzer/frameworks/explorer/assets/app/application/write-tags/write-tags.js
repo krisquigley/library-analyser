@@ -5,7 +5,7 @@ import {nextTagWriteState} from '../../domain/tag-write.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
 import {TAG_WRITES} from '../ports/explorer-api.js';
 import {requirePort} from '../ports/port.js';
-import {tagWriteApplied, tagWriteApplying, tagWriteFailed, tagWritePreviewed, tagWritePreviewing} from './tag-write-events.js';
+import {tagWriteApplied, tagWriteApplying, tagWriteDiscarded, tagWriteFailed, tagWritePreviewed, tagWritePreviewing} from './tag-write-events.js';
 
 export function createTagWrite({explorerApi, eventBus}) {
   requirePort(TAG_WRITES, explorerApi);
@@ -46,5 +46,12 @@ export function createTagWrite({explorerApi, eventBus}) {
     });
   }
 
-  return Object.freeze({state: () => state, preview, apply});
+  // Only an unapplied preview is discarded: its approval belongs to the track it was made for.
+  function discard() {
+    if (state !== 'previewed') return;
+    approval = null;
+    move('discard', tagWriteDiscarded());
+  }
+
+  return Object.freeze({state: () => state, preview, apply, discard});
 }

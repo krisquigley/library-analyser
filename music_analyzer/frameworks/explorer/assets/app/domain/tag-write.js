@@ -1,9 +1,10 @@
-// The lifecycle of the page's tag-write action (#132), as a transitions table: only a previewed action can be applied.
+// The lifecycle of the page's tag-write action (#132), as a transitions table: only a previewed action can be applied,
+// and a preview is discarded when the listener moves to another track.
 
 const TAG_WRITE_TRANSITIONS = Object.freeze({
   idle: Object.freeze({preview: 'previewing'}),
   previewing: Object.freeze({succeed: 'previewed', fail: 'failed'}),
-  previewed: Object.freeze({preview: 'previewing', apply: 'applying'}),
+  previewed: Object.freeze({preview: 'previewing', apply: 'applying', discard: 'idle'}),
   applying: Object.freeze({succeed: 'applied', fail: 'failed'}),
   applied: Object.freeze({preview: 'previewing'}),
   failed: Object.freeze({preview: 'previewing'}),

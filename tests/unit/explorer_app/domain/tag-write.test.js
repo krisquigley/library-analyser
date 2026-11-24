@@ -6,7 +6,7 @@ import {TAG_WRITE_STATES, TagWriteTransitionError, nextTagWriteState} from '../.
 const LEGAL = {
   idle: {preview: 'previewing'},
   previewing: {succeed: 'previewed', fail: 'failed'},
-  previewed: {preview: 'previewing', apply: 'applying'},
+  previewed: {preview: 'previewing', apply: 'applying', discard: 'idle'},
   applying: {succeed: 'applied', fail: 'failed'},
   applied: {preview: 'previewing'},
   failed: {preview: 'previewing'},
@@ -15,7 +15,7 @@ const LEGAL = {
 test('only a previewed action can be applied, and every transition is in the table', () => {
   assert.deepEqual(TAG_WRITE_STATES, Object.keys(LEGAL));
   for (const state of TAG_WRITE_STATES) {
-    for (const action of ['preview', 'apply', 'succeed', 'fail']) {
+    for (const action of ['preview', 'apply', 'succeed', 'fail', 'discard']) {
       const next = LEGAL[state][action];
       if (next) assert.equal(nextTagWriteState(state, action), next);
       else assert.throws(() => nextTagWriteState(state, action), TagWriteTransitionError);

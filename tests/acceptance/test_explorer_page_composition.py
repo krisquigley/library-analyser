@@ -162,6 +162,14 @@ assert.deepEqual(heard, ['tag-write-previewing', 'tag-write-previewed', 'tag-wri
 assert.deepEqual(byId('tag-write-report').children.map(item => item.textContent), ['b.mp3: written (BPM 120, key Am)']);
 assert.equal(byId('tag-write-status').textContent, '1 written, 0 skipped, 0 failed. Rescan them with music-analyzer scan.');
 assert.equal(byId('tag-write-apply').disabled, true, 'the approval is spent');
+await press('tag-write-preview'); await settle(2);
+assert.equal(byId('tag-write-apply').disabled, false);
+await search('a'); await settle(2);
+await chooseRow('a'); await settle(4); await untilCameraSettles();
+assert.equal(byId('tag-write-apply').disabled, true, 'a preview of b cannot be approved once a is selected');
+assert.deepEqual(byId('tag-write-changes').children, []);
+assert.equal(seam.snapshot().currentTrackId, 'a');
+assert.equal(requests.filter(r => r.path === '/api/tag-write/apply').length, 1);
 """)
 
 

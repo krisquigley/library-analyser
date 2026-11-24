@@ -17,5 +17,6 @@ export function tagWriteController({tagWrite, currentTrackId, rejectInput}) {
       await tagWrite.preview({trackIds: [trackId], policy});
     },
     applyRequested: () => tagWrite.apply(),
+    trackChanged: () => tagWrite.discard(),
   });
 }

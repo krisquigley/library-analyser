@@ -6,7 +6,7 @@ import {tagWriteController} from '../../../../../music_explorer/frameworks/explo
 function harness(currentTrackId) {
   const calls = [], rejected = [];
   const controller = tagWriteController({currentTrackId: () => currentTrackId, rejectInput: message => rejected.push(message),
-    tagWrite: {preview: async request => calls.push(['preview', request]), apply: async () => calls.push(['apply'])}});
+    tagWrite: {preview: async request => calls.push(['preview', request]), apply: async () => calls.push(['apply']), discard: () => calls.push(['discard'])}});
   return {controller, calls, rejected};
 }
 
@@ -24,4 +24,10 @@ test('without a selected track or with an unknown policy nothing is previewed', 
   const odd = harness('sha256:a');
   await odd.controller.previewRequested('overwrite');
   assert.deepEqual([odd.calls, odd.rejected], [[], ['Choose whether to fill empty tags only or also replace existing ones']]);
+});
+
+test('a change of track discards the preview', () => {
+  const {controller, calls} = harness('sha256:a');
+  controller.trackChanged();
+  assert.deepEqual(calls, [['discard']]);
 });

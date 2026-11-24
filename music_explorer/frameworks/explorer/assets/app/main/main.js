@@ -139,6 +139,8 @@ const selectionSession=createInMemorySession({snapshot:{current_track_id:null},e
 function currentTrackId(){return selectionSession.read().snapshot.current_track_id;}
 const selectionEvents=createInMemoryEventBus();
 const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession,eventBus:selectionEvents});
+// A preview's approval belongs to the track it was made for; any change of track discards it.
+for(const type of ['track-chosen','selection-rewinding','library-selection-changed','no-track-selected']) selectionEvents.subscribe(type,()=>tagWriteControls.trackChanged());
 selectionEvents.subscribe('track-chosen',()=>{cameraFocus.claimViewForSelection('new-selection'); renderDetailLoading(); updateSelectedTrackVisuals();});
 selectionEvents.subscribe('selection-rewinding',()=>{cameraFocus.claimViewForSelection('new-selection'); renderDetailLoading();});
 selectionEvents.subscribe('selection-accepted',event=>cameraFocus.requestForAcceptedSelection(event.focusCamera?event.trackId:null));
