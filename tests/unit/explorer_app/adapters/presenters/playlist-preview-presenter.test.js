@@ -90,3 +90,9 @@ test('Preview waits, with the reason, until the recipe is complete, and the miss
   {readiness: {ready: false, reason: 'To preview: select a start track first, enter a minimum BPM.'}, missing: ['start', 'bpmMin']});
   assert.deepEqual(playlistReadinessViewModel([]), {readiness: {ready: true, reason: ''}, missing: []});
 });
+
+test('a track without a title or artist tag is named by what it has (#255)', () => {
+  const rows = presentPlaylistPreviewEvent({type: 'playlist-previewed', preview: {complete: true, warning: null, transitions: [],
+    tracks: [track({title: ''}), track({trackId: 'b', artist: ''}), track({trackId: 'c', title: '', artist: ''})]}}).rows;
+  assert.deepEqual(rows.map(row => row.track), ['Synthetic', 'Opening', 'Untitled track']);
+});
