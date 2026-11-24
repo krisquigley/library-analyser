@@ -5,6 +5,11 @@ import {PLAYLIST_PREVIEW_EVENT_TYPES} from '../application/preview-playlist/play
 import {playlistPreviewController} from '../adapters/controllers/playlist-preview-controller.js';
 import {playlistPreviewViewModel, playlistReadinessViewModel, presentPlaylistPreviewEvent} from '../adapters/presenters/playlist-preview-presenter.js';
 import {playlistPreviewView} from '../frameworks/views/playlist-preview-view.js';
+import {createTrackPlayback} from '../application/listen-to-track/listen-to-track.js';
+import {TRACK_PLAYBACK_EVENT_TYPES} from '../application/listen-to-track/track-playback-events.js';
+import {trackAudioUrl} from '../adapters/gateways/track-audio-url.js';
+import {presentTrackPlaybackEvent} from '../adapters/presenters/track-playback-presenter.js';
+import {htmlAudioTrackPlayer} from '../frameworks/html-audio-track-player.js';
 import {EMPTY_PLAYLIST_DRAFT} from '../domain/playlist-draft.js';
 import {createPlaylistRecipeExport} from '../application/export-playlist-recipe/export-playlist-recipe.js';
 import {PLAYLIST_RECIPE_EXPORT_EVENT_TYPES} from '../application/export-playlist-recipe/playlist-recipe-export-events.js';
@@ -100,7 +105,12 @@ const playlistControlsView=playlistDownloadView({onControlsEdited:controls=>play
 for(const type of PLAYLIST_DOWNLOAD_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistControlsView.show(presentPlaylistDownloadEvent(event)));
 const playlistPreview=createPlaylistPreview({explorerApi,playlistDraft:playlistDraftSession,eventBus:playlistEvents});
 const playlistPreviewControls=playlistPreviewController({playlistPreview,currentTrackId});
-const playlistPreviewPanel=playlistPreviewView({onPreviewRequested:()=>playlistPreviewControls.previewRequested()});
+// #258: one track plays at a time from the preview's rows, in one audio player whose own controls seek.
+const playbackEvents=createInMemoryEventBus();
+const trackPlayerElement=typeof document!=='undefined'?document.createElement('audio'):{play(){},pause(){},load(){},removeAttribute(){}};
+const trackPlayback=createTrackPlayback({trackPlayer:htmlAudioTrackPlayer({audio:trackPlayerElement,audioUrl:trackAudioUrl,onReport:report=>trackPlayback.heard(report)}),eventBus:playbackEvents});
+const playlistPreviewPanel=playlistPreviewView({onPreviewRequested:()=>playlistPreviewControls.previewRequested(),onPlayRequested:trackId=>trackPlayback.toggle(trackId),player:trackPlayerElement});
+for(const type of TRACK_PLAYBACK_EVENT_TYPES) playbackEvents.subscribe(type,event=>playlistPreviewPanel.showPlayback(presentTrackPlaybackEvent(event)));
 for(const type of PLAYLIST_PREVIEW_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistPreviewPanel.show(presentPlaylistPreviewEvent(event)));
 // #234: Preview waits, saying why, until the recipe is complete; checked on every draft edit and change of track.
 function showPlaylistReadiness(){const readiness=playlistReadinessViewModel(playlistPreview.gaps(currentTrackId())); playlistPreviewPanel.show(readiness); playlistControlsView.show(readiness);}
@@ -122,6 +132,8 @@ const toolPanels=createToolPanels({eventBus:toolPanelEvents});
 const toolPanelControls=toolPanelController({toolPanels,rejectInput:message=>globalThis.console?.warn(message)});
 const toolPanelDisplay=toolPanelsView({onToggleRequested:tool=>toolPanelControls.toggleRequested(tool),onCloseRequested:tool=>toolPanelControls.closeRequested(tool),onOpenRequested:tool=>toolPanelControls.openRequested(tool)});
 for(const type of TOOL_PANEL_EVENT_TYPES) toolPanelEvents.subscribe(type,event=>toolPanelDisplay.show(toolPanelViewModel(event)));
+// Closing the Playlist silences the track playing from its preview (#258).
+toolPanelEvents.subscribe('tool-panel-closed',event=>{if(event.tool==='playlist') trackPlayback.stop();});
 const tagWriteEvents=createInMemoryEventBus();
 const tagWrite=createTagWrite({explorerApi,eventBus:tagWriteEvents});
 const tagWriteControls=tagWriteController({tagWrite,currentTrackId,rejectInput:message=>tagWritePanel.show(presentRejectedTagWriteInput(message))});
@@ -284,5 +296,5 @@ function buildControls(){const root=document.getElementById('controls'); buildGr
 function buildGraphControls(root){graphFilterControls.mount(root);}
 if(typeof document!=='undefined'){document.getElementById('undo').onclick=()=>applyHistorySelection('undo'); document.getElementById('reset').onclick=()=>applyHistorySelection('reset'); toolPanelDisplay.mount(); toolPanelControls.toggleRequested('library'); libraryLoading.mount(); buildControls(); mountTagWritePanel(); renderTracks([]); graphStatusDisplay.show(GRAPH_IDLE_STATUS); loadGraph().catch(()=>{}); refresh().catch(()=>{});}
 // The opt-in diagnostics seam (#146, owner decision A): off unless the page address has `diagnostics`.
-installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[NEIGHBOURHOOD_LABEL_EVENT_TYPES,labelEvents],[TOOL_PANEL_EVENT_TYPES,toolPanelEvents],[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[SAVED_RECIPE_EVENT_TYPES,playlistEvents],[TAG_WRITE_EVENT_TYPES,tagWriteEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:graphStage.current(),graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField,trackDetailFields:renderDetailFields})});
+installExplorerDiagnostics(globalThis,globalThis.location?.search||'',{buses:[[NEIGHBOURHOOD_LABEL_EVENT_TYPES,labelEvents],[TOOL_PANEL_EVENT_TYPES,toolPanelEvents],[TRACK_PLAYBACK_EVENT_TYPES,playbackEvents],[GRAPH_LOAD_EVENT_TYPES,graphEvents],[GRAPH_RENDERING_EVENT_TYPES,renderingEvents],[CAMERA_FOCUS_EVENT_TYPES,cameraEvents],[TRACK_SEARCH_EVENT_TYPES,trackEvents],[TRACK_SELECTION_EVENT_TYPES,selectionEvents],[PLAYLIST_DOWNLOAD_EVENT_TYPES,playlistEvents],[PLAYLIST_PREVIEW_EVENT_TYPES,playlistEvents],[PLAYLIST_RECIPE_EXPORT_EVENT_TYPES,playlistEvents],[SAVED_RECIPE_EVENT_TYPES,playlistEvents],[TAG_WRITE_EVENT_TYPES,tagWriteEvents],[LIBRARY_REFRESH_EVENT_TYPES,refreshEvents]],snapshot:diagnosticSnapshot,graph:()=>({model:graphState().model,visible:graphState().visible,layout:graphFraming.layout()}),scene:()=>({graph:graphStage.current(),graphData:graphDataMount.current(),halo:nodeHalo.current(),findSceneObject,graphObjectTrackId}),views:()=>({trackMetadata:renderTrackMetadata,detailField:renderDetailField,trackDetailFields:renderDetailFields})});
 function diagnosticSnapshot(){const {snapshot,selectionState}=selectionSession.read(); const camera=cameraFocusSession.read(); return {currentTrackId:snapshot.current_track_id??null,selectionEpoch:snapshot.selection_epoch??null,history:snapshot.history||[],graphStatus:graphState().loadState==='failed'?'error':graphState().loadState,cameraFocusActive:camera.frame!=null,pendingCameraTrackId:camera.pendingTrackId,selectionPending:awaitingServer(selectionState),trackSearchStatus:trackSearchSession.read().searchState==='failed'?'error':trackSearchSession.read().searchState,trackResultCount:trackSearchSession.read().results.tracks.length};}

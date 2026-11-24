@@ -70,6 +70,8 @@ function element(tag) {
     },
     getBoundingClientRect() { return {width: 800, height: 600, left: 0, top: 0, right: 800, bottom: 600}; },
     getContext() { return canvasContext; },
+    // An audio element (#258): playing is only recorded; nothing is fetched or heard.
+    play() { this.plays = (this.plays || 0) + 1; return Promise.resolve(); }, pause() {}, load() {},
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
     querySelectorAll(selector) { return walk(this).filter(node => node !== this && matches(node, selector)); },
     matches(selector) { return matches(this, selector); },

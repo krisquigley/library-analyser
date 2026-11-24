@@ -26,15 +26,21 @@ function recordingContext(log) {
 const CHART = Object.freeze({width: 300, height: 80, padding: 8, level: [[[8, 72], [292, 8]]], target: [[[8, 40]], [[150, 8], [292, 8]]],
   label: 'Energy across 2 tracks'});
 
-const ROW = Object.freeze({place: '1', track: 'Synthetic – Opening', length: '4:00', bpm: '120.0', key: '8A', energy: '0.3', target: '0.2',
+const ROW = Object.freeze({trackId: 'a', place: '1', track: 'Synthetic – Opening', length: '4:00', bpm: '120.0', key: '8A', energy: '0.3', target: '0.2',
   transition: 'Start'});
+
+const PLAY = Object.freeze({text: '▶', verb: 'Play', pressed: false});
+const IDLE_PLAYBACK = Object.freeze({activeTrackId: null, activeButton: PLAY, idleButton: PLAY, status: {text: '', urgent: false},
+  playerShown: false});
 
 function mounted() {
   const requests = [];
-  const view = playlistPreviewView({onPreviewRequested: () => requests.push('preview')});
+  const player = fakeElement('audio');
+  const view = playlistPreviewView({onPreviewRequested: () => requests.push('preview'),
+    onPlayRequested: trackId => requests.push(['play', trackId]), player});
   const panel = fakeElement('section');
   view.mount(panel, {previewDisabled: false, status: {text: '', urgent: false}, rows: [],
-    chart: {...CHART, level: [], target: [], label: 'No energy to chart yet.'}});
+    chart: {...CHART, level: [], target: [], label: 'No energy to chart yet.'}, playback: IDLE_PLAYBACK});
   const byId = id => descendants(panel).find(node => node.id === id);
   const cells = () => byId('playlist-preview-tracks').children.map(row => row.children.map(cell => cell.textContent));
   return {view, requests, byId, cells};
@@ -52,13 +58,13 @@ test('mounting draws the Preview button and an empty list, and asks for nothing 
 test('the list has a heading for each column', () => {
   const {byId} = mounted();
   const heading = byId('playlist-preview-heading');
-  assert.deepEqual(heading.children.map(cell => cell.textContent), ['#', 'Track', 'Length', 'BPM', 'Key', 'Energy', 'Target', 'Transition']);
+  assert.deepEqual(heading.children.map(cell => cell.textContent), ['Play', '#', 'Track', 'Length', 'BPM', 'Key', 'Energy', 'Target', 'Transition']);
 });
 
 test('showing a preview draws its rows, and a later update replaces them', () => {
   const {view, cells} = mounted();
   view.show({previewDisabled: false, status: {text: '1 track.', urgent: false}, rows: [ROW]});
-  assert.deepEqual(cells(), [['1', 'Synthetic – Opening', '4:00', '120.0', '8A', '0.3', '0.2', 'Start']]);
+  assert.deepEqual(cells(), [['', '1', 'Synthetic – Opening', '4:00', '120.0', '8A', '0.3', '0.2', 'Start']]);
   view.show({previewDisabled: false, status: {text: 'Preview failed: no', urgent: true}, rows: []});
   assert.deepEqual(cells(), []);
 });
@@ -106,4 +112,30 @@ test('Preview stays disabled with its reason until the recipe is ready, and whil
   assert.deepEqual([button.disabled, byId('playlist-preview-reason').textContent], [false, '']);
   view.show({previewDisabled: true});
   assert.equal(button.disabled, true, 'busy while previewing');
+});
+
+const button = (byId, trackId) => descendants(byId('playlist-preview-tracks')).find(node => node.dataset?.trackId === trackId);
+
+test('each track has a Play button that asks to play it, named for the track (#258)', () => {
+  const {view, byId, requests} = mounted();
+  view.show({rows: [ROW, {...ROW, trackId: 'b', place: '2', track: 'Synthetic – Lift'}]});
+  const play = button(byId, 'b');
+  assert.deepEqual([play.type, play.textContent, play.getAttribute('aria-label'), play.getAttribute('aria-pressed')],
+    ['button', '▶', 'Play Synthetic – Lift', 'false']);
+  play.onclick();
+  assert.deepEqual(requests, [['play', 'b']]);
+});
+
+test("the playing track's button offers Pause, the player shows with its status, and new rows keep it (#258)", () => {
+  const {view, byId} = mounted();
+  assert.deepEqual([byId('playlist-track-player').hidden, byId('playlist-track-player').controls], [true, true]);
+  view.show({rows: [ROW]});
+  view.showPlayback({...IDLE_PLAYBACK, activeTrackId: 'a', activeButton: {text: '❚❚', verb: 'Pause', pressed: true},
+    status: {text: 'Playing', urgent: false}, playerShown: true});
+  assert.deepEqual([button(byId, 'a').textContent, button(byId, 'a').getAttribute('aria-label')], ['❚❚', 'Pause Synthetic – Opening']);
+  assert.deepEqual([byId('playlist-track-player').hidden, byId('playlist-player-status').textContent], [false, 'Playing']);
+  view.show({rows: [ROW]});
+  assert.equal(button(byId, 'a').getAttribute('aria-pressed'), 'true');
+  view.showPlayback({...IDLE_PLAYBACK, status: {text: 'Could not play the track: gone', urgent: true}});
+  assert.deepEqual([button(byId, 'a').textContent, byId('playlist-player-status').getAttribute('role')], ['▶', 'alert']);
 });

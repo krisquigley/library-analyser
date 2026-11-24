@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import json
+import os
 import re
 from math import isfinite
 import threading
@@ -12,6 +13,8 @@ from importlib import resources
 from urllib.parse import parse_qs, unquote, urlparse
 
 from music_explorer.application.use_cases.label_tracks.label_tracks import LabelTracks, TrackLabelRequestError
+from music_explorer.application.use_cases.listen_to_track.listen_to_track import (
+    ListenToTrack, TrackAudioRequestError, TrackAudioUnavailableError)
 from music_explorer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
@@ -33,6 +36,8 @@ from music_explorer.infrastructure.taggable_tracks import ReadOnlyTaggableTracks
 from music_explorer.infrastructure.track_tags import MutagenTrackTags
 from music_explorer.interface_adapters.tag_write_http import (
     preview_request_from_query, tag_write_preview_to_http, tag_write_report_to_http)
+from music_explorer.interface_adapters.track_audio_http import (
+    TrackAudioFormatError, TrackAudioRangeError, audio_media_type, byte_range, track_audio_request_from_query)
 from music_explorer.interface_adapters.track_labels_http import label_request_from_query, track_labels_to_http
 from music_analyzer.application.dto.analysis import AnalysisError as AnalyzerAnalysisError
 
@@ -181,6 +186,7 @@ class ExplorerState:
             return self.snapshot_unlocked()
 
 
+_AUDIO_CHUNK_BYTES = 64 * 1024
 _STATIC_ASSETS = frozenset({'/style.css', '/vendor/3d-force-graph/3d-force-graph.min.js',
                             '/vendor/3d-force-graph/NOTICE'})
 # The browser app's ES modules (#146): lower-case, hyphenated names under /app/, never `..`.
@@ -225,6 +231,12 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json({'error': 'Invalid explorer request'}, HTTPStatus.BAD_REQUEST)
             if isinstance(error, TrackLabelRequestError):
                 return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
+            if isinstance(error, TrackAudioRequestError):
+                return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
+            if isinstance(error, TrackAudioUnavailableError):
+                return self._json({'error': message}, HTTPStatus.NOT_FOUND)
+            if isinstance(error, TrackAudioFormatError):
+                return self._json({'error': message}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
             if isinstance(error, TagWriteApprovalError):
                 return self._json({'error': message}, HTTPStatus.CONFLICT)
             if isinstance(error, ProjectionArtifactError):
@@ -289,6 +301,9 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path == '/api/track-labels':
                 request = label_request_from_query(parse_qs(parsed.query, keep_blank_values=True))
                 return self._json(track_labels_to_http(LabelTracks(repository).execute(request)))
+            if path == '/api/track-audio':
+                request = track_audio_request_from_query(parse_qs(parsed.query, keep_blank_values=True))
+                return self._audio(ListenToTrack(repository).execute(request))
             if path == '/api/tag-write/preview':
                 preview = preview_tag_write.execute(
                     preview_request_from_query(parse_qs(parsed.query, keep_blank_values=True)))
@@ -379,6 +394,47 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             self.send_header('Content-Length', str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+
+        def _audio(self, track_audio):
+            # #258: the file as it is, read only, in the one byte range a seek asks for. Its path is never sent.
+            media_type = audio_media_type(track_audio.location)
+            try:
+                audio = open(track_audio.location, 'rb')
+            except OSError:
+                return self._json({'error': "This track's audio file is missing"}, HTTPStatus.NOT_FOUND)
+            with audio:
+                size = os.fstat(audio.fileno()).st_size
+                try:
+                    wanted = byte_range(self.headers.get('Range'), size)
+                except TrackAudioRangeError:
+                    self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    self.send_header('Content-Range', f'bytes */{size}')
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+                first, last = wanted or (0, size - 1)
+                self.send_response(HTTPStatus.PARTIAL_CONTENT if wanted else HTTPStatus.OK)
+                self.send_header('Content-Type', media_type)
+                self.send_header('Accept-Ranges', 'bytes')
+                self.send_header('Cache-Control', 'no-store')
+                if wanted:
+                    self.send_header('Content-Range', f'bytes {first}-{last}/{size}')
+                self.send_header('Content-Length', str(last - first + 1))
+                self.end_headers()
+                audio.seek(first)
+                self._send_bytes(audio, last - first + 1)
+
+        def _send_bytes(self, audio, remaining):
+            try:
+                while remaining > 0:
+                    chunk = audio.read(min(_AUDIO_CHUNK_BYTES, remaining))
+                    if not chunk:
+                        return
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                # A seek or a new track abandons the response the browser no longer wants.
+                return
 
         def _m3u(self, content: str, warning: str | None = None):
             safe_warning = _safe_playlist_warning(warning)

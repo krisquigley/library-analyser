@@ -4,13 +4,14 @@ import assert from 'node:assert/strict';
 import {
   ENERGY_CHART, playlistEnergyChart, playlistPreviewViewModel, playlistReadinessViewModel, presentPlaylistPreviewEvent,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/playlist-preview-presenter.js';
+import {trackPlaybackViewModel} from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/track-playback-presenter.js';
 
 const track = (fields = {}) => ({trackId: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor',
   camelot: '8A', arousal: 0.4, energyLevel: 0.25, energyTarget: 0.2, durationSeconds: 240, ...fields});
 
 test('before any preview the panel offers Preview and shows nothing', () => {
   assert.deepEqual(playlistPreviewViewModel(), {previewDisabled: false, status: {text: '', urgent: false}, rows: [],
-    chart: playlistEnergyChart([])});
+    chart: playlistEnergyChart([]), playback: trackPlaybackViewModel()});
 });
 
 test('while previewing, Preview is disabled and the listener is told', () => {
@@ -34,10 +35,10 @@ test('a preview lists each track with its BPM, key in letters (#261), energy and
     previewDisabled: false,
     status: {text: '3 tracks · 12:00.', urgent: false},
     rows: [
-      {place: '1', track: 'Synthetic – Opening', length: '4:00', bpm: '120.0', key: 'A minor', energy: '0.3', target: '0.2', transition: 'Start'},
-      {place: '2', track: 'Synthetic – Lift', length: '4:00', bpm: '122.5', key: 'C major', energy: '—', target: '0.6',
+      {trackId: 'a', place: '1', track: 'Synthetic – Opening', length: '4:00', bpm: '120.0', key: 'A minor', energy: '0.3', target: '0.2', transition: 'Start'},
+      {trackId: 'b', place: '2', track: 'Synthetic – Lift', length: '4:00', bpm: '122.5', key: 'C major', energy: '—', target: '0.6',
         transition: 'Key compatible, +2.5 BPM'},
-      {place: '3', track: 'Synthetic – Drop', length: '4:00', bpm: '110.0', key: '—', energy: '0.3', target: '0.2',
+      {trackId: 'c', place: '3', track: 'Synthetic – Drop', length: '4:00', bpm: '110.0', key: '—', energy: '0.3', target: '0.2',
         transition: 'Key unknown, -12.5 BPM jump'},
     ],
   });

@@ -207,6 +207,13 @@ tbody tr:hover{background:var(--surface-hover)}
 [id^=m3u-arc-remove-]{margin-left:auto;color:var(--danger);border-color:transparent;background:transparent}
 .playlist-preview-table{font-size:var(--text-xs)}
 .playlist-preview-table th,.playlist-preview-table td{padding:var(--space-1)}
+.playlist-preview-table td.track-play-cell{width:2.25rem}
+.playlist-preview-table .track-play{min-width:2rem;padding:var(--space-1);font-size:var(--text-m);font-weight:700;line-height:1}
+.playlist-preview-table .track-play[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-hover)}
+.playlist-preview-table tr:has(.track-play[aria-pressed=true]) td{background:var(--accent-soft)}
+.playlist-track-player{display:block;width:100%;margin:var(--space-2) 0}
+.playlist-track-player[hidden]{display:none}
+#playlist-player-status:empty{display:none}
 .playlist-energy-chart{display:block;width:100%;height:96px;margin:var(--space-2) 0;background:var(--surface-sunken);border:1px solid var(--border);border-radius:var(--radius-s)}
 #playlist-step-finish>button,#playlist-step-finish>p{margin-left:var(--space-4)}
 
