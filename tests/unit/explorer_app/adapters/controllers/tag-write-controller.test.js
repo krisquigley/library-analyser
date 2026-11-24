@@ -5,29 +5,37 @@ import {tagWriteController} from '../../../../../music_explorer/frameworks/explo
 
 function harness(currentTrackId) {
   const calls = [], rejected = [];
+  const record = name => (...args) => { calls.push([name, ...args]); };
   const controller = tagWriteController({currentTrackId: () => currentTrackId, rejectInput: message => rejected.push(message),
-    tagWrite: {preview: async request => calls.push(['preview', request]), apply: async () => calls.push(['apply']), discard: () => calls.push(['discard'])}});
+    tagWrite: {previewSelectedTrack: record('track'), previewOfferedPlaylist: record('playlist'), apply: record('apply'),
+      discard: record('discard'), offerPlaylist: record('offer'), withdrawPlaylist: record('withdraw')}});
   return {controller, calls, rejected};
 }
 
-test('a preview covers the selected track with the chosen policy, and an apply follows it', async () => {
+test('a preview covers the selected track or the previewed playlist, with the chosen policy', async () => {
   const {controller, calls} = harness('sha256:a');
-  await controller.previewRequested('replace-existing');
+  await controller.previewRequested('replace-existing', 'selected-track');
+  await controller.previewRequested('fill-empty', 'previewed-playlist');
   await controller.applyRequested();
-  assert.deepEqual(calls, [['preview', {trackIds: ['sha256:a'], policy: 'replace-existing'}], ['apply']]);
+  assert.deepEqual(calls, [['track', {trackId: 'sha256:a', policy: 'replace-existing'}],
+    ['playlist', {policy: 'fill-empty'}], ['apply']]);
 });
 
-test('without a selected track or with an unknown policy nothing is previewed', async () => {
+test('without a selected track, or with an unknown policy or target, nothing is previewed', async () => {
   const none = harness(null);
-  await none.controller.previewRequested('fill-empty');
+  await none.controller.previewRequested('fill-empty', 'selected-track');
   assert.deepEqual([none.calls, none.rejected], [[], ['Select a track to tag first']]);
   const odd = harness('sha256:a');
-  await odd.controller.previewRequested('overwrite');
-  assert.deepEqual([odd.calls, odd.rejected], [[], ['Choose whether to fill empty tags only or also replace existing ones']]);
+  await odd.controller.previewRequested('overwrite', 'selected-track');
+  await odd.controller.previewRequested('fill-empty', 'library');
+  assert.deepEqual([odd.calls, odd.rejected], [[], ['Choose whether to fill empty tags only or also replace existing ones',
+    'Choose the selected track or the previewed playlist']]);
 });
 
-test('a change of track discards the preview', () => {
+test('a change of track discards the preview; a playlist preview offers or withdraws its tracks', () => {
   const {controller, calls} = harness('sha256:a');
   controller.trackChanged();
-  assert.deepEqual(calls, [['discard']]);
+  controller.playlistPreviewed([{trackId: 'x'}, {trackId: 'y'}]);
+  controller.playlistPreviewCleared();
+  assert.deepEqual(calls, [['discard'], ['offer', ['x', 'y']], ['withdraw']]);
 });

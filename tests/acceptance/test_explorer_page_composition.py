@@ -81,7 +81,8 @@ heard.length = 0;
 await press('preview-playlist'); await settle(2);
 const asked = request('/api/playlists/preview').url.searchParams;
 assert.deepEqual([asked.get('start'), asked.get('bpm_min')], ['b', '118']);
-assert.deepEqual(heard, ['playlist-preview-started', 'playlist-previewed']);
+assert.deepEqual(heard.filter(type => type.startsWith('playlist-')), ['playlist-preview-started', 'playlist-previewed']);
+assert.deepEqual(heard.filter(type => type.startsWith('tag-write-')), ['tag-write-playlist-withdrawn', 'tag-write-playlist-offered']);
 const cells = byId('playlist-preview-tracks').children.map(line => line.children.map(cell => cell.textContent));
 assert.deepEqual(cells, [
   ['1', 'Public synthetic – Track b', '120.0', '8A', '0.5', '—', 'Start'],
@@ -170,6 +171,42 @@ assert.equal(byId('tag-write-apply').disabled, true, 'a preview of b cannot be a
 assert.deepEqual(byId('tag-write-changes').children, []);
 assert.equal(seam.snapshot().currentTrackId, 'a');
 assert.equal(requests.filter(r => r.path === '/api/tag-write/apply').length, 1);
+""")
+
+
+    def test_the_previewed_playlist_is_tagged_as_one_approved_action(self):
+        self.run_scenario(r"""
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/playlists/preview'] = r => r.respond({
+  tracks: [
+    {track_id: 'b', title: 'Track b', artist: 'Public synthetic', bpm: 120, key: null, camelot: null, arousal: null,
+      energy_level: null, energy_target: null},
+    {track_id: 'a', title: 'Track a', artist: 'Public synthetic', bpm: 121, key: null, camelot: null, arousal: null,
+      energy_level: null, energy_target: null}],
+  transitions: [{from_track_id: 'b', to_track_id: 'a', key_compatible: null, bpm_step_smooth: true, bpm_change: 1}],
+  complete: true, warning: null});
+routes['/api/tag-write/preview'] = r => r.respond({token: 'approval-2', skipped: [], changes: [
+  {file: 'b.mp3', field: 'bpm', current: null, proposed: '120', replaces: false},
+  {file: 'a.mp3', field: 'bpm', current: null, proposed: '121', replaces: false}]});
+routes['/api/tag-write/apply'] = r => r.respond({notice: 'Rescan them.', outcomes: [
+  {file: 'b.mp3', status: 'written', detail: 'BPM 120'}, {file: 'a.mp3', status: 'written', detail: 'BPM 121'}]});
+await settle(6);
+const target = byId('tag-write-target');
+assert.equal(target.children[1].disabled, true, 'no playlist to tag before a preview');
+await search('b'); await settle(2);
+await chooseRow('b'); await settle(4); await untilCameraSettles();
+await press('preview-playlist'); await settle(2);
+assert.deepEqual([target.children[1].disabled, target.children[1].textContent], [false, 'Previewed playlist (2 tracks)']);
+target.value = 'previewed-playlist';
+await press('tag-write-preview'); await settle(2);
+assert.deepEqual(request('/api/tag-write/preview').url.searchParams.getAll('track'), ['b', 'a']);
+await press('tag-write-apply'); await settle(2);
+assert.deepEqual(request('/api/tag-write/apply').body, {token: 'approval-2'});
+assert.equal(byId('tag-write-status').textContent, '2 written, 0 skipped, 0 failed. Rescan them.');
+await press('tag-write-preview'); await settle(2);
+assert.equal(byId('tag-write-apply').disabled, false);
+await press('preview-playlist'); await settle(2);
+assert.equal(byId('tag-write-apply').disabled, true, 'a new playlist preview discards the tag preview made for the old one');
 """)
 
 

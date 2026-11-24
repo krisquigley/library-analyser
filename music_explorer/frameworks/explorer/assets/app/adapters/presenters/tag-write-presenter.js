@@ -1,6 +1,7 @@
 // What the Write tags panel shows for each step of a previewed and approved tag write (#132).
 
 const FIELD_NAMES = Object.freeze({bpm: 'BPM', key: 'Key'});
+const NO_PLAYLIST_TARGET = Object.freeze({available: false, label: 'Previewed playlist (preview one first)'});
 
 const TAG_WRITE_EVENT_VIEWS = Object.freeze({
   'tag-write-previewing': () => ({busy: true, rows: [], skipped: [], report: [], canApply: false,
@@ -11,13 +12,20 @@ const TAG_WRITE_EVENT_VIEWS = Object.freeze({
   'tag-write-applying': () => ({busy: true, canApply: false, status: {text: 'Writing tags…', urgent: false}}),
   'tag-write-applied': event => ({busy: false, canApply: false, rows: [], report: event.outcomes.map(outcomeLine),
     status: {text: appliedText(event), urgent: event.outcomes.some(outcome => outcome.status !== 'written')}}),
-  'tag-write-discarded': () => tagWriteViewModel(),
+  'tag-write-discarded': () => tagWriteStart(),
+  'tag-write-playlist-offered': event => ({playlistTarget: {available: true,
+    label: `Previewed playlist (${event.count} ${event.count === 1 ? 'track' : 'tracks'})`}}),
+  'tag-write-playlist-withdrawn': () => ({playlistTarget: {...NO_PLAYLIST_TARGET}}),
   'tag-write-failed': event => ({busy: false, canApply: false, status: {text: `Tags not written: ${event.message}`, urgent: true}}),
 });
 
 export function tagWriteViewModel() {
+  return {...tagWriteStart(), playlistTarget: {...NO_PLAYLIST_TARGET}};
+}
+
+function tagWriteStart() {
   return {busy: false, rows: [], skipped: [], report: [], canApply: false,
-    status: {text: 'Preview the BPM and key tags of the selected track before writing them.', urgent: false}};
+    status: {text: 'Choose the selected track or the previewed playlist, then preview its BPM and key tags.', urgent: false}};
 }
 
 export function presentTagWriteEvent(event) {
