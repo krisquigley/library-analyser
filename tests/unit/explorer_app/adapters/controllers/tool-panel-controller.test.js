@@ -5,7 +5,8 @@ import {toolPanelController} from '../../../../../music_explorer/frameworks/expl
 
 function harness(open = []) {
   const calls = [], rejected = [];
-  const toolPanels = {toggle: tool => calls.push(['toggle', tool]), close: tool => calls.push(['close', tool]), isOpen: tool => open.includes(tool)};
+  const toolPanels = {toggle: tool => calls.push(['toggle', tool]), open: tool => calls.push(['open', tool]),
+    close: tool => calls.push(['close', tool]), isOpen: tool => open.includes(tool)};
   return {controller: toolPanelController({toolPanels, rejectInput: message => rejected.push(message)}), calls, rejected};
 }
 
@@ -28,4 +29,12 @@ test('an unknown tool is rejected with a message', () => {
   controller.closeRequested(undefined);
   assert.deepEqual(calls, []);
   assert.deepEqual(rejected, ['There is no tool called settings', 'There is no tool called undefined']);
+});
+
+test('a shortcut opens its tool, and an unknown one is rejected (#236)', () => {
+  const {controller, calls, rejected} = harness();
+  controller.openRequested('tag-write');
+  controller.openRequested('settings');
+  assert.deepEqual(calls, [['open', 'tag-write']]);
+  assert.deepEqual(rejected, ['There is no tool called settings']);
 });

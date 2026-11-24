@@ -48,3 +48,11 @@ test('the graph filters take the Library drawer\'s place beside the graph', () =
   assert.deepEqual(published.slice(1), [{type: 'tool-panel-closed', tool: 'library'},
     {type: 'tool-panel-opened', tool: 'filters', presentation: 'drawer'}]);
 });
+
+test('a panel asked open stays open, and opening it again changes nothing (#236)', () => {
+  const {toolPanels, published} = harness();
+  toolPanels.open('tag-write');
+  toolPanels.open('tag-write');
+  assert.equal(toolPanels.isOpen('tag-write'), true);
+  assert.deepEqual(published, [{type: 'tool-panel-opened', tool: 'tag-write', presentation: 'modal'}]);
+});

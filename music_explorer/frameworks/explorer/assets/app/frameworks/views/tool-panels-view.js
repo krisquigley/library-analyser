@@ -4,8 +4,15 @@
 
 import {TOOL_PANELS} from '../../domain/tool-panels.js';
 
-export function toolPanelsView({onToggleRequested, onCloseRequested}) {
+// Buttons elsewhere on the page that open a tool without toggling it (#236).
+const TOOL_SHORTCUTS = Object.freeze({'detail-write-tags': 'tag-write'});
+
+export function toolPanelsView({onToggleRequested, onCloseRequested, onOpenRequested}) {
   function mount() {
+    for (const [id, tool] of Object.entries(TOOL_SHORTCUTS)) {
+      const shortcut = document.getElementById(id);
+      if (shortcut) shortcut.onclick = () => onOpenRequested(tool);
+    }
     for (const tool of Object.keys(TOOL_PANELS)) {
       const opener = document.getElementById(`open-${tool}`);
       if (opener) {

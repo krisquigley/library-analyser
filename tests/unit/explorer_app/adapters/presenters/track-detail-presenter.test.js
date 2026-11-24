@@ -1,11 +1,11 @@
 // Issue #146: what the track detail panel shows.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {detailFieldViewModel, scoreGaugeViewModel, trackDetailFailureViewModel, trackDetailLoadingViewModel, trackDetailViewModel,
+import {detailFieldViewModel, scoreBarViewModel, trackDetailFailureViewModel, trackDetailLoadingViewModel, trackDetailViewModel,
   trackMetadataViewModel} from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/track-detail-presenter.js';
 
 const MOOD_MODEL = 'mtg_jamendo_moodtheme-discogs-effnet-1';
-const text = items => items.map(item => item.text ?? `gauge ${item.gauge.label}`);
+const text = items => items.map(item => item.text ?? `bar ${item.bar.label}`);
 
 test('a manual override is shown instead of the automatic evidence', () => {
   assert.deepEqual(detailFieldViewModel('mood', {manual_text: 'Calm', typed_override_status: 'resolved'}),
@@ -13,11 +13,11 @@ test('a manual override is shown instead of the automatic evidence', () => {
   assert.deepEqual(text(detailFieldViewModel('key', {manual_text: 'A'}).items), ['Manual override: A (unresolved; automatic evidence not displayed)']);
 });
 
-test('scores show the scale, then a gauge for each of the first twelve, then how many more', () => {
+test('scores show the scale, then a bar for each of the first twelve, then how many more', () => {
   const values = Array.from({length: 14}, (_, i) => [`label${String(i).padStart(2, '0')}`, 0.9 - i * 0.01]);
   const items = detailFieldViewModel('mood', {automatic: {values, provenance: [[MOOD_MODEL, '1']]}}).items;
   assert.equal(items[0].text, 'display scores > 0.1 (raw 0–1 labelled scores; not probabilities; independent of analysis cutoff).');
-  assert.equal(items.filter(item => item.gauge).length, 12);
+  assert.equal(items.filter(item => item.bar).length, 12);
   assert.equal(items.at(-1).text, '2 more significant labels not shown');
 });
 
@@ -43,8 +43,8 @@ test('energy, BPM, key and other fields', () => {
   assert.deepEqual(text(detailFieldViewModel('loudness', {}).items), ['no usable evidence (no supported display scale)']);
 });
 
-test('a gauge names its score out of 1 and turns its needle over 240 degrees', () => {
-  assert.deepEqual(scoreGaugeViewModel('calm', 0.25), {label: 'calm', ariaLabel: 'calm: 0.3 out of 1', needleDegrees: -60});
+test('a bar names its raw score out of 1 and fills that share of its length (#236)', () => {
+  assert.deepEqual(scoreBarViewModel('calm', 0.25), {label: 'calm', ariaLabel: 'calm: 0.3 out of 1', valueText: '0.3', fillPercent: 25});
 });
 
 test('metadata rows use friendly labels, merge aliases and skip blanks and repeats', () => {

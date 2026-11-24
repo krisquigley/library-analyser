@@ -113,7 +113,7 @@ function matches(node, selector) {
 const canvasContext = {clearRect() {}, fillRect() {}, beginPath() {}, fill() {}, stroke() {}, moveTo() {}, lineTo() {},
   arc() {}, save() {}, restore() {}, setLineDash() {}, fillText() {}, measureText: () => ({width: 10})};
 const body = element('body');
-for (const [id, tag] of [['tracks', 'table'], ['track-search', 'input'], ['undo', 'button'], ['reset', 'button'],
+for (const [id, tag] of [['tracks', 'table'], ['track-search', 'input'], ['undo', 'button'], ['reset', 'button'], ['detail-write-tags', 'button'],
   ['controls', 'div'], ['playlist-controls', 'div'], ['detail', 'section'], ['graph-load-status', 'div'],
   ['loading-surface', 'div'], ['loading-status', 'div'], ['loading-error', 'div'], ['loading-retry', 'button'],
   ['graph3d', 'div'], ['map', 'canvas'], ['mood-strip', 'canvas'], ['mood-strip-picker', 'input'], ['mood-strip-value', 'output'], ['tag-write', 'div'],

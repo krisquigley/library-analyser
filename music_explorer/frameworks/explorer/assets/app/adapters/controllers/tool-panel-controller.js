@@ -11,6 +11,7 @@ export function toolPanelController({toolPanels, rejectInput}) {
 
   return Object.freeze({
     toggleRequested: tool => checked(tool, toolPanels.toggle),
+    openRequested: tool => checked(tool, toolPanels.open),
     closeRequested: tool => checked(tool, known => (toolPanels.isOpen(known) ? toolPanels.close(known) : undefined)),
   });
 }

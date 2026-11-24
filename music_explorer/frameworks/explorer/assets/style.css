@@ -11,8 +11,6 @@
   --surface-pressed:rgba(255,255,255,.11);
   --scrim:rgba(6,11,20,.8);
   --scrim-strong:rgba(6,11,20,.9);
-  --dial-light:#26364c;
-  --dial-dark:#121c2b;
   --border:rgba(150,175,210,.14);
   --border-strong:rgba(150,175,210,.28);
   --text:#e8eef7;
@@ -122,7 +120,6 @@ label{color:var(--text-muted);font-size:var(--text-s);margin-right:var(--space-2
 fieldset{margin:var(--space-3) 0;padding:var(--space-2) var(--space-3) var(--space-3);border:1px solid var(--border);border-radius:var(--radius-m);min-width:0}
 legend{padding:0 var(--space-1);font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
 .field{margin:var(--space-2) 0}
-.actions{position:sticky;bottom:calc(-1 * var(--space-3));display:flex;flex-wrap:wrap;gap:var(--space-2);margin:var(--space-3) calc(-1 * var(--space-4)) calc(-1 * var(--space-3));padding:var(--space-3) var(--space-4);background:var(--surface-solid);border-top:1px solid var(--border)}
 
 /* Controls */
 button,select,input,textarea{font:inherit;color:inherit}
@@ -231,14 +228,15 @@ tbody tr:hover{background:var(--surface-hover)}
 #detail .key-fact{padding:var(--space-1) var(--space-2);border:1px solid var(--border-strong);border-radius:var(--radius-round);background:var(--surface-raised);font-size:var(--text-s);font-weight:600;font-variant-numeric:tabular-nums;cursor:help}
 #detail .unavailable-evidence summary{cursor:pointer;font-size:var(--text-s);color:var(--text-muted)}
 #detail .unavailable-evidence p{color:var(--text-muted)}
-#detail .score-row{margin:var(--space-2) 0;min-width:0;font-size:var(--text-s)}
-#detail .score-row>span{display:block;overflow-wrap:anywhere}
-/* Compact circular dial: left is zero, top is half, right is one. */
-#detail .score-gauge{position:relative;width:39px;height:39px;margin:.12rem auto .25rem;border-radius:50%;background:radial-gradient(circle at 45% 38%,var(--dial-light),var(--dial-dark));border:1px solid var(--border-strong);box-shadow:inset 0 0 0 2px var(--surface-solid)}
-#detail .score-arc{position:absolute;inset:4px;border:1px solid var(--accent);border-bottom-color:transparent;border-radius:50%}
-#detail .score-needle{position:absolute;inset:3px;transform-origin:50% 50%;pointer-events:none}
-#detail .score-needle::before{content:'';position:absolute;left:calc(50% - 1px);top:1px;width:2px;height:15px;border-radius:2px;background:var(--warning);box-shadow:0 0 2px var(--bg)}
-#detail .score-hub{position:absolute;left:calc(50% - 2px);top:calc(50% - 2px);width:4px;height:4px;border-radius:50%;background:var(--warning);border:1px solid var(--surface-solid)}
+/* #236: a raw 0–1 score as a compact bar: label, bar, value. */
+#detail .score-bar{display:flex;align-items:center;gap:var(--space-2);margin:var(--space-1) 0;font-size:var(--text-s)}
+#detail .score-bar-label{flex:0 1 40%;min-width:0;overflow-wrap:anywhere}
+#detail .score-bar-track{position:relative;flex:1 1 auto;height:.5rem;border-radius:var(--radius-round);background:var(--surface-sunken);overflow:hidden}
+#detail .score-bar-fill{position:absolute;inset:0 auto 0 0;border-radius:inherit;background:var(--accent)}
+#detail .score-bar-value{flex:none;width:2.25rem;text-align:right;color:var(--text-muted);font-variant-numeric:tabular-nums}
+/* #236: the selected track's actions sit in its header. */
+.panel-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--space-1)}
+.panel-actions button{min-height:0;padding:var(--space-1) var(--space-2);font-size:var(--text-xs)}
 
 /* Mood strip */
 .mood-strip{width:min(740px,100%);max-height:min(180px,30dvh);padding:var(--space-2) var(--space-4)}
@@ -273,7 +271,6 @@ tbody tr:hover{background:var(--surface-hover)}
   #mood-strip{height:40px}
   .modal{width:100vw;height:100dvh;max-height:none;border-radius:0}
 }
-@media(max-width:700px){#detail .score-gauge{width:34px;height:34px}#detail .score-needle::before{height:12px}}
 @media(max-height:550px){
   .mood-strip{max-height:125px}
   #mood-strip{height:40px}

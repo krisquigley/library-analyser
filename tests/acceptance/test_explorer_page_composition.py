@@ -268,6 +268,18 @@ body.onkeydown({key: 'ArrowDown', target: buttons[0], preventDefault() { prevent
 assert.ok(prevented, 'the arrow key moves focus instead of scrolling');
 """)
 
+    def test_the_selected_track_card_opens_the_tag_write_dialog_from_its_header(self):
+        self.run_scenario(r"""
+await settle(6);
+const dialog = byId('tag-write-panel');
+assert.equal(dialog.open, false);
+await press('detail-write-tags');
+assert.deepEqual([dialog.open, dialog.modal], [true, true]);
+assert.equal(byId('open-tag-write').getAttribute('aria-expanded'), 'true');
+await press('detail-write-tags');
+assert.equal(dialog.open, true, 'a second press keeps it open');
+""")
+
     def test_tags_are_previewed_for_the_current_track_and_written_only_when_approved(self):
         self.run_scenario(r"""
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));

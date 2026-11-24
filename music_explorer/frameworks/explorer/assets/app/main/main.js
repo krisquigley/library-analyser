@@ -120,7 +120,7 @@ playlistEvents.subscribe('saved-recipe-loaded',event=>setCurrent(event.startTrac
 const toolPanelEvents=createInMemoryEventBus();
 const toolPanels=createToolPanels({eventBus:toolPanelEvents});
 const toolPanelControls=toolPanelController({toolPanels,rejectInput:message=>globalThis.console?.warn(message)});
-const toolPanelDisplay=toolPanelsView({onToggleRequested:tool=>toolPanelControls.toggleRequested(tool),onCloseRequested:tool=>toolPanelControls.closeRequested(tool)});
+const toolPanelDisplay=toolPanelsView({onToggleRequested:tool=>toolPanelControls.toggleRequested(tool),onCloseRequested:tool=>toolPanelControls.closeRequested(tool),onOpenRequested:tool=>toolPanelControls.openRequested(tool)});
 for(const type of TOOL_PANEL_EVENT_TYPES) toolPanelEvents.subscribe(type,event=>toolPanelDisplay.show(toolPanelViewModel(event)));
 const tagWriteEvents=createInMemoryEventBus();
 const tagWrite=createTagWrite({explorerApi,eventBus:tagWriteEvents});

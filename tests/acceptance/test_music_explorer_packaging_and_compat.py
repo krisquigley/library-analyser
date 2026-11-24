@@ -14,7 +14,7 @@ class MusicExplorerPackagingAndCompatibilityTests(unittest.TestCase):
         app_js = package_assets.joinpath('app/main/main.js').read_text(encoding='utf-8')
         style = package_assets.joinpath('style.css').read_text(encoding='utf-8')
         self.assertIn('renderMoodStrip', app_js)
-        self.assertIn('gauge', style.lower())
+        self.assertIn('score-bar', style.lower())
         self.assertTrue(package_assets.joinpath('vendor/3d-force-graph/3d-force-graph.min.js').is_file())
 
     def test_standalone_and_analyzer_explorer_assets_remain_mirrored(self):
