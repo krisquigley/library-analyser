@@ -157,12 +157,23 @@ tbody tr:hover{background:var(--surface-hover)}
 
 /* Library search */
 #track-search{width:100%;margin:var(--space-1) 0 var(--space-2);padding-left:2rem;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Ccircle cx='6' cy='6' r='4.5' fill='none' stroke='%2371839a' stroke-width='1.5'/%3E%3Cpath d='M9.5 9.5L13 13' stroke='%2371839a' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:var(--space-3) center}
-.tracks-table td{padding:0;vertical-align:middle}
-.tracks-table td+td{padding:var(--space-2);color:var(--text-muted);font-size:var(--text-xs)}
-.tracks-table button{width:100%;margin:0;justify-content:flex-start;text-align:left;min-height:2.25rem;padding:var(--space-1) var(--space-2);border:0;border-radius:var(--radius-s);background:transparent;font-weight:500}
-.tracks-table button:hover:not(:disabled){background:var(--surface-hover)}
-.tracks-table tr.current{background:var(--accent-soft)}
-.tracks-table tr.current button{color:var(--accent-hover);font-weight:600}
+/* #235: each result is a row, the title over the artist; the title's button covers the whole row. */
+.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.tracks-table tbody tr{position:relative;display:flex;flex-direction:column;border-bottom:1px solid var(--border);border-radius:var(--radius-s)}
+.tracks-table td{display:block;padding:0;border:0}
+.tracks-table td.track-title button{width:100%;min-height:0;margin:0;justify-content:flex-start;text-align:left;padding:var(--space-2) var(--space-3) 0;border:0;border-radius:0;background:transparent;box-shadow:none;font-weight:500;overflow-wrap:anywhere}
+.tracks-table td.track-title button::after{content:'';position:absolute;inset:0;border-radius:inherit}
+/* A transform would make the button the cover's containing block, shrinking it to the title mid-press. */
+.tracks-table td.track-title button:active:not(:disabled){transform:none}
+.tracks-table td.track-title button:focus-visible{box-shadow:none}
+.tracks-table tbody tr:focus-within{box-shadow:var(--focus-ring)}
+.tracks-table td.track-artist{display:flex;align-items:center;gap:var(--space-2);padding:0 var(--space-3) var(--space-2);color:var(--text-muted);font-size:var(--text-xs);overflow-wrap:anywhere}
+.track-badge{flex:none;margin-left:auto;padding:0 var(--space-2);border:1px solid var(--border);border-radius:var(--radius-round);color:var(--text-muted);font-size:var(--text-xs);font-variant-numeric:tabular-nums}
+.tracks-table tr.current{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.tracks-table tr.current td.track-title button{color:var(--accent-hover);font-weight:600}
+.track-list-status{margin:var(--space-2) 0}
+.track-list-status.failed{color:var(--danger)}
+#tracks[data-tone=searching] .tracks-table{opacity:.6}
 
 /* Graph filters */
 #graph-controls{margin:0 0 var(--space-3);padding:var(--space-2) var(--space-3) var(--space-3);border:1px solid var(--border);min-width:0}

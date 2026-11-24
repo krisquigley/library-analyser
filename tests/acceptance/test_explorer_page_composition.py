@@ -249,6 +249,25 @@ await press('reset'); await settle(4);
 assert.deepEqual([button.disabled, reason()], [true, 'To preview: select a start track first.']);
 """)
 
+    def test_library_results_are_rows_with_a_bpm_badge_and_arrow_keys_move_between_them(self):
+        self.run_scenario(r"""
+routes['/api/tracks/summary'] = r => r.respond(summaryBody(library));
+await settle(6);
+const tracks = byId('tracks');
+assert.equal(tracks.dataset.tone, 'idle');
+await search('Track'); await settle(2);
+assert.equal(tracks.dataset.tone, 'results');
+const rows = walk(tracks).filter(node => node.tagName === 'TR' && node.dataset.trackId);
+assert.deepEqual(rows.map(row => row.dataset.trackId), ['a', 'b']);
+const cells = row => row.children.map(cell => [cell.className, cell.textContent]);
+assert.deepEqual(cells(rows[0]), [['track-title', 'Track a'], ['track-artist', 'Public synthetic120 BPM']], 'the graph supplies the BPM');
+const buttons = rows.map(row => row.children[0].children[0]);
+const body = walk(tracks).find(node => node.tagName === 'TBODY');
+let prevented = false;
+body.onkeydown({key: 'ArrowDown', target: buttons[0], preventDefault() { prevented = true; }});
+assert.ok(prevented, 'the arrow key moves focus instead of scrolling');
+""")
+
     def test_tags_are_previewed_for_the_current_track_and_written_only_when_approved(self):
         self.run_scenario(r"""
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));

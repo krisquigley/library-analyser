@@ -1,7 +1,7 @@
 // Issue #146: the mood-axis graph model the 3D scene and the filters work on.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {moodGraphModel, moodNodeColor, moodToTrack} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/mood-graph.js';
+import {moodGraphModel, moodNodeColor, moodToTrack, trackBpmsOf} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/mood-graph.js';
 import {applyMoodGraphFilters, EMPTY_GRAPH_CONTROLS} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/graph-filters.js';
 
 const axis = (raw, normalized) => ({label: 'axis', raw, normalized});
@@ -99,4 +99,10 @@ test('a node keeps its colour when another mood is tracked, and when filters dro
   const [, loud] = faster.nodes;
   const kept = applyMoodGraphFilters(faster, {...EMPTY_GRAPH_CONTROLS, bpmMin: 130});
   assert.deepEqual(kept.nodes.map(node => [node.id, node.color]), [[loud.id, loud.color]]);
+});
+
+test('the graph knows the BPM of each positioned track, for the library rows (#235)', () => {
+  const bpms = trackBpmsOf({nodes: [{id: 'a', bpm: 120.4}, {id: 'b', bpm: null}]});
+  assert.deepEqual([...bpms], [['a', 120.4], ['b', null]]);
+  assert.deepEqual([...trackBpmsOf({nodes: []})], []);
 });

@@ -69,5 +69,16 @@ class ExplorerViewportLayoutTests(unittest.TestCase):
         self.assertIn('--app-bar-height:', narrow, 'panels start below the taller header')
 
 
+    def test_a_library_row_takes_the_click_wherever_it_is_pressed(self):
+        """#235: the title's button covers its whole row. A pressed button moved by its :active transform became the
+        containing block of that cover, which shrank to the title, so a press on the artist line was lost."""
+        css = (ASSETS / 'style.css').read_text()
+        self.assertIn('.tracks-table td.track-title button::after{', css)
+        self.assertIn('position:absolute;inset:0', css[css.index('.tracks-table td.track-title button::after{'):].split('}')[0])
+        self.assertIn('.tracks-table tbody tr{position:relative', css)
+        pressed = '.tracks-table td.track-title button:active:not(:disabled){'
+        self.assertIn(pressed, css, 'a pressed row button must not move')
+        self.assertIn('transform:none', css[css.index(pressed):].split('}')[0])
+
 if __name__ == '__main__':
     unittest.main()

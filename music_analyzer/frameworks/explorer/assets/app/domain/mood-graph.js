@@ -16,6 +16,11 @@ export function moodToTrack(requested, model) {
   return requested && model.availableMoods.includes(requested) ? requested : (model.selectedMood || '');
 }
 
+// Each positioned track's BPM as the graph holds it, so a list of tracks can show it without asking again (#235).
+export function trackBpmsOf(model) {
+  return new Map(model.nodes.map(node => [node.id, node.bpm]));
+}
+
 export function moodGraphModel(graph, {genreThresholdApplies = false} = {}) {
   const positioned = graph.positioned || [];
   const colorRanges = {valence: axisRange(positioned, 'x'), arousal: axisRange(positioned, 'y')};
