@@ -96,7 +96,7 @@ def validate_phase_intervals(intervals):
 _KNOWN_ROUTES = frozenset((
     '/api/state', '/api/current', '/api/tracks', '/api/tracks/summary',
     '/api/track-summaries', '/api/mood-axis-graph', '/api/history',
-    '/api/undo', '/api/reset',
+    '/api/undo', '/api/reset', '/api/track-labels',
 ))
 _METHODS = frozenset(('GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'))
 

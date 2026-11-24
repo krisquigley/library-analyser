@@ -22,7 +22,7 @@
       d.responsiveness.long_tasks.push({start_ms:entry.startTime,end_ms:entry.startTime+entry.duration,duration_ms:entry.duration});
     }}).observe({type:'longtask',buffered:true});
   }catch(error){d.responsiveness.long_tasks_status='unavailable';}
-  function route(path){if(['/api/state','/api/current','/api/mood-axis-graph','/api/tracks/summary'].includes(path))return path;if(path.startsWith('/api/tracks/'))return '/api/tracks/<id>';return 'unknown';}
+  function route(path){if(['/api/state','/api/current','/api/mood-axis-graph','/api/tracks/summary','/api/track-labels'].includes(path))return path;if(path.startsWith('/api/tracks/'))return '/api/tracks/<id>';return 'unknown';}
   const original=window.fetch;
   window.fetch=async function(input,options){
     const path=new URL(input,location.href).pathname, start=now(), graph=path==='/api/mood-axis-graph';

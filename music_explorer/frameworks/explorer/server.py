@@ -11,6 +11,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from importlib import resources
 from urllib.parse import parse_qs, unquote, urlparse
 
+from music_explorer.application.use_cases.label_tracks.label_tracks import LabelTracks, TrackLabelRequestError
 from music_explorer.application.dto.candidates import CandidateQuery, SelectionControlDto
 from music_explorer.application.use_cases.candidates import SelectExplorerCandidates
 from music_explorer.application.use_cases.explorer import BuildMoodAxisGraph, FilterMoodAxisGraph, GetExplorerTrackDetail, ListExplorerTracks, ListExplorerTrackSummaries
@@ -32,6 +33,7 @@ from music_explorer.infrastructure.taggable_tracks import ReadOnlyTaggableTracks
 from music_explorer.infrastructure.track_tags import MutagenTrackTags
 from music_explorer.interface_adapters.tag_write_http import (
     preview_request_from_query, tag_write_preview_to_http, tag_write_report_to_http)
+from music_explorer.interface_adapters.track_labels_http import label_request_from_query, track_labels_to_http
 from music_analyzer.application.dto.analysis import AnalysisError as AnalyzerAnalysisError
 
 MAX_BODY = 64 * 1024
@@ -221,6 +223,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
             if isinstance(error, (json.JSONDecodeError, UnicodeDecodeError)):
                 return self._json({'error': 'Invalid explorer request'}, HTTPStatus.BAD_REQUEST)
+            if isinstance(error, TrackLabelRequestError):
+                return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
             if isinstance(error, TagWriteApprovalError):
                 return self._json({'error': message}, HTTPStatus.CONFLICT)
             if isinstance(error, ProjectionArtifactError):
@@ -282,6 +286,9 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             if path == '/api/playlist-recipes/load':
                 name = saved_playlist_recipe_name(parse_qs(parsed.query).get('name', [None])[0])
                 return self._json(_to_json(LoadSavedPlaylistRecipe(repository).execute(name)))
+            if path == '/api/track-labels':
+                request = label_request_from_query(parse_qs(parsed.query, keep_blank_values=True))
+                return self._json(track_labels_to_http(LabelTracks(repository).execute(request)))
             if path == '/api/tag-write/preview':
                 preview = preview_tag_write.execute(
                     preview_request_from_query(parse_qs(parsed.query, keep_blank_values=True)))

@@ -314,6 +314,30 @@ class ReadOnlyExplorerSQLiteRepository:
                 next_cursor = self._encode_summary_cursor(self._summary_fold(key), last[0])
             return metadata, track_count, summaries, next_cursor
 
+    def track_summaries(self, track_ids):
+        """#243: the named active tracks' summaries, read by ID; only those rows are read and checked."""
+        if not track_ids:
+            return ()
+        marks = ','.join('?' * len(track_ids))
+        with self._transaction() as db:
+            rows = db.execute(f"""
+                WITH first_location AS (
+                    SELECT track_id, min(path) AS path, count(*) AS available_locations
+                    FROM locations WHERE available=1 AND track_id IN ({marks}) GROUP BY track_id
+                )
+                SELECT t.id, t.sha256, t.size, COALESCE(first_location.path, ''),
+                       COALESCE(first_location.available_locations, 0),
+                       COALESCE(tm.common_json, '[]'), COALESCE(tm.tags_json, '[]'),
+                       CASE WHEN COALESCE(first_location.path, '') = '' THEN ''
+                            ELSE _explorer_basename(first_location.path) END, ''
+                FROM tracks t
+                LEFT JOIN track_audio a ON a.track_id=t.id
+                LEFT JOIN first_location ON first_location.track_id=t.id
+                LEFT JOIN track_metadata tm ON tm.track_id=t.id
+                WHERE t.id IN ({marks}) AND {_ACTIVE_CANDIDATE_PREDICATE}
+            """, (*track_ids, *track_ids)).fetchall()
+            return tuple(self._summary_from_row(row) for row in rows)
+
     def candidate_snapshot(self):
         with self._transaction() as db:
             metadata = self._metadata(db)

@@ -255,3 +255,12 @@ test('a tag write answer shaped wrongly is refused whole, and a refusal is told 
     body: '{"error":"This approval has already been used: preview again"}'}));
   await assert.rejects(api.applyTagWrite('tok'), {message: 'This approval has already been used: preview again'});
 });
+
+test('labels for the named tracks are asked for by ID and checked (#243)', async () => {
+  const body = {labels: [{track_id: 'sha256:a', title: 'Alpha', artist: 'Synthetic'}]};
+  const labelled = gatewayAnswering(response({body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}}));
+  assert.deepEqual(await labelled.api.labelTracks(['sha256:a', 'sha256:b']), [{trackId: 'sha256:a', title: 'Alpha', artist: 'Synthetic'}]);
+  assert.deepEqual(labelled.requests, ['/api/track-labels?track=sha256%3Aa&track=sha256%3Ab']);
+  const wrong = gatewayAnswering(response({body: JSON.stringify({labels: [{}]}), headers: {'Content-Type': 'application/json'}}));
+  await assert.rejects(wrong.api.labelTracks(['a']), /Invalid track labels: label 1 track_id must be text/);
+});
