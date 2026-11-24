@@ -133,5 +133,37 @@ assert.ok(byId('detail').innerText.includes('Track a'), 'its detail is shown');
 ''')
 
 
+    def test_tags_are_previewed_for_the_current_track_and_written_only_when_approved(self):
+        self.run_scenario(r"""
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/tag-write/preview'] = r => r.respond({token: 'approval-1', skipped: [], changes: [
+  {file: 'b.mp3', field: 'bpm', current: null, proposed: '120', replaces: false},
+  {file: 'b.mp3', field: 'key', current: 'C', proposed: 'Am', replaces: true}]});
+routes['/api/tag-write/apply'] = r => r.respond({outcomes: [{file: 'b.mp3', status: 'written', detail: 'BPM 120, key Am'}],
+  notice: 'Rescan them with music-analyzer scan.'});
+await settle(6);
+await press('tag-write-preview'); await settle(2);
+assert.equal(byId('tag-write-status').textContent, 'Select a track to tag first');
+assert.equal(requests.filter(r => r.path.startsWith('/api/tag-write')).length, 0, 'nothing is asked without a track');
+await search('b'); await settle(2);
+await chooseRow('b'); await settle(4); await untilCameraSettles();
+assert.equal(byId('tag-write-apply').disabled, true, 'nothing can be written before a preview');
+byId('tag-write-policy').value = 'replace-existing';
+heard.length = 0;
+await press('tag-write-preview'); await settle(2);
+const asked = request('/api/tag-write/preview').url.searchParams;
+assert.deepEqual([asked.getAll('track'), asked.get('policy')], [['b'], 'replace-existing']);
+assert.deepEqual(byId('tag-write-changes').children.map(row => row.children.map(cell => cell.textContent)),
+  [['b.mp3', 'BPM', '(empty) → 120'], ['b.mp3', 'Key', 'C → Am (replaces)']]);
+assert.equal(requests.filter(r => r.path === '/api/tag-write/apply').length, 0, 'a preview writes nothing');
+await press('tag-write-apply'); await settle(2);
+assert.deepEqual(request('/api/tag-write/apply').body, {token: 'approval-1'});
+assert.deepEqual(heard, ['tag-write-previewing', 'tag-write-previewed', 'tag-write-applying', 'tag-write-applied']);
+assert.deepEqual(byId('tag-write-report').children.map(item => item.textContent), ['b.mp3: written (BPM 120, key Am)']);
+assert.equal(byId('tag-write-status').textContent, '1 written, 0 skipped, 0 failed. Rescan them with music-analyzer scan.');
+assert.equal(byId('tag-write-apply').disabled, true, 'the approval is spent');
+""")
+
+
 if __name__ == '__main__':
     unittest.main()

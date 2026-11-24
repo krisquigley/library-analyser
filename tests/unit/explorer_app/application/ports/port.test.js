@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {requirePort} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/port.js';
-import {EXPLORER_API, MOOD_GRAPHS, PLAYLIST_DOWNLOADS, PLAYLIST_PREVIEWS, SELECTIONS, TRACK_SEARCHES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/explorer-api.js';
+import {EXPLORER_API, MOOD_GRAPHS, PLAYLIST_DOWNLOADS, PLAYLIST_PREVIEWS, SELECTIONS, TRACK_SEARCHES, TAG_WRITES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/explorer-api.js';
 import {EVENT_BUS} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/event-bus.js';
 import {PLAYLIST_DRAFT_SESSION} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/playlist-draft-session.js';
 import {PLAYLIST_FILE} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/playlist-file.js';
@@ -12,13 +12,14 @@ import {CLOCK, DELAYS, FRAMES} from '../../../../../music_explorer/frameworks/ex
 import {GRAPH_RENDERER} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/graph-renderer.js';
 
 test('the ports name the operations their adapters provide', () => {
-  assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'previewPlaylist', 'listSavedPlaylistRecipes', 'loadSavedPlaylistRecipe', 'loadMoodGraph', 'searchTracks', 'chooseCurrentTrack', 'applyHistory',
+  assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'previewPlaylist', 'listSavedPlaylistRecipes', 'loadSavedPlaylistRecipe', 'previewTagWrite', 'applyTagWrite', 'loadMoodGraph', 'searchTracks', 'chooseCurrentTrack', 'applyHistory',
     'loadTrackDetail', 'loadLibraryState']);
   assert.deepEqual(SELECTIONS.operations, ['chooseCurrentTrack', 'applyHistory', 'loadTrackDetail', 'loadLibraryState']);
   assert.deepEqual([TRACK_SEARCHES.name, TRACK_SEARCHES.operations], ['ExplorerApi', ['searchTracks']]);
   assert.deepEqual([PLAYLIST_DOWNLOADS.name, PLAYLIST_DOWNLOADS.operations], ['ExplorerApi', ['downloadPlaylist']]);
   assert.deepEqual([MOOD_GRAPHS.name, MOOD_GRAPHS.operations], ['ExplorerApi', ['loadMoodGraph']]);
   assert.deepEqual([PLAYLIST_PREVIEWS.name, PLAYLIST_PREVIEWS.operations], ['ExplorerApi', ['previewPlaylist']]);
+  assert.deepEqual([TAG_WRITES.name, TAG_WRITES.operations], ['ExplorerApi', ['previewTagWrite', 'applyTagWrite']]);
   assert.deepEqual([PLAYLIST_DRAFT_SESSION.name, PLAYLIST_DRAFT_SESSION.operations], ['PlaylistDraftSession', ['read', 'write']]);
   assert.deepEqual(GRAPH_SESSION.operations, ['read', 'write']);
   assert.deepEqual(CLOCK.operations, ['nextFrame', 'wait']);

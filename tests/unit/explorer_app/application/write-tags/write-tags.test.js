@@ -1,0 +1,61 @@
+// Issue #132: previewing a tag write for chosen tracks, then applying exactly that preview once.
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createTagWrite} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/write-tags/write-tags.js';
+import {TAG_WRITE_EVENT_TYPES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/write-tags/tag-write-events.js';
+
+const CHANGES = [{file: 'one.mp3', field: 'bpm', current: null, proposed: '124', replaces: false}];
+const REPORT = {outcomes: [{file: 'one.mp3', status: 'written', detail: 'BPM 124'}], notice: 'Rescan them.'};
+
+function harness(api = {}) {
+  const published = [], applied = [], previewed = [];
+  const explorerApi = {
+    previewTagWrite: async request => { previewed.push(request); return {token: 'tok', changes: CHANGES, skipped: []}; },
+    applyTagWrite: async token => { applied.push(token); return REPORT; },
+    ...api,
+  };
+  const tagWrite = createTagWrite({explorerApi, eventBus: {publish: event => published.push(event), subscribe() {}}});
+  return {tagWrite, published, applied, previewed};
+}
+
+test('the event types are the ones the use case publishes', () => {
+  assert.deepEqual(TAG_WRITE_EVENT_TYPES, ['tag-write-previewing', 'tag-write-previewed', 'tag-write-applying',
+    'tag-write-applied', 'tag-write-failed']);
+});
+
+test('a preview lists the changes and an apply sends its token once', async () => {
+  const {tagWrite, published, applied, previewed} = harness();
+  await tagWrite.preview({trackIds: ['t1'], policy: 'fill-empty'});
+  assert.deepEqual(previewed, [{trackIds: ['t1'], policy: 'fill-empty'}]);
+  assert.deepEqual(published, [{type: 'tag-write-previewing', trackIds: ['t1']},
+    {type: 'tag-write-previewed', changes: CHANGES, skipped: [], approvable: true}]);
+  await tagWrite.apply();
+  assert.deepEqual(applied, ['tok']);
+  assert.deepEqual(published.slice(2), [{type: 'tag-write-applying'},
+    {type: 'tag-write-applied', outcomes: REPORT.outcomes, notice: REPORT.notice}]);
+  assert.equal(tagWrite.state(), 'applied');
+  await assert.rejects(tagWrite.apply(), /cannot apply while applied/);
+  assert.deepEqual(applied, ['tok']);
+});
+
+test('a preview with nothing to change cannot be applied', async () => {
+  const {tagWrite, published, applied} = harness({previewTagWrite: async () => ({token: null, changes: [],
+    skipped: [{trackId: 't1', reason: 'Nothing to change'}]})});
+  await tagWrite.preview({trackIds: ['t1'], policy: 'fill-empty'});
+  assert.equal(published.at(-1).approvable, false);
+  await tagWrite.apply();
+  assert.deepEqual(applied, []);
+  assert.deepEqual(published.at(-1), {type: 'tag-write-failed', message: 'There is nothing to write: preview again'});
+});
+
+test('a refused preview or apply is told, and an apply that failed needs a new preview', async () => {
+  const refused = harness({previewTagWrite: async () => { throw new Error('Choose at least one track to tag'); }});
+  await refused.tagWrite.preview({trackIds: [], policy: 'fill-empty'});
+  assert.deepEqual(refused.published.at(-1), {type: 'tag-write-failed', message: 'Choose at least one track to tag'});
+  const stale = harness({applyTagWrite: async () => { throw new Error('The tags changed since the preview: preview again'); }});
+  await stale.tagWrite.preview({trackIds: ['t1'], policy: 'fill-empty'});
+  await stale.tagWrite.apply();
+  assert.deepEqual(stale.published.at(-1), {type: 'tag-write-failed',
+    message: 'The tags changed since the preview: preview again'});
+  await assert.rejects(stale.tagWrite.apply(), /cannot apply while failed/);
+});

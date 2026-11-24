@@ -3,6 +3,7 @@
 import {playlistDownloadQuery, playlistPreviewQuery} from './playlist-download-query.js';
 import {playlistPreviewFrom} from './playlist-preview-dto.js';
 import {savedPlaylistRecipeFrom, savedPlaylistRecipesFrom} from './saved-playlist-recipe-dto.js';
+import {tagWritePreviewFrom, tagWriteReportFrom} from './tag-write-dto.js';
 
 const DEFAULT_PLAYLIST_FILENAME = 'library-graph-playlist.m3u';
 const DEFAULT_PLAYLIST_TYPE = 'audio/x-mpegurl;charset=utf-8';
@@ -33,6 +34,16 @@ export function fetchExplorerApi(fetchResource) {
     async loadSavedPlaylistRecipe(name) {
       const path = '/api/playlist-recipes/load?' + new URLSearchParams({name}).toString();
       return savedPlaylistRecipeFrom(await answer(await fetchResource(path), 'Saved recipe failed to load'));
+    },
+    async previewTagWrite({trackIds, policy}) {
+      const params = new URLSearchParams([...trackIds.map(trackId => ['track', trackId]), ['policy', policy]]);
+      return tagWritePreviewFrom(await answer(await fetchResource('/api/tag-write/preview?' + params.toString()),
+        'Tag preview failed'));
+    },
+    async applyTagWrite(token) {
+      const body = JSON.stringify({token});
+      return tagWriteReportFrom(await answer(await fetchResource('/api/tag-write/apply',
+        {method: 'POST', headers: {'Content-Type': 'application/json'}, body}), 'Tag write failed'));
     },
     async loadMoodGraph(mood) {
       const response = await fetchResource(moodGraphPath(mood));
