@@ -17,8 +17,9 @@ This is **experimental** software, delivered in small tested increments.
 
 - Everything runs **locally**. Your music, paths and results are not uploaded.
   Only the explicit `models download` command uses the network.
-- It never edits audio files or their tags. It writes only its own analysis
-  database, model bundles, an embedding cache, temporary decode snapshots
+- It never edits audio. The analyzer never writes tags; the Explorer writes only a
+  file's BPM and key tags, and only after you preview and approve that one action
+  (#132). The analyzer writes only its own analysis database, model bundles, an embedding cache, temporary decode snapshots
   (removed after use) and the export/projection files you name.
 - It can export its analysis to a **new** Mixxx library file (`export-mixxx`), but it
   must never be pointed at an existing Mixxx database, and refuses any existing path.
@@ -36,7 +37,7 @@ their command-line entry points:
 | Package | Command | What it does |
 | --- | --- | --- |
 | `music_analyzer` | `music-analyzer` | Catalogue, analysis and review CLI: `doctor`, `models`, `scan`, `analyze`, `status`, `list`, `show`, `override`, `reaggregate`, `export`, `graph`, `integrity`, `prepare-projection`. It **writes** the analysis database. |
-| `music_explorer` | `music-explorer` | Read-only localhost web explorer of an existing analysis database: search, track detail, a 3D mood-axis graph, candidate suggestions and M3U playlist export. It **never writes** the database. |
+| `music_explorer` | `music-explorer` | Read-only localhost web explorer of an existing analysis database: search, track detail, a 3D mood-axis graph, candidate suggestions and M3U playlist export. It **never writes** the database; the one thing it writes is a file's BPM and key tags, after you preview and approve that action. |
 
 `music-analyzer explorer` is a compatibility route to the same explorer, and
 `music-exporer` is a retained misspelled alias of `music-explorer`. The explorer

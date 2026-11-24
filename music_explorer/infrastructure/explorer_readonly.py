@@ -492,6 +492,15 @@ class ReadOnlyExplorerSQLiteRepository:
         with self._transaction() as db:
             return self._read_track(db, track_id)
 
+    def first_available_location(self, track_id: str) -> str | None:
+        """The track's first available file path (#132), for an approved tag write; None when it has none."""
+        with self._transaction() as db:
+            row = db.execute('SELECT min(path) FROM locations WHERE track_id=? AND available=1', (track_id,)).fetchone()
+        path = row[0] if row else None
+        if path is not None and not isinstance(path, str):
+            raise AnalysisError('Unexpected analysis database rows')
+        return path
+
     def find_track(self, track_id: str):
         with self._transaction() as db:
             if db.execute('SELECT 1 FROM tracks WHERE id=?', (track_id,)).fetchone() is None:

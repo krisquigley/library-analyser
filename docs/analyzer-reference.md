@@ -656,7 +656,18 @@ music-explorer --database /path/to/analysis.sqlite --port 8765
 music-analyzer explorer --database /path/to/analysis.sqlite --port 8765
 ```
 
-Open `http://127.0.0.1:8765/` in a browser. Stop it with Ctrl+C in the terminal. The explorer is intended for personal local use only: this slice rejects non-`127.0.0.1` binds, serves bundled offline HTML/CSS/JavaScript assets, reads the existing analysis database in read-only SQLite mode, and does not edit audio files, annotations, overrides, migrations, or analysis results. Do not point it at a Mixxx database.
+Open `http://127.0.0.1:8765/` in a browser. Stop it with Ctrl+C in the terminal. The explorer is intended for personal local use only: this slice rejects non-`127.0.0.1` binds, serves bundled offline HTML/CSS/JavaScript assets, reads the existing analysis database in read-only SQLite mode, and does not edit audio, annotations, overrides, migrations, or analysis results. The one thing it writes is a file's BPM and key tags, through an action you preview and approve (see below). Do not point it at a Mixxx database.
+
+**Writing BPM and key tags (#132).** The Explorer can write a track's BPM and key into its own file's tags, one previewed and approved action at a time. Nothing is ever written automatically or in bulk.
+- **Formats:** MP3 (ID3 `TBPM` and `TKEY`) and FLAC (Vorbis `BPM` and `INITIALKEY`). Other formats are skipped.
+- **Values:** BPM is written as a whole number, and the key uses the short standard names (`Am`, `C#m`, `Bb`). Your manual `bpm` or `key` override wins over the detected value. A detected key below the minimum key strength writes nothing.
+- **Preview:** `GET /api/tag-write/preview?track=ID&track=ID[&policy=fill-empty|replace-existing][&minimum_key_strength=0.5]` lists every change, old to new, and writes nothing. With `fill-empty`, the default, only empty tags are filled. `replace-existing` also replaces a different existing value, and the preview marks it as a replacement. One action covers at most 100 tracks.
+- **Apply:** `POST /api/tag-write/apply` with `{"token": ...}` applies exactly that preview, once, and only from the Explorer's own page (checked by `Origin` and `Host`).
+  - If any tag, analysis value or override changed since the preview, nothing is written and you preview again.
+  - A file that changed since it was analysed is skipped.
+  - Every file's outcome is reported as written, skipped or failed.
+  - Each file is written to a copy that replaces it only when complete. Other tags, pictures and the audio are left as they were.
+- **After a write:** the file's bytes have changed, so its analysis no longer matches it. Rescan it with `music-analyzer scan` (#223 will let a rescan keep the analysis and overrides).
 
 The page is search-first: it starts with an empty search sidebar (title/artist search with explicit paging) and loads the 3D mood-axis graph automatically from the persisted graph snapshot, with inline loading/error/retry feedback. You can inspect read-only details, explicitly set/undo/reset the current track, run the five existing candidate controls and export an M3U playlist. If no current graph snapshot exists, the graph reports that `music-analyzer graph build` is needed. If fields are missing, from a noncompleted run, provisional or uncertain, the detail/candidate/map views report or degrade around that missing evidence rather than inventing tags, calibration or playback decisions.
 
