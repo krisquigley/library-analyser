@@ -176,6 +176,28 @@ assert.equal(byId('m3u-arc-0').open, true, 'a new arc opens');
 assert.match(byId('m3u-arc-0').children[0].textContent, /^Arc 1 · Rising energy · length not set/);
 """)
 
+    def test_a_selected_track_keeps_its_neighbours_in_focus_and_dims_the_rest_of_the_graph(self):
+        self.run_scenario(r"""
+library.push(track('c', 0.5, 0.1, 0.3));
+routes['/api/mood-axis-graph'] = r => r.respond(graphBody(library, {links: [[0, 1, 0.9], [1, 2, 0.8]]}));
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/reset'] = r => r.respond(accepted(null, {epoch: 2}));
+await settle(6);
+await press('reload-graph'); await settle(6);
+assert.equal(mounted.links.length, 2);
+const colours = () => mounted.nodes.map(node => nodeColour(node));
+const links = () => mounted.links.map(link => linkColour(link));
+const bright = mounted.nodes.map(node => node.color);
+assert.deepEqual(colours(), bright, 'nothing is dimmed before a selection');
+await search('a'); await settle(2);
+await chooseRow('a'); await settle(4); await untilCameraSettles();
+assert.deepEqual(colours(), [bright[0], bright[1], 'rgba(120,135,160,0.1)'], 'a and its neighbour b stay bright; c is dimmed');
+assert.notEqual(links()[0], 'rgba(240,240,240,0.03)');
+assert.equal(links()[1], 'rgba(240,240,240,0.03)', 'the link from b to c is not one of a\'s');
+await press('reset'); await settle(4);
+assert.deepEqual(colours(), bright, 'clearing the selection restores the graph');
+""")
+
     def test_tags_are_previewed_for_the_current_track_and_written_only_when_approved(self):
         self.run_scenario(r"""
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));

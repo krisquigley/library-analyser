@@ -1,6 +1,7 @@
 // What the 3D graph shows beside its nodes (#146): the axes, the colour and link legends, and hover labels.
 
 import {displayNumber} from '../../domain/display-number.js';
+import {isFocusedLink, isFocusedTrack, neighbourFocus} from '../../domain/neighbour-focus.js';
 
 const SCENE_AXIS_KEYS = Object.freeze(['x', 'y', 'z']);
 // The offset leaves the origin outside the occupied node volume; it is not a data minimum.
@@ -72,4 +73,30 @@ function nativeRange(range) {
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, character => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'}[character]));
+}
+
+// #243: dimmed colours for what lies outside the selected track's neighbourhood. The graph scales node opacity by the
+// colour's alpha, and link opacity comes from each link's colour.
+const DIMMED_NODE_COLOR = 'rgba(120,135,160,0.1)';
+const DIMMED_LINK_COLOR = 'rgba(240,240,240,0.03)';
+
+// The graph hands links back with their ends replaced by the nodes they join; either form names a track.
+function linkEndTrackId(end) {
+  return end && typeof end === 'object' ? end.id : end;
+}
+
+function linkEnds(link) {
+  return {source: linkEndTrackId(link.source), target: linkEndTrackId(link.target)};
+}
+
+export function graphNeighbourFocus(visible, selectedTrackId) {
+  return neighbourFocus({trackIds: visible.nodes.map(node => node.id), links: visible.links.map(linkEnds)}, selectedTrackId);
+}
+
+export function focusedNodeColor(focus) {
+  return node => (isFocusedTrack(focus, node.id) ? node.color : DIMMED_NODE_COLOR);
+}
+
+export function focusedLinkColor(focus) {
+  return link => (isFocusedLink(focus, linkEnds(link)) ? relatednessLinkColor(link) : DIMMED_LINK_COLOR);
 }

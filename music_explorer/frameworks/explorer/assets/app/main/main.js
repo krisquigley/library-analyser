@@ -60,7 +60,7 @@ import {createTrackSelection} from '../application/select-track/select-track.js'
 import {moodStripMarks} from '../domain/mood-strip.js';
 import {moodStripViewModel} from '../adapters/presenters/mood-strip-presenter.js';
 import {moodStripView} from '../frameworks/views/mood-strip-view.js';
-import {graphAxisSpec, linkLabel, nodeLabel, relatednessLinkColor} from '../adapters/presenters/graph-scene-presenter.js';
+import {focusedLinkColor, focusedNodeColor, graphAxisSpec, graphNeighbourFocus, linkLabel, nodeLabel, relatednessLinkColor} from '../adapters/presenters/graph-scene-presenter.js';
 import {cameraViewDirection, selectionFocusPose} from '../domain/camera-arc.js';
 import {createCameraFocus} from '../application/focus-camera/focus-camera.js';
 import {CAMERA_FOCUS_EVENT_TYPES} from '../application/focus-camera/camera-focus-events.js';
@@ -177,7 +177,7 @@ const selectedNodeValue=selectedTrackNodeSize(currentTrackId);
 function updateSelectedTrackVisuals(){
   if(typeof document!=='undefined') for(const row of document.querySelectorAll('#tracks tr[data-track-id]')){row.className=row.dataset.trackId===currentTrackId()?'current':''; const button=row.querySelector ? row.querySelector('button') : null; if(button){if(row.className) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');}}
   const graph=graphStage.current();
-  if(graph){graphRendering.wake(); graph.nodeVal(selectedNodeValue); if(typeof graph.refresh==='function') graph.refresh(); syncSelectedNodeHalo(graph,graphState().visible); focusPendingCameraSelection();}
+  if(graph){graphRendering.wake(); graph.nodeVal(selectedNodeValue); focusNeighbourhood(graph); if(typeof graph.refresh==='function') graph.refresh(); syncSelectedNodeHalo(graph,graphState().visible); focusPendingCameraSelection();}
   else if(graphState().visible.nodes.length) drawCanvasFallback(graphState().visible,null,currentTrackId());
   renderMoodStrip(graphState().visible);
 }
@@ -196,6 +196,8 @@ function renderDetail(detail){trackDetail.show(trackDetailViewModel(detail));}
 function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraphDto(graph),{genreThresholdApplies:isIndexedMoodAxisGraph(graph)});}
 function fitGraph(elem){const size=fitGraphToElement(graphStage.current(),elem); graphRendering.wake(); return size;}
 
+// #243: once per selection or new graph data, never per frame.
+function focusNeighbourhood(graph){const focus=graphNeighbourFocus(graphState().visible,currentTrackId()); graph.nodeColor(focusedNodeColor(focus)).linkColor(focusedLinkColor(focus));}
 function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||graphState().visible.nodes,currentTrackId());}
 function animateGraphAxes(timestamp){
   const graph=graphStage.current();
@@ -260,7 +262,7 @@ function renderMap(data){
   const elem=graphContainer();
   if(typeof ForceGraph3D!=='function'){nodeHalo.clear(); drawCanvasFallback(data,elem,currentTrackId()); renderMoodStrip(data); return;}
   const graph=graphStage.ensure(elem,()=>{observeElementResize(elem,()=>fitGraph(elem)); observeGraphInput(elem,()=>graphRendering.wake()); if(typeof requestAnimationFrame==='function') graphStage.startFrames(requestAnimationFrame,animateGraphAxes);});
-  observeCameraFocusControls(graph); const size=fitGraph(elem); graphDataMount.mount(graph,data); syncSelectedNodeHalo(graph,data); graphFraming.frame(graph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();
+  observeCameraFocusControls(graph); const size=fitGraph(elem); graphDataMount.mount(graph,data); focusNeighbourhood(graph); syncSelectedNodeHalo(graph,data); graphFraming.frame(graph,data.nodes,size); focusPendingCameraSelection(true); graphRendering.wake();
   renderMoodStrip(data);
 }
 function buildControls(){const root=document.getElementById('controls'); buildGraphControls(root);}
