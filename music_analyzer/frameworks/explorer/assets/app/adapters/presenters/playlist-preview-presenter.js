@@ -3,6 +3,7 @@
 
 import {displayDuration} from '../../domain/display-duration.js';
 import {displayNumber} from '../../domain/display-number.js';
+import {trackPlaybackViewModel} from './track-playback-presenter.js';
 
 const UNKNOWN = '—';
 export const ENERGY_CHART = Object.freeze({width: 300, height: 80, padding: 8});
@@ -17,7 +18,8 @@ const PREVIEW_EVENT_VIEWS = Object.freeze({
 });
 
 export function playlistPreviewViewModel() {
-  return {previewDisabled: false, status: {text: '', urgent: false}, rows: [], chart: playlistEnergyChart([])};
+  return {previewDisabled: false, status: {text: '', urgent: false}, rows: [], chart: playlistEnergyChart([]),
+    playback: trackPlaybackViewModel()};
 }
 
 // Preview waits until the recipe is complete, saying what it still needs; the missing controls are flagged (#234).
@@ -80,6 +82,7 @@ function previewedLength(tracks) {
 function previewRows({tracks, transitions}) {
   const stepInto = new Map(transitions.map(step => [step.toTrackId, step]));
   return tracks.map((track, place) => ({
+    trackId: track.trackId,
     place: String(place + 1),
     track: trackName(track),
     length: displayDuration(track.durationSeconds) ?? UNKNOWN,

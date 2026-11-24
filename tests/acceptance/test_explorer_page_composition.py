@@ -86,13 +86,50 @@ assert.deepEqual(heard.filter(type => type.startsWith('playlist-')), ['playlist-
 assert.deepEqual(heard.filter(type => type.startsWith('tag-write-')), ['tag-write-playlist-withdrawn', 'tag-write-playlist-offered']);
 const cells = byId('playlist-preview-tracks').children.map(line => line.children.map(cell => cell.textContent));
 assert.deepEqual(cells, [
-  ['1', 'Public synthetic – Track b', '4:02', '120.0', 'A minor', '0.5', '—', 'Start'],
-  ['2', 'Public synthetic – Track a', '—', '121.0', '—', '—', '—', 'Key unknown, +1.0 BPM'],
+  ['▶', '1', 'Public synthetic – Track b', '4:02', '120.0', 'A minor', '0.5', '—', 'Start'],
+  ['▶', '2', 'Public synthetic – Track a', '—', '121.0', '—', '—', '—', 'Key unknown, +1.0 BPM'],
 ]);
 assert.equal(byId('playlist-preview-status').textContent, '2 tracks · 4:02, plus 1 of unknown length. Warning: Only 2 of 10 tracks fit');
 assert.equal(byId('playlist-energy-chart').getAttribute('aria-label'),
   'Energy across 2 tracks: the arc target (dashed) and the energy each track reaches (solid).');
 assert.equal(requests.filter(r => r.path === '/api/playlists/m3u').length, 0, 'a preview downloads nothing');
+''')
+
+
+    def test_a_previewed_track_plays_from_its_row_and_stops_when_the_playlist_closes(self):
+        """#258: the row's button plays the track's audio in the one player; closing the Playlist silences it."""
+        self.run_scenario(r'''
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/playlists/preview'] = r => r.respond({
+  tracks: [
+    {track_id: 'b', title: 'Track b', artist: 'Public synthetic', bpm: 120, key: null, camelot: null, arousal: null,
+      energy_level: null, energy_target: null, duration_seconds: 180},
+    {track_id: 'a', title: 'Track a', artist: 'Public synthetic', bpm: 121, key: null, camelot: null, arousal: null,
+      energy_level: null, energy_target: null, duration_seconds: 200}],
+  transitions: [{from_track_id: 'b', to_track_id: 'a', key_compatible: null, bpm_step_smooth: true, bpm_change: 1}],
+  complete: true, warning: null});
+await settle(6);
+await search('b'); await settle(2);
+await chooseRow('b'); await settle(4); await untilCameraSettles();
+await press('open-playlist'); await settle(1);
+const bpmMin = byId('m3u-bpm-min'); bpmMin.value = '118'; bpmMin.onchange();
+const bpmMax = byId('m3u-bpm-max'); bpmMax.value = '126'; bpmMax.onchange();
+await press('preview-playlist'); await settle(2);
+const player = byId('playlist-track-player');
+const play = id => byId('playlist-preview-tracks').querySelectorAll('button').find(button => button.dataset.trackId === id);
+assert.equal(player.hidden, true, 'no player until a track is played');
+heard.length = 0;
+play('a').click(); await settle(1);
+assert.deepEqual([player.src, player.plays, player.hidden], ['/api/track-audio?track=a', 1, false]);
+player.dispatch('playing'); await settle(1);
+assert.deepEqual(heard.filter(type => type.startsWith('track-playback-')), ['track-playback-loading', 'track-playback-playing']);
+assert.deepEqual([play('a').getAttribute('aria-label'), play('b').getAttribute('aria-label')],
+  ['Pause Public synthetic – Track a', 'Play Public synthetic – Track b']);
+assert.equal(byId('playlist-player-status').textContent, 'Playing');
+assert.equal(requests.filter(r => r.path === '/api/track-audio').length, 0, 'the audio element fetches the file, not the page');
+await press('close-playlist'); await settle(1);
+assert.equal(heard.filter(type => type.startsWith('track-playback-')).at(-1), 'track-playback-stopped');
+assert.deepEqual([player.hidden, play('a').getAttribute('aria-pressed')], [true, 'false']);
 ''')
 
 
