@@ -57,5 +57,17 @@ class ExplorerViewportLayoutTests(unittest.TestCase):
         self.assertIn('::backdrop', css)
 
 
+    def test_the_header_stays_reachable_on_a_phone(self):
+        """#245: on a narrow screen the graph status squeezed the header until its tool buttons fell under the drawer."""
+        css = (ASSETS / 'style.css').read_text()
+        self.assertIn('.app-bar .graph-load-status button{', css)
+        self.assertIn('white-space:nowrap', css[css.index('.app-bar .graph-load-status button{'):].split('}')[0])
+        narrow = css[css.index('@media(max-width:560px){'):]
+        narrow = narrow[:narrow.index('\n}\n')]
+        self.assertIn('.app-bar{flex-wrap:wrap', narrow, 'the tools take their own row')
+        self.assertIn('.app-tools{width:100%', narrow)
+        self.assertIn('--app-bar-height:', narrow, 'panels start below the taller header')
+
+
 if __name__ == '__main__':
     unittest.main()
