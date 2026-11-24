@@ -34,8 +34,19 @@ class ExplorerViewportLayoutTests(unittest.TestCase):
         for element in ('tracks', 'detail', 'undo', 'reset', 'controls',
                         'mood-strip', 'mood-strip-picker', 'mood-strip-value'):
             self.assertIn('overlay', html.ancestors[element][2], element)
-        for element in ('tracks-panel', 'candidate-panel', 'detail-panel'):
-            self.assertEqual(html.tags[element], 'details')
+        # #233: a header bar opens the tools; the Library is a drawer, the others are centred modal dialogs.
+        for tool in ('library', 'playlist', 'tag-write'):
+            self.assertEqual(html.tags[f'{tool}-panel'], 'dialog', tool)
+            self.assertEqual(html.tags[f'open-{tool}'], 'button', tool)
+            self.assertIn('app-bar', html.ancestors[f'open-{tool}'], tool)
+        for tool in ('playlist', 'tag-write'):
+            self.assertIn(f'{tool}-panel', html.ancestors[f'close-{tool}'], tool)
+        self.assertIn('library-panel', html.ancestors['tracks'])
+        self.assertIn('playlist-panel', html.ancestors['controls'])
+        self.assertIn('tag-write-panel', html.ancestors['tag-write'])
+        self.assertIn('app-bar', html.ancestors['graph-load-status'], 'a graph failure and its retry stay in view')
+        self.assertIn('playlist-panel', html.ancestors['playlist-controls'])
+        self.assertEqual(html.tags['detail-panel'], 'section', 'the selected track stays in view beside the graph')
         self.assertNotIn('candidates', html.tags, 'no numbered candidate list below the controls')
         css = (ASSETS / 'style.css').read_text()
         self.assertIn('position:fixed', css)
@@ -43,6 +54,7 @@ class ExplorerViewportLayoutTests(unittest.TestCase):
         self.assertIn('pointer-events:none', css)
         self.assertIn('pointer-events:auto', css)
         self.assertNotIn('grid-template-columns', css)
+        self.assertIn('::backdrop', css)
 
 
 if __name__ == '__main__':

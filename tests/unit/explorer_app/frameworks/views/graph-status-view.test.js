@@ -63,3 +63,19 @@ test('titles and messages are text, never markup', () => {
   assert.ok(!descendants(panel).some(node => node.tagName === 'IMG'));
   assert.equal(panel.children[1].textContent, '<img src=x onerror=alert(1)>');
 });
+
+test('#233: with a playlist host on the page, the status stays in view and the playlist controls go to the host', () => {
+  const hosted = installFakeDocument(['graph-load-status', 'playlist-controls']);
+  const {view, heard} = watching();
+  const [panel, host] = [hosted['graph-load-status'], hosted['playlist-controls']];
+  view.show({status: 'ready', message: 'Graph ready: 12 tracks.'});
+  assert.deepEqual(panel.children.map(node => node.textContent), ['Library graph', 'Graph ready: 12 tracks.', 'Reload graph']);
+  assert.deepEqual(host.children.map(node => node.id), ['m3u']);
+  const controls = host.children[0];
+  view.show({status: 'ready', message: 'Graph ready: 5 of 12 tracks shown.'});
+  assert.equal(host.children[0], controls, 'a graph that stays ready keeps the live playlist controls');
+  view.show({status: 'loading', message: 'Reloading.'});
+  assert.deepEqual(host.children, [], 'no playlist controls while the graph reloads');
+  view.show({status: 'ready', message: 'Graph ready: 12 tracks.'});
+  assert.deepEqual([host.children.length, heard.playlistControls], [1, 2]);
+});

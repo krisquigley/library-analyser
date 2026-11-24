@@ -27,7 +27,7 @@ class DesignTokenTests(unittest.TestCase):
     def test_every_control_is_styled_for_the_dark_theme(self):
         css = STYLESHEETS[0].read_text()
         for selector in ('button{', 'button:disabled{', 'select:not([multiple]){', 'input[type=checkbox],input[type=radio],input[type=range]{',
-                         'th{', 'td{', 'legend{', 'summary::before{'):
+                         'th{', 'td{', 'legend{', '.panel-header{', '.panel-close{', '.modal::backdrop{'):
             self.assertIn(selector, css)
         self.assertIn('color-scheme:dark', css)
         self.assertIn('@media(prefers-reduced-motion:reduce)', css)
