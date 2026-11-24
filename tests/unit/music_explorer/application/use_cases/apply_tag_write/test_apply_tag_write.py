@@ -31,6 +31,8 @@ class ApplyTagWriteTests(unittest.TestCase):
         self.assertEqual((TagWriteOutcome('/music/t1.mp3', 'written', 'BPM 124, key Am'),
                           TagWriteOutcome('/music/t2.mp3', 'written', 'BPM 124, key Am')), report.outcomes)
         self.assertEqual(RESCAN_NOTICE, report.notice)
+        self.assertIn('music-analyzer scan', report.notice)
+        self.assertIn('keeps their analysis and overrides', report.notice, 'a rescan carries the evidence over (#223)')
         self.assertEqual('applied', self.actions.find('token-1').state)
         self.assertEqual(TagWriteApplied('token-1', 2, 0, 0), self.events.published[-1])
 

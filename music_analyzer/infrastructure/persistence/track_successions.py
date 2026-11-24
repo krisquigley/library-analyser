@@ -3,9 +3,12 @@
 A departure is a track whose file is gone but whose analysis runs or overrides remain. An arrival is an
 available track with no runs or overrides of its own. Each is identified by its audio stream. Carrying over
 moves the runs, overrides and batch state to the successor in one transaction, records the succession, and
-rebuilds the derived graph feature evidence for the successor from the moved run's stored stages. Stage
-results, the raw evidence, are never rewritten.
+rebuilds the derived graph feature evidence for the successor from the moved run's stored stages. Saved
+playlist recipes that start on the predecessor start on its successor. Stage results, the raw evidence, are
+never rewritten.
 """
+import json
+
 from music_analyzer.application.ports.track_successions import SuccessionCandidates
 from music_analyzer.domain.track_succession import StreamedTrack, TrackSuccession
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
@@ -44,11 +47,24 @@ class SQLiteTrackSuccessions(SQLiteAnalysisRepository):
             db.execute('DELETE FROM graph_feature_evidence WHERE track_id=?', (predecessor,))
             db.execute('INSERT INTO track_successions(successor_id,predecessor_id,audio_sha256) VALUES(?,?,?)',
                        (successor, predecessor, succession.audio_sha256))
+            _follow_in_saved_recipes(db, succession)
             self._invalidate_current_graph_snapshot(db, successor)
             latest = self._latest_active_run_for_track(db, successor)
             if latest is not None and latest[1] == 'completed':
                 self._persist_graph_feature_evidence(db, successor, latest[0])
             return True
+
+
+def _follow_in_saved_recipes(db, succession: TrackSuccession) -> None:
+    for name, recipe_json in db.execute('SELECT name,recipe_json FROM playlist_recipes').fetchall():
+        try:
+            document = json.loads(recipe_json)
+        except ValueError:
+            continue
+        if isinstance(document, dict) and document.get('start_track_id') == succession.predecessor_id:
+            document['start_track_id'] = succession.successor_id
+            db.execute('UPDATE playlist_recipes SET recipe_json=?,updated_at=CURRENT_TIMESTAMP WHERE name=?',
+                       (json.dumps(document, ensure_ascii=False, allow_nan=False, sort_keys=True), name))
 
 
 def _holds(db, condition, track_id, audio_sha256) -> bool:
