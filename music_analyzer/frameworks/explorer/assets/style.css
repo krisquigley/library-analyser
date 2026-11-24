@@ -226,6 +226,11 @@ tbody tr:hover{background:var(--surface-hover)}
 #detail .field{border-top:1px solid var(--border);padding-top:var(--space-2);margin:var(--space-2) 0}
 #detail .field h4{font-size:var(--text-xs);margin:0;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint)}
 #detail .field p{font-size:var(--text-s);margin:var(--space-1) 0;color:var(--text)}
+/* #236: key facts first, as badges that say where they come from; fields without evidence share one line. */
+#detail .key-facts{display:flex;flex-wrap:wrap;gap:var(--space-1);margin:0 0 var(--space-2)}
+#detail .key-fact{padding:var(--space-1) var(--space-2);border:1px solid var(--border-strong);border-radius:var(--radius-round);background:var(--surface-raised);font-size:var(--text-s);font-weight:600;font-variant-numeric:tabular-nums;cursor:help}
+#detail .unavailable-evidence summary{cursor:pointer;font-size:var(--text-s);color:var(--text-muted)}
+#detail .unavailable-evidence p{color:var(--text-muted)}
 #detail .score-row{margin:var(--space-2) 0;min-width:0;font-size:var(--text-s)}
 #detail .score-row>span{display:block;overflow-wrap:anywhere}
 /* Compact circular dial: left is zero, top is half, right is one. */
