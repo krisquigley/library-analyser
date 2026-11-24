@@ -39,10 +39,13 @@ export function measuredValue(name, field) {
   return (Array.isArray(values) && values.find(([label, value]) => label === name && usable(value))) || null;
 }
 
+// The analyzer's rule (#251): explicit `model` entries must all name this model; without one, the model id is a key.
 function fromModelOnScale(field, model, scale) {
-  const provenance = Object.fromEntries(field.automatic?.provenance || []);
-  return model in provenance && (provenance.model == null || provenance.model === model)
-    && (provenance.scale == null || provenance.scale === scale);
+  const pairs = field.automatic?.provenance || [];
+  const named = pairs.filter(([key]) => key === 'model').map(([, value]) => value);
+  const fromModel = named.length ? named.every(value => value === model) : pairs.some(([key]) => key === model);
+  const scales = pairs.filter(([key]) => key === 'scale').map(([, value]) => value);
+  return fromModel && scales.every(value => value === scale);
 }
 
 function isSignificantScore([label, value]) {

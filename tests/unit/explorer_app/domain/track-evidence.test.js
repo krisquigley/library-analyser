@@ -40,3 +40,13 @@ test('BPM is a positive number and the key is non-blank text', () => {
   assert.deepEqual(measuredValue('key', {automatic: {values: [['key', ' '], ['key', 'A minor']]}}), ['key', 'A minor']);
   assert.equal(measuredValue('key', {automatic: {}}), null);
 });
+
+test('a model named explicitly in the provenance counts, as the analyzer counts it; a different one does not (#251)', () => {
+  const energy = provenance => ({automatic: {values: [['valence', 0.8], ['arousal', 0.6]], provenance}});
+  assert.deepEqual(energyEvidence(energy([['model', 'emomusic-msd-musicnn-2'], ['scale', 'native_valence_arousal_regression']])),
+    [['valence', 0.8], ['arousal', 0.6]]);
+  assert.equal(energyEvidence(energy([['model', 'some-other-model']])), null);
+  assert.equal(energyEvidence(energy([['model', 'emomusic-msd-musicnn-2'], ['scale', 'sigmoid_mean_score_0_1']])), null, 'the scale still has to match');
+  const mood = {automatic: {values: [['happy', 0.7]], provenance: [['model', 'mtg_jamendo_moodtheme-discogs-effnet-1']]}};
+  assert.deepEqual(scoreEvidence('mood', mood).scores, [['happy', 0.7]]);
+});
