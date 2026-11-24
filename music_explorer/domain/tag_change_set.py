@@ -7,6 +7,8 @@ give equal change sets, so an apply can tell when anything moved since the liste
 """
 from dataclasses import dataclass
 
+from music_explorer.domain.track_tag_values import bpm_tag_value, key_tag_value
+
 FILL_EMPTY = 'fill-empty'
 REPLACE_EXISTING = 'replace-existing'
 EXISTING_TAG_POLICIES = (FILL_EMPTY, REPLACE_EXISTING)
@@ -19,6 +21,29 @@ class TagChange:
     current: str | None
     proposed: str
     replaces: bool
+
+
+@dataclass(frozen=True)
+class TrackTagEvidence:
+    """What the analysis knows about one track's tempo and key, and where its file is."""
+    location: str
+    detected_bpm: object
+    tonic: object
+    scale: object
+    key_strength: object
+    manual_bpm: str | None
+    manual_key: str | None
+
+
+def planned_track_changes(evidence: TrackTagEvidence, *, current_bpm, current_key, policy: str,
+                          minimum_key_strength: float) -> tuple[TagChange, ...]:
+    """The BPM and key changes for one file, in that order; fields with nothing to change are left out."""
+    proposed_key = key_tag_value(evidence.tonic, evidence.scale, evidence.key_strength, evidence.manual_key,
+                                 minimum_strength=minimum_key_strength)
+    changes = (planned_change(evidence.location, 'bpm', current_bpm,
+                              bpm_tag_value(evidence.detected_bpm, evidence.manual_bpm), policy),
+               planned_change(evidence.location, 'key', current_key, proposed_key, policy))
+    return tuple(change for change in changes if change is not None)
 
 
 def planned_change(location: str, field: str, current, proposed, policy: str) -> TagChange | None:
