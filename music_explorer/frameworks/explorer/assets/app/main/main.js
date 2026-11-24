@@ -3,7 +3,7 @@ import {PLAYLIST_DOWNLOAD_EVENT_TYPES} from '../application/download-playlist/pl
 import {createPlaylistPreview} from '../application/preview-playlist/preview-playlist.js';
 import {PLAYLIST_PREVIEW_EVENT_TYPES} from '../application/preview-playlist/playlist-preview-events.js';
 import {playlistPreviewController} from '../adapters/controllers/playlist-preview-controller.js';
-import {playlistPreviewViewModel, presentPlaylistPreviewEvent} from '../adapters/presenters/playlist-preview-presenter.js';
+import {playlistPreviewViewModel, playlistReadinessViewModel, presentPlaylistPreviewEvent} from '../adapters/presenters/playlist-preview-presenter.js';
 import {playlistPreviewView} from '../frameworks/views/playlist-preview-view.js';
 import {EMPTY_PLAYLIST_DRAFT} from '../domain/playlist-draft.js';
 import {createPlaylistRecipeExport} from '../application/export-playlist-recipe/export-playlist-recipe.js';
@@ -102,6 +102,9 @@ const playlistPreview=createPlaylistPreview({explorerApi,playlistDraft:playlistD
 const playlistPreviewControls=playlistPreviewController({playlistPreview,currentTrackId});
 const playlistPreviewPanel=playlistPreviewView({onPreviewRequested:()=>playlistPreviewControls.previewRequested()});
 for(const type of PLAYLIST_PREVIEW_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistPreviewPanel.show(presentPlaylistPreviewEvent(event)));
+// #234: Preview waits, saying why, until the recipe is complete; checked on every draft edit and change of track.
+function showPlaylistReadiness(){const readiness=playlistReadinessViewModel(playlistPreview.gaps(currentTrackId())); playlistPreviewPanel.show(readiness); playlistControlsView.show(readiness);}
+for(const type of ['playlist-draft-edited','saved-recipe-loaded']) playlistEvents.subscribe(type,showPlaylistReadiness);
 const playlistRecipeExport=createPlaylistRecipeExport({playlistDraft:playlistDraftSession,playlistFile:browserPlaylistFile(),eventBus:playlistEvents});
 const recipeExportControls=playlistRecipeExportController({playlistRecipeExport,currentTrackId});
 const recipeExportPanel=playlistRecipeExportView({onExportRequested:()=>recipeExportControls.exportRequested()});
@@ -165,6 +168,7 @@ const selectionEvents=createInMemoryEventBus();
 const trackSelection=createTrackSelection({explorerApi,selectionTickets,selectionSession,eventBus:selectionEvents});
 // A preview's approval belongs to the track it was made for; any change of track discards it.
 for(const type of ['track-chosen','selection-rewinding','library-selection-changed','no-track-selected']) selectionEvents.subscribe(type,()=>tagWriteControls.trackChanged());
+for(const type of TRACK_SELECTION_EVENT_TYPES) selectionEvents.subscribe(type,showPlaylistReadiness);
 selectionEvents.subscribe('track-chosen',()=>{cameraFocus.claimViewForSelection('new-selection'); renderDetailLoading(); updateSelectedTrackVisuals();});
 selectionEvents.subscribe('selection-rewinding',()=>{cameraFocus.claimViewForSelection('new-selection'); renderDetailLoading();});
 selectionEvents.subscribe('selection-accepted',event=>cameraFocus.requestForAcceptedSelection(event.focusCamera?event.trackId:null));
@@ -197,7 +201,7 @@ async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose
 function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId()}));}
 function loadGraph(){return graphLoad.load();}
 
-function appendM3UDownloadControls(panel){const steps=playlistGeneratorSteps(); playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]}),steps.finish); panel.append(steps.preview,steps.finish); playlistPreviewPanel.mount(steps.preview,playlistPreviewViewModel()); recipeExportPanel.mount(steps.finish); savedRecipePanel.mount(steps.finish,savedRecipesViewModel());}
+function appendM3UDownloadControls(panel){const steps=playlistGeneratorSteps(); playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]}),steps.finish); panel.append(steps.preview,steps.finish); playlistPreviewPanel.mount(steps.preview,playlistPreviewViewModel()); showPlaylistReadiness(); recipeExportPanel.mount(steps.finish); savedRecipePanel.mount(steps.finish,savedRecipesViewModel());}
 function mountTagWritePanel(){const root=document.getElementById('tag-write'); if(root) tagWritePanel.mount(root,tagWriteViewModel());}
 function renderInitialDetail(){trackDetail.showNone();}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}

@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ARC_LENGTH_UNITS, EMPTY_PLAYLIST_DRAFT, addDraftArc, arcsSetTheLength, editDraftArc, editPlaylistDraft,
-  minimumKeyStrengthApplies, moveDraftArc, playlistRecipeOf, removeDraftArc,
+  minimumKeyStrengthApplies, moveDraftArc, playlistDraftGaps, playlistRecipeOf, removeDraftArc,
 } from '../../../../music_explorer/frameworks/explorer/assets/app/domain/playlist-draft.js';
 
 test('a new draft asks for ten tracks with harmonic mixing, no arcs and arc lengths in tracks', () => {
@@ -98,4 +98,20 @@ test("a chain with lengths sets the playlist's length in the draft's unit", () =
 
 test('a draft without a start track has no recipe', () => {
   assert.throws(() => playlistRecipeOf(EMPTY_PLAYLIST_DRAFT, null), /Select a start track first/);
+});
+
+test('a draft says what it still needs before it can be previewed (#234)', () => {
+  const gaps = (changes, start = 'track-1') => playlistDraftGaps({...EMPTY_PLAYLIST_DRAFT, ...changes}, start)
+    .map(gap => gap.control);
+  assert.deepEqual(gaps({}, null), ['start', 'bpmMin', 'bpmMax']);
+  assert.deepEqual(gaps({bpmMin: ' 120 ', bpmMax: '128'}), []);
+  assert.deepEqual(gaps({bpmMin: '120', bpmMax: '128', count: '', durationMinutes: ''}), ['length']);
+  assert.deepEqual(gaps({bpmMin: '120', bpmMax: '128', count: '', durationMinutes: '45'}), []);
+  const arc = length => ({shape: 'rise', low: '', high: '', length});
+  assert.deepEqual(gaps({bpmMin: '120', bpmMax: '128', count: '', energyArcs: [arc('8')]}), [], 'arcs with lengths set the length');
+  assert.deepEqual(gaps({bpmMin: '120', bpmMax: '128', energyArcs: [arc('')]}), [], 'one arc spans the playlist');
+  assert.deepEqual(gaps({bpmMin: '120', bpmMax: '128', energyArcs: [arc('8'), arc('')]}), ['arcLengths']);
+  assert.deepEqual(gaps({bpmMin: '120', bpmMax: '128', energyArcs: [arc(''), arc('')]}), ['arcLengths']);
+  assert.deepEqual(playlistDraftGaps(EMPTY_PLAYLIST_DRAFT, null).map(gap => gap.reason),
+    ['Select a start track first', 'Enter a minimum BPM', 'Enter a maximum BPM']);
 });

@@ -77,6 +77,7 @@ await settle(6);
 await search('b'); await settle(2);
 await chooseRow('b'); await settle(4); await untilCameraSettles();
 const bpmMin = byId('m3u-bpm-min'); bpmMin.value = '118'; bpmMin.onchange();
+const bpmMax = byId('m3u-bpm-max'); bpmMax.value = '126'; bpmMax.onchange();
 heard.length = 0;
 await press('preview-playlist'); await settle(2);
 const asked = request('/api/playlists/preview').url.searchParams;
@@ -220,6 +221,34 @@ await press('reset'); await settle(4);
 assert.deepEqual(labels(), [], 'clearing the selection removes the labels');
 """)
 
+    def test_preview_waits_with_its_reason_until_the_playlist_recipe_is_complete(self):
+        self.run_scenario(r"""
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/reset'] = r => r.respond(accepted(null, {epoch: 2}));
+routes['/api/playlists/preview'] = r => r.respond({tracks: [], transitions: [], complete: true, warning: null});
+await settle(6);
+const button = byId('preview-playlist'), reason = () => byId('playlist-preview-reason').textContent;
+assert.equal(button.disabled, true);
+assert.equal(reason(), 'To preview: select a start track first, enter a minimum BPM, enter a maximum BPM.');
+assert.deepEqual(['m3u-bpm-min', 'm3u-bpm-max'].map(id => byId(id).getAttribute('aria-required')), ['true', 'true']);
+assert.equal(byId('m3u-bpm-max').getAttribute('aria-invalid'), 'true');
+const type = (id, value) => { byId(id).value = value; byId(id).oninput(); };
+type('m3u-bpm-min', '118'); await settle(1);
+assert.equal(reason(), 'To preview: select a start track first, enter a maximum BPM.', 'checked as you type');
+type('m3u-bpm-max', '126'); type('m3u-count', ''); await settle(1);
+assert.equal(reason(), 'To preview: select a start track first, enter a track count or a duration.');
+assert.equal(byId('m3u-count').getAttribute('aria-invalid'), 'true');
+type('m3u-count', '12');
+await search('b'); await settle(2);
+await chooseRow('b'); await settle(4); await untilCameraSettles();
+assert.deepEqual([button.disabled, reason()], [false, ''], 'a complete recipe with a start track can be previewed');
+await press('preview-playlist'); await settle(2);
+assert.equal(request('/api/playlists/preview').url.searchParams.get('bpm_max'), '126');
+assert.equal(button.disabled, false);
+await press('reset'); await settle(4);
+assert.deepEqual([button.disabled, reason()], [true, 'To preview: select a start track first.']);
+""")
+
     def test_tags_are_previewed_for_the_current_track_and_written_only_when_approved(self):
         self.run_scenario(r"""
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
@@ -281,6 +310,7 @@ const target = byId('tag-write-target');
 assert.equal(target.children[1].disabled, true, 'no playlist to tag before a preview');
 await search('b'); await settle(2);
 await chooseRow('b'); await settle(4); await untilCameraSettles();
+for (const [id, value] of [['m3u-bpm-min', '118'], ['m3u-bpm-max', '126']]) { byId(id).value = value; byId(id).oninput(); }
 await press('preview-playlist'); await settle(2);
 assert.deepEqual([target.children[1].disabled, target.children[1].textContent], [false, 'Previewed playlist (2 tracks)']);
 target.value = 'previewed-playlist';

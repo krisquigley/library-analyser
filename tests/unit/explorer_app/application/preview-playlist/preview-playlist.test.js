@@ -7,10 +7,9 @@ import {EMPTY_PLAYLIST_DRAFT} from '../../../../../music_explorer/frameworks/exp
 
 const PREVIEW = Object.freeze({tracks: [], transitions: [], complete: true, warning: null});
 
-function harness({previewPlaylist} = {}) {
+function harness({previewPlaylist, draft = {...EMPTY_PLAYLIST_DRAFT, bpmMin: '120', bpmMax: '128'}} = {}) {
   const requests = [];
   const published = [];
-  const draft = {...EMPTY_PLAYLIST_DRAFT, bpmMin: '120', bpmMax: '128'};
   const explorerApi = {previewPlaylist: previewPlaylist || (async recipe => { requests.push(recipe); return PREVIEW; })};
   const playlistPreview = createPlaylistPreview({explorerApi, playlistDraft: {read: () => ({draft}), write() {}},
     eventBus: {publish: event => published.push(event), subscribe() {}}});
@@ -56,4 +55,13 @@ test('an overtaken preview is never shown', async () => {
   assert.deepEqual(published.map(event => event.type),
     ['playlist-preview-started', 'playlist-preview-started', 'playlist-previewed']);
   assert.equal(published.at(-1).preview, later);
+});
+
+test('the gaps in the draft are told before a preview, and an incomplete draft is never sent (#234)', async () => {
+  const {playlistPreview, requests, published} = harness({draft: {...EMPTY_PLAYLIST_DRAFT, bpmMin: '120'}});
+  assert.deepEqual(playlistPreview.gaps('track-1').map(gap => gap.control), ['bpmMax']);
+  assert.deepEqual(published, [], 'asking what is missing publishes nothing');
+  await playlistPreview.preview('track-1');
+  assert.deepEqual(requests, []);
+  assert.deepEqual(published.at(-1), {type: 'playlist-preview-failed', message: 'Enter a maximum BPM'});
 });

@@ -9,10 +9,17 @@ const PREVIEW_COLUMNS = Object.freeze([
 
 export function playlistPreviewView({onPreviewRequested}) {
   let mounted = null;
+  let busy = false;
+  let ready = true;
 
   function show(update) {
     if (!mounted) return;
-    if (update.previewDisabled !== undefined) mounted.button.disabled = update.previewDisabled;
+    if (update.previewDisabled !== undefined) busy = update.previewDisabled;
+    if (update.readiness) {
+      ready = update.readiness.ready;
+      mounted.reason.textContent = update.readiness.reason;
+    }
+    mounted.button.disabled = busy || !ready;
     if (update.status) showStatus(mounted.status, update.status);
     if (update.rows) mounted.body.replaceChildren(...update.rows.map(previewRow));
     if (update.chart) drawEnergyChart(mounted.chart, update.chart);
@@ -21,6 +28,8 @@ export function playlistPreviewView({onPreviewRequested}) {
   function mount(panel, viewModel) {
     const button = element('button', {id: 'preview-playlist', type: 'button', textContent: 'Preview'});
     button.onclick = () => onPreviewRequested();
+    const reason = element('p', {id: 'playlist-preview-reason', className: 'playlist-preview-reason'});
+    button.setAttribute('aria-describedby', reason.id);
     const status = element('p', {id: 'playlist-preview-status', className: 'muted'});
     const chart = element('canvas', {id: 'playlist-energy-chart', className: 'playlist-energy-chart'});
     chart.setAttribute('role', 'img');
@@ -33,9 +42,9 @@ export function playlistPreviewView({onPreviewRequested}) {
     table.append(head, body);
     const section = element('section', {id: 'playlist-preview'});
     section.setAttribute('aria-label', 'Playlist preview');
-    section.append(button, status, chart, table);
+    section.append(button, reason, status, chart, table);
     panel.append(section);
-    mounted = {button, status, chart, body};
+    mounted = {button, reason, status, chart, body};
     show(viewModel);
   }
 

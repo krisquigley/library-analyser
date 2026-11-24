@@ -57,6 +57,30 @@ export function playlistRecipeOf(draft, startTrackId) {
   });
 }
 
+// What the draft still needs before the server can walk it (#234): the controls left blank that it requires.
+// The ranges stay the server's to check; only what is missing is told here, in the order the steps ask for it.
+export function playlistDraftGaps(draft, startTrackId) {
+  const gaps = [];
+  if (!startTrackId) gaps.push(draftGap('start', 'Select a start track first'));
+  if (blank(draft.bpmMin)) gaps.push(draftGap('bpmMin', 'Enter a minimum BPM'));
+  if (blank(draft.bpmMax)) gaps.push(draftGap('bpmMax', 'Enter a maximum BPM'));
+  if (!arcsSetTheLength(draft) && blank(draft.count) && blank(draft.durationMinutes)) {
+    gaps.push(draftGap('length', 'Enter a track count or a duration'));
+  }
+  if (draft.energyArcs.length > 1 && draft.energyArcs.some(arc => blank(arc.length))) {
+    gaps.push(draftGap('arcLengths', 'Give every arc a length'));
+  }
+  return Object.freeze(gaps);
+}
+
+function draftGap(control, reason) {
+  return Object.freeze({control, reason});
+}
+
+function blank(value) {
+  return String(value ?? '').trim() === '';
+}
+
 function withArcs(draft, energyArcs) {
   return Object.freeze({...draft, energyArcs});
 }
