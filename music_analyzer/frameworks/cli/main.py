@@ -20,6 +20,7 @@ from music_analyzer.infrastructure.analysis.fingerprint import recipe_fingerprin
 from music_analyzer.interface_adapters.presenters.batch import present_batch
 
 from music_analyzer.application.use_cases.scan_library import ScanLibrary, ResolveTrack
+from music_analyzer.application.use_cases.carry_over_tag_changes.carry_over_tag_changes import CarryOverTagChanges
 from music_analyzer.application.dto.catalogue import ScanLimits
 from music_analyzer.infrastructure.audio.metadata import MutagenMetadataReader
 from music_analyzer.infrastructure.filesystem.inventory import LocalInventory
@@ -31,6 +32,8 @@ from music_analyzer.application.use_cases.active_library import active_exclusion
 from music_analyzer.infrastructure.analysis.essentia import EssentiaEngine, VerifiedModels, load_backend
 from music_analyzer.infrastructure.audio.ffmpeg import FFmpegDecoder
 from music_analyzer.infrastructure.persistence.analysis import SQLiteAnalysisRepository
+from music_analyzer.infrastructure.persistence.track_successions import SQLiteTrackSuccessions
+from music_analyzer.infrastructure.event_bus import InProcessEventBus
 from music_analyzer.interface_adapters.presenters.analysis import present_analysis
 from music_analyzer.application.use_cases.run_doctor import RunDoctor
 from music_analyzer.application.use_cases.models import DownloadModels, VerifyModels
@@ -336,7 +339,8 @@ def main(argv: list[str] | None = None) -> int:
             limits = ScanLimits(args.max_entries, args.max_file_bytes, args.max_total_bytes)
             settings = load_settings(**overrides)
             report = ScanLibrary(LocalInventory(MutagenMetadataReader()), SQLiteAnalysisRepository(settings.database)).execute(args.root, limits)
-            output = present_scan(report, as_json=args.json)
+            carried_over = CarryOverTagChanges(SQLiteTrackSuccessions(settings.database), InProcessEventBus()).execute()
+            output = present_scan(report, carried_over, as_json=args.json)
             ready = report.complete
         elif args.command == 'status':
             queue = SQLiteBatchQueue(load_settings(**overrides).database)
