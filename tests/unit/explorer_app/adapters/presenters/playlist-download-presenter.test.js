@@ -29,9 +29,12 @@ test('each arc row shows its values and which way it can move', () => {
   draft = editDraftArc(draft, 1, {shape: 'peak', length: '20', low: '0.2', high: '0.9'});
   const view = playlistControlsViewModel({draft, downloadState: 'idle', moods: []});
   assert.deepEqual(view.arcs, [
-    {shape: 'rise', length: '', low: '', high: '', canMoveEarlier: false, canMoveLater: true},
-    {shape: 'peak', length: '20', low: '0.2', high: '0.9', canMoveEarlier: true, canMoveLater: true},
-    {shape: 'rise', length: '', low: '', high: '', canMoveEarlier: true, canMoveLater: false},
+    {shape: 'rise', length: '', low: '', high: '', canMoveEarlier: false, canMoveLater: true,
+      summary: 'Arc 1 · Rising energy · length not set · default energy range'},
+    {shape: 'peak', length: '20', low: '0.2', high: '0.9', canMoveEarlier: true, canMoveLater: true,
+      summary: 'Arc 2 · Energy peak · 20 minutes · energy 0.2 to 0.9'},
+    {shape: 'rise', length: '', low: '', high: '', canMoveEarlier: true, canMoveLater: false,
+      summary: 'Arc 3 · Rising energy · length not set · default energy range'},
   ]);
   assert.equal(view.arcLengthPlaceholder, 'minutes');
 });
@@ -52,7 +55,8 @@ test('an edited draft shows its arcs and enables only the inputs that apply', ()
   const draft = editDraftArc(addDraftArc(EMPTY_PLAYLIST_DRAFT), 0, {shape: 'dip', length: '5'});
   assert.deepEqual(presentPlaylistDownloadEvent({type: 'playlist-draft-edited', draft}), {
     minimumKeyStrengthDisabled: false, lengthDisabled: true, arcLengthPlaceholder: 'tracks',
-    arcs: [{shape: 'dip', length: '5', low: '', high: '', canMoveEarlier: false, canMoveLater: false}]});
+    arcs: [{shape: 'dip', length: '5', low: '', high: '', canMoveEarlier: false, canMoveLater: false,
+      summary: 'Arc 1 · Energy dip · 5 tracks · default energy range'}]});
 });
 
 test('download events update the button and the status', () => {
@@ -76,4 +80,12 @@ test('a loaded draft shows its values in the controls, with its arcs and what th
   const view = presentLoadedPlaylistDraft(loaded);
   assert.equal(view.values, loaded);
   assert.deepEqual([view.minimumKeyStrengthDisabled, view.lengthDisabled, view.arcs.length], [true, true, 1]);
+});
+
+test('#234: a collapsed arc row sums itself up in one line, a half-set range included', () => {
+  let draft = addDraftArc(addDraftArc(EMPTY_PLAYLIST_DRAFT));
+  draft = editDraftArc(draft, 0, {length: '1', low: '0.3'});
+  draft = editDraftArc(draft, 1, {shape: 'steady', high: '0.6'});
+  assert.deepEqual(playlistControlsViewModel({draft, downloadState: 'idle', moods: []}).arcs.map(arc => arc.summary),
+    ['Arc 1 · Rising energy · 1 track · energy from 0.3', 'Arc 2 · Steady energy · length not set · energy up to 0.6']);
 });

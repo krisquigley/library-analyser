@@ -9,6 +9,7 @@
     <section id="graph-load-status" class="graph-load-status" aria-label="Library graph"></section>
     <nav class="app-tools" aria-label="Tools">
       <button id="open-library" type="button" aria-controls="library-panel">Library</button>
+      <button id="open-filters" type="button" aria-controls="filters-panel">Filters</button>
       <button id="open-playlist" type="button" aria-controls="playlist-panel">Playlist</button>
       <button id="open-tag-write" type="button" aria-controls="tag-write-panel">Write tags</button>
     </nav>
@@ -31,10 +32,14 @@
     <div id="detail"></div>
     <div class="actions"><button id="undo">Undo selection</button><button id="reset">Clear selection</button></div>
   </section>
-  <dialog id="playlist-panel" class="panel modal" aria-labelledby="playlist-title">
-    <div class="panel-header"><h2 id="playlist-title">Playlist and graph filters</h2><button id="close-playlist" type="button" class="panel-close" aria-label="Close Playlist">×</button></div>
-    <p class="muted">Playlists start from the selected track. The 3D library graph loads automatically; search and track detail stay usable while it loads.</p>
+  <dialog id="filters-panel" class="panel drawer" aria-labelledby="filters-title">
+    <div class="panel-header"><h2 id="filters-title">Filters</h2><button id="close-filters" type="button" class="panel-close" aria-label="Close Filters">×</button></div>
+    <p class="muted">Choose the mood the graph colours by, and narrow the graph by BPM and genre.</p>
     <div id="controls"></div>
+  </dialog>
+  <dialog id="playlist-panel" class="panel modal" aria-labelledby="playlist-title">
+    <div class="panel-header"><h2 id="playlist-title">Playlist</h2><button id="close-playlist" type="button" class="panel-close" aria-label="Close Playlist">×</button></div>
+    <p class="muted">Builds a playlist that starts from the selected track. Work through the steps, preview, then save or download.</p>
     <div id="playlist-controls"></div>
   </dialog>
   <dialog id="tag-write-panel" class="panel modal" aria-labelledby="tag-write-title">

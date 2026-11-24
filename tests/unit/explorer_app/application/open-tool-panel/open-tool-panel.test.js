@@ -40,3 +40,11 @@ test('closing a panel that is already closed is rejected, and an unknown tool is
   assert.throws(() => toolPanels.toggle('settings'), /no tool panel called settings/i);
   assert.deepEqual(published, []);
 });
+
+test('the graph filters take the Library drawer\'s place beside the graph', () => {
+  const {toolPanels, published} = harness();
+  toolPanels.toggle('library');
+  toolPanels.toggle('filters');
+  assert.deepEqual(published.slice(1), [{type: 'tool-panel-closed', tool: 'library'},
+    {type: 'tool-panel-opened', tool: 'filters', presentation: 'drawer'}]);
+});

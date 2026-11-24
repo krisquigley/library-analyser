@@ -43,12 +43,29 @@ export function presentRejectedPlaylistInput(message) {
 function draftView(draft) {
   return {
     minimumKeyStrengthDisabled: !minimumKeyStrengthApplies(draft),
-    arcs: draft.energyArcs.map((arc, place) => arcRow(arc, place, draft.energyArcs.length)),
+    arcs: draft.energyArcs.map((arc, place) => arcRow(arc, place, draft)),
     arcLengthPlaceholder: draft.arcLengthUnit,
     lengthDisabled: arcsSetTheLength(draft),
   };
 }
 
-function arcRow({shape, length, low, high}, place, total) {
-  return {shape, length, low, high, canMoveEarlier: place > 0, canMoveLater: place < total - 1};
+function arcRow({shape, length, low, high}, place, draft) {
+  return {shape, length, low, high, canMoveEarlier: place > 0, canMoveLater: place < draft.energyArcs.length - 1,
+    summary: [`Arc ${place + 1}`, arcShapeCaption(shape), arcLengthSummary(length, draft.arcLengthUnit), arcRangeSummary(low, high)].join(' · ')};
+}
+
+function arcShapeCaption(shape) {
+  return (ARC_SHAPE_CHOICES.find(([value]) => value === shape) || [shape, shape])[1];
+}
+
+function arcLengthSummary(length, unit) {
+  if (length === '') return 'length not set';
+  return `${length} ${Number(length) === 1 ? unit.replace(/s$/, '') : unit}`;
+}
+
+function arcRangeSummary(low, high) {
+  if (low !== '' && high !== '') return `energy ${low} to ${high}`;
+  if (low !== '') return `energy from ${low}`;
+  if (high !== '') return `energy up to ${high}`;
+  return 'default energy range';
 }

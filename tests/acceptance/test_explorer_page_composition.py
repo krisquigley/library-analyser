@@ -158,6 +158,24 @@ assert.deepEqual(heard.filter(type => type.startsWith('tool-panel')), ['tool-pan
   'tool-panel-closed', 'tool-panel-opened', 'tool-panel-closed', 'tool-panel-opened', 'tool-panel-closed', 'tool-panel-closed']);
 """)
 
+    def test_filters_take_the_drawer_and_the_playlist_generator_is_a_series_of_steps(self):
+        self.run_scenario(r"""
+await settle(6);
+await press('open-filters');
+assert.deepEqual([byId('filters-panel').open, byId('filters-panel').modal, byId('library-panel').open], [true, false, false],
+  'the filters drawer takes the Library drawer\'s place');
+const steps = byId('playlist-controls').children.map(node => node.id);
+assert.deepEqual(steps, ['m3u-download-controls', 'playlist-step-preview', 'playlist-step-finish']);
+assert.deepEqual(byId('m3u-download-controls').children.map(node => node.id), ['playlist-step-tempo', 'playlist-step-energy']);
+const inFinish = walk(byId('playlist-step-finish')).map(node => node.id);
+for (const id of ['download-m3u', 'export-playlist-recipe', 'saved-recipes-list']) assert.ok(inFinish.includes(id), id);
+assert.ok(walk(byId('playlist-step-preview')).some(node => node.id === 'preview-playlist'));
+await press('m3u-add-arc'); await flush();
+assert.equal(byId('m3u-arc-0').tagName, 'DETAILS');
+assert.equal(byId('m3u-arc-0').open, true, 'a new arc opens');
+assert.match(byId('m3u-arc-0').children[0].textContent, /^Arc 1 · Rising energy · length not set/);
+""")
+
     def test_tags_are_previewed_for_the_current_track_and_written_only_when_approved(self):
         self.run_scenario(r"""
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));

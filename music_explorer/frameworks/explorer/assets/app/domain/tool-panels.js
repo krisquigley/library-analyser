@@ -1,5 +1,5 @@
-// The tools the header opens over the graph (#233): the Library as a drawer beside it, and the playlist generator and
-// Write tags as centred modals. Each panel is closed or open; only one modal is open at a time.
+// The tools the header opens over the graph (#233): the Library and the graph filters (#234) as drawers beside it, and
+// the playlist generator and Write tags as centred modals. Each panel is closed or open; one drawer and one modal at most.
 
 const TOOL_PANEL_TRANSITIONS = Object.freeze({
   closed: Object.freeze({open: 'open'}),
@@ -8,7 +8,7 @@ const TOOL_PANEL_TRANSITIONS = Object.freeze({
 
 export const TOOL_PANEL_STATES = Object.freeze(Object.keys(TOOL_PANEL_TRANSITIONS));
 
-export const TOOL_PANELS = Object.freeze({library: 'drawer', playlist: 'modal', 'tag-write': 'modal'});
+export const TOOL_PANELS = Object.freeze({library: 'drawer', filters: 'drawer', playlist: 'modal', 'tag-write': 'modal'});
 
 export class ToolPanelTransitionError extends Error {}
 
@@ -22,7 +22,6 @@ export function isToolPanel(name) {
   return typeof name === 'string' && Object.hasOwn(TOOL_PANELS, name);
 }
 
-export function modalsDisplacedBy(tool, openTools) {
-  if (TOOL_PANELS[tool] !== 'modal') return [];
-  return openTools.filter(other => other !== tool && TOOL_PANELS[other] === 'modal');
+export function panelsDisplacedBy(tool, openTools) {
+  return openTools.filter(other => other !== tool && TOOL_PANELS[other] === TOOL_PANELS[tool]);
 }
