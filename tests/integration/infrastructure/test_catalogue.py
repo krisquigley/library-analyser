@@ -10,6 +10,7 @@ from music_analyzer.application.use_cases.scan_library import ScanLibrary, Resol
 from music_analyzer.application.dto.analysis import AnalysisError
 from music_analyzer.application.dto.catalogue import ScanLimits
 from music_analyzer.domain.catalogue import FileIdentity
+from tests.support.synthetic_tagged_audio import MP3_AUDIO, with_id3v2
 
 
 class CatalogueTests(unittest.TestCase):
@@ -45,6 +46,21 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(repo.locations(track), ())
         self.assertEqual(len(self.scan().files), 1)
 
+    def test_mp3_files_differing_only_in_tags_share_their_audio_identity(self):
+        """#223: the bytes between the tag blocks identify the audio across a tags-only change."""
+        import hashlib
+        (self.root / 'one.mp3').write_bytes(with_id3v2(MP3_AUDIO, b'one' + bytes(20)))
+        (self.root / 'two.mp3').write_bytes(with_id3v2(MP3_AUDIO, b'two' + bytes(90)))
+        (self.root / 'three.wav').write_bytes(b'RIFF' + bytes(60))
+        result = self.scan()
+        identities = {Path(file.location).name: file.identity.track_id for file in result.files}
+        audio = {Path(file.location).name: file.audio_sha256 for file in result.files}
+        self.assertEqual(audio, {'one.mp3': hashlib.sha256(MP3_AUDIO).hexdigest(),
+                                 'two.mp3': hashlib.sha256(MP3_AUDIO).hexdigest(), 'three.wav': None})
+        with closing(sqlite3.connect(self.db)) as db:
+            stored = dict(db.execute('SELECT track_id,audio_sha256 FROM track_streams'))
+        self.assertEqual(stored, {identities['one.mp3']: audio['one.mp3'], identities['two.mp3']: audio['two.mp3']})
+
     def test_bounds_symlinks_and_partial_does_not_mark_missing(self):
         (self.root / 'a.flac').write_bytes(b'a')
         self.scan()
@@ -78,7 +94,7 @@ class CatalogueTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.db))
         SQLiteAnalysisRepository(str(self.db))
         with closing(sqlite3.connect(self.db)) as db, db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (11,))
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (12,))
             self.assertEqual(db.execute('SELECT result FROM stages').fetchone()[0], '{"provenance":"unchanged Unicode é"}')
 
     def test_malformed_v1_not_partially_migrated(self):

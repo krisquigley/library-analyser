@@ -51,6 +51,8 @@ class ReviewRepositoryTests(unittest.TestCase):
             db.execute('DROP TABLE track_audio')
             db.execute('DROP TABLE track_metadata')
             db.execute('DROP TABLE playlist_recipes')
+            db.execute('DROP TABLE track_successions')
+            db.execute('DROP TABLE track_streams')
             db.execute('DROP TABLE run_tracks'); db.execute('DROP TABLE overrides'); db.execute('PRAGMA user_version=3')
         original = SQLiteAnalysisRepository._validate
         def fail(repo, db, version=4):
@@ -65,7 +67,7 @@ class ReviewRepositoryTests(unittest.TestCase):
         SQLiteAnalysisRepository(str(self.path))
         with closing(sqlite3.connect(self.path)) as db, db:
             self.assertEqual(db.execute('SELECT * FROM stages').fetchall(), before)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 11)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 12)
 
     def test_v4_migration_rejects_malformed_existing_track_metadata_table(self):
         with closing(sqlite3.connect(self.path)) as db, db:

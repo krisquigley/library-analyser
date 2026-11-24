@@ -60,7 +60,7 @@ class ExplorerSyntheticWriterSchemaRedTests(unittest.TestCase):
                      "WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")
             with readonly(reference) as expected, readonly(fixture['db_path']) as actual:
                 self.assertEqual(actual.execute('PRAGMA application_id').fetchone(), (0x4D414E41,))
-                self.assertEqual(actual.execute('PRAGMA user_version').fetchone(), (11,))
+                self.assertEqual(actual.execute('PRAGMA user_version').fetchone(), (12,))
                 self.assertEqual(actual.execute(query).fetchall(), expected.execute(query).fetchall())
                 self.assertEqual(actual.execute('PRAGMA integrity_check').fetchall(), [('ok',)])
                 self.assertEqual(actual.execute('PRAGMA foreign_key_check').fetchall(), [])
@@ -79,7 +79,7 @@ class ExplorerSyntheticWriterSchemaRedTests(unittest.TestCase):
             SQLiteAnalysisRepository(str(path))
             self.assertEqual(fingerprint_sqlite_files(path), before)
             inspected = inspect_fixture(path)
-            self.assertEqual(inspected['schema_version'], 11)
+            self.assertEqual(inspected['schema_version'], 12)
             self.assertEqual(inspected['counts']['tracks'], 12)
             self.assertEqual(inspected['counts']['current_graph_feature_evidence'], 11)
             repository = ReadOnlyExplorerSQLiteRepository(str(path))
@@ -92,7 +92,7 @@ class ExplorerSyntheticWriterSchemaRedTests(unittest.TestCase):
     def test_manifest_and_actual_sql_match_independently_fixed_tiny_counts(self):
         with public_fixture(self) as fixture:
             manifest = fixture['manifest']
-            self.assertEqual(manifest['schema_version'], 11)
+            self.assertEqual(manifest['schema_version'], 12)
             self.assertEqual(manifest['application_id'], 0x4D414E41)
             for key, count in TINY_COUNTS.items():
                 with self.subTest(count=key):

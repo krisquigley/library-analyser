@@ -32,13 +32,15 @@ class BatchQueueTests(unittest.TestCase):
             db.execute('DROP TABLE run_tracks')
             db.execute('DROP TABLE overrides')
             db.execute('DROP TABLE playlist_recipes')
+            db.execute('DROP TABLE track_successions')
+            db.execute('DROP TABLE track_streams')
             db.execute('DROP TABLE batch_jobs'); db.execute('PRAGMA user_version=2'); db.commit()
             before = tuple(db.execute('SELECT * FROM stages'))
         SQLiteAnalysisRepository(self.path)
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(tuple(db.execute('SELECT * FROM stages')), before)
             self.assertEqual(db.execute('SELECT id FROM tracks').fetchone(), ('a',))
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 11)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 12)
 
     def test_restart_recovers_running_and_preserves_completed(self):
         queue = SQLiteBatchQueue(self.path)

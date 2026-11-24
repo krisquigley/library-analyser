@@ -114,7 +114,7 @@ class GraphObservation:
 
 class IntegrityD2GraphControls(unittest.TestCase):
     def test_true_versions_core_physical_fk_and_full_readers(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 path = Path(td) / 'public.sqlite'
                 identities = create_public_graph_database(path, version)

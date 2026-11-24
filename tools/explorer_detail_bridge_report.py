@@ -142,7 +142,7 @@ def publish_detail_bridge(source):
     request_ids = [s[phase]['request_id'] for s in selections for phase in ('post', 'detail')
                    if s[phase] is not None]
     valid = (published['fixture']['source'] == 'public-synthetic-sqlite'
-             and published['fixture']['schema_version'] == 11
+             and published['fixture']['schema_version'] == 12
              and published['fixture']['track_count'] is not None
              and 12 <= published['fixture']['track_count'] <= 20000
              and published['fixture']['seed'] is not None

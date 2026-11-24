@@ -114,7 +114,7 @@ class IntegrityD2Remediation(unittest.TestCase):
                          ('blocked', None, 'unavailable'))
 
     def test_healthy_public_fixture_and_real_wrapper_control(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
                 self.path = Path(td) / 'public.sqlite'
                 self.create(version)

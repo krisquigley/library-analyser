@@ -46,5 +46,5 @@ class IntegrityReport:
     report_version: int = 1
     coverage_revision: str = 'D3'
     required_scope_revision: str = 'P7-1'
-    supported_schema_versions: tuple[int, ...] = (6, 7, 8, 9, 10, 11)
+    supported_schema_versions: tuple[int, ...] = (6, 7, 8, 9, 10, 11, 12)
     complete: bool = False

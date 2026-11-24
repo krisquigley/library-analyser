@@ -5,6 +5,7 @@ from pathlib import Path
 import stat
 
 from music_analyzer.domain.catalogue import FileIdentity
+from music_analyzer.infrastructure.filesystem.audio_stream import audio_stream_span
 from music_analyzer.application.dto.catalogue import Inventory, ScanIssue, ScannedFile, ScanLimits, TrackMetadata
 
 
@@ -29,9 +30,14 @@ class LocalInventory:
                 raise ValueError('Not a regular file')
             if before.st_size > maximum:
                 raise ValueError('File exceeds scan byte budget; increase explicit scan limits')
-            digest = hashlib.sha256()
+            file_format = path.suffix.lower().lstrip('.')
+            audio_span = audio_stream_span(file_format, _reader_at(stream), before.st_size)
+            stream.seek(0)
+            digest, audio_digest = hashlib.sha256(), hashlib.sha256() if audio_span else None
             count = 0
             while chunk := stream.read(min(1024 * 1024, maximum - count + 1)):
+                if audio_digest is not None:
+                    audio_digest.update(_within(chunk, count, audio_span))
                 count += len(chunk)
                 if count > maximum:
                     raise ValueError('File grew beyond scan byte budget')
@@ -45,7 +51,9 @@ class LocalInventory:
             current_after_metadata = path.stat(follow_symlinks=False)
             if key(after) != key(current_after_metadata):
                 raise ValueError('File changed while hashing; scan again')
-            return ScannedFile(str(path), FileIdentity(digest.hexdigest(), count), after.st_mtime_ns, path.suffix.lower().lstrip('.'), metadata or TrackMetadata())
+            audio_sha256 = audio_digest.hexdigest() if audio_digest is not None else None
+            return ScannedFile(str(path), FileIdentity(digest.hexdigest(), count), after.st_mtime_ns, file_format,
+                               metadata or TrackMetadata(), audio_sha256)
 
     def inventory(self, root, limits):
         root = self._path(root)
@@ -93,3 +101,16 @@ class LocalInventory:
             return self._read(location, ScanLimits().max_file_bytes).identity.track_id == track_id
         except (OSError, ValueError):
             return False
+
+
+def _reader_at(stream):
+    def read(offset, length):
+        stream.seek(offset)
+        return stream.read(length)
+    return read
+
+
+def _within(chunk, offset, span):
+    """The part of a chunk starting at offset that lies inside the [start, end) span."""
+    start, end = span
+    return chunk[max(start - offset, 0):max(end - offset, 0)]

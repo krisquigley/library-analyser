@@ -70,7 +70,7 @@ class ScopedFixture(unittest.TestCase):
 
     def pages(self, repo):
         first = repo.list_track_summaries(100, query='beacon', order='title')
-        self.assertEqual(first[0]['schema_version'], 11)
+        self.assertEqual(first[0]['schema_version'], 12)
         self.assertEqual(first[1], 101)
         self.assertEqual(tuple(row.handle for row in first[2]), self.handles[:100])
         self.assertTrue(first[3])
@@ -105,7 +105,7 @@ class ScopedReadPolicyRedTests(ScopedFixture):
                 with self.subTest(mirror=module.__name__, operation=operation):
                     with observe_sql(repo) as statements:
                         if operation == 'metadata':
-                            self.assertEqual(repo.metadata()['schema_version'], 11)
+                            self.assertEqual(repo.metadata()['schema_version'], 12)
                         elif operation == 'pages':
                             self.pages(repo)
                         else:

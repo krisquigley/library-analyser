@@ -55,7 +55,7 @@ def execute(scan):
 
 class IntegrityD2Report(unittest.TestCase):
     def test_selected_graph_states_counts_fixed_inventory_and_noncertification(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             scan = selected_scan(version)
             report = execute(scan)
             for field, expected in (
@@ -64,7 +64,7 @@ class IntegrityD2Report(unittest.TestCase):
                     ('status', 'incomplete'), ('exit_code', 4), ('complete', False),
                     ('report_version', 1), ('coverage_revision', 'D3'),
                     ('required_scope_revision', 'P7-1'),
-                    ('supported_schema_versions', (6, 7, 8, 9, 10, 11))):
+                    ('supported_schema_versions', (6, 7, 8, 9, 10, 11, 12))):
                 with self.subTest(version=version, field=field):
                     self.assertEqual(getattr(report, field), expected,
                                      'selected D2a graph coverage is not full P7 certification')
@@ -122,7 +122,7 @@ class IntegrityD2Report(unittest.TestCase):
 
 class IntegrityD2ReportControls(unittest.TestCase):
     def test_fake_scan_inventory_has_literal_approved_shape(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             scan = selected_scan(version)
             self.assertEqual(tuple(c.check_id for c in scan.checks), tuple(c[0] for c in CHECKS))
             self.assertTrue(scan.implemented_scope_complete)

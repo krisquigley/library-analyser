@@ -14,7 +14,7 @@ class IntegrityD1Presenter(unittest.TestCase):
         report = CheckIntegrity(FakeScanner(healthy_scan(6))).execute('PRIVATE TARGET.sqlite')
         expected = {
             'report_version': 1, 'coverage_revision': 'D3', 'required_scope_revision': 'P7-1',
-            'supported_schema_versions': [6, 7, 8, 9, 10, 11], 'schema_version': 6,
+            'supported_schema_versions': [6, 7, 8, 9, 10, 11, 12], 'schema_version': 6,
             'status': 'incomplete', 'complete': False, 'implemented_scope_complete': True,
             'stop_reason': 'scope_not_implemented', 'exit_code': 4,
             'checks': [asdict(c) for c in report.checks], 'findings': [], 'findings_truncated': False,

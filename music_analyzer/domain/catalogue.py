@@ -8,7 +8,7 @@ class FileIdentity:
     size: int
 
     def __post_init__(self):
-        if len(self.sha256) != 64 or any(c not in '0123456789abcdef' for c in self.sha256) or self.size < 0:
+        if not is_sha256_digest(self.sha256) or self.size < 0:
             raise ValueError('Identity requires a lowercase SHA-256 digest and nonnegative size')
 
     @property
@@ -27,3 +27,8 @@ def validate_file_size(size: int) -> None:
         isinstance(size, float) and not size.is_integer()
     ):
         raise ValueError('Invalid identity size; requires nonnegative integer numeric value')
+
+
+def is_sha256_digest(value) -> bool:
+    """A lowercase hexadecimal SHA-256 digest: how both a file and its audio stream are identified."""
+    return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)

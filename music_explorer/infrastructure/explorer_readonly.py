@@ -1097,6 +1097,6 @@ class ReadOnlyExplorerSQLiteRepository:
         # A compatibility guard, not a certificate of schema or retained history.
         if version is None:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10, 11):
+        if db.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID or version not in (6, 7, 8, 9, 10, 11, 12):
             raise AnalysisError('Not a supported music-analyzer analysis database')
 

@@ -41,7 +41,7 @@ def writer_args():
 def bridge_observation():
     """Deterministic mock contract, no database/DOM/performance claim."""
     return {
-        'fixture': {'source': 'public-synthetic-sqlite', 'schema_version': 11, 'track_count': 12,
+        'fixture': {'source': 'public-synthetic-sqlite', 'schema_version': 12, 'track_count': 12,
                     'seed': 70, 'history_count': 2},
         'server': 'packaged-explorer-loopback',
         'database_unchanged': True,

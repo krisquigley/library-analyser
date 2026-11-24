@@ -175,7 +175,7 @@ class ExplorerInteractionMeasurementContractTests(unittest.TestCase):
             complete_graph_relevant_run(writer, identity, location='/synthetic/a.flac')
             before = path.read_bytes()
             report = measurement.inspect_fixture(path)
-            self.assertEqual(report.get('schema_version'), 11, 'inspect real writer schema, not legacy v6 smoke')
+            self.assertEqual(report.get('schema_version'), 12, 'inspect real writer schema, not legacy v6 smoke')
             self.assertEqual(report['application_id'], 0x4D414E41)
             self.assertEqual(report['integrity_check'], 'ok')
             self.assertEqual(report['foreign_key_check'], [])

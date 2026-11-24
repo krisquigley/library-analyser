@@ -142,6 +142,22 @@ _EXPECTED_GRAPH_FEATURE_SCHEMA = {
 
 _EXPECTED_GRAPH_FEATURE_INDEXES = {('idx_graph_feature_evidence_one_current_per_track', 'index'), ('idx_graph_feature_evidence_run_id', 'index')}
 
+_EXPECTED_TRACK_STREAM_SCHEMA = {
+    'track_streams': {
+        'columns': ((('track_id', 'TEXT', False, 1), ('audio_sha256', 'TEXT', True, 0)),),
+        'foreign_keys': ((('tracks', ('track_id',), ('id',)),),),
+        'unique_indexes': (),
+        'checks': (('CHECK(length(audio_sha256) = 64)',),),
+    },
+    'track_successions': {
+        'columns': ((('successor_id', 'TEXT', False, 1), ('predecessor_id', 'TEXT', True, 0), ('audio_sha256', 'TEXT', True, 0),
+                     ('recorded_at', 'TEXT', True, 0)),),
+        'foreign_keys': ((('tracks', ('predecessor_id',), ('id',)), ('tracks', ('successor_id',), ('id',))),),
+        'unique_indexes': (),
+        'checks': (('CHECK(length(audio_sha256) = 64)', 'CHECK(successor_id <> predecessor_id)'),),
+    },
+}
+
 _EXPECTED_PLAYLIST_RECIPE_SCHEMA = {
     'playlist_recipes': {
         'columns': ((('name', 'TEXT', True, 1), ('recipe_json', 'TEXT', True, 0), ('format_version', 'INTEGER', True, 0),

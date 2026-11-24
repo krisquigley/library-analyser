@@ -23,7 +23,7 @@ from music_analyzer.application.use_cases.graph_feature_evidence import (
 )
 from music_analyzer.application.use_cases.metadata_validation import validate_metadata
 from music_analyzer.application.use_cases.stage_result_validation import validate_stage_result
-from music_analyzer.domain.catalogue import validate_file_size
+from music_analyzer.domain.catalogue import is_sha256_digest, validate_file_size
 from music_analyzer.domain.review import validate_override
 from music_analyzer.domain.projection import (
     DISTANCE_POLICY_VERSION, NEIGHBOUR_POLICY_VERSION, validate_graph_source_fingerprint,
@@ -128,7 +128,7 @@ def _coalesced_duration(file, files, stored_audio=None):
 
 
 APPLICATION_ID = 0x4D414E41
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 _COLUMNS = {
     'runs': ('id', 'location', 'status', 'detail', 'created_at'),
     'stages': ('run_id', 'stage', 'result'),
@@ -165,6 +165,20 @@ _GRAPH_FEATURE_COLUMNS = {
 _PLAYLIST_RECIPE_COLUMNS = {
     'playlist_recipes': ('name', 'recipe_json', 'format_version', 'created_at', 'updated_at'),
 }
+_TRACK_STREAM_COLUMNS = {
+    'track_streams': ('track_id', 'audio_sha256'),
+    'track_successions': ('successor_id', 'predecessor_id', 'audio_sha256', 'recorded_at'),
+}
+# The audio between a file's tag blocks (#223), and which track a tags-only change succeeded.
+_TRACK_STREAMS_TABLE = """CREATE TABLE track_streams(
+    track_id TEXT PRIMARY KEY REFERENCES tracks(id),
+    audio_sha256 TEXT NOT NULL CHECK(length(audio_sha256) = 64))"""
+_TRACK_SUCCESSIONS_TABLE = """CREATE TABLE track_successions(
+    successor_id TEXT PRIMARY KEY REFERENCES tracks(id),
+    predecessor_id TEXT NOT NULL REFERENCES tracks(id),
+    audio_sha256 TEXT NOT NULL CHECK(length(audio_sha256) = 64),
+    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(successor_id <> predecessor_id))"""
 _PLAYLIST_RECIPES_TABLE = """CREATE TABLE playlist_recipes(
     name TEXT NOT NULL PRIMARY KEY,
     recipe_json TEXT NOT NULL,
@@ -192,7 +206,7 @@ class SQLiteAnalysisRepository:
                     result TEXT NOT NULL, PRIMARY KEY(run_id,stage))""")
                 db.execute(f'PRAGMA application_id={APPLICATION_ID}')
                 db.execute('PRAGMA user_version=1')
-            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
+            elif identity != APPLICATION_ID or version not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
                 raise AnalysisError('Not a supported music-analyzer analysis database; use a new dedicated path')
             if version >= 6:
                 self._validate_adopted_views(db)
@@ -254,6 +268,11 @@ class SQLiteAnalysisRepository:
                 self._validate(db, 10)
                 db.execute(_PLAYLIST_RECIPES_TABLE)
                 db.execute('PRAGMA user_version=11')
+            if db.execute('PRAGMA user_version').fetchone()[0] == 11:
+                self._validate(db, 11)
+                db.execute(_TRACK_STREAMS_TABLE)
+                db.execute(_TRACK_SUCCESSIONS_TABLE)
+                db.execute('PRAGMA user_version=12')
             self._validate(db, SCHEMA_VERSION)
 
     def _validate_adopted_views(self, db):
@@ -502,6 +521,8 @@ class SQLiteAnalysisRepository:
             columns_by_table = {**columns_by_table, **_GRAPH_FEATURE_COLUMNS}
         if version >= 11:
             columns_by_table = {**columns_by_table, **_PLAYLIST_RECIPE_COLUMNS}
+        if version >= 12:
+            columns_by_table = {**columns_by_table, **_TRACK_STREAM_COLUMNS}
         objects = set(db.execute("SELECT name,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         expected = {(name, 'table') for name in columns_by_table}
         if version >= 6:
@@ -1386,6 +1407,8 @@ class SQLiteAnalysisRepository:
                     raise ValueError('Invalid file size for SQLite INTEGER; use a whole-byte size '
                                      'between 0 and 9223372036854775807 (signed 64-bit)')
                 validate_metadata(file.metadata)
+                if file.audio_sha256 is not None and not is_sha256_digest(file.audio_sha256):
+                    raise ValueError('Invalid audio stream digest; requires a lowercase SHA-256 digest or none')
         except ValueError as error:
             raise AnalysisError(str(error)) from error
         missing = []
@@ -1410,6 +1433,9 @@ class SQLiteAnalysisRepository:
                 db.execute('INSERT INTO locations VALUES(?,?,?,?,1) ON CONFLICT(path) DO UPDATE SET track_id=excluded.track_id,mtime_ns=excluded.mtime_ns,format=excluded.format,available=1',
                            (file.location, identity.track_id, file.mtime_ns, file.format))
                 db.execute('INSERT OR IGNORE INTO scan_roots VALUES(?,?)', (inventory.root, file.location))
+                if file.audio_sha256 is not None:
+                    db.execute('INSERT INTO track_streams VALUES(?,?) ON CONFLICT(track_id) DO UPDATE SET audio_sha256=excluded.audio_sha256',
+                               (identity.track_id, file.audio_sha256))
                 db.execute('INSERT INTO track_metadata VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET common_json=excluded.common_json,tags_json=excluded.tags_json,warnings_json=excluded.warnings_json',
                            (identity.track_id, json.dumps(file.metadata.common, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.tags, ensure_ascii=False, allow_nan=False), json.dumps(file.metadata.warnings, ensure_ascii=False, allow_nan=False)))
                 stored_audio_state = db.execute('SELECT duration_seconds,duration_source,status,reason FROM track_audio WHERE track_id=?', (identity.track_id,)).fetchone()

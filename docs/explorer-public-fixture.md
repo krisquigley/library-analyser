@@ -50,8 +50,8 @@ SHM coordination state is not a committed-data fingerprint.
 
 ## Writer ownership and public content
 
-The ordinary `SQLiteAnalysisRepository` initializes the exact writer-owned v11
-schema (`application_id=0x4D414E41`, `user_version=11`). No custom DDL, indexes,
+The ordinary `SQLiteAnalysisRepository` initializes the exact writer-owned v12
+schema (`application_id=0x4D414E41`, `user_version=12`). No custom DDL, indexes,
 migrations or production reader policies are introduced. Synthetic population
 reuses public stage, duration and graph-feature-evidence contracts; graph
 promotion uses the writer's public `replace_graph_snapshot` API. The actual

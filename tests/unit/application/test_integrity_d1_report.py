@@ -75,7 +75,7 @@ class FakeScanner:
 
 class IntegrityD1WireGate(unittest.TestCase):
     def test_every_wire_gate_field_is_independently_reached_on_healthy_versions(self):
-        for version in range(6, 12):
+        for version in range(6, 13):
             report = CheckIntegrity(FakeScanner(healthy_scan(version))).execute('explicit-public.sqlite')
             for field, expected in (
                     ('implemented_scope_complete', True), ('status', 'incomplete'),
@@ -94,7 +94,7 @@ class IntegrityD1WireGate(unittest.TestCase):
         report = CheckIntegrity(FakeScanner(healthy_scan(6))).execute('explicit-public.sqlite')
         for field, expected in (
                 ('report_version', 1), ('coverage_revision', 'D3'),
-                ('required_scope_revision', 'P7-1'), ('supported_schema_versions', (6, 7, 8, 9, 10, 11)),
+                ('required_scope_revision', 'P7-1'), ('supported_schema_versions', (6, 7, 8, 9, 10, 11, 12)),
                 ('schema_version', 6), ('checks', healthy_scan(6).checks)):
             with self.subTest(field=field):
                 self.assertEqual(getattr(report, field, None), expected,

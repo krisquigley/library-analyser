@@ -29,6 +29,8 @@ class ScannedFile:
     mtime_ns: int
     format: str
     metadata: TrackMetadata = TrackMetadata()
+    # The digest of the audio between the tag blocks (#223), so a tags-only change is recognised; None when unknown.
+    audio_sha256: str | None = None
 
 
 @dataclass(frozen=True)

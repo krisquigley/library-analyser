@@ -32,10 +32,10 @@ class PlaylistRecipeSchemaTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / 'analysis.sqlite'
 
-    def test_a_new_database_is_v11_with_an_empty_recipes_table(self):
+    def test_a_new_database_has_an_empty_recipes_table(self):
         SQLiteAnalysisRepository(str(self.path))
 
-        self.assertEqual(11, _version(self.path))
+        self.assertEqual(12, _version(self.path))
         self.assertEqual(RECIPE_COLUMNS, _columns(self.path))
 
     def test_a_v10_database_migrates_to_v11_and_keeps_its_tracks(self):
@@ -43,7 +43,7 @@ class PlaylistRecipeSchemaTests(unittest.TestCase):
 
         SQLiteAnalysisRepository(str(self.path))
 
-        self.assertEqual(11, _version(self.path))
+        self.assertEqual(12, _version(self.path))
         self.assertEqual(RECIPE_COLUMNS, _columns(self.path))
         with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(sorted(PUBLIC_TRACK_IDS), sorted(row[0] for row in db.execute('SELECT id FROM tracks')))
@@ -67,8 +67,7 @@ class PlaylistRecipeSchemaTests(unittest.TestCase):
             SQLiteAnalysisRepository(str(self.path))
 
     def test_both_explorer_readers_read_a_v11_database(self):
-        create_public_core_database(self.path, 10)
-        SQLiteAnalysisRepository(str(self.path))
+        create_public_core_database(self.path, 11)
 
         for reader in (AnalyzerReader, ExplorerReader):
             with self.subTest(reader=reader.__module__):
