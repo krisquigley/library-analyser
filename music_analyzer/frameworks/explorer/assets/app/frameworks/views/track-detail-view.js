@@ -49,19 +49,20 @@ export function trackDetailView() {
   function field({name, items}) {
     const section = detailElement('section', {className: 'field'});
     section.append(setDetailText(document.createElement('h4'), name),
-      ...items.map(item => (item.gauge ? gauge(item.gauge) : setDetailText(document.createElement('p'), item.text))));
+      ...items.map(item => (item.bar ? bar(item.bar) : setDetailText(document.createElement('p'), item.text))));
     return section;
   }
 
-  function gauge({label, ariaLabel, needleDegrees}) {
-    const dial = detailElement('div', {className: 'score-gauge'});
-    dial.setAttribute('role', 'img');
-    dial.setAttribute('aria-label', ariaLabel);
-    const needle = detailElement('span', {className: 'score-needle'});
-    needle.style.transform = `rotate(${needleDegrees}deg)`;
-    dial.append(detailElement('span', {className: 'score-arc'}), needle, detailElement('span', {className: 'score-hub'}));
-    const row = detailElement('div', {className: 'score-row'});
-    row.append(setDetailText(document.createElement('span'), label), dial);
+  function bar({label, ariaLabel, valueText, fillPercent}) {
+    const track = detailElement('span', {className: 'score-bar-track'});
+    track.setAttribute('role', 'img');
+    track.setAttribute('aria-label', ariaLabel);
+    const fill = detailElement('span', {className: 'score-bar-fill'});
+    fill.style.width = `${fillPercent}%`;
+    track.append(fill);
+    const row = detailElement('div', {className: 'score-bar'});
+    row.append(setDetailText(detailElement('span', {className: 'score-bar-label'}), label), track,
+      setDetailText(detailElement('span', {className: 'score-bar-value'}), valueText));
     return row;
   }
 
@@ -72,7 +73,7 @@ export function trackDetailView() {
     return section;
   }
 
-  return Object.freeze({show, fieldList, showNone, showLoading, showFailure, field, gauge, metadata});
+  return Object.freeze({show, fieldList, showNone, showLoading, showFailure, field, bar, metadata});
 }
 
 function keyFactBadges(keyFacts) {

@@ -39,5 +39,10 @@ export function createToolPanels({eventBus}) {
     else open(tool);
   }
 
-  return Object.freeze({toggle, close, isOpen});
+  // A shortcut to a panel (#236): opens it unless it is already open.
+  function openPanel(tool) {
+    if (!isOpen(tool)) open(tool);
+  }
+
+  return Object.freeze({toggle, open: openPanel, close, isOpen});
 }

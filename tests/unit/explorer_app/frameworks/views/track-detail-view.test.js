@@ -52,11 +52,13 @@ test('a failure is an alert, with Retry detail only when it can be retried', () 
   assert.equal(byTag(roots.detail, 'button').length, 0);
 });
 
-test('a gauge names its score for assistive technology and turns its needle', () => {
-  const gauge = trackDetailView().gauge({label: 'calm', ariaLabel: 'calm: 0.3 out of 1', needleDegrees: -60});
-  const dial = descendants(gauge).find(node => node.className === 'score-gauge');
-  assert.deepEqual([dial.getAttribute('role'), dial.getAttribute('aria-label')], ['img', 'calm: 0.3 out of 1']);
-  assert.equal(descendants(gauge).find(node => node.className === 'score-needle').style.transform, 'rotate(-60deg)');
+test('a score is a compact bar with its label and raw value, named for assistive technology (#236)', () => {
+  const row = trackDetailView().bar({label: 'calm', ariaLabel: 'calm: 0.3 out of 1', valueText: '0.3', fillPercent: 25});
+  assert.equal(row.className, 'score-bar');
+  const track = descendants(row).find(node => node.className === 'score-bar-track');
+  assert.deepEqual([track.getAttribute('role'), track.getAttribute('aria-label')], ['img', 'calm: 0.3 out of 1']);
+  assert.equal(descendants(row).find(node => node.className === 'score-bar-fill').style.width, '25%');
+  assert.deepEqual(row.children.map(child => child.textContent).filter(Boolean), ['calm', '0.3']);
 });
 
 test('key facts are badges above the metadata, each saying where it comes from (#236)', () => {

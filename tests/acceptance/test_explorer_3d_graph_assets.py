@@ -72,11 +72,13 @@ class Explorer3DGraphAssetTests(unittest.TestCase):
         self.assertIn("document.getElementById('undo').onclick=()=>applyHistorySelection('undo');", app)
         self.assertIn("document.getElementById('reset').onclick=()=>applyHistorySelection('reset');", app)
 
-    def test_detail_dials_are_half_size_and_have_no_tick_styles(self):
+    def test_detail_scores_are_compact_bars_not_dials(self):
+        """#236 replaces the score dials with compact bars: label, bar, raw value."""
         style = (REPO_ROOT / 'music_analyzer/frameworks/explorer/assets/style.css').read_text()
-        self.assertIn('#detail .score-gauge{position:relative;width:39px;height:39px;', style)
-        self.assertIn('@media(max-width:700px){#detail .score-gauge{width:34px;height:34px}', style)
-        self.assertNotIn('.score-tick', style)
+        self.assertIn('#detail .score-bar{display:flex;', style)
+        self.assertIn('#detail .score-bar-fill{', style)
+        for retired in ('.score-gauge', '.score-needle', '.score-tick', '--dial-'):
+            self.assertNotIn(retired, style)
 
     def test_browser_startup_source_leaves_sidebar_empty_until_search(self):
         for app in (APP_JS, explorer_app_script(REPO_ROOT / 'music_explorer/frameworks/explorer/assets/app/main/main.js')):

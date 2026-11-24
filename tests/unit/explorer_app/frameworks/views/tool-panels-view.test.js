@@ -6,7 +6,7 @@ import {installFakeDocument} from '../fake-document.js';
 
 let roots;
 beforeEach(() => {
-  roots = installFakeDocument(['open-library', 'library-panel', 'open-playlist', 'playlist-panel', 'close-playlist']);
+  roots = installFakeDocument(['open-library', 'library-panel', 'open-playlist', 'playlist-panel', 'close-playlist', 'detail-write-tags']);
   for (const id of ['library-panel', 'playlist-panel']) {
     Object.assign(roots[id], {open: false, shown: [],
       show() { this.open = true; this.shown.push('show'); },
@@ -17,7 +17,8 @@ beforeEach(() => {
 
 function mounted() {
   const heard = [];
-  const view = toolPanelsView({onToggleRequested: tool => heard.push(['toggle', tool]), onCloseRequested: tool => heard.push(['close', tool])});
+  const view = toolPanelsView({onToggleRequested: tool => heard.push(['toggle', tool]), onCloseRequested: tool => heard.push(['close', tool]),
+    onOpenRequested: tool => heard.push(['open', tool])});
   view.mount();
   return {view, heard};
 }
@@ -60,4 +61,10 @@ test('a click on the Library drawer itself never closes it: only a modal has a b
   const drawer = roots['library-panel'];
   drawer.onclick?.({target: drawer});
   assert.deepEqual(heard, []);
+});
+
+test('the selected track card\'s Write tags button opens the tag-write dialog (#236)', () => {
+  const {heard} = mounted();
+  roots['detail-write-tags'].onclick();
+  assert.deepEqual(heard, [['open', 'tag-write']]);
 });

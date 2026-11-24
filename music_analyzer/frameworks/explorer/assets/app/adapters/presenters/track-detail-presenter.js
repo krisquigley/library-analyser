@@ -5,7 +5,7 @@
 import {displayNumber} from '../../domain/display-number.js';
 import {energyEvidence, measuredValue, scoreEvidence} from '../../domain/track-evidence.js';
 
-const GAUGES_SHOWN = 12;
+const BARS_SHOWN = 12;
 const METADATA_LABELS = Object.freeze({title: 'Title', artist: 'Artist', album: 'Album', album_artist: 'Album artist',
   date: 'Date', year: 'Year', genre: 'Genre', composer: 'Composer', track_number: 'Track number', disc_number: 'Disc number',
   comment: 'Comment'});
@@ -39,8 +39,9 @@ export function detailFieldViewModel(name, field) {
   return {name, items};
 }
 
-export function scoreGaugeViewModel(label, value) {
-  return {label, ariaLabel: `${label}: ${displayNumber(value)} out of 1`, needleDegrees: value * 240 - 120};
+// A raw 0–1 score as a compact bar (#236): the bar fills that share of its length; the value is shown as recorded.
+export function scoreBarViewModel(label, value) {
+  return {label, ariaLabel: `${label}: ${displayNumber(value)} out of 1`, valueText: displayNumber(value), fillPercent: value * 100};
 }
 
 export function trackMetadataViewModel(metadata) {
@@ -119,8 +120,8 @@ function scoreItems({usable, hasValues, scores}) {
   if (!usable) return [{text: 'no usable evidence (unsupported or missing model/scale)'}];
   const items = [{text: 'display scores > 0.1 (raw 0–1 labelled scores; not probabilities; independent of analysis cutoff).'}];
   if (!scores.length) items.push({text: hasValues ? 'no significant values' : 'no usable evidence'});
-  for (const [label, value] of scores.slice(0, GAUGES_SHOWN)) items.push({gauge: scoreGaugeViewModel(label, value)});
-  if (scores.length > GAUGES_SHOWN) items.push({text: `${scores.length - GAUGES_SHOWN} more significant labels not shown`});
+  for (const [label, value] of scores.slice(0, BARS_SHOWN)) items.push({bar: scoreBarViewModel(label, value)});
+  if (scores.length > BARS_SHOWN) items.push({text: `${scores.length - BARS_SHOWN} more significant labels not shown`});
   return items;
 }
 
