@@ -44,7 +44,7 @@ import {jumpCameraToPickedNode, mountedPickedNode, pickedTrackId} from '../frame
 import {configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, fitGraphToElement, graphContainer, observeElementResize, selectedTrackNodeSize} from '../frameworks/graph-scene/force-graph-scene.js';
 import {playlistDownloadView} from '../frameworks/views/playlist-download-view.js';
 import {EMPTY_GRAPH_CONTROLS} from '../domain/graph-filters.js';
-import {moodGraphModel} from '../domain/mood-graph.js';
+import {moodGraphModel,trackBpmsOf} from '../domain/mood-graph.js';
 import {isIndexedMoodAxisGraph, normalizeMoodAxisGraphDto} from '../adapters/gateways/mood-axis-graph-dto.js';
 import {createGraphLoad} from '../application/load-graph/load-graph.js';
 import {graphControlsController} from '../adapters/controllers/graph-controls-controller.js';
@@ -54,7 +54,7 @@ import {graphStatusView} from '../frameworks/views/graph-status-view.js';
 import {createTrackSearch} from '../application/search-tracks/search-tracks.js';
 import {TRACK_SEARCH_EVENT_TYPES} from '../application/search-tracks/track-search-events.js';
 import {emptyTrackResults} from '../domain/track-search.js';
-import {trackListViewModel} from '../adapters/presenters/track-list-presenter.js';
+import {trackListViewModel,trackBpmBadges} from '../adapters/presenters/track-list-presenter.js';
 import {trackListView} from '../frameworks/views/track-list-view.js';
 import {detailFieldViewModel, trackDetailFailureViewModel, trackDetailLoadingViewModel, trackDetailViewModel, trackMetadataViewModel} from '../adapters/presenters/track-detail-presenter.js';
 import {trackDetailView} from '../frameworks/views/track-detail-view.js';
@@ -150,7 +150,7 @@ const graphStatusDisplay=graphStatusView({onReload:()=>loadGraph().catch(()=>{})
 function showGraphLoadEvent(event){const status=presentGraphLoadEvent(event); if(status) graphStatusDisplay.show(status);}
 graphEvents.subscribe('graph-controls-edited',event=>graphFilterControls.showValues(graphControlValuesViewModel(event.controls)));
 graphEvents.subscribe('graph-load-started',event=>{cameraFocus.claimView('graph-reloaded'); showGraphLoadEvent(event);});
-graphEvents.subscribe('graph-model-built',event=>{graphFilterControls.showOptions(graphControlOptionsViewModel(event.model,event.controls)); showGraphLoadEvent(event);});
+graphEvents.subscribe('graph-model-built',event=>{trackList.showBpmBadges(trackBpmBadges(trackSearchSession.read().results.tracks,trackBpmsOf(event.model))); graphFilterControls.showOptions(graphControlOptionsViewModel(event.model,event.controls)); showGraphLoadEvent(event);});
 graphEvents.subscribe('graph-render-due',event=>renderMap(event.visible));
 graphEvents.subscribe('graph-ready',showGraphLoadEvent);
 graphEvents.subscribe('graph-load-failed',showGraphLoadEvent);
@@ -198,7 +198,7 @@ function updateSelectedTrackVisuals(){
 function renderDetailLoading(){trackDetail.showLoading(trackDetailLoadingViewModel());}
 function renderDetailError(error,retry){trackDetail.showFailure(trackDetailFailureViewModel(error),retry);}
 async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose(id,{focusCamera});}
-function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId()}));}
+function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId(),trackBpms:trackBpmsOf(graphState().model)}));}
 function loadGraph(){return graphLoad.load();}
 
 function appendM3UDownloadControls(panel){const steps=playlistGeneratorSteps(); playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]}),steps.finish); panel.append(steps.preview,steps.finish); playlistPreviewPanel.mount(steps.preview,playlistPreviewViewModel()); showPlaylistReadiness(); recipeExportPanel.mount(steps.finish); savedRecipePanel.mount(steps.finish,savedRecipesViewModel());}
