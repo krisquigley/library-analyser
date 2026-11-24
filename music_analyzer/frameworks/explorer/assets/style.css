@@ -47,6 +47,7 @@
   --ease:150ms ease;
   --gutter:var(--space-3);
   --app-bar-height:3rem;
+  --panel-header-height:3rem;
   --panel-top:calc(var(--gutter) + var(--app-bar-height) + var(--space-2));
   --drawer-width:min(340px,32vw);
   --side-card-width:min(360px,32vw);
@@ -91,10 +92,10 @@ main.overlay{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidde
 .app-title h1{font-size:var(--text-l);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .app-title p{font-size:var(--text-xs);margin:0;color:var(--text-faint);white-space:nowrap}
 .app-tools{display:flex;flex:none;justify-content:flex-end;gap:var(--space-1)}
-.app-bar .graph-load-status{display:flex;align-items:center;gap:var(--space-2);min-width:0;flex:0 1 auto;font-size:var(--text-xs);color:var(--text-muted)}
+.app-bar .graph-load-status{display:flex;align-items:center;gap:var(--space-2);min-width:2rem;flex:0 1 auto;font-size:var(--text-xs);color:var(--text-muted)}
 .app-bar .graph-load-status h3{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .app-bar .graph-load-status p{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.app-bar .graph-load-status button{margin:0;min-height:1.75rem;font-size:var(--text-xs);flex:none}
+.app-bar .graph-load-status button{margin:0;min-height:1.75rem;font-size:var(--text-xs);flex:none;white-space:nowrap}
 .app-tools button{margin:0;background:transparent;border-color:transparent;color:var(--text-muted)}
 .app-tools button:hover:not(:disabled){background:var(--surface-hover);border-color:transparent;color:var(--text)}
 .app-tools button[aria-expanded=true]{background:var(--accent-soft);color:var(--accent-hover)}
@@ -104,7 +105,7 @@ main.overlay{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidde
 .panel{padding:0 var(--space-4) var(--space-3);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
 .panel::-webkit-scrollbar{width:8px}
 .panel::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:var(--radius-round)}
-.panel-header{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);margin:0 calc(-1 * var(--space-4)) var(--space-3);padding:var(--space-2) var(--space-2) var(--space-2) var(--space-4);min-height:var(--app-bar-height);background:var(--surface-solid);border-bottom:1px solid var(--border)}
+.panel-header{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);margin:0 calc(-1 * var(--space-4)) var(--space-3);padding:var(--space-2) var(--space-2) var(--space-2) var(--space-4);min-height:var(--panel-header-height);background:var(--surface-solid);border-bottom:1px solid var(--border)}
 .panel-header h2{margin:0;font-size:var(--text-l)}
 .panel-close{margin:0;width:var(--control-height);padding:0;font-size:var(--text-l);background:transparent;border-color:transparent;color:var(--text-muted)}
 .panel-close:hover:not(:disabled){background:var(--surface-hover);border-color:transparent;color:var(--text)}
@@ -235,7 +236,13 @@ tbody tr:hover{background:var(--surface-hover)}
   .panel-header{margin:0 calc(-1 * var(--space-3)) var(--space-2);padding-left:var(--space-3)}
 }
 @media(max-width:560px){
+  :root{--app-bar-height:5.25rem}
+  .app-bar{flex-wrap:wrap;row-gap:var(--space-1);padding:var(--space-1) var(--space-2) var(--space-1) var(--space-3)}
+  .app-title{flex:1 1 0}
+  .app-bar .graph-load-status{flex:none}
   .app-bar .graph-load-status p{display:none}
+  .app-tools{width:100%;justify-content:space-between}
+  .app-tools button{flex:1 1 0;padding:0 var(--space-1)}
   .drawer{right:var(--gutter);width:auto;max-height:34dvh}
   .side-card{top:auto;bottom:calc(var(--gutter) + 9.5rem);left:var(--gutter);right:var(--gutter);width:auto;max-height:26dvh}
   .bottom-dock{left:var(--gutter);right:var(--gutter)}
