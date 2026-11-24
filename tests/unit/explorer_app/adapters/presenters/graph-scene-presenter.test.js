@@ -56,3 +56,16 @@ test('a negative relatedness score is as faint as none, and the legend says what
   assert.equal(relatednessLinkAlpha({score: -2}), 0.18);
   assert.match(graphRelatednessLegend(), /Link alpha reflects axis-independent relatedness strength.*higher-score links are more opaque/);
 });
+
+test('#243: outside the selected track\'s neighbourhood, nodes and links are very dim; inside, they keep their colours', async () => {
+  const {graphNeighbourFocus, focusedNodeColor, focusedLinkColor, relatednessLinkColor: linkColour} =
+    await import('../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/graph-scene-presenter.js');
+  const [a, b, c] = ['a', 'b', 'c'].map(id => ({id, color: `hsl(${id.charCodeAt(0)} 50% 50%)`}));
+  const near = {source: a, target: b, score: 0.8}, far = {source: 'b', target: 'c', score: 0.8};
+  const focus = graphNeighbourFocus({nodes: [a, b, c], links: [near, far]}, 'a');
+  assert.deepEqual([a, b, c].map(focusedNodeColor(focus)), [a.color, b.color, 'rgba(120,135,160,0.1)']);
+  assert.deepEqual([near, far].map(focusedLinkColor(focus)), [linkColour(near), 'rgba(240,240,240,0.03)']);
+  const none = graphNeighbourFocus({nodes: [a, b, c], links: [near, far]}, null);
+  assert.deepEqual([c].map(focusedNodeColor(none)), [c.color]);
+  assert.deepEqual([far].map(focusedLinkColor(none)), [linkColour(far)]);
+});

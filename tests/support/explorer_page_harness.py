@@ -168,7 +168,7 @@ const camera = {fov: 50, position: {x: 500, y: 400, z: 300}, up: {x: 0, y: 1, z:
 const controls = {target: {x: 0, y: 0, z: 0}, listeners: {}, addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); },
   removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter(item => item !== fn); }, update() {}};
 const cameraMoves = [];
-let mounted = {nodes: [], links: []}, nodeClick = null, nodeSize = null, mounts = 0;
+let mounted = {nodes: [], links: []}, nodeClick = null, nodeSize = null, mounts = 0, nodeColour = null, linkColour = null;
 const graph = new Proxy({}, {get(_target, key) {
   if (key === 'scene') return () => scene;
   if (key === 'camera') return () => camera;
@@ -193,6 +193,8 @@ const graph = new Proxy({}, {get(_target, key) {
   };
   if (key === 'onNodeClick') return handler => { nodeClick = handler; return graph; };
   if (key === 'nodeVal') return size => { nodeSize = size; return graph; };
+  if (key === 'nodeColor') return colour => { nodeColour = colour; return graph; };
+  if (key === 'linkColor') return colour => { linkColour = colour; return graph; };
   return () => graph;
 }});
 
