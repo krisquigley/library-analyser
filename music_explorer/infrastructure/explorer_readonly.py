@@ -503,9 +503,10 @@ class ReadOnlyExplorerSQLiteRepository:
                 exists = Path(path).is_file()
                 if not exists:
                     continue
-                artist = self._metadata_value(self._summary_metadata(common_json, tags_json), 'artist') or ''
+                metadata = self._summary_metadata(common_json, tags_json)
                 candidates.append(PlayableTrackCandidate(track_id, float(bpm), path, exists, True, True,
-                                                         artist=artist,
+                                                         title=self._metadata_value(metadata, 'title') or '',
+                                                         artist=self._metadata_value(metadata, 'artist') or '',
                                                          manual_overrides=tuple(overridden.get(track_id, ())),
                                                          duration_seconds=_playlist_duration(duration),
                                                          **_key_from_stage_payload(key_payload)))

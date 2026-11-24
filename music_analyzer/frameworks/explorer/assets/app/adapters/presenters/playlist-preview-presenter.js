@@ -71,13 +71,17 @@ function previewRows({tracks, transitions}) {
   const stepInto = new Map(transitions.map(step => [step.toTrackId, step]));
   return tracks.map((track, place) => ({
     place: String(place + 1),
-    track: `${track.artist} – ${track.title}`,
+    track: trackName(track),
     bpm: displayNumber(track.bpm),
     key: track.camelot ?? track.key ?? UNKNOWN,
     energy: shownNumber(track.energyLevel),
     target: shownNumber(track.energyTarget),
     transition: place === 0 ? 'Start' : stepText(stepInto.get(track.trackId)),
   }));
+}
+
+function trackName({artist, title}) {
+  return [artist, title].filter(Boolean).join(' – ') || 'Untitled track';
 }
 
 function stepText(step) {

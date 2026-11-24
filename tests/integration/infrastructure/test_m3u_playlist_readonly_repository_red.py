@@ -262,8 +262,8 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
             self.assertEqual([(c.track_id, c.manual_overrides) for c in candidates],
                              [(track_ids[0], ()), (track_ids[1], ('bpm', 'key'))])
 
-    def test_playlist_export_carries_artist_and_verified_duration_for_the_walk(self):
-        # Issue #121: no same artist back-to-back, and target-duration playlists.
+    def test_playlist_export_carries_title_artist_and_verified_duration_for_the_walk(self):
+        # Issue #121: no same artist back-to-back, and target-duration playlists. #255: the preview names each track.
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             db_path = root / 'analysis.sqlite'
@@ -274,15 +274,15 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
             _create_playlist_fixture_db(db_path, playable_paths)
             with sqlite3.connect(db_path) as db:
                 db.execute('INSERT INTO track_metadata VALUES(?,?,?,?)',
-                           (track_ids[0], json.dumps([['artist', 'Synthetic Artist']]), '[]', '[]'))
+                           (track_ids[0], json.dumps([['title', 'Synthetic Title'], ['artist', 'Synthetic Artist']]), '[]', '[]'))
                 db.execute('UPDATE track_audio SET duration_seconds=241.5 WHERE track_id=?', (track_ids[0],))
             before = db_path.read_bytes()
 
             candidates = ReadOnlyExplorerSQLiteRepository(str(db_path)).playlist_export_tracks()
 
             self.assertEqual(db_path.read_bytes(), before)
-            self.assertEqual([(c.artist, c.duration_seconds) for c in candidates],
-                             [('Synthetic Artist', 241.5), ('', 120.0)])
+            self.assertEqual([(c.title, c.artist, c.duration_seconds) for c in candidates],
+                             [('Synthetic Title', 'Synthetic Artist', 241.5), ('', '', 120.0)])
 
     def test_playlist_export_carries_the_detected_key_for_harmonic_mixing(self):
         # Issue #122: key, scale and strength come from the latest completed key stage.
