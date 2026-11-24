@@ -1,8 +1,10 @@
 // The energy arc editor inside the Download M3U controls (#137): one row per arc, in play order.
 // A chain of the same size is updated in place, so the field the listener is in keeps its focus.
+// #234: each row is a collapsible accordion item summed up in one line; a new arc opens, the others keep their state.
 
 const ENERGY_LEVEL_SCALE = '0 is the calmest eligible track, 1 the most energetic';
 const ARC_FIELDS = Object.freeze(['shape', 'length', 'low', 'high']);
+const ARC_FIELD_CAPTIONS = Object.freeze({shape: 'Shape', length: 'Length', low: 'Energy low', high: 'Energy high'});
 
 export function energyArcEditorView({onArcAdded, onArcRemoved, onArcMoved, onArcEdited}) {
   let rows = null;
@@ -25,7 +27,9 @@ export function energyArcEditorView({onArcAdded, onArcRemoved, onArcMoved, onArc
   function show(arcs, unit) {
     if (!rows) return;
     if (rowControls.length !== arcs.length) {
+      const wasOpen = rowControls.map(controls => controls.row.open);
       rowControls = arcs.map((arc, place) => arcRowControls(place));
+      rowControls.forEach((controls, place) => { controls.row.open = wasOpen[place] ?? true; });
       rows.replaceChildren(...rowControls.map(controls => controls.row));
     }
     arcs.forEach((arc, place) => syncRow(rowControls[place], arc, unit));
@@ -45,16 +49,21 @@ export function energyArcEditorView({onArcAdded, onArcRemoved, onArcMoved, onArc
     const earlier = arcButton(`m3u-arc-earlier-${place}`, 'Earlier', `Move arc ${place + 1} earlier`, () => onArcMoved(place, -1));
     const later = arcButton(`m3u-arc-later-${place}`, 'Later', `Move arc ${place + 1} later`, () => onArcMoved(place, 1));
     const remove = arcButton(`m3u-arc-remove-${place}`, 'Remove', `Remove arc ${place + 1}`, () => onArcRemoved(place));
-    const row = arcElement('div', {id: `m3u-arc-${place}`, className: 'm3u-arc-row'});
-    row.append(setArcText(document.createElement('span'), `Arc ${place + 1}`), ...ARC_FIELDS.map(field => fields[field]),
-      earlier, later, remove);
-    return {row, fields, earlier, later, place};
+    const summary = setArcText(document.createElement('summary'), `Arc ${place + 1}`);
+    const body = arcElement('div', {className: 'm3u-arc-fields'});
+    body.append(...ARC_FIELDS.map(field => arcField(ARC_FIELD_CAPTIONS[field], fields[field])));
+    const actions = arcElement('div', {className: 'm3u-arc-actions'});
+    actions.append(earlier, later, remove);
+    const row = arcElement('details', {id: `m3u-arc-${place}`, className: 'm3u-arc-row'});
+    row.append(summary, body, actions);
+    return {row, summary, fields, earlier, later, place};
   }
 
   return Object.freeze({build, show});
 }
 
-function syncRow({fields, earlier, later, place}, arc, unit) {
+function syncRow({summary, fields, earlier, later, place}, arc, unit) {
+  if (arc.summary) setArcText(summary, arc.summary);
   for (const field of ARC_FIELDS) {
     if (fields[field].value !== arc[field]) fields[field].value = arc[field];
   }
@@ -79,6 +88,12 @@ function arcButton(id, caption, label, onclick) {
   const button = arcElement('button', {id, type: 'button', onclick});
   button.setAttribute('aria-label', label);
   return setArcText(button, caption);
+}
+
+function arcField(caption, control) {
+  const field = arcElement('div', {className: 'm3u-arc-field'});
+  field.append(arcLabel(control, caption), control);
+  return field;
 }
 
 function arcLabel(control, caption) {

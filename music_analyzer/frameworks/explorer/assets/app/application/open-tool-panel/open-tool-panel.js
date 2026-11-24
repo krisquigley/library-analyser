@@ -1,6 +1,6 @@
-// Opening and closing the header's tools over the graph (#233). Opening a modal closes any other open modal first.
+// Opening and closing the header's tools over the graph (#233). Opening a panel first closes the open one of its kind.
 
-import {TOOL_PANELS, ToolPanelTransitionError, isToolPanel, modalsDisplacedBy, nextToolPanelState} from '../../domain/tool-panels.js';
+import {TOOL_PANELS, ToolPanelTransitionError, isToolPanel, panelsDisplacedBy, nextToolPanelState} from '../../domain/tool-panels.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
 import {requirePort} from '../ports/port.js';
 import {toolPanelClosed, toolPanelOpened} from './tool-panel-events.js';
@@ -29,7 +29,7 @@ export function createToolPanels({eventBus}) {
 
   function open(tool) {
     const next = nextToolPanelState(states.get(tool), 'open');
-    for (const displaced of modalsDisplacedBy(tool, openTools())) close(displaced);
+    for (const displaced of panelsDisplacedBy(tool, openTools())) close(displaced);
     states.set(tool, next);
     eventBus.publish(toolPanelOpened({tool, presentation: TOOL_PANELS[tool]}));
   }

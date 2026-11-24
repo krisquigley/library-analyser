@@ -35,14 +35,14 @@ class ExplorerViewportLayoutTests(unittest.TestCase):
                         'mood-strip', 'mood-strip-picker', 'mood-strip-value'):
             self.assertIn('overlay', html.ancestors[element][2], element)
         # #233: a header bar opens the tools; the Library is a drawer, the others are centred modal dialogs.
-        for tool in ('library', 'playlist', 'tag-write'):
+        for tool in ('library', 'filters', 'playlist', 'tag-write'):
             self.assertEqual(html.tags[f'{tool}-panel'], 'dialog', tool)
             self.assertEqual(html.tags[f'open-{tool}'], 'button', tool)
             self.assertIn('app-bar', html.ancestors[f'open-{tool}'], tool)
         for tool in ('playlist', 'tag-write'):
             self.assertIn(f'{tool}-panel', html.ancestors[f'close-{tool}'], tool)
         self.assertIn('library-panel', html.ancestors['tracks'])
-        self.assertIn('playlist-panel', html.ancestors['controls'])
+        self.assertIn('filters-panel', html.ancestors['controls'])
         self.assertIn('tag-write-panel', html.ancestors['tag-write'])
         self.assertIn('app-bar', html.ancestors['graph-load-status'], 'a graph failure and its retry stay in view')
         self.assertIn('playlist-panel', html.ancestors['playlist-controls'])

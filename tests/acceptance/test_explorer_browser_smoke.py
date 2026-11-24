@@ -56,9 +56,9 @@ class ExplorerBrowserSmokeTests(unittest.TestCase):
                     before = page.evaluate(SHOWN_GRAPH)
                     page.wait_for_timeout(150)
                     before['camera'] = page.evaluate(f'{SCENE}.graph.cameraPosition()')
-                    page.click('#open-playlist')  # #233: the mood tracker lives in the playlist modal
+                    page.click('#open-filters')  # #234: the mood tracker lives in the Filters drawer
                     page.locator('#selected-mood').select_option('relaxing')
-                    page.keyboard.press('Escape')
+                    page.click('#open-library')
                     page.wait_for_function(f"{GRAPH}.model.selectedMood === 'relaxing'")
                     after = page.evaluate(SHOWN_GRAPH)
                     after['camera'] = page.evaluate(f'{SCENE}.graph.cameraPosition()')

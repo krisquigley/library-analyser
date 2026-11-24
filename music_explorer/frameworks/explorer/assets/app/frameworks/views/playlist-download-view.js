@@ -1,5 +1,6 @@
 // The Download M3U controls in the page (#146), with the energy arc editor (#137):
 // renders view models and reports the listener's input. It keeps only the elements it last mounted, to update them in place.
+// #234: the controls are the playlist generator's first accordion steps; the page says where Download M3U goes.
 
 import {energyArcEditorView} from './energy-arc-editor-view.js';
 
@@ -24,7 +25,7 @@ export function playlistDownloadView({onControlsEdited, onDownloadRequested, ...
     if (update.status) showPlaylistStatus(mounted.status, update.status);
   }
 
-  function mount(panel, viewModel) {
+  function mount(panel, viewModel, finish = panel) {
     const controls = playlistControlElements(viewModel);
     const readControls = () => playlistControlValues(controls);
     for (const control of Object.values(controls)) control.onchange = () => onControlsEdited(readControls());
@@ -34,13 +35,17 @@ export function playlistDownloadView({onControlsEdited, onDownloadRequested, ...
     const status = playlistElement('p', {id: 'm3u-download-status', className: 'muted'});
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    const fieldset = playlistElement('fieldset', {id: 'm3u-download-controls'});
-    fieldset.append(setPlaylistText(document.createElement('legend'), 'Download M3U'),
-      controls.bpmMin, controls.bpmMax, controls.count, controls.durationMinutes,
-      controls.harmonicMixing, playlistLabel(controls.harmonicMixing, 'Harmonic mixing'),
-      playlistLabel(controls.minimumKeyStrength, 'Min key strength (0.0–1.0)'), controls.minimumKeyStrength,
-      arcEditor.build(controls.arcLengthUnit, viewModel), controls.moodHold, button, status);
-    panel.append(fieldset);
+    const tempo = playlistStep('playlist-step-tempo', 'Tempo and length');
+    tempo.append(playlistField('BPM range', controls.bpmMin, controls.bpmMax),
+      playlistField('Length', controls.count, controls.durationMinutes),
+      playlistField('Harmonic mixing', controls.harmonicMixing),
+      playlistField('Min key strength (0.0–1.0)', controls.minimumKeyStrength));
+    const energy = playlistStep('playlist-step-energy', 'Energy plan');
+    energy.append(arcEditor.build(controls.arcLengthUnit, viewModel), playlistField('Mood hold', controls.moodHold));
+    const steps = playlistElement('div', {id: 'm3u-download-controls', className: 'playlist-steps'});
+    steps.append(tempo, energy);
+    panel.append(steps);
+    finish.append(button, status);
     mounted = {controls, button, status};
   }
 
@@ -94,10 +99,18 @@ function playlistSelect(id, choices, current, title) {
   return select;
 }
 
-function playlistLabel(control, caption) {
+function playlistStep(id, title) {
+  const step = playlistElement('details', {id, open: true, className: 'playlist-step'});
+  step.append(setPlaylistText(document.createElement('summary'), title));
+  return step;
+}
+
+function playlistField(caption, ...controls) {
+  const field = playlistElement('div', {className: 'playlist-field'});
   const label = document.createElement('label');
-  label.htmlFor = control.id;
-  return setPlaylistText(label, caption);
+  label.htmlFor = controls[0].id;
+  field.append(setPlaylistText(label, caption), ...controls);
+  return field;
 }
 
 function playlistElement(tag, properties) {

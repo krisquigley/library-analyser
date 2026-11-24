@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {playlistDownloadView} from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/views/playlist-download-view.js';
 import {createInMemorySession} from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/in-memory-session.js';
 import {EMPTY_PLAYLIST_DRAFT} from '../../../../../music_explorer/frameworks/explorer/assets/app/domain/playlist-draft.js';
-import {byTag, descendants, fakeElement, installFakeDocument} from '../fake-document.js';
+import {descendants, fakeElement, installFakeDocument} from '../fake-document.js';
 
 beforeEach(() => { installFakeDocument([]); });
 
@@ -155,7 +155,6 @@ test('the button is disabled while a download is in flight, and nothing is shown
   const {view, byId} = mounted();
   view.show({downloadDisabled: true});
   assert.equal(byId('download-m3u').disabled, true);
-  assert.equal(byTag(byId('m3u-download-controls'), 'legend')[0].textContent, 'Download M3U');
 });
 
 test("composed with the real controller and use case, the arc editor's input reaches the M3U address", async () => {
@@ -207,4 +206,39 @@ test('a loaded draft replaces every control value, harmonic mixing as a tick (#1
   assert.deepEqual(['m3u-bpm-min', 'm3u-bpm-max', 'm3u-count', 'm3u-min-key-strength', 'm3u-arc-unit', 'm3u-mood']
     .map(id => byId(id).value), ['118', '126', '12', '0.7', 'minutes', 'happy']);
   assert.equal(byId('m3u-harmonic').checked, false);
+});
+
+test('#234: the controls are steps of an accordion, Tempo and length and Energy plan, open to start', () => {
+  const {byId} = mounted();
+  const steps = byId('m3u-download-controls').children.filter(node => node.tagName === 'DETAILS');
+  assert.deepEqual(steps.map(step => [step.id, step.open, step.children[0].tagName, step.children[0].textContent]),
+    [['playlist-step-tempo', true, 'SUMMARY', 'Tempo and length'], ['playlist-step-energy', true, 'SUMMARY', 'Energy plan']]);
+  assert.ok(descendants(steps[0]).some(node => node.id === 'm3u-bpm-min'));
+  assert.ok(descendants(steps[1]).some(node => node.id === 'm3u-add-arc'));
+  assert.ok(descendants(steps[1]).some(node => node.id === 'm3u-mood'));
+});
+
+test('#234: Download M3U and its status go where the page puts them', () => {
+  const heard = [];
+  const view = playlistDownloadView({onControlsEdited() {}, onDownloadRequested: values => heard.push(values),
+    onArcAdded() {}, onArcRemoved() {}, onArcMoved() {}, onArcEdited() {}});
+  const [panel, finish] = [fakeElement('section'), fakeElement('section')];
+  view.mount(panel, viewModel(), finish);
+  assert.deepEqual(descendants(finish).filter(node => node.id).map(node => node.id), ['download-m3u', 'm3u-download-status']);
+  assert.ok(!descendants(panel).some(node => node.id === 'download-m3u'));
+});
+
+test('#234: each arc is a collapsible row summed up in one line; a new arc opens and the others keep their state', () => {
+  const {view, byId} = mounted({arcs: [{...ARC, summary: 'Arc 1 · Rising energy · length not set · default energy range'}]});
+  const first = byId('m3u-arc-0');
+  assert.equal(first.tagName, 'DETAILS');
+  assert.deepEqual([first.children[0].tagName, first.children[0].textContent],
+    ['SUMMARY', 'Arc 1 · Rising energy · length not set · default energy range']);
+  first.open = false;
+  view.show({arcs: [{...ARC, summary: 'Arc 1 · Rising energy · 8 tracks · default energy range'}, {...ARC, summary: 'Arc 2'}],
+    arcLengthPlaceholder: 'tracks'});
+  assert.deepEqual([byId('m3u-arc-0').open, byId('m3u-arc-1').open], [false, true]);
+  assert.equal(byId('m3u-arc-0').children[0].textContent, 'Arc 1 · Rising energy · 8 tracks · default energy range');
+  const length = byId('m3u-arc-length-0');
+  assert.equal(descendants(byId('m3u-arc-0')).find(node => node.tagName === 'LABEL' && node.htmlFor === length.id)?.textContent, 'Length');
 });

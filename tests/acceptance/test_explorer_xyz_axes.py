@@ -81,9 +81,9 @@ class GraphAxesBrowserTests(unittest.TestCase):
                     self.assertEqual(before['labels'][::2], ['X valence (native)', 'Y arousal (native)', 'Z BPM'])
                     page.evaluate(f'() => {{{SCENE}.graph.cameraPosition({{x:900,y:1200,z:4300}},{{x:100,y:60,z:4450}},0);return true}}')
                     page.wait_for_function(f'{LABELS}[0].style.transform !== ' + repr(before['screen']))
-                    page.click('#open-playlist')  # #233: the mood tracker lives in the playlist modal
+                    page.click('#open-filters')  # #234: the mood tracker lives in the Filters drawer
                     page.locator('#selected-mood').select_option('relaxing')
-                    page.keyboard.press('Escape')
+                    page.click('#open-library')
                     page.wait_for_function(f"{GRAPH}.model.selectedMood === 'relaxing'")
                     after = page.evaluate(SHOWN_AXES)
                     self.assertEqual(after['axes'], before['axes'])

@@ -26,6 +26,7 @@ import {TOOL_PANEL_EVENT_TYPES} from '../application/open-tool-panel/tool-panel-
 import {toolPanelController} from '../adapters/controllers/tool-panel-controller.js';
 import {toolPanelViewModel} from '../adapters/presenters/tool-panel-presenter.js';
 import {toolPanelsView} from '../frameworks/views/tool-panels-view.js';
+import {playlistGeneratorSteps} from '../frameworks/views/playlist-steps-view.js';
 import {playlistDownloadController} from '../adapters/controllers/playlist-download-controller.js';
 import {fetchExplorerApi} from '../adapters/gateways/explorer-api-gateway.js';
 import {playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
@@ -186,7 +187,7 @@ async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose
 function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId()}));}
 function loadGraph(){return graphLoad.load();}
 
-function appendM3UDownloadControls(panel){playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]})); playlistPreviewPanel.mount(panel,playlistPreviewViewModel()); recipeExportPanel.mount(panel); savedRecipePanel.mount(panel,savedRecipesViewModel());}
+function appendM3UDownloadControls(panel){const steps=playlistGeneratorSteps(); playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]}),steps.finish); panel.append(steps.preview,steps.finish); playlistPreviewPanel.mount(steps.preview,playlistPreviewViewModel()); recipeExportPanel.mount(steps.finish); savedRecipePanel.mount(steps.finish,savedRecipesViewModel());}
 function mountTagWritePanel(){const root=document.getElementById('tag-write'); if(root) tagWritePanel.mount(root,tagWriteViewModel());}
 function renderInitialDetail(){trackDetail.showNone();}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}
