@@ -141,9 +141,9 @@ test('refused selection, history, detail and state requests fail with the server
 const PREVIEW_BODY = {
   tracks: [
     {track_id: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
-      energy_level: 0.25, energy_target: 0.2},
+      energy_level: 0.25, energy_target: 0.2, duration_seconds: 241.5},
     {track_id: 'b', title: 'Lift', artist: 'Synthetic', bpm: 122.5, key: null, camelot: null, arousal: null,
-      energy_level: null, energy_target: 0.6},
+      energy_level: null, energy_target: 0.6, duration_seconds: null},
   ],
   transitions: [{from_track_id: 'a', to_track_id: 'b', key_compatible: null, bpm_step_smooth: true, bpm_change: 2.5}],
   complete: false, warning: 'Only 2 of 10 tracks fit',
@@ -157,9 +157,9 @@ test('a playlist preview asks the preview endpoint and reads the walk the server
   assert.deepEqual(preview, {
     tracks: [
       {trackId: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
-        energyLevel: 0.25, energyTarget: 0.2},
+        energyLevel: 0.25, energyTarget: 0.2, durationSeconds: 241.5},
       {trackId: 'b', title: 'Lift', artist: 'Synthetic', bpm: 122.5, key: null, camelot: null, arousal: null,
-        energyLevel: null, energyTarget: 0.6},
+        energyLevel: null, energyTarget: 0.6, durationSeconds: null},
     ],
     transitions: [{fromTrackId: 'a', toTrackId: 'b', keyCompatible: null, bpmStepSmooth: true, bpmChange: 2.5}],
     complete: false, warning: 'Only 2 of 10 tracks fit',
@@ -174,6 +174,8 @@ test('a preview the server shaped wrongly is refused whole, never half-read (#13
     [{...PREVIEW_BODY, tracks: [{...track, title: null}]}, 'Invalid playlist preview: track 1 title must be text'],
     [{...PREVIEW_BODY, tracks: [{...track, energy_target: 'high'}]},
       'Invalid playlist preview: track 1 energy_target must be a number or null'],
+    [{...PREVIEW_BODY, tracks: [{...track, duration_seconds: '4:01'}]},
+      'Invalid playlist preview: track 1 duration_seconds must be a number or null'],
     [{...PREVIEW_BODY, transitions: [{...PREVIEW_BODY.transitions[0], key_compatible: 'yes'}]},
       'Invalid playlist preview: transition 1 key_compatible must be true, false or null'],
     [{...PREVIEW_BODY, complete: 'no'}, 'Invalid playlist preview: complete must be true or false'],

@@ -1,5 +1,6 @@
 """Issue #138: see a playlist, track by track and transition by transition, before downloading it."""
 import unittest
+from dataclasses import replace
 
 from music_explorer.application.dto.playlists import EnergyArcRequest, PlaylistRecipe
 from music_explorer.application.use_cases.download_playlist.download_playlist import GenerateBpmGraphM3UPlaylist
@@ -7,15 +8,16 @@ from music_explorer.application.use_cases.preview_playlist.preview_playlist impo
 from tests.unit.application.test_m3u_playlist_generation import _FakePlaylistRepository, _PlayableTrack, _edge
 
 
-def _library():
+def _library(changes=None):
+    changes = changes or {}
     return _FakePlaylistRepository(
-        tracks=(_PlayableTrack('a', 120, '/library/a.flac', title='Opening', artist='First', key='C', scale='major',
+        tracks=tuple(replace(track, **changes.get(track.track_id, {})) for track in (_PlayableTrack('a', 120, '/library/a.flac', title='Opening', artist='First', key='C', scale='major',
                                key_strength=0.9, arousal=2.0),
                 _PlayableTrack('b', 124, '/library/b.flac', title='Middle', artist='Second', key='G', scale='major',
                                key_strength=0.9, arousal=5.0),
                 _PlayableTrack('c', 135, '/library/c.flac', title='Late', artist='Third', key='F#', scale='major',
                                key_strength=0.2, arousal=8.0),
-                _PlayableTrack('d', 121, '/library/d.flac', manual_overrides=('energy',), arousal=9.0)),
+                _PlayableTrack('d', 121, '/library/d.flac', manual_overrides=('energy',), arousal=9.0))),
         edges=(_edge('a', 'b', 0.9), _edge('b', 'c', 0.8), _edge('a', 'd', 0.7)))
 
 
@@ -42,6 +44,11 @@ class PreviewPlaylistTests(unittest.TestCase):
         self.assertEqual([2.0, 5.0, 8.0], [track.arousal for track in tracks])
         self.assertEqual([0.0, 0.5, 1.0], [track.energy_level for track in tracks], 'ranked among the eligible tracks')
         self.assertEqual([None, None, None], [track.energy_target for track in tracks], 'no arc, no target')
+
+    def test_each_track_shows_its_length_where_the_audio_file_gave_one(self):
+        # Issue #257.
+        tracks = PreviewPlaylist(_library({'b': {'duration_seconds': 241.5}, 'c': {'duration_seconds': None}})).execute(_recipe()).tracks
+        self.assertEqual([180.0, 241.5, None], [track.duration_seconds for track in tracks])
 
     def test_with_an_arc_each_track_shows_the_target_it_was_chosen_for(self):
         tracks = PreviewPlaylist(_library()).execute(_recipe(energy_plan=(EnergyArcRequest('rise'),))).tracks

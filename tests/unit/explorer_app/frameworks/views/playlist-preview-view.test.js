@@ -26,7 +26,7 @@ function recordingContext(log) {
 const CHART = Object.freeze({width: 300, height: 80, padding: 8, level: [[[8, 72], [292, 8]]], target: [[[8, 40]], [[150, 8], [292, 8]]],
   label: 'Energy across 2 tracks'});
 
-const ROW = Object.freeze({place: '1', track: 'Synthetic – Opening', bpm: '120.0', key: '8A', energy: '0.3', target: '0.2',
+const ROW = Object.freeze({place: '1', track: 'Synthetic – Opening', length: '4:00', bpm: '120.0', key: '8A', energy: '0.3', target: '0.2',
   transition: 'Start'});
 
 function mounted() {
@@ -52,13 +52,13 @@ test('mounting draws the Preview button and an empty list, and asks for nothing 
 test('the list has a heading for each column', () => {
   const {byId} = mounted();
   const heading = byId('playlist-preview-heading');
-  assert.deepEqual(heading.children.map(cell => cell.textContent), ['#', 'Track', 'BPM', 'Key', 'Energy', 'Target', 'Transition']);
+  assert.deepEqual(heading.children.map(cell => cell.textContent), ['#', 'Track', 'Length', 'BPM', 'Key', 'Energy', 'Target', 'Transition']);
 });
 
 test('showing a preview draws its rows, and a later update replaces them', () => {
   const {view, cells} = mounted();
   view.show({previewDisabled: false, status: {text: '1 track.', urgent: false}, rows: [ROW]});
-  assert.deepEqual(cells(), [['1', 'Synthetic – Opening', '120.0', '8A', '0.3', '0.2', 'Start']]);
+  assert.deepEqual(cells(), [['1', 'Synthetic – Opening', '4:00', '120.0', '8A', '0.3', '0.2', 'Start']]);
   view.show({previewDisabled: false, status: {text: 'Preview failed: no', urgent: true}, rows: []});
   assert.deepEqual(cells(), []);
 });

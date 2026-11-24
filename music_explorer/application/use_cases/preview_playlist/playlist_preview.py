@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class PreviewTrack:
-    """A placed track. Energy levels are ranks among the eligible tracks, 0 to 1; None where unknown."""
+    """A placed track. Energy levels are ranks among the eligible tracks, 0 to 1; None where unknown.
+    The duration is the audio file's, in seconds (#257); None where unknown."""
     track_id: str
     title: str
     artist: str
@@ -14,6 +15,7 @@ class PreviewTrack:
     arousal: float | None
     energy_level: float | None
     energy_target: float | None
+    duration_seconds: float | None = None
 
 
 @dataclass(frozen=True)
