@@ -113,7 +113,7 @@ const body = element('body');
 for (const [id, tag] of [['tracks', 'table'], ['track-search', 'input'], ['undo', 'button'], ['reset', 'button'],
   ['controls', 'div'], ['detail', 'section'], ['graph-load-status', 'div'],
   ['loading-surface', 'div'], ['loading-status', 'div'], ['loading-error', 'div'], ['loading-retry', 'button'],
-  ['graph3d', 'div'], ['map', 'canvas'], ['mood-strip', 'canvas'], ['mood-strip-picker', 'input'], ['mood-strip-value', 'output']]) {
+  ['graph3d', 'div'], ['map', 'canvas'], ['mood-strip', 'canvas'], ['mood-strip-picker', 'input'], ['mood-strip-value', 'output'], ['tag-write', 'div']]) {
   const node = element(tag); node.id = id; body.append(node);
 }
 body.querySelector('#tracks').append(element('tbody'));

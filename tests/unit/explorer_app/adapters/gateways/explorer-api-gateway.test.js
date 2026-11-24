@@ -224,3 +224,34 @@ test('a recipe that cannot be loaded fails with the server message (#139)', asyn
     body: '{"error":"No saved recipe named \\"a\\""}'}));
   await assert.rejects(api.loadSavedPlaylistRecipe('a'), {message: 'No saved recipe named "a"'});
 });
+
+test('a tag write is previewed with GET and applied with a JSON POST of its token (#132)', async () => {
+  const previewBody = {token: 'tok', changes: [{file: 'one.mp3', field: 'bpm', current: null, proposed: '124', replaces: false}],
+    skipped: [{track_id: 'sha256:b', reason: 'Nothing to change'}]};
+  const preview = gatewayAnswering(response({body: JSON.stringify(previewBody), headers: {'Content-Type': 'application/json'}}));
+  assert.deepEqual(await preview.api.previewTagWrite({trackIds: ['sha256:a', 'sha256:b'], policy: 'replace-existing'}),
+    {token: 'tok', changes: previewBody.changes, skipped: [{trackId: 'sha256:b', reason: 'Nothing to change'}]});
+  assert.deepEqual(preview.requests, ['/api/tag-write/preview?track=sha256%3Aa&track=sha256%3Ab&policy=replace-existing']);
+  const reportBody = {outcomes: [{file: 'one.mp3', status: 'written', detail: 'BPM 124'}], notice: 'Rescan them.'};
+  const apply = gatewayAnswering(response({body: JSON.stringify(reportBody), headers: {'Content-Type': 'application/json'}}));
+  assert.deepEqual(await apply.api.applyTagWrite('tok'), reportBody);
+  assert.deepEqual(apply.requests, [['/api/tag-write/apply', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: '{"token":"tok"}'}]]);
+});
+
+test('a tag write answer shaped wrongly is refused whole, and a refusal is told (#132)', async () => {
+  for (const [operation, body, message] of [
+    ['previewTagWrite', {token: 3, changes: [], skipped: []}, 'Invalid tag preview: token must be text or null'],
+    ['previewTagWrite', {token: null, changes: [{file: 'a', field: 'mood', current: null, proposed: 'x', replaces: false}], skipped: []},
+      'Invalid tag preview: change 1 field must be bpm or key'],
+    ['previewTagWrite', {token: null, changes: [], skipped: [{track_id: 'a'}]}, 'Invalid tag preview: skipped track 1 reason must be text'],
+    ['applyTagWrite', {outcomes: [{file: 'a', status: 'done', detail: ''}], notice: ''},
+      'Invalid tag write report: outcome 1 status must be written, skipped or failed'],
+  ]) {
+    const {api} = gatewayAnswering(response({body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}}));
+    await assert.rejects(api[operation]({trackIds: ['a'], policy: 'fill-empty'}), {message});
+  }
+  const {api} = gatewayAnswering(response({ok: false, headers: {'Content-Type': 'application/json'},
+    body: '{"error":"This approval has already been used: preview again"}'}));
+  await assert.rejects(api.applyTagWrite('tok'), {message: 'This approval has already been used: preview again'});
+});

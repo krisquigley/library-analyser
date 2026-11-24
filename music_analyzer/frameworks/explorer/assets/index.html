@@ -21,6 +21,7 @@
   </div>
   <div class="right-dock">
     <details id="detail-panel" class="panel" open><summary>Current / graph notes</summary><div id="detail"></div><div class="actions"><button id="undo">Undo selection</button><button id="reset">Clear selection</button></div></details>
+    <details id="tag-write-panel" class="panel"><summary>Write tags</summary><p class="muted">Writes the selected track’s BPM and key into its MP3 or FLAC file, only after you check the preview and approve it. Nothing else in the file changes.</p><div id="tag-write"></div></details>
   </div>
   <div class="bottom-dock">
     <section class="panel mood-strip"><h2>Selected mood strength</h2><div class="mood-strip-axis"><span>0</span><span>0.5</span><span>1</span></div><canvas id="mood-strip" height="70" aria-label="Selected mood score distribution from zero to one"></canvas><label for="mood-strip-picker">Inspect sorted visible track</label><input id="mood-strip-picker" type="range" min="0" max="0" value="0"><output id="mood-strip-value" for="mood-strip-picker" aria-live="polite"></output></section>
