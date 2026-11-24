@@ -67,9 +67,9 @@ routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
 routes['/api/playlists/preview'] = r => r.respond({
   tracks: [
     {track_id: 'b', title: 'Track b', artist: 'Public synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
-      energy_level: 0.5, energy_target: null},
+      energy_level: 0.5, energy_target: null, duration_seconds: 241.5},
     {track_id: 'a', title: 'Track a', artist: 'Public synthetic', bpm: 121, key: null, camelot: null, arousal: null,
-      energy_level: null, energy_target: null},
+      energy_level: null, energy_target: null, duration_seconds: null},
   ],
   transitions: [{from_track_id: 'b', to_track_id: 'a', key_compatible: null, bpm_step_smooth: true, bpm_change: 1}],
   complete: false, warning: 'Only 2 of 10 tracks fit'});
@@ -86,10 +86,10 @@ assert.deepEqual(heard.filter(type => type.startsWith('playlist-')), ['playlist-
 assert.deepEqual(heard.filter(type => type.startsWith('tag-write-')), ['tag-write-playlist-withdrawn', 'tag-write-playlist-offered']);
 const cells = byId('playlist-preview-tracks').children.map(line => line.children.map(cell => cell.textContent));
 assert.deepEqual(cells, [
-  ['1', 'Public synthetic – Track b', '120.0', 'A minor', '0.5', '—', 'Start'],
-  ['2', 'Public synthetic – Track a', '121.0', '—', '—', '—', 'Key unknown, +1.0 BPM'],
+  ['1', 'Public synthetic – Track b', '4:02', '120.0', 'A minor', '0.5', '—', 'Start'],
+  ['2', 'Public synthetic – Track a', '—', '121.0', '—', '—', '—', 'Key unknown, +1.0 BPM'],
 ]);
-assert.equal(byId('playlist-preview-status').textContent, '2 tracks. Warning: Only 2 of 10 tracks fit');
+assert.equal(byId('playlist-preview-status').textContent, '2 tracks · 4:02, plus 1 of unknown length. Warning: Only 2 of 10 tracks fit');
 assert.equal(byId('playlist-energy-chart').getAttribute('aria-label'),
   'Energy across 2 tracks: the arc target (dashed) and the energy each track reaches (solid).');
 assert.equal(requests.filter(r => r.path === '/api/playlists/m3u').length, 0, 'a preview downloads nothing');
@@ -326,9 +326,9 @@ routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
 routes['/api/playlists/preview'] = r => r.respond({
   tracks: [
     {track_id: 'b', title: 'Track b', artist: 'Public synthetic', bpm: 120, key: null, camelot: null, arousal: null,
-      energy_level: null, energy_target: null},
+      energy_level: null, energy_target: null, duration_seconds: 180},
     {track_id: 'a', title: 'Track a', artist: 'Public synthetic', bpm: 121, key: null, camelot: null, arousal: null,
-      energy_level: null, energy_target: null}],
+      energy_level: null, energy_target: null, duration_seconds: 200}],
   transitions: [{from_track_id: 'b', to_track_id: 'a', key_compatible: null, bpm_step_smooth: true, bpm_change: 1}],
   complete: true, warning: null});
 routes['/api/tag-write/preview'] = r => r.respond({token: 'approval-2', skipped: [], changes: [

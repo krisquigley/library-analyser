@@ -2,6 +2,7 @@
 // fields without usable evidence share one line that still gives each reason (#236). Nothing is invented: a key fact
 // is shown only when its evidence is, and says where it comes from.
 
+import {displayDuration} from '../../domain/display-duration.js';
 import {displayNumber} from '../../domain/display-number.js';
 import {energyEvidence, measuredValue, scoreEvidence} from '../../domain/track-evidence.js';
 
@@ -101,11 +102,8 @@ function energyFacts(field) {
 }
 
 function durationFact(seconds) {
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
-  const whole = Math.round(seconds);
-  const [hours, minutes, rest] = [Math.floor(whole / 3600), Math.floor(whole / 60) % 60, whole % 60];
-  const pad = value => String(value).padStart(2, '0');
-  return {text: hours ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${minutes}:${pad(rest)}`, source: 'audio file'};
+  const text = displayDuration(seconds);
+  return text ? {text, source: 'audio file'} : null;
 }
 
 function evidenceItems(name, field) {

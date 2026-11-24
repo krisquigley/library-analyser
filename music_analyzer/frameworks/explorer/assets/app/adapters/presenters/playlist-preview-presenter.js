@@ -1,6 +1,7 @@
 // What the playlist preview shows for each preview event (#138): one row per track, with the step into it,
 // and the energy chart: the arc's target and the energy each track reaches, left to right.
 
+import {displayDuration} from '../../domain/display-duration.js';
 import {displayNumber} from '../../domain/display-number.js';
 
 const UNKNOWN = '—';
@@ -63,8 +64,17 @@ function trackCount(count) {
 }
 
 function previewSummary({tracks, warning}) {
-  const count = `${trackCount(tracks.length)}.`;
-  return warning ? `${count} Warning: ${warning}` : count;
+  const summary = `${trackCount(tracks.length)} · ${previewedLength(tracks)}.`;
+  return warning ? `${summary} Warning: ${warning}` : summary;
+}
+
+// The playlist's length (#257): the known lengths added up, saying how many tracks' lengths are unknown.
+function previewedLength(tracks) {
+  const known = tracks.map(track => track.durationSeconds).filter(seconds => displayDuration(seconds) !== null);
+  if (!known.length) return 'length unknown';
+  const total = displayDuration(known.reduce((sum, seconds) => sum + seconds, 0));
+  const unknown = tracks.length - known.length;
+  return unknown ? `${total}, plus ${unknown} of unknown length` : total;
 }
 
 function previewRows({tracks, transitions}) {
@@ -72,6 +82,7 @@ function previewRows({tracks, transitions}) {
   return tracks.map((track, place) => ({
     place: String(place + 1),
     track: trackName(track),
+    length: displayDuration(track.durationSeconds) ?? UNKNOWN,
     bpm: displayNumber(track.bpm),
     key: track.key ?? UNKNOWN,
     energy: shownNumber(track.energyLevel),

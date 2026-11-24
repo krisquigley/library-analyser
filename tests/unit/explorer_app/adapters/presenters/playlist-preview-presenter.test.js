@@ -6,7 +6,7 @@ import {
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/playlist-preview-presenter.js';
 
 const track = (fields = {}) => ({trackId: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor',
-  camelot: '8A', arousal: 0.4, energyLevel: 0.25, energyTarget: 0.2, ...fields});
+  camelot: '8A', arousal: 0.4, energyLevel: 0.25, energyTarget: 0.2, durationSeconds: 240, ...fields});
 
 test('before any preview the panel offers Preview and shows nothing', () => {
   assert.deepEqual(playlistPreviewViewModel(), {previewDisabled: false, status: {text: '', urgent: false}, rows: [],
@@ -32,12 +32,12 @@ test('a preview lists each track with its BPM, key in letters (#261), energy and
   assert.deepEqual(chart, playlistEnergyChart(preview.tracks));
   assert.deepEqual(listed, {
     previewDisabled: false,
-    status: {text: '3 tracks.', urgent: false},
+    status: {text: '3 tracks · 12:00.', urgent: false},
     rows: [
-      {place: '1', track: 'Synthetic – Opening', bpm: '120.0', key: 'A minor', energy: '0.3', target: '0.2', transition: 'Start'},
-      {place: '2', track: 'Synthetic – Lift', bpm: '122.5', key: 'C major', energy: '—', target: '0.6',
+      {place: '1', track: 'Synthetic – Opening', length: '4:00', bpm: '120.0', key: 'A minor', energy: '0.3', target: '0.2', transition: 'Start'},
+      {place: '2', track: 'Synthetic – Lift', length: '4:00', bpm: '122.5', key: 'C major', energy: '—', target: '0.6',
         transition: 'Key compatible, +2.5 BPM'},
-      {place: '3', track: 'Synthetic – Drop', bpm: '110.0', key: '—', energy: '0.3', target: '0.2',
+      {place: '3', track: 'Synthetic – Drop', length: '4:00', bpm: '110.0', key: '—', energy: '0.3', target: '0.2',
         transition: 'Key unknown, -12.5 BPM jump'},
     ],
   });
@@ -46,7 +46,7 @@ test('a preview lists each track with its BPM, key in letters (#261), energy and
 test('an incomplete preview says why, and a single track is one track', () => {
   const view = presentPlaylistPreviewEvent({type: 'playlist-previewed',
     preview: {tracks: [track()], transitions: [], complete: false, warning: 'Only 1 of 10 tracks fit'}});
-  assert.deepEqual(view.status, {text: '1 track. Warning: Only 1 of 10 tracks fit', urgent: false});
+  assert.deepEqual(view.status, {text: '1 track · 4:00. Warning: Only 1 of 10 tracks fit', urgent: false});
 });
 
 test('a clash and an unknown step are told apart', () => {
@@ -95,4 +95,13 @@ test('a track without a title or artist tag is named by what it has (#255)', () 
   const rows = presentPlaylistPreviewEvent({type: 'playlist-previewed', preview: {complete: true, warning: null, transitions: [],
     tracks: [track({title: ''}), track({trackId: 'b', artist: ''}), track({trackId: 'c', title: '', artist: ''})]}}).rows;
   assert.deepEqual(rows.map(row => row.track), ['Synthetic', 'Opening', 'Untitled track']);
+});
+
+test("each track shows its length, and the summary the playlist's, counting the tracks whose length is unknown (#257)", () => {
+  const previewed = durations => presentPlaylistPreviewEvent({type: 'playlist-previewed', preview: {complete: true, warning: null,
+    transitions: [], tracks: durations.map((durationSeconds, place) => track({trackId: String(place), durationSeconds}))}});
+  const mixed = previewed([225.4, null, 3600]);
+  assert.deepEqual(mixed.rows.map(row => row.length), ['3:45', '—', '1:00:00']);
+  assert.equal(mixed.status.text, '3 tracks · 1:03:45, plus 1 of unknown length.');
+  assert.equal(previewed([null, null]).status.text, '2 tracks · length unknown.');
 });

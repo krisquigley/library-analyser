@@ -49,7 +49,8 @@ def _preview_track(track, arousal, levels, target):
     return PreviewTrack(
         track_id=track.track_id, title=getattr(track, 'title', '') or '', artist=getattr(track, 'artist', '') or '',
         bpm=track.bpm, key=f'{track.key} {key.scale}' if key else None, camelot=camelot_code(key) if key else None,
-        arousal=arousal.get(track.track_id), energy_level=levels.get(track.track_id), energy_target=target)
+        arousal=arousal.get(track.track_id), energy_level=levels.get(track.track_id), energy_target=target,
+        duration_seconds=getattr(track, 'duration_seconds', None))
 
 
 def _transition(before, after, mixing):

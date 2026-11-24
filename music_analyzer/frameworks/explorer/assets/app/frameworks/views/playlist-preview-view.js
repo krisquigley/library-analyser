@@ -4,7 +4,7 @@
 const TARGET_LINE = Object.freeze({color: '#8dd6ff', dash: Object.freeze([4, 3])});
 const LEVEL_LINE = Object.freeze({color: '#ffcf70', dash: Object.freeze([])});
 const PREVIEW_COLUMNS = Object.freeze([
-  ['place', '#'], ['track', 'Track'], ['bpm', 'BPM'], ['key', 'Key'], ['energy', 'Energy'], ['target', 'Target'],
+  ['place', '#'], ['track', 'Track'], ['length', 'Length'], ['bpm', 'BPM'], ['key', 'Key'], ['energy', 'Energy'], ['target', 'Target'],
   ['transition', 'Transition']]);
 
 export function playlistPreviewView({onPreviewRequested}) {

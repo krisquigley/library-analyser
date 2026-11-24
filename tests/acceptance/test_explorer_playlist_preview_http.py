@@ -53,7 +53,8 @@ class ExplorerPlaylistPreviewHTTPTests(unittest.TestCase):
         before = _table_counts(self.db_path)
         preview = self._preview(self._query(('length', '2')))
 
-        self.assertEqual({'track_id', 'title', 'artist', 'bpm', 'key', 'camelot', 'arousal', 'energy_level', 'energy_target'},
+        self.assertEqual({'track_id', 'title', 'artist', 'bpm', 'key', 'camelot', 'arousal', 'energy_level', 'energy_target',
+                          'duration_seconds'},
                          set(preview['tracks'][0]))
         self.assertEqual([(self.first, self.second)],
                          [(step['from_track_id'], step['to_track_id']) for step in preview['transitions']])
