@@ -14,8 +14,10 @@ def _duration_reason_and_unknown(metadata):
     return decision.warning or '', unknown
 
 
-def present_scan(report, as_json=False):
+def present_scan(report, carried_over=(), as_json=False):
     payload = asdict(report)
+    payload['carried_over'] = [{'predecessor_id': kept.predecessor_id, 'successor_id': kept.successor_id}
+                               for kept in carried_over]
     excluded = []
     unknown = []
     for file, original in zip(payload['files'], report.files):
@@ -30,6 +32,15 @@ def present_scan(report, as_json=False):
         return json.dumps(payload, ensure_ascii=False)
     lines = [f"Scan {'complete' if report.complete else 'partial'}: {len(report.files)} files, {len(report.missing)} missing locations, {len(excluded)} duration exclusions, {len(unknown)} unknown durations"]
     lines.extend(f'{f.identity.track_id}  {f.location}' for f in report.files)
+    lines.append(_carried_over_summary(len(carried_over)))
+    lines.extend(f'KEPT {kept.predecessor_id} -> {kept.successor_id}' for kept in carried_over)
     lines.extend(f'WARNING {f.location}: {reason}' for f, reason in (*excluded, *unknown))
     lines.extend(f'ERROR {issue.location}: {issue.detail}' for issue in report.issues)
     return '\n'.join(lines)
+
+
+def _carried_over_summary(count):
+    """#223: tracks whose file changed only in its tags keep their analysis and overrides."""
+    if count == 1:
+        return '1 track kept its analysis after a tags-only change'
+    return f'{count} tracks kept their analysis after a tags-only change'
