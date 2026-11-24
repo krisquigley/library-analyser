@@ -18,7 +18,7 @@ test('while previewing, Preview is disabled and the listener is told', () => {
     {previewDisabled: true, status: {text: 'Previewing the playlist…', urgent: false}});
 });
 
-test('a preview lists each track with its BPM, key, energy and the step into it', () => {
+test('a preview lists each track with its BPM, key in letters (#261), energy and the step into it', () => {
   const preview = {
     tracks: [track(), track({trackId: 'b', title: 'Lift', bpm: 122.5, key: 'C major', camelot: null, energyLevel: null,
       energyTarget: 0.6}), track({trackId: 'c', title: 'Drop', bpm: 110, key: null, camelot: null})],
@@ -34,7 +34,7 @@ test('a preview lists each track with its BPM, key, energy and the step into it'
     previewDisabled: false,
     status: {text: '3 tracks.', urgent: false},
     rows: [
-      {place: '1', track: 'Synthetic – Opening', bpm: '120.0', key: '8A', energy: '0.3', target: '0.2', transition: 'Start'},
+      {place: '1', track: 'Synthetic – Opening', bpm: '120.0', key: 'A minor', energy: '0.3', target: '0.2', transition: 'Start'},
       {place: '2', track: 'Synthetic – Lift', bpm: '122.5', key: 'C major', energy: '—', target: '0.6',
         transition: 'Key compatible, +2.5 BPM'},
       {place: '3', track: 'Synthetic – Drop', bpm: '110.0', key: '—', energy: '0.3', target: '0.2',

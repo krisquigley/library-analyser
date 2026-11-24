@@ -86,7 +86,7 @@ assert.deepEqual(heard.filter(type => type.startsWith('playlist-')), ['playlist-
 assert.deepEqual(heard.filter(type => type.startsWith('tag-write-')), ['tag-write-playlist-withdrawn', 'tag-write-playlist-offered']);
 const cells = byId('playlist-preview-tracks').children.map(line => line.children.map(cell => cell.textContent));
 assert.deepEqual(cells, [
-  ['1', 'Public synthetic – Track b', '120.0', '8A', '0.5', '—', 'Start'],
+  ['1', 'Public synthetic – Track b', '120.0', 'A minor', '0.5', '—', 'Start'],
   ['2', 'Public synthetic – Track a', '121.0', '—', '—', '—', 'Key unknown, +1.0 BPM'],
 ]);
 assert.equal(byId('playlist-preview-status').textContent, '2 tracks. Warning: Only 2 of 10 tracks fit');
