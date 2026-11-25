@@ -36,6 +36,7 @@ from music_explorer.infrastructure.taggable_tracks import ReadOnlyTaggableTracks
 from music_explorer.infrastructure.track_tags import MutagenTrackTags
 from music_explorer.interface_adapters.tag_write_http import (
     preview_request_from_query, tag_write_preview_to_http, tag_write_report_to_http)
+from music_explorer.infrastructure.playable_audio import open_playable_audio
 from music_explorer.interface_adapters.track_audio_http import (
     TrackAudioFormatError, TrackAudioRangeError, audio_media_type, byte_range, track_audio_request_from_query)
 from music_explorer.interface_adapters.track_labels_http import label_request_from_query, track_labels_to_http
@@ -396,42 +397,37 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
             self.wfile.write(payload)
 
         def _audio(self, track_audio):
-            # #258: the file as it is, read only, in the one byte range a seek asks for. Its path is never sent.
+            # #258: the file read only, in the one byte range a seek asks for. Its path is never sent.
+            # #269: as the browser can play it, without a FLAC's pictures (see playable_audio).
             media_type = audio_media_type(track_audio.location)
             try:
-                audio = open(track_audio.location, 'rb')
+                audio = open_playable_audio(track_audio.location)
             except OSError:
                 return self._json({'error': "This track's audio file is missing"}, HTTPStatus.NOT_FOUND)
             with audio:
-                size = os.fstat(audio.fileno()).st_size
-                try:
-                    wanted = byte_range(self.headers.get('Range'), size)
-                except TrackAudioRangeError:
-                    self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
-                    self.send_header('Content-Range', f'bytes */{size}')
-                    self.send_header('Content-Length', '0')
-                    self.end_headers()
-                    return
-                first, last = wanted or (0, size - 1)
-                self.send_response(HTTPStatus.PARTIAL_CONTENT if wanted else HTTPStatus.OK)
-                self.send_header('Content-Type', media_type)
-                self.send_header('Accept-Ranges', 'bytes')
-                self.send_header('Cache-Control', 'no-store')
-                if wanted:
-                    self.send_header('Content-Range', f'bytes {first}-{last}/{size}')
-                self.send_header('Content-Length', str(last - first + 1))
-                self.end_headers()
-                audio.seek(first)
-                self._send_bytes(audio, last - first + 1)
+                self._send_audio(audio, media_type)
 
-        def _send_bytes(self, audio, remaining):
+        def _send_audio(self, audio, media_type):
             try:
-                while remaining > 0:
-                    chunk = audio.read(min(_AUDIO_CHUNK_BYTES, remaining))
-                    if not chunk:
-                        return
+                wanted = byte_range(self.headers.get('Range'), audio.size)
+            except TrackAudioRangeError:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header('Content-Range', f'bytes */{audio.size}')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            first, last = wanted or (0, audio.size - 1)
+            self.send_response(HTTPStatus.PARTIAL_CONTENT if wanted else HTTPStatus.OK)
+            self.send_header('Content-Type', media_type)
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Cache-Control', 'no-store')
+            if wanted:
+                self.send_header('Content-Range', f'bytes {first}-{last}/{audio.size}')
+            self.send_header('Content-Length', str(last - first + 1))
+            self.end_headers()
+            try:
+                for chunk in audio.chunks(first, last, _AUDIO_CHUNK_BYTES):
                     self.wfile.write(chunk)
-                    remaining -= len(chunk)
             except (BrokenPipeError, ConnectionResetError):
                 # A seek or a new track abandons the response the browser no longer wants.
                 return
