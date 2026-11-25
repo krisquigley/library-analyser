@@ -64,10 +64,10 @@ test('#243: outside the selected track\'s neighbourhood, nodes and links are ver
   const near = {source: a, target: b, score: 0.8}, far = {source: 'b', target: 'c', score: 0.8};
   const focus = graphNeighbourFocus({nodes: [a, b, c], links: [near, far]}, 'a');
   assert.deepEqual([a, b, c].map(focusedNodeColor(focus)), [a.color, b.color, 'rgba(120,135,160,0.1)']);
-  assert.deepEqual([near, far].map(focusedLinkColor(focus)), [linkColour(near), 'rgba(240,240,240,0.03)']);
+  assert.deepEqual([far].map(focusedLinkColor(focus, [a, b, c])), ['rgba(240,240,240,0.03)']);
   const none = graphNeighbourFocus({nodes: [a, b, c], links: [near, far]}, null);
   assert.deepEqual([c].map(focusedNodeColor(none)), [c.color]);
-  assert.deepEqual([far].map(focusedLinkColor(none)), [linkColour(far)]);
+  assert.deepEqual([near, far].map(focusedLinkColor(none, [a, b, c])), [linkColour(near), linkColour(far)]);
 });
 
 test("a track's neighbourhood is where the shown tracks linked to it are placed (#267)", async () => {
@@ -77,4 +77,27 @@ test("a track's neighbourhood is where the shown tracks linked to it are placed 
     links: [{source: 'a', target: 'b'}, {source: {id: 'c'}, target: {id: 'a'}}, {source: 'b', target: 'd'}]};
   assert.deepEqual(graphNeighbourPositions(visible, 'a'), [{x: 10, y: 0, z: 0}, {x: 20, y: 0, z: 0}]);
   assert.deepEqual(graphNeighbourPositions(visible, 'missing'), []);
+});
+
+test("#271: a selected track's link is coloured by how the neighbour differs: red valence, green arousal, blue BPM", async () => {
+  const {neighbourDifferenceColor} = await import('../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/graph-scene-presenter.js');
+  assert.equal(neighbourDifferenceColor({valence: 0.3, arousal: 0, bpm: 0}, 1), 'rgba(255,0,0,0.72)');
+  assert.equal(neighbourDifferenceColor({valence: 0, arousal: 0.1, bpm: 0.05}, 1), 'rgba(0,255,128,0.72)');
+  assert.equal(neighbourDifferenceColor({valence: 0.2, arousal: 0.2, bpm: 0.2}, 1), 'rgba(255,255,255,0.72)');
+});
+
+test('#271: weaker relatedness fades the difference colour towards grey, and no difference is grey', async () => {
+  const {neighbourDifferenceColor} = await import('../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/graph-scene-presenter.js');
+  assert.equal(neighbourDifferenceColor({valence: 0, arousal: 0, bpm: 0.4}, 0.5), 'rgba(120,120,248,0.45)');
+  assert.equal(neighbourDifferenceColor({valence: 0, arousal: 0, bpm: 0.4}, 0), 'rgba(240,240,240,0.18)');
+  assert.equal(neighbourDifferenceColor({valence: 0, arousal: 0, bpm: 0}, 1), 'rgba(240,240,240,0.72)');
+});
+
+test("#271: the selection's links compare each neighbour with the selected track across the library's spans", async () => {
+  const {graphNeighbourFocus, focusedLinkColor} = await import('../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/graph-scene-presenter.js');
+  const placed = (id, valence, arousal, bpm) => ({id, axis: {x: {raw: valence}, y: {raw: arousal}, z: {raw: bpm}}});
+  const nodes = [placed('a', 0, 0, 100), placed('b', 0.5, 0, 100), placed('c', 0, 0, 140), placed('d', 1, 1, 200)];
+  const toB = {source: nodes[1], target: nodes[0], score: 1}, toC = {source: 'a', target: 'c', score: 1};
+  const focus = graphNeighbourFocus({nodes, links: [toB, toC]}, 'a');
+  assert.deepEqual([toB, toC].map(focusedLinkColor(focus, nodes)), ['rgba(255,0,0,0.72)', 'rgba(0,0,255,0.72)']);
 });

@@ -1,6 +1,7 @@
 // What the 3D graph shows beside its nodes (#146): the axes, the colour and link legends, and hover labels.
 
 import {displayNumber} from '../../domain/display-number.js';
+import {axisSpans, differenceShares} from '../../domain/neighbour-difference.js';
 import {isFocusedLink, isFocusedTrack, neighbourFocus} from '../../domain/neighbour-focus.js';
 
 const SCENE_AXIS_KEYS = Object.freeze(['x', 'y', 'z']);
@@ -44,9 +45,12 @@ export function graphRelatednessLegend() {
 }
 
 export function relatednessLinkAlpha(link) {
-  const score = Number(link && link.score);
-  const clamped = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0;
-  return Math.round((0.18 + clamped * 0.54) * 100) / 100;
+  return Math.round((0.18 + relatednessStrength(link && link.score) * 0.54) * 100) / 100;
+}
+
+function relatednessStrength(score) {
+  const number = Number(score);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 0;
 }
 
 export function relatednessLinkColor(link) {
@@ -103,6 +107,37 @@ export function focusedNodeColor(focus) {
   return node => (isFocusedTrack(focus, node.id) ? node.color : DIMMED_NODE_COLOR);
 }
 
-export function focusedLinkColor(focus) {
-  return link => (isFocusedLink(focus, linkEnds(link)) ? relatednessLinkColor(link) : DIMMED_LINK_COLOR);
+// #271: the selection's links show how each neighbour differs from it, in the scene's axis colours: red for valence,
+// green for arousal, blue for BPM. Each channel is that axis's share of the difference, the largest at full intensity;
+// weaker relatedness fades the colour towards the plain link grey.
+const LINK_GREY = 240;
+const FULL_CHANNEL = 255;
+
+export function focusedLinkColor(focus, libraryNodes) {
+  if (!focus.active) return relatednessLinkColor;
+  const tracks = new Map(libraryNodes.map(node => [node.id, differenceTrack(node)]));
+  const spans = axisSpans([...tracks.values()]);
+  const selected = tracks.get(focus.selectedTrackId);
+  return link => {
+    const {source, target} = linkEnds(link);
+    if (!isFocusedLink(focus, {source, target})) return DIMMED_LINK_COLOR;
+    const neighbour = tracks.get(source === focus.selectedTrackId ? target : source);
+    if (!selected || !neighbour) return relatednessLinkColor(link);
+    return neighbourDifferenceColor(differenceShares(selected, neighbour, spans), link.score);
+  };
+}
+
+export function neighbourDifferenceColor(shares, score) {
+  const largest = Math.max(shares.valence, shares.arousal, shares.bpm);
+  const strength = relatednessStrength(score);
+  const channel = share => {
+    const full = largest > 0 ? FULL_CHANNEL * share / largest : LINK_GREY;
+    return Math.round(LINK_GREY + (full - LINK_GREY) * strength);
+  };
+  return `rgba(${channel(shares.valence)},${channel(shares.arousal)},${channel(shares.bpm)},${relatednessLinkAlpha({score})})`;
+}
+
+function differenceTrack(node) {
+  const axis = node.axis || {};
+  return {valence: axis.x?.raw, arousal: axis.y?.raw, bpm: axis.z?.raw};
 }
