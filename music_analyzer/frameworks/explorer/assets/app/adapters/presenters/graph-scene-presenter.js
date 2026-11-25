@@ -107,11 +107,16 @@ export function focusedNodeColor(focus) {
   return node => (isFocusedTrack(focus, node.id) ? node.color : DIMMED_NODE_COLOR);
 }
 
-// #271: the selection's links show how each neighbour differs from it, in the scene's axis colours: red for valence,
-// green for arousal, blue for BPM. Each channel is that axis's share of the difference, the largest at full intensity;
-// weaker relatedness fades the colour towards the plain link grey.
-const LINK_GREY = 240;
-const FULL_CHANNEL = 255;
+// #273: the selection's links show how each neighbour differs from it. The hue runs blue, through purple, to red as the
+// neighbour's valence is lower or higher, as the track colours do; the link is more vivid the further apart the two are in
+// arousal and BPM, never so pale its hue is lost; and it is as thick as the tracks are related.
+const FULL_DIFFERENCE = 0.25;
+const LOWER_VALENCE_HUE = 220;
+const SAME_VALENCE_HUE = 290;
+const PALEST = 0.25;
+const SELECTED_LINK_LIGHTNESS = 0.6;
+const SELECTED_LINK_ALPHA = 0.9;
+const SELECTED_LINK_THICKENING = 4;
 
 export function focusedLinkColor(focus, libraryNodes) {
   if (!focus.active) return relatednessLinkColor;
@@ -123,18 +128,34 @@ export function focusedLinkColor(focus, libraryNodes) {
     if (!isFocusedLink(focus, {source, target})) return DIMMED_LINK_COLOR;
     const neighbour = tracks.get(source === focus.selectedTrackId ? target : source);
     if (!selected || !neighbour) return relatednessLinkColor(link);
-    return neighbourDifferenceColor(differenceShares(selected, neighbour, spans), link.score);
+    return neighbourDifferenceColor(differenceShares(selected, neighbour, spans));
   };
 }
 
-export function neighbourDifferenceColor(shares, score) {
-  const largest = Math.max(shares.valence, shares.arousal, shares.bpm);
-  const strength = relatednessStrength(score);
-  const channel = share => {
-    const full = largest > 0 ? FULL_CHANNEL * share / largest : LINK_GREY;
-    return Math.round(LINK_GREY + (full - LINK_GREY) * strength);
+export function neighbourDifferenceColor({valence, arousal, bpm}) {
+  const towardsHigher = Math.max(-1, Math.min(1, valence / FULL_DIFFERENCE));
+  const hue = SAME_VALENCE_HUE + (SAME_VALENCE_HUE - LOWER_VALENCE_HUE) * towardsHigher;
+  const apart = Math.min(1, (Math.abs(arousal) + Math.abs(bpm)) / 2 / FULL_DIFFERENCE);
+  const [red, green, blue] = hslChannels(hue, PALEST + (1 - PALEST) * apart, SELECTED_LINK_LIGHTNESS);
+  return `rgba(${red},${green},${blue},${SELECTED_LINK_ALPHA})`;
+}
+
+export function relatednessLinkWidth(link) {
+  return 1 + relatednessStrength(link && link.score);
+}
+
+export function focusedLinkWidth(focus) {
+  return link => (focus.active && isFocusedLink(focus, linkEnds(link))
+    ? 1 + SELECTED_LINK_THICKENING * relatednessStrength(link.score) : relatednessLinkWidth(link));
+}
+
+function hslChannels(hue, saturation, lightness) {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const channel = offset => {
+    const turn = (offset + hue / 30) % 12;
+    return Math.round((lightness - chroma / 2 * Math.max(-1, Math.min(turn - 3, 9 - turn, 1))) * 255);
   };
-  return `rgba(${channel(shares.valence)},${channel(shares.arousal)},${channel(shares.bpm)},${relatednessLinkAlpha({score})})`;
+  return [channel(0), channel(8), channel(4)];
 }
 
 function differenceTrack(node) {

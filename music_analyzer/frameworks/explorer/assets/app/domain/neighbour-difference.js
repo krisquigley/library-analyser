@@ -1,5 +1,5 @@
-// How a neighbour differs from the selected track (#271): on valence, arousal and BPM, the size of the difference as a
-// share of the library's span on that axis, so the three axes compare on one scale.
+// How a neighbour differs from the selected track (#271, #273): on valence, arousal and BPM, the difference as a share of
+// the library's span on that axis, so the three axes compare on one scale. A neighbour above the selected track is positive.
 
 const DIFFERENCE_AXES = Object.freeze(['valence', 'arousal', 'bpm']);
 
@@ -18,5 +18,5 @@ function axisSpan(values) {
 
 function differenceShare(from, to, span) {
   if (!(span > 0) || !Number.isFinite(from) || !Number.isFinite(to)) return 0;
-  return Math.min(1, Math.abs(to - from) / span);
+  return Math.max(-1, Math.min(1, (to - from) / span));
 }

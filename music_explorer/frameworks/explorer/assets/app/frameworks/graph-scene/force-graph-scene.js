@@ -8,10 +8,10 @@ const DEFAULT_GRAPH_SIZE = Object.freeze({width: 900, height: 1040});
 const PANEL_TRIM = Object.freeze(['paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth']);
 
 // Positions are fixed by the mood axes: no dragging, no simulation, and link opacity comes from each link's colour.
-export function configureForceGraph(graph, {nodeLabel, linkLabel, linkColor, nodeValue, onNodeClick}) {
+export function configureForceGraph(graph, {nodeLabel, linkLabel, linkColor, linkWidth, nodeValue, onNodeClick}) {
   return graph.enableNodeDrag(false).cooldownTicks(0).nodeId('id').nodeRelSize(4).nodeLabel(nodeLabel)
     .nodeColor(node => node.color).nodeVal(nodeValue).linkLabel(linkLabel).linkOpacity(1).linkColor(linkColor)
-    .linkWidth(link => 1 + Math.max(0, Number(link.score) || 0)).onNodeClick(onNodeClick);
+    .linkWidth(linkWidth).onNodeClick(onNodeClick);
 }
 
 // Selection changes the node's size, never its colour, which belongs to its mood.
