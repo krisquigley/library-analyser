@@ -16,7 +16,8 @@ const viewModel = (changes = {}) => ({values: DRAFT, minimumKeyStrengthDisabled:
   arcs: [], arcLengthUnit: 'tracks', downloadDisabled: false,
   arcShapeChoices: [['rise', 'Rising energy'], ['peak', 'Energy peak']],
   arcLengthUnitChoices: [['tracks', 'Tracks'], ['minutes', 'Minutes']],
-  moodChoices: [['', 'No mood hold'], ['happy', 'Hold mood: happy']], ...changes});
+  moodChoices: [['', 'No mood hold'], ['happy', 'Hold mood: happy']],
+  arousalRange: 'Library arousal: not known until the graph has placed tracks with arousal.', ...changes});
 
 function mounted(changes) {
   const heard = {edited: [], downloads: [], arcs: []};
@@ -93,7 +94,10 @@ test('each arc row has its shape, length and energy range, and reports the whole
   assert.deepEqual([shape.value, length.value, low.value, high.value], ['peak', '6', '', '0.9']);
   assert.deepEqual([length.type, length.min, length.placeholder, length.getAttribute('aria-label')],
     ['number', '0', 'minutes', 'Arc 2 length in minutes']);
-  assert.deepEqual([low.min, low.max, low.step, low.placeholder, high.placeholder], ['0', '1', '0.05', '0.1', '0.9']);
+  // #265: raw arousal, as the graph shows it; a blank end follows the eligible tracks.
+  assert.deepEqual([low.step, low.placeholder, high.placeholder], ['0.1', 'default', 'default']);
+  assert.ok(!('min' in low) && !('max' in high), 'no 0-1 bounds');
+  assert.match(low.title, /arousal as the graph shows it/);
   assert.equal(shape.getAttribute('aria-label'), 'Arc 2 shape');
   low.value = '0.3';
   low.onchange();
@@ -264,4 +268,11 @@ test("the arc unit shown follows the draft's, so a duration switches it to minut
   const {view, byId} = mounted({arcs: [ARC]});
   view.show({arcs: [ARC], arcLengthUnit: 'minutes'});
   assert.deepEqual([byId('m3u-arc-unit').value, byId('m3u-arc-length-0').placeholder], ['minutes', 'minutes']);
+});
+
+test("the arc editor shows the library's arousal range once the graph has loaded (#265)", () => {
+  const {view, byId} = mounted();
+  assert.equal(byId('m3u-arousal-range').textContent, 'Library arousal: not known until the graph has placed tracks with arousal.');
+  view.show({arousalRange: 'Library arousal: 3.1 to 6.8'});
+  assert.equal(byId('m3u-arousal-range').textContent, 'Library arousal: 3.1 to 6.8');
 });

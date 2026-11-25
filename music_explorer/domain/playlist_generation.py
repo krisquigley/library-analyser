@@ -9,6 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Mapping
 
+from music_explorer.domain.arousal_scale import ArousalScale
 from music_explorer.domain.energy_plan import BY_DURATION, BY_TRACK_COUNT, ArcSegment, EnergyPlan, EnergyRange
 from music_explorer.domain.harmonic_mixing import HarmonicMixing
 from music_explorer.domain.mood_hold import MoodHold
@@ -83,7 +84,7 @@ def _energy_plan_and_mood_hold(rules, candidates, evidence):
     if rules.mood_hold and not mood:
         raise ValueError(f"No eligible track has a score for the mood '{rules.mood_hold}'")
     timeline = BY_DURATION if isinstance(rules.goal, DurationGoal) else BY_TRACK_COUNT
-    plan = EnergyPlan(rules.arcs, percentile_ranks(arousal), timeline) if rules.arcs else None
+    plan = EnergyPlan(rules.arcs, arousal, timeline, ArousalScale.of(arousal.values())) if rules.arcs else None
     hold = MoodHold(percentile_ranks(mood)) if rules.mood_hold else None
     return plan, hold
 

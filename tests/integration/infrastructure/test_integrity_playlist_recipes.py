@@ -12,7 +12,7 @@ from tests.integration.infrastructure.integrity_d1_public_fixture import PUBLIC_
 
 
 def _recipe(**changes):
-    return {'format': 'playlist-recipe', 'version': 1, 'start_track_id': PUBLIC_TRACK_IDS[0],
+    return {'format': 'playlist-recipe', 'version': 2, 'start_track_id': PUBLIC_TRACK_IDS[0],
             'bpm': {'min': 100, 'max': 130}, 'length': {'tracks': 10}, **changes}
 
 
@@ -22,7 +22,7 @@ class PlaylistRecipeIntegrityRowTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / 'analysis.sqlite'
 
-    def _store(self, name, recipe_json, format_version=1):
+    def _store(self, name, recipe_json, format_version=2):
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute('INSERT INTO playlist_recipes(name, recipe_json, format_version) VALUES (?, ?, ?)',
                        (name, recipe_json, format_version))
@@ -64,7 +64,7 @@ class PlaylistRecipeIntegrityRowTests(unittest.TestCase):
         self._store('Unknown field', json.dumps(_recipe(colour='red')))
         self._store('Inverted BPM', json.dumps(_recipe(bpm={'min': 140, 'max': 100})))
         self._store('  Padded name  ', json.dumps(_recipe()))
-        self._store('Wrong version column', json.dumps(_recipe()), format_version=2)
+        self._store('Wrong version column', json.dumps(_recipe()), format_version=3)
 
         result, check, findings = self._scan()
 

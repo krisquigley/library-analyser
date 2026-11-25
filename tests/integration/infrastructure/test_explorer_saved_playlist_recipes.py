@@ -11,7 +11,7 @@ from music_explorer.application.ports.saved_playlist_recipes import SavedPlaylis
 from music_explorer.infrastructure.explorer_readonly import ReadOnlyExplorerSQLiteRepository
 from tests.integration.infrastructure.integrity_d1_public_fixture import create_public_core_database
 
-DOCUMENT = {'format': 'playlist-recipe', 'version': 1, 'start_track_id': 'x', 'mood_hold': 'calm ☕'}
+DOCUMENT = {'format': 'playlist-recipe', 'version': 2, 'start_track_id': 'x', 'mood_hold': 'calm ☕'}
 
 
 def _digest(path):

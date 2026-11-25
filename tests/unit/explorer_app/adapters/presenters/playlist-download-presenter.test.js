@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput,
+  libraryArousalRangeViewModel, playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/playlist-download-presenter.js';
 import {
   EMPTY_PLAYLIST_DRAFT, addDraftArc, editDraftArc, editPlaylistDraft,
@@ -21,7 +21,16 @@ test('the controls show the draft, its choices and which inputs apply', () => {
       ['fall', 'Falling energy'], ['peak', 'Energy peak'], ['dip', 'Energy dip']],
     arcLengthUnitChoices: [['tracks', 'Tracks'], ['minutes', 'Minutes']],
     moodChoices: [['', 'No mood hold'], ['happy', 'Hold mood: happy']],
+    arousalRange: 'Library arousal: not known until the graph has placed tracks with arousal.',
   });
+  assert.equal(playlistControlsViewModel({draft, downloadState: 'idle', moods: [], arousalRange: {low: 3.12, high: 6.84}}).arousalRange,
+    libraryArousalRangeViewModel({low: 3.12, high: 6.84}).arousalRange);
+});
+
+test("the arc editor names the library's arousal range, in the graph's numbers (#265)", () => {
+  assert.deepEqual(libraryArousalRangeViewModel({low: 3.12, high: 6.84}), {arousalRange:
+    "Library arousal: 3.1 to 6.8 (the graph's vertical axis). A blank low or high follows the tracks in your BPM range."});
+  assert.deepEqual(libraryArousalRangeViewModel(null), {arousalRange: 'Library arousal: not known until the graph has placed tracks with arousal.'});
 });
 
 test('each arc row shows its values and which way it can move', () => {

@@ -23,7 +23,7 @@ test('the draft is offered as a JSON recipe file from the start track', () => {
   assert.equal(saved.length, 1);
   assert.deepEqual([saved[0].filename, saved[0].contentType], ['playlist-recipe.json', 'application/json']);
   const document = JSON.parse(saved[0].contents);
-  assert.deepEqual([document.format, document.version, document.start_track_id, document.bpm], ['playlist-recipe', 1, 'track-1',
+  assert.deepEqual([document.format, document.version, document.start_track_id, document.bpm], ['playlist-recipe', 2, 'track-1',
     {min: 120, max: 128}]);
   assert.ok(saved[0].contents.endsWith('}\n'));
   assert.deepEqual(published, [{type: 'playlist-recipe-exported', filename: 'playlist-recipe.json'}]);

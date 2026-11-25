@@ -23,7 +23,7 @@ class ExplorerSavedPlaylistRecipesHTTPTests(unittest.TestCase):
             path.write_bytes(b'existence only')
         self.db_path = root / 'analysis.sqlite'
         self.first, _second = _create_playlist_http_db(self.db_path, first_path, second_path)
-        self.recipe = {'format': 'playlist-recipe', 'version': 1, 'start_track_id': self.first,
+        self.recipe = {'format': 'playlist-recipe', 'version': 2, 'start_track_id': self.first,
                        'bpm': {'min': 119, 'max': 125}, 'energy_plan': [{'shape': 'rise', 'tracks': 2}]}
         store = SQLitePlaylistRecipeStore(str(self.db_path))
         store.store_recipe('Warm-up', self.recipe, 1)

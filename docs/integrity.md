@@ -170,7 +170,7 @@ This diagnostic does not suggest automatic repair. Keep the source and a consist
 On v11 and later the `playlist_recipes` check reads every stored recipe row (#139) and counts one unit of work per row. Each row is checked against the analyzer's own recipe contract (`music_analyzer/domain/playlist_recipe.py`), the same one `playlist-recipe save` applies, so a failing row was changed outside the analyzer. A row can raise each of these at most once:
 
 - `recipe_json_invalid`: the stored recipe is not JSON text.
-- `recipe_contract_invalid`: it is JSON but not a valid version 1 recipe.
+- `recipe_contract_invalid`: it is JSON but not a valid version 2 recipe.
 - `recipe_name_invalid`: the name is not the trimmed, printable, 1–100 character name the analyzer saves.
 - `recipe_version_invalid`: the `format_version` column does not match the document's version.
 

@@ -21,6 +21,12 @@ export function trackBpmsOf(model) {
   return new Map(model.nodes.map(node => [node.id, node.bpm]));
 }
 
+// The lowest and highest arousal the graph places (#265), as raw arousal: the numbers playlist arcs are set in.
+export function libraryArousalRange(model) {
+  const range = model?.colorRanges?.arousal;
+  return range ? {low: range[0], high: range[1]} : null;
+}
+
 export function moodGraphModel(graph, {genreThresholdApplies = false} = {}) {
   const positioned = graph.positioned || [];
   const colorRanges = {valence: axisRange(positioned, 'x'), arousal: axisRange(positioned, 'y')};

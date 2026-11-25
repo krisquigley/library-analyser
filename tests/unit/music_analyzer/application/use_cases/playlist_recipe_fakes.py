@@ -6,7 +6,7 @@ START = 'sha256:' + 'a' * 64
 
 
 def recipe_document(**fields):
-    return {'format': 'playlist-recipe', 'version': 1, 'start_track_id': START, 'bpm': {'min': 100, 'max': 130},
+    return {'format': 'playlist-recipe', 'version': 2, 'start_track_id': START, 'bpm': {'min': 100, 'max': 130},
             'length': {'tracks': 12}, **fields}
 
 

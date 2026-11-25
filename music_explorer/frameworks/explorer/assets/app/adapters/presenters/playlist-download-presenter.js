@@ -1,5 +1,6 @@
 // What the Download M3U controls and the energy arc editor show for the draft and each download event (#146, #137).
 
+import {displayNumber} from '../../domain/display-number.js';
 import {arcsSetTheLength, minimumKeyStrengthApplies} from '../../domain/playlist-draft.js';
 
 const ARC_SHAPE_CHOICES = Object.freeze([
@@ -16,7 +17,15 @@ const PLAYLIST_EVENT_VIEWS = Object.freeze({
     text: `M3U download failed: ${event.message}`, urgent: true}}),
 });
 
-export function playlistControlsViewModel({draft, downloadState, moods}) {
+// #265: arcs are set in raw arousal, so the editor names the range the library's tracks span.
+export function libraryArousalRangeViewModel(range) {
+  return {arousalRange: range
+    ? `Library arousal: ${displayNumber(range.low)} to ${displayNumber(range.high)} (the graph's vertical axis). `
+      + 'A blank low or high follows the tracks in your BPM range.'
+    : 'Library arousal: not known until the graph has placed tracks with arousal.'};
+}
+
+export function playlistControlsViewModel({draft, downloadState, moods, arousalRange = null}) {
   return {
     values: draft,
     ...draftView(draft),
@@ -24,6 +33,7 @@ export function playlistControlsViewModel({draft, downloadState, moods}) {
     arcShapeChoices: ARC_SHAPE_CHOICES.map(choice => [...choice]),
     arcLengthUnitChoices: ARC_LENGTH_UNIT_CHOICES.map(choice => [...choice]),
     moodChoices: [['', 'No mood hold'], ...moods.map(mood => [mood, `Hold mood: ${mood}`])],
+    ...libraryArousalRangeViewModel(arousalRange),
   };
 }
 

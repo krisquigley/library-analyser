@@ -2,7 +2,7 @@
 // A chain of the same size is updated in place, so the field the listener is in keeps its focus.
 // #234: each row is a collapsible accordion item summed up in one line; a new arc opens, the others keep their state.
 
-const ENERGY_LEVEL_SCALE = '0 is the calmest eligible track, 1 the most energetic';
+const ENERGY_LEVEL_SCALE = "in arousal as the graph shows it (its vertical axis); left blank, it follows the tracks in your BPM range";
 const ARC_FIELDS = Object.freeze(['shape', 'length', 'low', 'high']);
 const ARC_FIELD_CAPTIONS = Object.freeze({shape: 'Shape', length: 'Length', low: 'Energy low', high: 'Energy high'});
 
@@ -10,6 +10,7 @@ export function energyArcEditorView({onArcAdded, onArcRemoved, onArcMoved, onArc
   let rows = null;
   let rowControls = [];
   let shapeChoices = [];
+  let arousalRange = null;
 
   function build(unitControl, viewModel) {
     shapeChoices = viewModel.arcShapeChoices;
@@ -17,9 +18,11 @@ export function energyArcEditorView({onArcAdded, onArcRemoved, onArcMoved, onArc
     const add = arcElement('button', {id: 'm3u-add-arc', type: 'button'});
     setArcText(add, 'Add energy arc');
     add.onclick = () => onArcAdded();
+    arousalRange = arcElement('p', {id: 'm3u-arousal-range', className: 'muted'});
+    showArousalRange(viewModel.arousalRange);
     const fieldset = arcElement('fieldset', {id: 'm3u-energy-arcs'});
     fieldset.append(setArcText(document.createElement('legend'), 'Energy arcs'),
-      arcLabel(unitControl, 'Length in'), unitControl, rows, add);
+      arcLabel(unitControl, 'Length in'), unitControl, arousalRange, rows, add);
     show(viewModel.arcs, viewModel.arcLengthUnit);
     return fieldset;
   }
@@ -39,8 +42,8 @@ export function energyArcEditorView({onArcAdded, onArcRemoved, onArcMoved, onArc
     const fields = {
       shape: arcSelect(`m3u-arc-shape-${place}`, shapeChoices, `Arc ${place + 1} shape`),
       length: arcElement('input', {id: `m3u-arc-length-${place}`, type: 'number', min: '0'}),
-      low: energyLevel(`m3u-arc-low-${place}`, '0.1', `How low arc ${place + 1} goes: ${ENERGY_LEVEL_SCALE}`),
-      high: energyLevel(`m3u-arc-high-${place}`, '0.9', `How high arc ${place + 1} goes: ${ENERGY_LEVEL_SCALE}`),
+      low: energyLevel(`m3u-arc-low-${place}`, `How low arc ${place + 1} goes, ${ENERGY_LEVEL_SCALE}`),
+      high: energyLevel(`m3u-arc-high-${place}`, `How high arc ${place + 1} goes, ${ENERGY_LEVEL_SCALE}`),
     };
     fields.low.setAttribute('aria-label', `Arc ${place + 1} energy low`);
     fields.high.setAttribute('aria-label', `Arc ${place + 1} energy high`);
@@ -59,7 +62,11 @@ export function energyArcEditorView({onArcAdded, onArcRemoved, onArcMoved, onArc
     return {row, summary, fields, earlier, later, place};
   }
 
-  return Object.freeze({build, show});
+  function showArousalRange(text) {
+    if (arousalRange) setArcText(arousalRange, text);
+  }
+
+  return Object.freeze({build, show, showArousalRange});
 }
 
 function syncRow({summary, fields, earlier, later, place}, arc, unit) {
@@ -73,8 +80,8 @@ function syncRow({summary, fields, earlier, later, place}, arc, unit) {
   later.disabled = !arc.canMoveLater;
 }
 
-function energyLevel(id, placeholder, title) {
-  return arcElement('input', {id, type: 'number', min: '0', max: '1', step: '0.05', placeholder, title});
+function energyLevel(id, title) {
+  return arcElement('input', {id, type: 'number', step: '0.1', placeholder: 'default', title});
 }
 
 function arcSelect(id, choices, label) {

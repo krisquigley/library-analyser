@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import unittest
 
+from music_explorer.domain.arousal_scale import ArousalScale
 from music_explorer.domain.playlist_generation import PlaylistRules, generate_walk
 
 
@@ -98,7 +99,8 @@ class GenerateWalkTests(unittest.TestCase):
         evidence = {'a': _Evidence(arousal=1.0), 'b': _Evidence(arousal=2.0), 'c': _Evidence(arousal=3.0)}
         generated = generate_walk(_rules(energy_plan=(_Arc('rise'),)), TRACKS, EDGES, evidence)
 
-        self.assertEqual({'a': 0.0, 'b': 0.5, 'c': 1.0}, dict(generated.plan.levels))
+        self.assertEqual({'a': 1.0, 'b': 2.0, 'c': 3.0}, dict(generated.plan.levels), 'raw arousal (#265)')
+        self.assertEqual(ArousalScale.of([1.0, 2.0, 3.0]), generated.plan.scale, "the eligible tracks' scale")
         with self.assertRaisesRegex(ValueError, "No eligible track has a score for the mood 'calm'"):
             generate_walk(_rules(mood_hold='calm'), TRACKS, EDGES, evidence)
 

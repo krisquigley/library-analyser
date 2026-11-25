@@ -1,5 +1,6 @@
 // What the playlist preview shows for each preview event (#138): one row per track, with the step into it,
 // and the energy chart: the arc's target and the energy each track reaches, left to right.
+// #265: energy is raw arousal, as the graph shows it; the chart spans the lowest to the highest value it draws.
 
 import {displayDuration} from '../../domain/display-duration.js';
 import {displayNumber} from '../../domain/display-number.js';
@@ -34,21 +35,28 @@ export function presentPlaylistPreviewEvent(event) {
 }
 
 export function playlistEnergyChart(tracks) {
-  return {...ENERGY_CHART, level: energyLine(tracks, 'energyLevel'), target: energyLine(tracks, 'energyTarget'),
+  const span = energySpan(tracks);
+  return {...ENERGY_CHART, level: energyLine(tracks, 'arousal', span), target: energyLine(tracks, 'energyTarget', span),
     label: tracks.length ? `Energy across ${trackCount(tracks.length)}: the arc target (dashed) and the energy each track reaches (solid).`
       : 'No energy to chart yet.'};
 }
 
 // A line through the known values, broken where a value is unknown.
-function energyLine(tracks, field) {
+function energyLine(tracks, field, span) {
   const segments = [];
   let segment = null;
   tracks.forEach((track, place) => {
     if (track[field] === null) { segment = null; return; }
     if (!segment) segments.push(segment = []);
-    segment.push([chartX(place, tracks.length), chartY(track[field])]);
+    segment.push([chartX(place, tracks.length), chartY(track[field], span)]);
   });
   return segments;
+}
+
+// The lowest and highest energy the chart draws, the tracks' and the targets' alike.
+function energySpan(tracks) {
+  const values = tracks.flatMap(track => [track.arousal, track.energyTarget]).filter(value => value !== null);
+  return {low: Math.min(...values), high: Math.max(...values)};
 }
 
 function chartX(place, total) {
@@ -56,9 +64,10 @@ function chartX(place, total) {
   return total === 1 ? width / 2 : padding + place * (width - 2 * padding) / (total - 1);
 }
 
-function chartY(energy) {
+function chartY(energy, {low, high}) {
   const {height, padding} = ENERGY_CHART;
-  return height - padding - energy * (height - 2 * padding);
+  if (high === low) return height / 2;
+  return height - padding - (energy - low) / (high - low) * (height - 2 * padding);
 }
 
 function trackCount(count) {
@@ -88,7 +97,7 @@ function previewRows({tracks, transitions}) {
     length: displayDuration(track.durationSeconds) ?? UNKNOWN,
     bpm: displayNumber(track.bpm),
     key: track.key ?? UNKNOWN,
-    energy: shownNumber(track.energyLevel),
+    energy: shownNumber(track.arousal),
     target: shownNumber(track.energyTarget),
     transition: place === 0 ? 'Start' : stepText(stepInto.get(track.trackId)),
   }));

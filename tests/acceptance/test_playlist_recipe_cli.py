@@ -32,7 +32,7 @@ class PlaylistRecipeCLITests(unittest.TestCase):
         return str(path)
 
     def recipe(self, **fields):
-        return {'format': 'playlist-recipe', 'version': 1, 'start_track_id': START, 'bpm': {'min': 100, 'max': 130},
+        return {'format': 'playlist-recipe', 'version': 2, 'start_track_id': START, 'bpm': {'min': 100, 'max': 130},
                 'energy_plan': [{'shape': 'rise', 'tracks': 6}, {'shape': 'fall', 'tracks': 6}], **fields}
 
     def test_save_list_show_and_delete(self):

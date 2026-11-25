@@ -3,8 +3,9 @@
 A plan is a chain of arcs played in order. Each arc lasts a number of tracks or
 a duration, in the playlist's own unit, and gives each place in its part of the
 playlist (0 at its start, 1 at its end) a target energy level. Tracks off the
-target are nudged down, never excluded. Levels are percentile ranks among the
-eligible tracks, from 0 to 1.
+target are nudged down, never excluded. Levels are raw arousal, the numbers
+the graph shows (#265); the eligible tracks' ArousalScale gives the defaults,
+the middle and the span a miss is measured against.
 
 The first arc is anchored on the start track. Each later arc starts from the
 energy actually reached: the level of the last track placed before it began,
@@ -16,18 +17,17 @@ An arc may have an energy range (#136): rise heads for its high, fall for its
 low, peak climbs to its high and dip sinks to its low, both coming back to the
 level they started from, and steady holds the start level within the range. An
 arc never heads the wrong way: a rise that starts above its high holds there.
-Without a range, the arcs head for 0.9 and 0.1, and steady holds the start
-level wherever it is.
+Without a range, the arcs head for the library's defaults (the arousal at the
+eligible tracks' 90th and 10th percentiles), and steady holds the start level
+wherever it is.
 """
 from dataclasses import dataclass
 from math import isfinite
 from typing import Mapping, Sequence
 
-from music_explorer.domain.percentile_rank import MIDDLE_LEVEL
+from music_explorer.domain.arousal_scale import ArousalScale
 
 ARC_SHAPES = ('steady', 'rise', 'fall', 'peak', 'dip')
-HIGH_LEVEL = 0.9
-LOW_LEVEL = 0.1
 # Where a peak reaches its summit and a dip its trough.
 TURN_POSITION = 2 / 3
 # Chosen from aggregate measurements on a ~3.4k-track library: at 0.2 the
@@ -38,47 +38,51 @@ ARC_WEIGHT = 0.6
 UNKNOWN_ENERGY_MISS = 0.25
 
 
-def _level(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and 0.0 <= value <= 1.0
+def _arousal(value):
+    return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value))
 
 
 @dataclass(frozen=True)
 class EnergyRange:
-    low: float = LOW_LEVEL
-    high: float = HIGH_LEVEL
+    """How low and how high an arc goes, in raw arousal (#265), as the listener set it; an unset end is None."""
+    low: float | None = None
+    high: float | None = None
 
     def __post_init__(self):
-        if not all(_level(value) for value in (self.low, self.high)):
-            raise ValueError('Energy low and high must be between 0.0 and 1.0')
-        if self.low >= self.high:
+        if not all(_arousal(value) for value in (self.low, self.high)):
+            raise ValueError('Energy low and high must be numbers')
+        if self.low is not None and self.high is not None and self.low >= self.high:
             raise ValueError('Energy low must be below energy high')
 
     @classmethod
     def of(cls, *, low: float | None, high: float | None) -> 'EnergyRange | None':
-        """The range the listener set, defaulting an unset end; None when neither is set."""
+        """The range the listener set; None when neither end is set."""
         if low is None and high is None:
             return None
-        return cls(LOW_LEVEL if low is None else low, HIGH_LEVEL if high is None else high)
+        return cls(low, high)
 
-    def clamp(self, level: float) -> float:
-        return min(max(level, self.low), self.high)
+    def bounds(self, scale: ArousalScale) -> tuple[float, float]:
+        """The (low, high) the arc heads for, an unset end taking the library's default."""
+        low = scale.low if self.low is None else self.low
+        high = scale.high if self.high is None else self.high
+        if low >= high:
+            raise ValueError(f'Energy low {low:.2f} must be below energy high {high:.2f}')
+        return low, high
 
 
-DEFAULT_RANGE = EnergyRange()
-
-
-def arc_target(shape: str, start_level: float, position: float, energy_range: EnergyRange | None = None) -> float:
+def arc_target(shape: str, start_level: float, position: float, energy_range: EnergyRange | None,
+               scale: ArousalScale) -> float:
     _check_shape(shape)
-    bounds = energy_range or DEFAULT_RANGE
+    low, high = energy_range.bounds(scale) if energy_range else (scale.low, scale.high)
     if shape == 'rise':
-        return _towards(start_level, max(start_level, bounds.high), position)
+        return _towards(start_level, max(start_level, high), position)
     if shape == 'fall':
-        return _towards(start_level, min(start_level, bounds.low), position)
+        return _towards(start_level, min(start_level, low), position)
     if shape == 'peak':
-        return _there_and_back(start_level, max(start_level, bounds.high), position)
+        return _there_and_back(start_level, max(start_level, high), position)
     if shape == 'dip':
-        return _there_and_back(start_level, min(start_level, bounds.low), position)
-    return start_level if energy_range is None else energy_range.clamp(start_level)
+        return _there_and_back(start_level, min(start_level, low), position)
+    return start_level if energy_range is None else min(max(start_level, low), high)
 
 
 @dataclass(frozen=True)
@@ -140,12 +144,15 @@ class EnergyPlan:
     segments: tuple[ArcSegment, ...]
     levels: Mapping[str, float]
     timeline: _TrackCountTimeline | _DurationTimeline
+    scale: ArousalScale
 
     def __post_init__(self):
         if not self.segments:
             raise ValueError('An energy plan has at least one arc')
         for arc in self.segments:
             self.timeline.check(arc.length)
+            if arc.energy_range:
+                arc.energy_range.bounds(self.scale)
 
     def target_after(self, walk: Sequence) -> float:
         """The energy level the plan wants from the track placed after `walk`."""
@@ -169,7 +176,7 @@ class EnergyPlan:
         level = self.levels.get(track_id)
         if level is None:
             return -ARC_WEIGHT * UNKNOWN_ENERGY_MISS
-        return -ARC_WEIGHT * abs(level - target)
+        return -ARC_WEIGHT * abs(level - target) / self.scale.span
 
     def _spans(self):
         spans, start = [], 0
@@ -189,12 +196,12 @@ class EnergyPlan:
         if level is not None:
             return level
         if index == 0:
-            return MIDDLE_LEVEL
+            return self.scale.middle
         return self._arc_target(index - 1, self._anchor_level(index - 1, walk, starts, spans), 1.0)
 
     def _arc_target(self, index, start_level, position):
         arc = self.segments[index]
-        return arc_target(arc.shape, start_level, position, arc.energy_range)
+        return arc_target(arc.shape, start_level, position, arc.energy_range, self.scale)
 
 
 def _number(value):

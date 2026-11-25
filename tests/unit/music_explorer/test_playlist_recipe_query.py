@@ -61,7 +61,7 @@ class PlaylistRecipeQueryTests(unittest.TestCase):
         self.assertEqual((EnergyArcRequest('rise', energy_high=0.75),), recipe.energy_plan)
 
     def test_an_energy_range_that_is_not_a_number_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'Energy low and high must be between 0.0 and 1.0'):
+        with self.assertRaisesRegex(ValueError, 'Energy low and high must be numbers'):
             _recipe(start='a', length='5', arc='rise', energy_high='loud')
 
     def test_an_energy_range_needs_an_energy_arc(self):

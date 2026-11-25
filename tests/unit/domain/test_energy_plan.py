@@ -1,9 +1,15 @@
-"""Issues #123 and #135: an energy plan sets a target energy level per playlist position."""
+"""Issues #123 and #135: an energy plan sets a target energy level per playlist position.
+
+#265: levels are raw arousal. Most cases here use RANKS, a scale shaped like the old 0-1 rank levels
+(defaults 0.1 and 0.9, middle 0.5, span 1), so the arithmetic reads as before."""
 from dataclasses import dataclass
 import unittest
 
+from music_explorer.domain.arousal_scale import ArousalScale
 from music_explorer.domain.energy_plan import (
     ARC_SHAPES, BY_DURATION, BY_TRACK_COUNT, ArcSegment, EnergyPlan, EnergyRange, arc_target)
+
+RANKS = ArousalScale(low=0.1, high=0.9, middle=0.5, span=1.0)
 
 
 class ArcTargetTests(unittest.TestCase):
@@ -24,15 +30,15 @@ class ArcTargetTests(unittest.TestCase):
         for shape, start, points in cases:
             for position, target in points:
                 with self.subTest(shape=shape, start=start, position=position):
-                    self.assertAlmostEqual(target, arc_target(shape, start, position))
+                    self.assertAlmostEqual(target, arc_target(shape, start, position, None, RANKS))
 
     def test_unknown_shape_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'steady, rise, fall, peak or dip'):
-            arc_target('wave', 0.5, 0.5)
+            arc_target('wave', 0.5, 0.5, None, RANKS)
 
 
 class EnergyRangeTargetTests(unittest.TestCase):
-    # #136: the listener sets how low and how high an arc goes, on the 0-1 rank scale.
+    # #136: the listener sets how low and how high an arc goes; #265: in raw arousal.
     def test_targets_within_a_range(self):
         range_ = EnergyRange(low=0.3, high=0.7)
         cases = [
@@ -45,39 +51,44 @@ class EnergyRangeTargetTests(unittest.TestCase):
         for shape, start, points in cases:
             for position, target in points:
                 with self.subTest(shape=shape, start=start, position=position):
-                    self.assertAlmostEqual(target, arc_target(shape, start, position, range_))
+                    self.assertAlmostEqual(target, arc_target(shape, start, position, range_, RANKS))
 
     def test_steady_holds_the_start_level_clamped_into_the_range(self):
         range_ = EnergyRange(low=0.3, high=0.7)
 
-        self.assertAlmostEqual(0.7, arc_target('steady', 0.95, 0.5, range_))
-        self.assertAlmostEqual(0.3, arc_target('steady', 0.05, 0.5, range_))
+        self.assertAlmostEqual(0.7, arc_target('steady', 0.95, 0.5, range_, RANKS))
+        self.assertAlmostEqual(0.3, arc_target('steady', 0.05, 0.5, range_, RANKS))
 
     def test_without_a_range_steady_holds_the_start_level_wherever_it_is(self):
-        self.assertAlmostEqual(0.95, arc_target('steady', 0.95, 0.5))
+        self.assertAlmostEqual(0.95, arc_target('steady', 0.95, 0.5, None, RANKS))
 
     def test_an_arc_never_heads_the_wrong_way(self):
         range_ = EnergyRange(low=0.3, high=0.7)
 
-        self.assertAlmostEqual(0.8, arc_target('rise', 0.8, 1.0, range_))
-        self.assertAlmostEqual(0.2, arc_target('fall', 0.2, 1.0, range_))
-        self.assertAlmostEqual(0.8, arc_target('peak', 0.8, 2 / 3, range_))
-        self.assertAlmostEqual(0.2, arc_target('dip', 0.2, 2 / 3, range_))
+        self.assertAlmostEqual(0.8, arc_target('rise', 0.8, 1.0, range_, RANKS))
+        self.assertAlmostEqual(0.2, arc_target('fall', 0.2, 1.0, range_, RANKS))
+        self.assertAlmostEqual(0.8, arc_target('peak', 0.8, 2 / 3, range_, RANKS))
+        self.assertAlmostEqual(0.2, arc_target('dip', 0.2, 2 / 3, range_, RANKS))
 
-    def test_a_range_with_only_one_end_set_keeps_the_default_other_end(self):
-        self.assertEqual(EnergyRange(0.1, 0.6), EnergyRange.of(low=None, high=0.6))
-        self.assertEqual(EnergyRange(0.4, 0.9), EnergyRange.of(low=0.4, high=None))
+    def test_a_range_with_only_one_end_set_keeps_the_library_s_default_other_end(self):
+        self.assertEqual((0.1, 0.6), EnergyRange.of(low=None, high=0.6).bounds(RANKS))
+        self.assertEqual((4.0, 6.6), EnergyRange.of(low=4.0, high=None).bounds(ArousalScale(3.4, 6.6, 5.0, 4.0)))
         self.assertIsNone(EnergyRange.of(low=None, high=None))
 
-    def test_a_range_must_lie_within_0_and_1_with_low_below_high(self):
-        for low, high in ((-0.1, 0.5), (0.2, 1.1), (float('nan'), 0.5)):
+    def test_a_range_is_any_finite_arousal_with_low_below_high(self):
+        self.assertEqual((-0.5, 7.5), EnergyRange(-0.5, 7.5).bounds(RANKS), 'raw arousal is not bounded to 0-1')
+        for low, high in ((float('nan'), 0.5), (0.2, float('inf')), (True, 0.5), ('3', 5.0)):
             with self.subTest(low=low, high=high):
-                with self.assertRaisesRegex(ValueError, 'Energy low and high must be between 0.0 and 1.0'):
+                with self.assertRaisesRegex(ValueError, 'Energy low and high must be numbers'):
                     EnergyRange(low, high)
         for low, high in ((0.5, 0.5), (0.7, 0.3)):
             with self.subTest(low=low, high=high):
                 with self.assertRaisesRegex(ValueError, 'Energy low must be below energy high'):
                     EnergyRange(low, high)
+
+    def test_an_end_set_past_the_library_s_default_other_end_is_refused_with_both_numbers(self):
+        with self.assertRaisesRegex(ValueError, 'Energy low 3.40 must be below energy high 3.00'):
+            EnergyRange.of(low=None, high=3.0).bounds(ArousalScale(3.4, 6.6, 5.0, 4.0))
 
 
 @dataclass(frozen=True)
@@ -94,8 +105,8 @@ def _timed(*tracks):
     return tuple(_Placed(track_id, seconds) for track_id, seconds in tracks)
 
 
-def _plan(shape, levels, length=10):
-    return EnergyPlan((ArcSegment(shape, length),), levels, BY_TRACK_COUNT)
+def _plan(shape, levels, length=10, scale=RANKS):
+    return EnergyPlan((ArcSegment(shape, length),), levels, BY_TRACK_COUNT, scale)
 
 
 class EnergyPlanMissTests(unittest.TestCase):
@@ -107,6 +118,12 @@ class EnergyPlanMissTests(unittest.TestCase):
 
     def test_unknown_energy_costs_a_quarter_range_miss(self):
         self.assertAlmostEqual(-0.15, _plan('steady', {}).miss('unknown', 0.5))
+
+    def test_a_miss_in_raw_arousal_counts_as_its_share_of_the_eligible_tracks_span(self):
+        plan = _plan('steady', {'off': 6.0}, scale=ArousalScale(3.4, 6.6, 5.0, 4.0))
+
+        self.assertAlmostEqual(-0.6 * 1.0 / 4.0, plan.miss('off', 5.0))
+        self.assertAlmostEqual(-0.15, plan.miss('unknown', 5.0))
 
 
 class SingleArcPlanTests(unittest.TestCase):
@@ -125,24 +142,30 @@ class SingleArcPlanTests(unittest.TestCase):
 
     def test_a_start_without_known_energy_anchors_the_middle(self):
         self.assertAlmostEqual(0.5, _plan('steady', {}).target_after(_walk('start')))
+        self.assertAlmostEqual(5.0, _plan('steady', {}, scale=ArousalScale(3.4, 6.6, 5.0, 4.0)).target_after(_walk('start')))
+
+    def test_in_raw_arousal_an_arc_without_a_range_heads_for_the_library_s_defaults(self):
+        plan = _plan('rise', {'start': 4.0}, length=3, scale=ArousalScale(3.4, 6.6, 5.0, 4.0))
+
+        self.assertAlmostEqual(6.6, plan.target_after(_walk('start', 'a')))
 
     def test_a_one_track_arc_is_already_at_its_end(self):
         self.assertAlmostEqual(0.9, _plan('rise', {'start': 0.3}, length=1).target_after(_walk('start')))
 
     def test_the_arc_follows_its_energy_range(self):
-        plan = EnergyPlan((ArcSegment('rise', 2, EnergyRange(0.2, 0.6)),), {'start': 0.2}, BY_TRACK_COUNT)
+        plan = EnergyPlan((ArcSegment('rise', 2, EnergyRange(0.2, 0.6)),), {'start': 0.2}, BY_TRACK_COUNT, RANKS)
 
         self.assertAlmostEqual(0.6, plan.target_after(_walk('start')))
 
     def test_by_duration_the_target_follows_the_time_the_next_track_starts(self):
-        plan = EnergyPlan((ArcSegment('rise', 600),), {'start': 0.3}, BY_DURATION)
+        plan = EnergyPlan((ArcSegment('rise', 600),), {'start': 0.3}, BY_DURATION, RANKS)
 
         self.assertAlmostEqual(0.6, plan.target_after(_timed(('start', 300))))
         self.assertAlmostEqual(0.9, plan.target_after(_timed(('start', 300), ('a', 400))))
 
 
 def _chain(*arcs, timeline=BY_TRACK_COUNT, levels):
-    return EnergyPlan(tuple(ArcSegment(shape, length) for shape, length in arcs), levels, timeline)
+    return EnergyPlan(tuple(ArcSegment(shape, length) for shape, length in arcs), levels, timeline, RANKS)
 
 
 class ChainedArcTests(unittest.TestCase):
@@ -218,14 +241,14 @@ class TargetsAlongTests(unittest.TestCase):
 class EnergyPlanShapeTests(unittest.TestCase):
     def test_a_plan_has_at_least_one_arc(self):
         with self.assertRaisesRegex(ValueError, 'at least one arc'):
-            EnergyPlan((), {}, BY_TRACK_COUNT)
+            EnergyPlan((), {}, BY_TRACK_COUNT, RANKS)
 
     def test_an_arc_lasts_a_positive_whole_number_of_tracks_or_a_positive_duration(self):
         for timeline, length in ((BY_TRACK_COUNT, 0), (BY_TRACK_COUNT, 2.5), (BY_TRACK_COUNT, True),
                                  (BY_DURATION, 0), (BY_DURATION, -60), (BY_DURATION, float('inf')), (BY_DURATION, None)):
             with self.subTest(timeline=timeline, length=length):
                 with self.assertRaisesRegex(ValueError, 'length'):
-                    EnergyPlan((ArcSegment('rise', length),), {}, timeline)
+                    EnergyPlan((ArcSegment('rise', length),), {}, timeline, RANKS)
 
     def test_unknown_shape_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'steady, rise, fall, peak or dip'):

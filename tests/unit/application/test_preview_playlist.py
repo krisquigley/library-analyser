@@ -41,8 +41,7 @@ class PreviewPlaylistTests(unittest.TestCase):
         self.assertEqual([('a', 'Opening', 'First', 120, 'C major', '8B'), ('b', 'Middle', 'Second', 124, 'G major', '9B'),
                           ('c', 'Late', 'Third', 135, 'F# major', '2B')],
                          [(t.track_id, t.title, t.artist, t.bpm, t.key, t.camelot) for t in tracks])
-        self.assertEqual([2.0, 5.0, 8.0], [track.arousal for track in tracks])
-        self.assertEqual([0.0, 0.5, 1.0], [track.energy_level for track in tracks], 'ranked among the eligible tracks')
+        self.assertEqual([2.0, 5.0, 8.0], [track.arousal for track in tracks], 'raw arousal, as the graph shows it (#265)')
         self.assertEqual([None, None, None], [track.energy_target for track in tracks], 'no arc, no target')
 
     def test_each_track_shows_its_length_where_the_audio_file_gave_one(self):
@@ -53,15 +52,15 @@ class PreviewPlaylistTests(unittest.TestCase):
     def test_with_an_arc_each_track_shows_the_target_it_was_chosen_for(self):
         tracks = PreviewPlaylist(_library()).execute(_recipe(energy_plan=(EnergyArcRequest('rise'),))).tracks
 
-        for actual, expected in zip([track.energy_target for track in tracks], (0.0, 0.45, 0.9)):
+        # #265: in raw arousal, from a (2) towards the eligible tracks' 90th percentile (7.4).
+        for actual, expected in zip([track.energy_target for track in tracks], (2.0, 4.7, 7.4)):
             self.assertAlmostEqual(expected, actual)
 
     def test_a_manual_energy_leaves_the_track_s_energy_unknown(self):
         repo = _FakePlaylistRepository(tracks=_library()._tracks, edges=(_edge('a', 'd', 0.9),))
         track = PreviewPlaylist(repo).execute(_recipe(length=2)).tracks[1]
 
-        self.assertEqual(('d', None, None, None, None), (track.track_id, track.arousal, track.energy_level, track.key,
-                                                         track.camelot))
+        self.assertEqual(('d', None, None, None), (track.track_id, track.arousal, track.key, track.camelot))
 
     def test_each_transition_shows_its_key_compatibility_and_bpm_step(self):
         transitions = PreviewPlaylist(_library()).execute(_recipe()).transitions

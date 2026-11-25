@@ -11,7 +11,7 @@ const arc = (shape, fields = {}) => ({shape, length: '', low: '', high: '', ...f
 
 test('a plain draft becomes a recipe with numbers, its track count and harmonic mixing', () => {
   assert.deepEqual(playlistRecipeDocument(draft(), 'track-1'), {
-    format: 'playlist-recipe', version: 1, start_track_id: 'track-1', bpm: {min: 120, max: 128.5},
+    format: 'playlist-recipe', version: 2, start_track_id: 'track-1', bpm: {min: 120, max: 128.5},
     length: {tracks: 10}, harmonic_mixing: {enabled: true, minimum_key_strength: 0.5}, energy_plan: [], mood_hold: null,
   });
 });
@@ -69,7 +69,7 @@ test('a saved recipe becomes the draft and start track it was exported from', ()
 });
 
 test('a loaded recipe shows its numbers as entered text, with blanks for what it leaves unset', () => {
-  const {draft: loaded} = playlistDraftOfRecipe({format: 'playlist-recipe', version: 1, start_track_id: 't',
+  const {draft: loaded} = playlistDraftOfRecipe({format: 'playlist-recipe', version: 2, start_track_id: 't',
     bpm: {min: 120, max: 128.5}, length: {minutes: 45}, harmonic_mixing: {enabled: true, minimum_key_strength: 0.5},
     energy_plan: [{shape: 'fall', energy_low: null, energy_high: 0.4}], mood_hold: null});
   assert.deepEqual(loaded, {...EMPTY_PLAYLIST_DRAFT, bpmMin: '120', bpmMax: '128.5', durationMinutes: '45',
@@ -81,7 +81,7 @@ test('a document that is not a version 1 recipe is refused', () => {
   const cases = [
     [null, 'This is not a playlist recipe'],
     [{...recipe, format: 'm3u'}, 'This is not a playlist recipe'],
-    [{...recipe, version: 2}, 'Recipe version 2 is not supported; only version 1 can be read'],
+    [{...recipe, version: 1}, 'Recipe version 1 is not supported; only version 2 can be read'],
     [{...recipe, bpm: {min: '120', max: 128}}, 'The recipe\'s bpm.min must be a number'],
     [{...recipe, energy_plan: [{shape: 'spiral'}]}, 'The recipe\'s arc 1 shape is not one the panel offers'],
   ];

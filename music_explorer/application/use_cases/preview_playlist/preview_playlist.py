@@ -2,13 +2,12 @@
 
 The walk follows the domain's generation rule, so the preview lists the same
 tracks as the M3U download of the same recipe. Arousal is always read, so every
-preview can show the energy actually placed.
+preview can show the energy actually placed, in the graph's numbers (#265).
 """
 from music_explorer.application.dto.playlists import PlaylistRecipe
 from music_explorer.application.use_cases.preview_playlist.playlist_preview import (
     PlaylistPreview, PreviewTrack, PreviewTransition)
 from music_explorer.domain.harmonic_mixing import HarmonicMixing, MusicalKey, camelot_code, keys_compatible
-from music_explorer.domain.percentile_rank import percentile_ranks
 from music_explorer.domain.playlist_candidates import usable_energy_and_mood
 from music_explorer.domain.playlist_generation import PlaylistRules, generate_walk
 
@@ -29,10 +28,9 @@ class PreviewPlaylist:
         evidence = self.repository.playlist_mood_evidence(rules.mood_hold)
         generated = generate_walk(rules, tracks, self._related_track_edges(), evidence)
         arousal, _mood = usable_energy_and_mood(generated.candidates, evidence)
-        levels = percentile_ranks(arousal)
         walk = tuple(generated.walk_tracks[track_id] for track_id in generated.track_ids)
         targets = generated.plan.targets_along(walk) if generated.plan else (None,) * len(walk)
-        placed = tuple(_preview_track(generated.candidates[track.track_id], arousal, levels, target)
+        placed = tuple(_preview_track(generated.candidates[track.track_id], arousal, target)
                        for track, target in zip(walk, targets))
         mixing = rules.harmonic_mixing or HarmonicMixing()
         transitions = tuple(_transition(before, after, mixing) for before, after in zip(walk, walk[1:]))
@@ -44,12 +42,12 @@ class PreviewPlaylist:
         return edges if status is not None and status.get('state') == 'ready' else ()
 
 
-def _preview_track(track, arousal, levels, target):
+def _preview_track(track, arousal, target):
     key = MusicalKey.parse(getattr(track, 'key', None), getattr(track, 'scale', None))
     return PreviewTrack(
         track_id=track.track_id, title=getattr(track, 'title', '') or '', artist=getattr(track, 'artist', '') or '',
         bpm=track.bpm, key=f'{track.key} {key.scale}' if key else None, camelot=camelot_code(key) if key else None,
-        arousal=arousal.get(track.track_id), energy_level=levels.get(track.track_id), energy_target=target,
+        arousal=arousal.get(track.track_id), energy_target=target,
         duration_seconds=getattr(track, 'duration_seconds', None))
 
 

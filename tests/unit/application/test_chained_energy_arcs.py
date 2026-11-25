@@ -8,7 +8,7 @@ from tests.unit.application.test_m3u_playlist_generation import _FakePlaylistRep
 
 
 def _even_library(seconds=180.0):
-    # t0..t9 have energy levels 0, 1/9 ... 1; every pair is equally related, so only the plan steers the walk.
+    # t0..t9 have arousal 0 ... 9; every pair is equally related, so only the plan steers the walk.
     tracks = tuple(_PlayableTrack(f't{i}', 120, f'/library/t{i}.flac', arousal=float(i), duration_seconds=seconds)
                    for i in range(10))
     edges = tuple(_edge(a.track_id, b.track_id, 0.5) for a, b in combinations(tracks, 2))
@@ -29,8 +29,8 @@ class ChainedArcPlaylistTests(unittest.TestCase):
         self.assertIsNone(result.warning)
 
     def test_each_arc_keeps_its_own_energy_range(self):
-        result = _generate(_even_library(), EnergyArcRequest('rise', energy_high=0.6, tracks=2),
-                           EnergyArcRequest('fall', energy_low=0.3, tracks=2))
+        result = _generate(_even_library(), EnergyArcRequest('rise', energy_high=5.4, tracks=2),
+                           EnergyArcRequest('fall', energy_low=2.7, tracks=2))
 
         self.assertEqual(('t4', 't5', 't3', 't2'), result.track_ids)
 

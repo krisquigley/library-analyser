@@ -2,7 +2,7 @@
 // the operations it uses; the gateway provides them all.
 // downloadPlaylist(recipe) resolves to {filename, contents, contentType, warning}.
 // previewPlaylist(recipe) resolves to {tracks, transitions, complete, warning}: each track {trackId, title, artist, bpm,
-//   key, camelot, arousal, energyLevel, energyTarget}, each transition {fromTrackId, toTrackId, keyCompatible,
+//   key, camelot, arousal, energyTarget, durationSeconds}, arousal and its target raw, as the graph shows them; each transition {fromTrackId, toTrackId, keyCompatible,
 //   bpmStepSmooth, bpmChange}; values the server could not tell are null.
 // listSavedPlaylistRecipes() resolves to [{name, updatedAt, problem}], problem null when the recipe can be loaded;
 //   loadSavedPlaylistRecipe(name) resolves to {name, recipe}, the recipe in its saved form.

@@ -23,6 +23,7 @@ export function playlistDownloadView({onControlsEdited, onDownloadRequested, ...
     disableControl(mounted.button, update.downloadDisabled);
     if (update.arcLengthUnit) mounted.controls.arcLengthUnit.value = update.arcLengthUnit;
     if (update.arcs) arcEditor.show(update.arcs, update.arcLengthUnit);
+    if (update.arousalRange) arcEditor.showArousalRange(update.arousalRange);
     if (update.status) showPlaylistStatus(mounted.status, update.status);
     if (update.missing) flagMissingControls(mounted.controls, update.missing);
   }

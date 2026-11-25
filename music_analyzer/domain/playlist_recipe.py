@@ -10,7 +10,8 @@ from dataclasses import dataclass
 import math
 
 FORMAT = 'playlist-recipe'
-VERSION = 1
+# Version 2 (#265): an arc's energy_low and energy_high are raw arousal, as the graph shows it, not 0-1 ranks.
+VERSION = 2
 ARC_SHAPES = ('steady', 'rise', 'fall', 'peak', 'dip')
 MAXIMUM_TRACKS = 1000
 MAXIMUM_MINUTES = 1440
@@ -205,15 +206,19 @@ def _arc(arc, prefix):
     shape = _required(arc, 'shape', prefix)
     if shape not in ARC_SHAPES:
         raise PlaylistRecipeError(f'{prefix}shape must be {", ".join(ARC_SHAPES[:-1])} or {ARC_SHAPES[-1]}')
-    low, high = (_optional_fraction(arc.get(bound), prefix + bound) for bound in ('energy_low', 'energy_high'))
+    low, high = (_optional_arousal(arc.get(bound), prefix + bound) for bound in ('energy_low', 'energy_high'))
     if low is not None and high is not None and low >= high:
         raise PlaylistRecipeError(f'{prefix}energy_low must be below its energy_high')
     length = _unit_and_value(arc, prefix, 'Give every arc its length in the same unit: tracks or minutes')
     return EnergyArc(shape, length, low, high)
 
 
-def _optional_fraction(value, name):
-    return None if value is None else _fraction(value, name)
+def _optional_arousal(value, name):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise PlaylistRecipeError(f'{name} must be a number')
+    return float(value)
 
 
 def missing_start_track(start_track_id: str) -> str:

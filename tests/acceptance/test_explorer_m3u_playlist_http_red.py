@@ -336,7 +336,8 @@ class ExplorerM3UPlaylistHTTPRedTests(unittest.TestCase):
     def test_download_m3u_endpoint_rejects_an_unknown_arc_or_unscored_mood_as_json_400(self):
         cases = [({'arc': 'wave'}, 'steady, rise, fall, peak or dip'),
                  ({'mood': 'calm'}, "No eligible track has a score for the mood 'calm'"),
-                 ({'arc': 'rise', 'energy_high': '1.5'}, 'Energy low and high must be between 0.0 and 1.0'),
+                 ({'arc': 'rise', 'energy_high': 'loud'}, 'Energy low and high must be numbers'),
+                 ({'arc': 'rise', 'energy_high': 'nan'}, 'Energy low and high must be numbers'),
                  ({'arc': 'rise', 'energy_low': '0.8', 'energy_high': '0.4'}, 'Energy low must be below energy high'),
                  ({'energy_low': '0.2'}, 'An energy range needs an energy arc')]
         for options, message in cases:

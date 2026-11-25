@@ -11,7 +11,7 @@ START = 'sha256:' + 'c' * 64
 
 
 def _document(**fields):
-    document = {'format': 'playlist-recipe', 'version': 1, 'start_track_id': START, 'bpm': {'min': 98, 'max': 126.5},
+    document = {'format': 'playlist-recipe', 'version': 2, 'start_track_id': START, 'bpm': {'min': 98, 'max': 126.5},
                 'length': {'tracks': 24}}
     document.update(fields)
     return {name: value for name, value in document.items() if value is not ...}
@@ -20,7 +20,8 @@ def _document(**fields):
 VALID = (
     _document(),
     _document(length={'minutes': 75}, harmonic_mixing={'enabled': False}, mood_hold='calm'),
-    _document(length={'tracks': 10}, energy_plan=[{'shape': 'peak', 'energy_low': 0.1, 'energy_high': 0.9}]),
+    _document(length={'tracks': 10}, energy_plan=[{'shape': 'peak', 'energy_low': 3.2, 'energy_high': 6.8}]),
+    _document(length={'tracks': 10}, energy_plan=[{'shape': 'dip', 'energy_low': -1.5, 'energy_high': 12}]),
     _document(length=..., energy_plan=[{'shape': 'rise', 'tracks': 8, 'energy_high': 0.8},
                                        {'shape': 'steady', 'tracks': 4}, {'shape': 'dip', 'tracks': 8}]),
     _document(length=..., energy_plan=[{'shape': 'fall', 'minutes': 1000}, {'shape': 'rise', 'minutes': 440}]),
@@ -28,7 +29,7 @@ VALID = (
 )
 
 INVALID = (
-    None, [], 'recipe', _document(format='m3u'), _document(version=2), _document(version=True), _document(tempo=1),
+    None, [], 'recipe', _document(format='m3u'), _document(version=1), _document(version=3), _document(version=True), _document(tempo=1),
     _document(start_track_id=...), _document(start_track_id=' '), _document(bpm={'min': 1}),
     _document(bpm={'min': 2, 'max': 1}), _document(bpm={'min': float('nan'), 'max': 1}), _document(bpm={'min': '1', 'max': 2}),
     _document(length=...), _document(length={'tracks': 0}), _document(length={'tracks': 1001}),
@@ -36,6 +37,8 @@ INVALID = (
     _document(harmonic_mixing={'enabled': 1}), _document(harmonic_mixing={'minimum_key_strength': -0.1}),
     _document(mood_hold=''), _document(mood_hold=3), _document(energy_plan='rise'), _document(energy_plan=[{'shape': 'wave'}]),
     _document(energy_plan=[{'shape': 'rise', 'energy_low': 0.5, 'energy_high': 0.5}]),
+    _document(energy_plan=[{'shape': 'rise', 'energy_high': float('inf')}]),
+    _document(energy_plan=[{'shape': 'rise', 'energy_low': '4'}]),
     _document(energy_plan=[{'shape': 'rise'}, {'shape': 'fall'}]),
     _document(length=..., energy_plan=[{'shape': 'rise', 'tracks': 3}, {'shape': 'fall'}]),
     _document(energy_plan=[{'shape': 'rise', 'tracks': 3}]),

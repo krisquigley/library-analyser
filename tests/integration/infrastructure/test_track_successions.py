@@ -137,13 +137,13 @@ class TagsOnlyRescanTests(unittest.TestCase):
         self.assertEqual(self.rows('SELECT count(*) FROM track_successions'), [(0,)])
 
     def test_a_saved_recipe_starting_on_the_retagged_track_follows_it(self):
-        from music_analyzer.domain.playlist_recipe import PlaylistRecipe
+        from music_analyzer.domain.playlist_recipe import VERSION, PlaylistRecipe
         from music_analyzer.infrastructure.persistence.playlist_recipes import SQLitePlaylistRecipeStore
         old, _ = self.analysed_track()
         recipes = SQLitePlaylistRecipeStore(self.db)
         for name, start in (('Warm-up', old), ('Elsewhere', 'sha256:' + '9' * 64)):
             document = PlaylistRecipe(start, 118.0, 126.0, ('tracks', 12), False, 0.5, (), None).to_document()
-            recipes.store_recipe(name, document, 1)
+            recipes.store_recipe(name, document, VERSION)
         self.song.write_bytes(with_id3v2(MP3_AUDIO, b'retagged' + bytes(60)))
         new = self.scan()['song.mp3']
         self.carry_over()
