@@ -224,7 +224,7 @@ function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraph
 function fitGraph(elem){const size=fitGraphToElement(graphStage.current(),elem); graphRendering.wake(); return size;}
 
 // #243: once per selection or new graph data, never per frame.
-function focusNeighbourhood(graph){const focus=graphNeighbourFocus(graphState().visible,currentTrackId()); graph.nodeColor(focusedNodeColor(focus)).linkColor(focusedLinkColor(focus)); neighbourhoodLabels.label(focus).catch(()=>{});}
+function focusNeighbourhood(graph){const focus=graphNeighbourFocus(graphState().visible,currentTrackId()); graph.nodeColor(focusedNodeColor(focus)).linkColor(focusedLinkColor(focus,graphState().model?.nodes||[])); neighbourhoodLabels.label(focus).catch(()=>{});}
 function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||graphState().visible.nodes,currentTrackId());}
 function animateGraphAxes(timestamp){
   const graph=graphStage.current();
