@@ -1,7 +1,7 @@
 // Issue #146: framing the graph's display coordinates for the camera.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {graphCameraFrame} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/camera-frame.js';
+import {graphCameraFrame, neighbourhoodCameraDistance} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/camera-frame.js';
 
 test('with no positioned node the camera looks at the origin from 650 away', () => {
   assert.deepEqual(graphCameraFrame([{x: NaN, y: 0, z: 0}], {width: 800, height: 600}, 50),
@@ -54,4 +54,40 @@ test('nodes without numeric coordinates do not move the frame', () => {
   for (const x of [undefined, null, '0']) {
     assert.deepEqual(graphCameraFrame([placed, {x, y: 500, z: 500}], {width: 800, height: 600}, 50), frame, String(x));
   }
+});
+
+// #267: a selection is framed so every neighbour linked to it stays in view, as the camera sees it from its direction.
+const SQUARE = {width: 800, height: 800};
+const FROM_FRONT = {x: 0, y: 0, z: 1};
+const view = (changes = {}) => ({direction: FROM_FRONT, size: SQUARE, fieldOfView: 60, ...changes});
+const TAN_30 = Math.tan(Math.PI / 6);
+
+test("a selection backs off just far enough that its widest neighbour, node and padding, fits the field of view", () => {
+  const centre = {x: 10, y: 0, z: 0};
+  const distance = neighbourhoodCameraDistance(centre, [{x: 40, y: 0, z: 0}, {x: 10, y: -100, z: 0}], view());
+  assert.ok(Math.abs(distance - 1.2 * (100 + 4) / TAN_30) < 1e-9, String(distance));
+});
+
+test("a neighbour behind the selection, along the line of sight, needs no more room than its sideways offset", () => {
+  const behind = neighbourhoodCameraDistance({x: 0, y: 0, z: 0}, [{x: 0, y: 50, z: -900}], view());
+  assert.equal(behind, 100, 'it already shows close to the selection from in front');
+  const before = neighbourhoodCameraDistance({x: 0, y: 0, z: 0}, [{x: 0, y: 50, z: 100}], view());
+  assert.ok(Math.abs(before - (100 + 1.2 * 54 / TAN_30)) < 1e-9, 'a neighbour nearer the camera keeps in front of it');
+});
+
+test("a narrow or portrait viewport backs further off than a wide one, by its narrower field of view", () => {
+  const near = [{x: 0, y: 0, z: 0}, [{x: 50, y: 0, z: 0}]];
+  const wide = neighbourhoodCameraDistance(...near, view({size: {width: 1600, height: 800}, fieldOfView: 50}));
+  const square = neighbourhoodCameraDistance(...near, view({fieldOfView: 50}));
+  const portrait = neighbourhoodCameraDistance(...near, view({size: {width: 400, height: 800}, fieldOfView: 50}));
+  assert.equal(wide, square, 'the vertical field is the narrower one on a wide screen');
+  assert.ok(portrait > square * 1.5, `${portrait} vs ${square}`);
+});
+
+test("close neighbours are never framed closer than the focus radius of 100, where the enlarged selected node still leaves room, and a track without positioned neighbours has no framing", () => {
+  assert.equal(neighbourhoodCameraDistance({x: 0, y: 0, z: 0}, [{x: 1, y: 0, z: 0}], view()), 100);
+  assert.equal(neighbourhoodCameraDistance({x: 0, y: 0, z: 0}, [], view()), null);
+  assert.equal(neighbourhoodCameraDistance({x: 0, y: 0, z: 0}, [{x: NaN, y: 0, z: 0}], view()), null);
+  assert.equal(neighbourhoodCameraDistance({x: 0, y: 0, z: 0}, [{x: 100, y: 0, z: 0}], view({size: {width: 0, height: 0}, fieldOfView: 'wide'})),
+    neighbourhoodCameraDistance({x: 0, y: 0, z: 0}, [{x: 100, y: 0, z: 0}], view({fieldOfView: 50})), 'a bad size or field of view falls back');
 });

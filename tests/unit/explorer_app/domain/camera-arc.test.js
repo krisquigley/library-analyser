@@ -189,3 +189,24 @@ test('a tiny node or a radius near the smallest normal square is still focused, 
     assert.deepEqual([pose.position.y, pose.position.z], [0, 0]);
   }
 });
+
+test("a selection can be seen from the distance its direction calls for, still within the orbit bounds (#267)", () => {
+  const asked = [];
+  const options = {currentDirection: () => null, distanceFor: direction => { asked.push(direction); return 250; }};
+  assert.deepEqual(selectionFocusPose({x: 0, y: 0, z: 10}, options).position, {x: 0, y: 0, z: 260});
+  assert.deepEqual(asked, [{x: 0, y: 0, z: 1}]);
+  assert.deepEqual(selectionFocusPose({x: 0, y: 0, z: 10}, {...options, maxDistance: 200}).position, {x: 0, y: 0, z: 210});
+  assert.deepEqual(selectionFocusPose({x: 0, y: 0, z: 10}, {currentDirection: () => null, distanceFor: () => undefined}).position,
+    {x: 0, y: 0, z: 110}, 'no framing keeps the focus radius');
+});
+
+test("a picked node can be seen from the distance its current direction calls for (#267)", () => {
+  const pose = pickedNodePose({x: 5, y: 5, z: 5}, {cameraPosition: {x: 0, y: 0, z: 30}, orbitTarget: {x: 0, y: 0, z: 0},
+    distanceFor: () => 120});
+  assert.deepEqual(pose, {position: {x: 5, y: 5, z: 125}, target: {x: 5, y: 5, z: 5}});
+  const bounded = pickedNodePose({x: 0, y: 0, z: 0}, {cameraPosition: {x: 0, y: 0, z: 30}, orbitTarget: {x: 0, y: 0, z: 0},
+    distanceFor: () => 120, minDistance: 0, maxDistance: 90});
+  assert.deepEqual(bounded.position, {x: 0, y: 0, z: 90});
+  assert.deepEqual(pickedNodePose({x: 0, y: 0, z: 0}, {cameraPosition: {x: 0, y: 0, z: 30}, orbitTarget: {x: 0, y: 0, z: 0},
+    distanceFor: () => undefined}).position, {x: 0, y: 0, z: 30}, 'no framing keeps the offset');
+});

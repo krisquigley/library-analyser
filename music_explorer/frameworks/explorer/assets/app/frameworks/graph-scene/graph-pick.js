@@ -2,7 +2,7 @@
 // listener sees the pick answered before the selection is accepted.
 
 import {pickedNodePose} from '../../domain/camera-arc.js';
-import {setCameraFocusPose, settleCameraFocusInput} from './camera-focus-scene.js';
+import {neighbourhoodFocusDistance, setCameraFocusPose, settleCameraFocusInput} from './camera-focus-scene.js';
 
 export function pickedTrackId(picked) {
   const id = picked?.id;
@@ -17,11 +17,14 @@ export function mountedPickedNode(id, {visible, mounted}) {
 }
 
 // The camera is best-effort: an unreachable node or a failing camera never stops the track being selected.
-export function jumpCameraToPickedNode(graph, node, controlsWatch) {
+// #267: with neighbours, it comes in or backs off along its offset until they are all in view.
+export function jumpCameraToPickedNode(graph, node, {controlsWatch, neighbours = []}) {
   try {
     const controls = graph.controls();
-    const pose = pickedNodePose({x: node.fx, y: node.fy, z: node.fz},
-      {cameraPosition: graph.cameraPosition(), orbitTarget: controls.target});
+    const target = {x: node.fx, y: node.fy, z: node.fz};
+    const pose = pickedNodePose(target, {cameraPosition: graph.cameraPosition(), orbitTarget: controls.target,
+      distanceFor: neighbourhoodFocusDistance(graph, target, neighbours),
+      minDistance: controls.minDistance, maxDistance: controls.maxDistance});
     if (!pose) return 'skipped';
     controlsWatch.observe(graph);
     settleCameraFocusInput(graph);

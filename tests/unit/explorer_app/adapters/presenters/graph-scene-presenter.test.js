@@ -69,3 +69,12 @@ test('#243: outside the selected track\'s neighbourhood, nodes and links are ver
   assert.deepEqual([c].map(focusedNodeColor(none)), [c.color]);
   assert.deepEqual([far].map(focusedLinkColor(none)), [linkColour(far)]);
 });
+
+test("a track's neighbourhood is where the shown tracks linked to it are placed (#267)", async () => {
+  const {graphNeighbourPositions} = await import('../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/graph-scene-presenter.js');
+  const placed = (id, fx) => ({id, fx, fy: 0, fz: 0});
+  const visible = {nodes: [placed('a', 0), placed('b', 10), placed('c', 20), placed('d', 30)],
+    links: [{source: 'a', target: 'b'}, {source: {id: 'c'}, target: {id: 'a'}}, {source: 'b', target: 'd'}]};
+  assert.deepEqual(graphNeighbourPositions(visible, 'a'), [{x: 10, y: 0, z: 0}, {x: 20, y: 0, z: 0}]);
+  assert.deepEqual(graphNeighbourPositions(visible, 'missing'), []);
+});

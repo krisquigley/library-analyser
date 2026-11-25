@@ -69,24 +69,33 @@ export function cameraArcPose(arc, progress) {
   return {position, target, up: arc.fromUp ? turnedUp(arc, c, s) : null};
 }
 
-// A selection is seen from the focus radius, within any configured orbit bounds, along its
-// direction from the origin. A positioned origin has no such direction, so the current view's is kept;
+// A selection is seen from the focus radius, or the distance its direction calls for (#267), within any configured
+// orbit bounds, along its direction from the origin. A positioned origin has no such direction, so the current view's is kept;
 // currentDirection() is asked only for that case.
-export function selectionFocusPose(target, {currentDirection, minDistance, maxDistance}) {
+export function selectionFocusPose(target, {currentDirection, minDistance, maxDistance, distanceFor = () => undefined}) {
   if (!ARC_AXES.every(axis => Number.isFinite(target[axis]))) return null;
   const length = Math.hypot(target.x, target.y, target.z);
   if (!Number.isFinite(length)) return null;
-  const distance = Math.max(minDistance ?? 0, Math.min(maxDistance ?? Infinity, FOCUS_RADIUS));
   const direction = length === 0 ? (currentDirection() || {x: 0, y: 0, z: 1}) : cameraUnitDirection(target);
+  const distance = withinOrbitBounds(distanceFor(direction) ?? FOCUS_RADIUS, {minDistance, maxDistance});
   // Normalised before scaling: distance * target can underflow for a tiny non-origin node.
   const position = mapAxes(axis => target[axis] + distance * direction[axis]);
   return representable(position, target) ? {position, target} : null;
 }
 
-// A picked node is seen from the camera's current offset, so the view jumps to it unchanged.
-export function pickedNodePose(target, {cameraPosition, orbitTarget}) {
-  const position = mapAxes(axis => target[axis] + (cameraPosition[axis] - orbitTarget[axis]));
+// A picked node is seen from the camera's current offset, so the view jumps to it unchanged; when its direction calls
+// for a distance (#267), it is seen from there along the same direction, within any configured orbit bounds.
+export function pickedNodePose(target, {cameraPosition, orbitTarget, distanceFor = () => undefined, minDistance, maxDistance}) {
+  const offset = subtract(cameraPosition, orbitTarget);
+  const direction = cameraUnitDirection(offset);
+  const distance = direction ? distanceFor(direction) : undefined;
+  const seen = distance === undefined ? offset : scale(direction, withinOrbitBounds(distance, {minDistance, maxDistance}));
+  const position = mapAxes(axis => target[axis] + seen[axis]);
   return representable(position, target) ? {position, target} : null;
+}
+
+function withinOrbitBounds(distance, {minDistance, maxDistance}) {
+  return Math.max(minDistance ?? 0, Math.min(maxDistance ?? Infinity, distance));
 }
 
 // Reliable orientation needs a finite pose whose offset has a normal-range squared length:
