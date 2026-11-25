@@ -205,11 +205,11 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         self.assertEqual('c', self._second_track(repo))
 
     def _energy_repo(self, *, a_b=0.9, a_c=0.85, b_overrides=()):
-        # Energy levels (percentiles): d 0, a 1/3, c 2/3, b 1.
+        # Arousal evenly spaced (#265: arcs use it raw): d 1, a 3, c 5, b 7, a third of the span apart.
         return _FakePlaylistRepository(
-            tracks=(_PlayableTrack('a', 120, '/library/a.flac', arousal=5.0),
-                    _PlayableTrack('b', 120, '/library/b.flac', arousal=9.0, manual_overrides=b_overrides),
-                    _PlayableTrack('c', 120, '/library/c.flac', arousal=5.2),
+            tracks=(_PlayableTrack('a', 120, '/library/a.flac', arousal=3.0),
+                    _PlayableTrack('b', 120, '/library/b.flac', arousal=7.0, manual_overrides=b_overrides),
+                    _PlayableTrack('c', 120, '/library/c.flac', arousal=5.0),
                     _PlayableTrack('d', 120, '/library/d.flac', arousal=1.0)),
             edges=(_edge('a', 'b', a_b), _edge('a', 'c', a_c)))
 
@@ -229,10 +229,10 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         self.assertEqual('b', self._second_track(repo, energy_plan=(EnergyArcRequest('rise'),)))
 
     def test_a_rising_arc_heads_for_the_high_of_its_energy_range(self):
-        # #136: a rises from 1/3; capped at 0.7, c (2/3) is closer than b (1).
+        # #136: a rises from 3; capped at 5.2 (in raw arousal, #265), c (5) is closer than b (7).
         repo = self._energy_repo(a_b=0.85, a_c=0.87)
 
-        self.assertEqual('c', self._second_track(repo, energy_plan=(EnergyArcRequest('rise', energy_high=0.7),)))
+        self.assertEqual('c', self._second_track(repo, energy_plan=(EnergyArcRequest('rise', energy_high=5.2),)))
 
     def test_an_invalid_energy_range_is_rejected_before_any_evidence_is_read(self):
         repo = self._energy_repo()
@@ -242,15 +242,15 @@ class M3UPlaylistGenerationTests(unittest.TestCase):
         self.assertEqual([], repo.mood_evidence_reads)
 
     def test_a_manual_energy_override_makes_the_arousal_unknown(self):
-        # Known, b (level 1) misses the steady target (a, level 1/3) by more than c does.
-        # Overridden, b costs only a quarter-range miss, while c (now level 1) misses a (now 1/2) by 1/2.
+        # Known, b (7) misses the steady target (a, 3) by more than c (5) does.
+        # Overridden, b costs only a quarter-span miss, while c misses a by half the span left (1 to 5).
         self.assertEqual('c', self._second_track(self._energy_repo(a_b=0.85, a_c=0.85), energy_plan=(EnergyArcRequest('steady'),)))
         self.assertEqual('b', self._second_track(self._energy_repo(a_b=0.85, a_c=0.85, b_overrides=('energy',)),
                                                  energy_plan=(EnergyArcRequest('steady'),)))
 
     def test_a_dip_sinks_towards_the_low_end_where_a_rise_climbs(self):
-        # #137: over four tracks the second sits a third of the way into the arc. From a (1/3),
-        # a dip heads for 0.2, nearest d (0); a rise heads for about 0.5, nearest c (2/3).
+        # #137: over four tracks the second sits a third of the way into the arc. From a (3),
+        # a dip heads for about 2.3, nearest d (1); a rise heads for about 4.1, nearest c (5).
         repo = _FakePlaylistRepository(
             tracks=self._energy_repo()._tracks, edges=(_edge('a', 'c', 0.9), _edge('a', 'd', 0.8)))
 

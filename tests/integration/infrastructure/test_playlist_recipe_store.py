@@ -8,7 +8,7 @@ import unittest
 from music_analyzer.infrastructure.persistence.playlist_recipes import SQLitePlaylistRecipeStore
 from tests.integration.infrastructure.integrity_d1_public_fixture import PUBLIC_TRACK_IDS, create_public_core_database
 
-DOCUMENT = {'format': 'playlist-recipe', 'version': 1, 'start_track_id': 'x', 'bpm': {'min': 100.0, 'max': 120.0},
+DOCUMENT = {'format': 'playlist-recipe', 'version': 2, 'start_track_id': 'x', 'bpm': {'min': 100.0, 'max': 120.0},
             'length': {'tracks': 10}, 'mood_hold': 'calm ☕'}
 
 

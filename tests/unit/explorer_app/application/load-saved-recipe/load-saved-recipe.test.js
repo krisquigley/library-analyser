@@ -50,7 +50,7 @@ test('a list or recipe that cannot be read is told, and the draft is kept', asyn
   await unreadable.recipes.list();
   await unreadable.recipes.load('Warm-up');
   assert.deepEqual(unreadable.published.at(-1),
-    {type: 'saved-recipe-failed', message: 'Recipe version 7 is not supported; only version 1 can be read'});
+    {type: 'saved-recipe-failed', message: 'Recipe version 7 is not supported; only version 2 can be read'});
   assert.equal(unreadable.draft(), EMPTY_PLAYLIST_DRAFT);
 });
 

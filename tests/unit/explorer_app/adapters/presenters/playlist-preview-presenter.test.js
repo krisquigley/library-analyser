@@ -7,7 +7,7 @@ import {
 import {trackPlaybackViewModel} from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/track-playback-presenter.js';
 
 const track = (fields = {}) => ({trackId: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor',
-  camelot: '8A', arousal: 0.4, energyLevel: 0.25, energyTarget: 0.2, durationSeconds: 240, ...fields});
+  camelot: '8A', arousal: 0.25, energyTarget: 0.2, durationSeconds: 240, ...fields});
 
 test('before any preview the panel offers Preview and shows nothing', () => {
   assert.deepEqual(playlistPreviewViewModel(), {previewDisabled: false, status: {text: '', urgent: false}, rows: [],
@@ -21,7 +21,7 @@ test('while previewing, Preview is disabled and the listener is told', () => {
 
 test('a preview lists each track with its BPM, key in letters (#261), energy and the step into it', () => {
   const preview = {
-    tracks: [track(), track({trackId: 'b', title: 'Lift', bpm: 122.5, key: 'C major', camelot: null, energyLevel: null,
+    tracks: [track(), track({trackId: 'b', title: 'Lift', bpm: 122.5, key: 'C major', camelot: null, arousal: null,
       energyTarget: 0.6}), track({trackId: 'c', title: 'Drop', bpm: 110, key: null, camelot: null})],
     transitions: [
       {fromTrackId: 'a', toTrackId: 'b', keyCompatible: true, bpmStepSmooth: true, bpmChange: 2.5},
@@ -63,9 +63,9 @@ test('a failed preview clears the list and alerts the listener', () => {
       chart: playlistEnergyChart([])});
 });
 
-test('the energy chart places each track left to right, energy 0 at the foot and 1 at the head', () => {
+test('the energy chart places each track left to right, the lowest arousal shown at the foot and the highest at the head (#265)', () => {
   const {width, height, padding} = ENERGY_CHART;
-  const chart = playlistEnergyChart([track({energyLevel: 0, energyTarget: 1}), track({energyLevel: 1, energyTarget: 0.5})]);
+  const chart = playlistEnergyChart([track({arousal: 3.0, energyTarget: 7.0}), track({arousal: 7.0, energyTarget: 5.0})]);
   const foot = height - padding, head = padding, middle = (foot + head) / 2;
   assert.deepEqual(chart.level, [[[padding, foot], [width - padding, head]]]);
   assert.deepEqual(chart.target, [[[padding, head], [width - padding, middle]]]);
@@ -73,15 +73,15 @@ test('the energy chart places each track left to right, energy 0 at the foot and
 });
 
 test('an unknown energy breaks the line instead of inventing a value', () => {
-  const chart = playlistEnergyChart([track({energyLevel: 0.2}), track({energyLevel: null}), track({energyLevel: 0.4}),
-    track({energyLevel: 0.6})]);
+  const chart = playlistEnergyChart([track({arousal: 4.2}), track({arousal: null}), track({arousal: 4.4}),
+    track({arousal: 4.6})]);
   assert.deepEqual(chart.level.map(segment => segment.length), [1, 2]);
   assert.deepEqual(playlistEnergyChart([track({energyTarget: null})]).target, []);
 });
 
 test('a single track sits in the middle, and no tracks draw no lines', () => {
-  const [[[x]]] = playlistEnergyChart([track()]).level;
-  assert.equal(x, ENERGY_CHART.width / 2);
+  const [[[x, y]]] = playlistEnergyChart([track({energyTarget: null})]).level;
+  assert.deepEqual([x, y], [ENERGY_CHART.width / 2, ENERGY_CHART.height / 2], 'one value has no spread, so it sits mid-height');
   assert.deepEqual(playlistEnergyChart([]), {...ENERGY_CHART, level: [], target: [], label: 'No energy to chart yet.'});
 });
 

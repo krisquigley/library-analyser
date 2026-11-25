@@ -1,7 +1,7 @@
 // Issue #146: the mood-axis graph model the 3D scene and the filters work on.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {moodGraphModel, moodNodeColor, moodToTrack, trackBpmsOf} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/mood-graph.js';
+import {libraryArousalRange, moodGraphModel, moodNodeColor, moodToTrack, trackBpmsOf} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/mood-graph.js';
 import {applyMoodGraphFilters, EMPTY_GRAPH_CONTROLS} from '../../../../music_explorer/frameworks/explorer/assets/app/domain/graph-filters.js';
 
 const axis = (raw, normalized) => ({label: 'axis', raw, normalized});
@@ -105,4 +105,9 @@ test('the graph knows the BPM of each positioned track, for the library rows (#2
   const bpms = trackBpmsOf({nodes: [{id: 'a', bpm: 120.4}, {id: 'b', bpm: null}]});
   assert.deepEqual([...bpms], [['a', 120.4], ['b', null]]);
   assert.deepEqual([...trackBpmsOf({nodes: []})], []);
+});
+
+test("the library's arousal range is the lowest and highest the graph places, as raw arousal (#265)", () => {
+  assert.deepEqual(libraryArousalRange({colorRanges: {arousal: [3.12, 6.84]}}), {low: 3.12, high: 6.84});
+  assert.equal(libraryArousalRange({colorRanges: {arousal: null}}), null);
 });

@@ -38,7 +38,7 @@ import {trackLabelViewModels} from '../adapters/presenters/track-label-presenter
 import {createTrackLabels} from '../frameworks/graph-scene/track-labels.js';
 import {playlistDownloadController} from '../adapters/controllers/playlist-download-controller.js';
 import {fetchExplorerApi} from '../adapters/gateways/explorer-api-gateway.js';
-import {playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
+import {libraryArousalRangeViewModel,playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
 import {browserPlaylistFile} from '../frameworks/browser-playlist-file.js';
 import {createInMemoryEventBus} from '../frameworks/in-memory-event-bus.js';
 import {createGraphRendering} from '../application/render-graph/render-graph.js';
@@ -49,7 +49,7 @@ import {jumpCameraToPickedNode, mountedPickedNode, pickedTrackId} from '../frame
 import {configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, fitGraphToElement, graphContainer, observeElementResize, selectedTrackNodeSize} from '../frameworks/graph-scene/force-graph-scene.js';
 import {playlistDownloadView} from '../frameworks/views/playlist-download-view.js';
 import {EMPTY_GRAPH_CONTROLS} from '../domain/graph-filters.js';
-import {moodGraphModel,trackBpmsOf} from '../domain/mood-graph.js';
+import {libraryArousalRange,moodGraphModel,trackBpmsOf} from '../domain/mood-graph.js';
 import {isIndexedMoodAxisGraph, normalizeMoodAxisGraphDto} from '../adapters/gateways/mood-axis-graph-dto.js';
 import {createGraphLoad} from '../application/load-graph/load-graph.js';
 import {graphControlsController} from '../adapters/controllers/graph-controls-controller.js';
@@ -162,7 +162,7 @@ const graphStatusDisplay=graphStatusView({onReload:()=>loadGraph().catch(()=>{})
 function showGraphLoadEvent(event){const status=presentGraphLoadEvent(event); if(status) graphStatusDisplay.show(status);}
 graphEvents.subscribe('graph-controls-edited',event=>graphFilterControls.showValues(graphControlValuesViewModel(event.controls)));
 graphEvents.subscribe('graph-load-started',event=>{cameraFocus.claimView('graph-reloaded'); showGraphLoadEvent(event);});
-graphEvents.subscribe('graph-model-built',event=>{trackList.showBpmBadges(trackBpmBadges(trackSearchSession.read().results.tracks,trackBpmsOf(event.model))); graphFilterControls.showOptions(graphControlOptionsViewModel(event.model,event.controls)); showGraphLoadEvent(event);});
+graphEvents.subscribe('graph-model-built',event=>{playlistControlsView.show(libraryArousalRangeViewModel(libraryArousalRange(event.model))); trackList.showBpmBadges(trackBpmBadges(trackSearchSession.read().results.tracks,trackBpmsOf(event.model))); graphFilterControls.showOptions(graphControlOptionsViewModel(event.model,event.controls)); showGraphLoadEvent(event);});
 graphEvents.subscribe('graph-render-due',event=>renderMap(event.visible));
 graphEvents.subscribe('graph-ready',showGraphLoadEvent);
 graphEvents.subscribe('graph-load-failed',showGraphLoadEvent);
@@ -213,7 +213,7 @@ async function setCurrent(id,{focusCamera=true}={}){return trackSelection.choose
 function renderTracks(tracks){trackList.show(trackListViewModel({tracks,...trackSearchSession.read(),currentTrackId:currentTrackId(),trackBpms:trackBpmsOf(graphState().model)}));}
 function loadGraph(){return graphLoad.load();}
 
-function appendM3UDownloadControls(panel){const steps=playlistGeneratorSteps(); playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[]}),steps.finish); panel.append(steps.preview,steps.finish); playlistPreviewPanel.mount(steps.preview,playlistPreviewViewModel()); showPlaylistReadiness(); recipeExportPanel.mount(steps.finish); savedRecipePanel.mount(steps.finish,savedRecipesViewModel());}
+function appendM3UDownloadControls(panel){const steps=playlistGeneratorSteps(); playlistControlsView.mount(panel,playlistControlsViewModel({draft:playlistDownload.draft(),downloadState:playlistDownload.downloadState(),moods:graphState().model.availableMoods||[],arousalRange:libraryArousalRange(graphState().model)}),steps.finish); panel.append(steps.preview,steps.finish); playlistPreviewPanel.mount(steps.preview,playlistPreviewViewModel()); showPlaylistReadiness(); recipeExportPanel.mount(steps.finish); savedRecipePanel.mount(steps.finish,savedRecipesViewModel());}
 function mountTagWritePanel(){const root=document.getElementById('tag-write'); if(root) tagWritePanel.mount(root,tagWriteViewModel());}
 function renderInitialDetail(){trackDetail.showNone();}
 function renderDetailField(name,field){return trackDetail.field(detailFieldViewModel(name,field));}

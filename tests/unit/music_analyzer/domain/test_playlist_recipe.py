@@ -6,7 +6,7 @@ from music_analyzer.domain.playlist_recipe import (
 
 
 def _recipe(**fields):
-    document = {'format': 'playlist-recipe', 'version': 1, 'start_track_id': 'sha256:abc', 'bpm': {'min': 100, 'max': 130},
+    document = {'format': 'playlist-recipe', 'version': 2, 'start_track_id': 'sha256:abc', 'bpm': {'min': 100, 'max': 130},
                 'length': {'tracks': 20}}
     document.update(fields)
     return {name: value for name, value in document.items() if value is not ...}
@@ -16,20 +16,20 @@ class ValidRecipeTests(unittest.TestCase):
     def test_a_minimal_recipe_gets_the_defaults_and_a_canonical_form(self):
         recipe = parse_playlist_recipe(_recipe())
 
-        self.assertEqual({'format': 'playlist-recipe', 'version': 1, 'start_track_id': 'sha256:abc',
+        self.assertEqual({'format': 'playlist-recipe', 'version': 2, 'start_track_id': 'sha256:abc',
                           'bpm': {'min': 100.0, 'max': 130.0}, 'length': {'tracks': 20},
                           'harmonic_mixing': {'enabled': True, 'minimum_key_strength': 0.5}, 'energy_plan': [],
                           'mood_hold': None}, recipe.to_document())
 
     def test_a_full_recipe_round_trips(self):
         document = _recipe(length=..., harmonic_mixing={'enabled': False, 'minimum_key_strength': 0.7}, mood_hold='calm',
-                           energy_plan=[{'shape': 'rise', 'minutes': 20, 'energy_low': None, 'energy_high': 0.8},
-                                        {'shape': 'dip', 'minutes': 12.5, 'energy_low': 0.2, 'energy_high': None}])
+                           energy_plan=[{'shape': 'rise', 'minutes': 20, 'energy_low': None, 'energy_high': 6.8},
+                                        {'shape': 'dip', 'minutes': 12.5, 'energy_low': 3.2, 'energy_high': None}])
         recipe = parse_playlist_recipe(document)
 
         self.assertEqual(recipe, parse_playlist_recipe(recipe.to_document()))
-        self.assertEqual([{'shape': 'rise', 'minutes': 20.0, 'energy_low': None, 'energy_high': 0.8},
-                          {'shape': 'dip', 'minutes': 12.5, 'energy_low': 0.2, 'energy_high': None}],
+        self.assertEqual([{'shape': 'rise', 'minutes': 20.0, 'energy_low': None, 'energy_high': 6.8},
+                          {'shape': 'dip', 'minutes': 12.5, 'energy_low': 3.2, 'energy_high': None}],
                          recipe.to_document()['energy_plan'])
         self.assertNotIn('length', recipe.to_document(), "the arcs set the playlist's length")
 
@@ -47,7 +47,7 @@ class InvalidRecipeTests(unittest.TestCase):
 
     def test_only_this_format_and_version(self):
         self.assertRejected('not a playlist recipe', _recipe(format='m3u'))
-        self.assertRejected('version 2 is not supported; only version 1 can be read', _recipe(version=2))
+        self.assertRejected('version 1 is not supported; only version 2 can be read', _recipe(version=1))
         self.assertRejected('version True is not supported', _recipe(version=True))
         self.assertRejected('must be a JSON object', ['not', 'an', 'object'])
 
@@ -79,7 +79,8 @@ class InvalidRecipeTests(unittest.TestCase):
                               r'energy_plan\[0\].energy_low must be below its energy_high'),
                              ({'shape': 'rise', 'energy_low': 0.5, 'energy_high': 0.5},
                               r'energy_plan\[0\].energy_low must be below its energy_high'),
-                             ({'shape': 'rise', 'energy_high': 2}, r'energy_plan\[0\].energy_high must be between 0 and 1'),
+                             ({'shape': 'rise', 'energy_high': float('nan')}, r'energy_plan\[0\].energy_high must be a number'),
+                             ({'shape': 'rise', 'energy_low': True}, r'energy_plan\[0\].energy_low must be a number'),
                              ({'shape': 'rise', 'colour': 'red'}, r'Unknown recipe field: energy_plan\[0\].colour')):
             with self.subTest(arc=arc):
                 self.assertRejected(message, _recipe(energy_plan=[arc]))

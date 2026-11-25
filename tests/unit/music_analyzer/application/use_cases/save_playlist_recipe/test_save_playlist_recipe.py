@@ -19,7 +19,7 @@ class SavePlaylistRecipeTests(unittest.TestCase):
         self.save.execute(SavePlaylistRecipeRequest('Warm-up', recipe, replace=False))
 
         self.assertEqual(recipe.to_document(), self.store.recipes['Warm-up'].document)
-        self.assertEqual(1, self.store.recipes['Warm-up'].format_version)
+        self.assertEqual(2, self.store.recipes['Warm-up'].format_version)
         self.assertEqual([PlaylistRecipeSaved('Warm-up', replaced=False)], self.events.events)
 
     def test_an_existing_name_is_kept_unless_replacing_is_asked_for(self):

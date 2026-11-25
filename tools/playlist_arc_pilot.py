@@ -1,8 +1,8 @@
 """Chained energy arc pilot (#137): how closely playlists follow their arcs, in aggregate only.
 
 Runs the playlist preview from a seeded sample of eligible start tracks and
-reports, for each arc, the mean distance between the target and the energy level
-actually placed, with the mean relation score of the transitions and the run
+reports, for each arc, the mean distance between the target and the arousal
+actually placed (raw arousal, as the graph shows it, since #265), with the mean relation score of the transitions and the run
 timings. It can repeat the runs at other arc weights to re-check the weight; that
 override is for measurement only and is put back afterwards. Nothing it prints
 names a track, a title or a path, and it opens the database read-only.
@@ -100,7 +100,7 @@ def _runs(repository, arcs, sample, bpm_range, tracks, relation, lengths, unit):
         placed = preview.tracks
         places = arc_places([tracks[track.track_id].duration_seconds for track in placed], lengths, unit)
         runs.append({
-            'placements': [(arc, track.energy_level, track.energy_target) for arc, track in zip(places, placed)],
+            'placements': [(arc, track.arousal, track.energy_target) for arc, track in zip(places, placed)],
             'relations': [relation[frozenset((step.from_track_id, step.to_track_id))] for step in preview.transitions],
             'seconds': seconds, 'complete': preview.complete})
     return runs, failures

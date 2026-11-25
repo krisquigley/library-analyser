@@ -11,7 +11,7 @@ class ListPlaylistRecipesTests(unittest.TestCase):
         store = FakePlaylistRecipeStore(recipes=[
             stored('b gone', recipe_document(start_track_id='sha256:gone')),
             stored('a fine', recipe_document()),
-            stored('c broken', {'format': 'playlist-recipe', 'version': 1}),
+            stored('c broken', {'format': 'playlist-recipe', 'version': 2}),
             stored('d unreadable', None),
         ])
 

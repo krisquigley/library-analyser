@@ -7,7 +7,8 @@ import {EMPTY_PLAYLIST_DRAFT, arcsSetTheLength} from './playlist-draft.js';
 import {DEFAULT_MINIMUM_KEY_STRENGTH, DEFAULT_TRACK_COUNT} from './playlist-recipe.js';
 
 const RECIPE_FORMAT = 'playlist-recipe';
-const RECIPE_VERSION = 1;
+// Version 2 (#265): arc energy ranges are raw arousal, as the graph shows it.
+const RECIPE_VERSION = 2;
 
 export class PlaylistRecipeDocumentError extends Error {}
 

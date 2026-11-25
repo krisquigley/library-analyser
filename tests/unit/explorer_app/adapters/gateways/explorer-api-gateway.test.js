@@ -141,9 +141,9 @@ test('refused selection, history, detail and state requests fail with the server
 const PREVIEW_BODY = {
   tracks: [
     {track_id: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
-      energy_level: 0.25, energy_target: 0.2, duration_seconds: 241.5},
+      energy_target: 0.2, duration_seconds: 241.5},
     {track_id: 'b', title: 'Lift', artist: 'Synthetic', bpm: 122.5, key: null, camelot: null, arousal: null,
-      energy_level: null, energy_target: 0.6, duration_seconds: null},
+      energy_target: 0.6, duration_seconds: null},
   ],
   transitions: [{from_track_id: 'a', to_track_id: 'b', key_compatible: null, bpm_step_smooth: true, bpm_change: 2.5}],
   complete: false, warning: 'Only 2 of 10 tracks fit',
@@ -157,9 +157,9 @@ test('a playlist preview asks the preview endpoint and reads the walk the server
   assert.deepEqual(preview, {
     tracks: [
       {trackId: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
-        energyLevel: 0.25, energyTarget: 0.2, durationSeconds: 241.5},
+        energyTarget: 0.2, durationSeconds: 241.5},
       {trackId: 'b', title: 'Lift', artist: 'Synthetic', bpm: 122.5, key: null, camelot: null, arousal: null,
-        energyLevel: null, energyTarget: 0.6, durationSeconds: null},
+        energyTarget: 0.6, durationSeconds: null},
     ],
     transitions: [{fromTrackId: 'a', toTrackId: 'b', keyCompatible: null, bpmStepSmooth: true, bpmChange: 2.5}],
     complete: false, warning: 'Only 2 of 10 tracks fit',
@@ -204,7 +204,7 @@ test('saved recipes are listed by name, with when each was saved and what stops 
 });
 
 test('a saved recipe is loaded by name, and a list or recipe shaped wrongly is refused whole (#139)', async () => {
-  const recipe = {format: 'playlist-recipe', version: 1};
+  const recipe = {format: 'playlist-recipe', version: 2};
   const loading = gatewayAnswering(response({headers: {'content-type': 'application/json'},
     body: JSON.stringify({name: 'Warm up & go', recipe})}));
   assert.deepEqual(await loading.api.loadSavedPlaylistRecipe('Warm up & go'), {name: 'Warm up & go', recipe});

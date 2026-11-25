@@ -107,7 +107,7 @@ def _energy_level(raw):
     try:
         return float(raw) if raw else None
     except ValueError:
-        raise ValueError('Energy low and high must be between 0.0 and 1.0')
+        raise ValueError('Energy low and high must be numbers')
 
 
 def _arc_tracks(raw):
