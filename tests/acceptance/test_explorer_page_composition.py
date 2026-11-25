@@ -241,21 +241,22 @@ await press('reset'); await settle(4);
 assert.deepEqual(colours(), bright, 'clearing the selection restores the graph');
 """)
 
-    def test_a_selected_tracks_links_are_coloured_by_how_each_neighbour_differs(self):
+    def test_a_selected_tracks_links_show_how_each_neighbour_differs_and_how_related_it_is(self):
         self.run_scenario(r"""
 library.push(track('c', 0.5, 0.1, 0.3));
-routes['/api/mood-axis-graph'] = r => r.respond(graphBody(library, {links: [[0, 1, 1], [1, 2, 0.8]]}));
+routes['/api/mood-axis-graph'] = r => r.respond(graphBody(library, {links: [[0, 1, 1], [1, 2, 0.5]]}));
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
 routes['/api/reset'] = r => r.respond(accepted(null, {epoch: 2}));
 await settle(6);
 await press('reload-graph'); await settle(6);
-const toNeighbour = () => linkColour(mounted.links[0]);
-assert.match(toNeighbour(), /^rgba\(240,240,240,/, 'before a selection, links are plain grey');
+const toNeighbour = () => [linkColour(mounted.links[0]), linkWidth(mounted.links[0])];
+assert.deepEqual(toNeighbour(), ['rgba(240,240,240,0.72)', 2], 'before a selection, links are plain grey');
 await search('a'); await settle(2);
 await chooseRow('a'); await settle(4); await untilCameraSettles();
-assert.equal(toNeighbour(), 'rgba(202,255,0,0.72)', 'b differs from a mostly in arousal, then valence, not in BPM');
+assert.deepEqual(toNeighbour(), ['rgba(51,119,255,0.9)', 5],
+  'b has lower valence than a, so its link is blue, vivid as they are far apart in arousal, and thick as they are closely related');
 await press('reset'); await settle(4);
-assert.match(toNeighbour(), /^rgba\(240,240,240,/, 'clearing the selection restores the grey');
+assert.deepEqual(toNeighbour(), ['rgba(240,240,240,0.72)', 2], 'clearing the selection restores the plain link');
 """)
 
     def test_a_selection_is_seen_from_just_far_enough_to_keep_its_neighbours_in_view(self):

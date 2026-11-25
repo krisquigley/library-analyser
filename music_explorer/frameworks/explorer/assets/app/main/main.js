@@ -69,7 +69,7 @@ import {createTrackSelection} from '../application/select-track/select-track.js'
 import {moodStripMarks} from '../domain/mood-strip.js';
 import {moodStripViewModel} from '../adapters/presenters/mood-strip-presenter.js';
 import {moodStripView} from '../frameworks/views/mood-strip-view.js';
-import {graphNeighbourPositions,focusedLinkColor, focusedNodeColor, graphAxisSpec, graphNeighbourFocus, linkLabel, nodeLabel, relatednessLinkColor} from '../adapters/presenters/graph-scene-presenter.js';
+import {graphNeighbourPositions,focusedLinkColor,focusedLinkWidth,relatednessLinkWidth, focusedNodeColor, graphAxisSpec, graphNeighbourFocus, linkLabel, nodeLabel, relatednessLinkColor} from '../adapters/presenters/graph-scene-presenter.js';
 import {cameraViewDirection, selectionFocusPose} from '../domain/camera-arc.js';
 import {createCameraFocus} from '../application/focus-camera/focus-camera.js';
 import {CAMERA_FOCUS_EVENT_TYPES} from '../application/focus-camera/camera-focus-events.js';
@@ -84,7 +84,7 @@ import {createLibraryRefresh} from '../application/refresh-library/refresh-libra
 import {LIBRARY_REFRESH_EVENT_TYPES} from '../application/refresh-library/library-refresh-events.js';
 import {presentLibraryRefreshEvent} from '../adapters/presenters/library-loading-presenter.js';
 import {libraryLoadingView} from '../frameworks/views/library-loading-view.js';
-const graphStage=createForceGraphStage({create:elem=>configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode})});
+const graphStage=createForceGraphStage({create:elem=>configureForceGraph(ForceGraph3D()(elem),{nodeLabel,linkLabel,linkColor:relatednessLinkColor,linkWidth:relatednessLinkWidth,nodeValue:selectedNodeValue,onNodeClick:selectGraphNode})});
 const graphAxes=createGraphAxes();
 const nodeHalo=createSelectedNodeHalo();
 const graphDataMount=createGraphDataMount({onReplaced:()=>nodeHalo.clear()});
@@ -224,7 +224,7 @@ function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraph
 function fitGraph(elem){const size=fitGraphToElement(graphStage.current(),elem); graphRendering.wake(); return size;}
 
 // #243: once per selection or new graph data, never per frame.
-function focusNeighbourhood(graph){const focus=graphNeighbourFocus(graphState().visible,currentTrackId()); graph.nodeColor(focusedNodeColor(focus)).linkColor(focusedLinkColor(focus,graphState().model?.nodes||[])); neighbourhoodLabels.label(focus).catch(()=>{});}
+function focusNeighbourhood(graph){const focus=graphNeighbourFocus(graphState().visible,currentTrackId()); graph.nodeColor(focusedNodeColor(focus)).linkColor(focusedLinkColor(focus,graphState().model?.nodes||[])).linkWidth(focusedLinkWidth(focus)); neighbourhoodLabels.label(focus).catch(()=>{});}
 function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||graphState().visible.nodes,currentTrackId());}
 function animateGraphAxes(timestamp){
   const graph=graphStage.current();

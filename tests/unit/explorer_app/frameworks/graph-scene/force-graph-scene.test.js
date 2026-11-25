@@ -22,14 +22,14 @@ function recordingGraph() {
 test('the graph is configured for fixed positions, sized nodes and relatedness-shaded links', () => {
   const {graph, settings} = recordingGraph();
   const handlers = {nodeLabel: () => 'node', linkLabel: () => 'link', linkColor: () => 'rgba(240,240,240,0.45)',
-    nodeValue: node => (node.id === 'a' ? 4 : 1), onNodeClick: () => 'clicked'};
+    linkWidth: () => 1.5, nodeValue: node => (node.id === 'a' ? 4 : 1), onNodeClick: () => 'clicked'};
   assert.equal(configureForceGraph(graph, handlers), graph);
   assert.deepEqual([settings.enableNodeDrag, settings.cooldownTicks, settings.nodeId, settings.nodeRelSize, settings.linkOpacity],
     [false, 0, 'id', 4, 1]);
-  assert.deepEqual([settings.nodeLabel, settings.linkLabel, settings.linkColor, settings.nodeVal, settings.onNodeClick],
-    [handlers.nodeLabel, handlers.linkLabel, handlers.linkColor, handlers.nodeValue, handlers.onNodeClick]);
+  assert.deepEqual([settings.nodeLabel, settings.linkLabel, settings.linkColor, settings.linkWidth, settings.nodeVal,
+    settings.onNodeClick],
+  [handlers.nodeLabel, handlers.linkLabel, handlers.linkColor, handlers.linkWidth, handlers.nodeValue, handlers.onNodeClick]);
   assert.equal(settings.nodeColor({color: '#123456'}), '#123456');
-  assert.deepEqual([{score: 0.5}, {score: -1}, {score: 'x'}].map(settings.linkWidth), [1.5, 1, 1]);
 });
 
 test('the current track\'s node is drawn larger than the rest, without changing its colour', () => {
