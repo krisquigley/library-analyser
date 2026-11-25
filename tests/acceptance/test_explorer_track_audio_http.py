@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from music_explorer.frameworks.explorer.server import create_server
 from tests.acceptance.test_explorer_m3u_playlist_http_red import _create_playlist_http_db, _table_counts
+from tests.support.synthetic_flac import FRAMES, PICTURE, STREAMINFO, metadata_block, picture_body, synthetic_flac
 
 SYNTHETIC_AUDIO = bytes(range(256)) * 300
 
@@ -74,6 +75,18 @@ class ExplorerTrackAudioHTTPTests(unittest.TestCase):
         body = refused.read().decode('utf-8')
         self.assertEqual((404, {'error': "This track's audio file is missing"}), (refused.code, json.loads(body)))
         self.assertNotIn('First', body)
+
+    def test_a_flac_whose_cover_picture_has_no_type_plays_without_it(self):
+        # #269: Chromium refuses a FLAC whose picture block names no MIME type; the picture is left out of the stream.
+        content = synthetic_flac((STREAMINFO, bytes(34)), (PICTURE, picture_body(b'', bytes(3000))))
+        self.first_path.write_bytes(content)
+        served = b'fLaC' + metadata_block(STREAMINFO, bytes(34), last=True) + FRAMES
+        with self._get(urlencode({'track': self.first})) as response:
+            self.assertEqual((200, str(len(served)), served), (response.status, response.headers['Content-Length'], response.read()))
+        with self._get(urlencode({'track': self.first}), {'Range': 'bytes=30-49'}) as response:
+            self.assertEqual((206, f'bytes 30-49/{len(served)}', served[30:50]),
+                             (response.status, response.headers['Content-Range'], response.read()))
+        self.assertEqual(content, self.first_path.read_bytes(), 'the file is never changed')
 
 
 if __name__ == '__main__':
