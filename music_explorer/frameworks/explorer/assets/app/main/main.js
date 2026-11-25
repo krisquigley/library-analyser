@@ -44,7 +44,7 @@ import {createInMemoryEventBus} from '../frameworks/in-memory-event-bus.js';
 import {createGraphRendering} from '../application/render-graph/render-graph.js';
 import {forceGraphRenderer, graphViewPose, observeGraphInput} from '../frameworks/graph-scene/force-graph-rendering.js';
 import {createSelectedNodeHalo, findSceneObject, graphObjectTrackId} from '../frameworks/graph-scene/selected-node-halo.js';
-import {animateCameraArc, createCameraControlsWatch} from '../frameworks/graph-scene/camera-focus-scene.js';
+import {neighbourhoodFocusDistance,animateCameraArc, createCameraControlsWatch} from '../frameworks/graph-scene/camera-focus-scene.js';
 import {jumpCameraToPickedNode, mountedPickedNode, pickedTrackId} from '../frameworks/graph-scene/graph-pick.js';
 import {configureForceGraph, createGraphDataMount, createGraphFraming, drawCanvasFallback, fitGraphToElement, graphContainer, observeElementResize, selectedTrackNodeSize} from '../frameworks/graph-scene/force-graph-scene.js';
 import {playlistDownloadView} from '../frameworks/views/playlist-download-view.js';
@@ -69,7 +69,7 @@ import {createTrackSelection} from '../application/select-track/select-track.js'
 import {moodStripMarks} from '../domain/mood-strip.js';
 import {moodStripViewModel} from '../adapters/presenters/mood-strip-presenter.js';
 import {moodStripView} from '../frameworks/views/mood-strip-view.js';
-import {focusedLinkColor, focusedNodeColor, graphAxisSpec, graphNeighbourFocus, linkLabel, nodeLabel, relatednessLinkColor} from '../adapters/presenters/graph-scene-presenter.js';
+import {graphNeighbourPositions,focusedLinkColor, focusedNodeColor, graphAxisSpec, graphNeighbourFocus, linkLabel, nodeLabel, relatednessLinkColor} from '../adapters/presenters/graph-scene-presenter.js';
 import {cameraViewDirection, selectionFocusPose} from '../domain/camera-arc.js';
 import {createCameraFocus} from '../application/focus-camera/focus-camera.js';
 import {CAMERA_FOCUS_EVENT_TYPES} from '../application/focus-camera/camera-focus-events.js';
@@ -254,7 +254,7 @@ function selectGraphNode(picked){
   cameraFocus.request(null);
   const node=mountedPickedNode(id,{visible:graphState().visible.nodes,mounted:graphDataMount.current().nodes});
   const graph=graphStage.current();
-  if(graph && node && jumpCameraToPickedNode(graph,node,cameraControlsWatch)==='failed') cancelCameraFocus('camera-failure');
+  if(graph && node && jumpCameraToPickedNode(graph,node,{controlsWatch:cameraControlsWatch,neighbours:graphNeighbourPositions(graphState().visible,id)})==='failed') cancelCameraFocus('camera-failure');
   return setCurrent(id,{focusCamera:false});
 }
 function focusPendingCameraSelection(graphRendered=false){
@@ -275,7 +275,7 @@ function focusPendingCameraSelection(graphRendered=false){
   try {
     // Configured orbit bounds take precedence over the nominal display-space radius.
     const controls=graph.controls();
-    const pose=selectionFocusPose(target,{currentDirection:()=>cameraViewDirection(graph.cameraPosition(),controls.target),minDistance:controls.minDistance,maxDistance:controls.maxDistance});
+    const pose=selectionFocusPose(target,{currentDirection:()=>cameraViewDirection(graph.cameraPosition(),controls.target),minDistance:controls.minDistance,maxDistance:controls.maxDistance,distanceFor:neighbourhoodFocusDistance(graph,target,graphNeighbourPositions(graphState().visible,id))});
     // Skip before settling input; never widen custom bounds to make focus eligible.
     if(pose) animateCameraFocus(graph,pose.position,pose.target);
   } catch(error) {

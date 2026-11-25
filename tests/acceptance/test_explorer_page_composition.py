@@ -58,6 +58,9 @@ const halo = scene.children.find(child => child.userData?.role === 'selected-nod
 assert.equal(halo?.userData.trackId, 'b', 'the halo marks the chosen track');
 const node = mounted.nodes.find(n => n.id === 'b');
 assert.deepEqual(cameraMoves.at(-1).target, {x: node.fx, y: node.fy, z: node.fz}, 'the camera ends looking at it');
+const seenFrom = cameraMoves.at(-1).position;
+assert.ok(Math.abs(Math.hypot(seenFrom.x - node.fx, seenFrom.y - node.fy, seenFrom.z - node.fz) - 100) < 1e-6,
+  'a track without linked neighbours is seen from the focus radius');
 ''')
 
 
@@ -236,6 +239,37 @@ assert.notEqual(links()[0], 'rgba(240,240,240,0.03)');
 assert.equal(links()[1], 'rgba(240,240,240,0.03)', 'the link from b to c is not one of a\'s');
 await press('reset'); await settle(4);
 assert.deepEqual(colours(), bright, 'clearing the selection restores the graph');
+""")
+
+    def test_a_selection_is_seen_from_just_far_enough_to_keep_its_neighbours_in_view(self):
+        self.run_scenario(r"""
+library.push(track('c', 0.5, 0.1, 0.3));
+routes['/api/mood-axis-graph'] = r => r.respond(graphBody(library, {links: [[0, 1, 0.9], [1, 2, 0.8]]}));
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+await settle(6);
+await press('reload-graph'); await settle(6);
+const at = id => { const n = mounted.nodes.find(item => item.id === id); return {x: n.fx, y: n.fy, z: n.fz}; };
+const apart = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
+// The harness camera keeps the default 50 degree field of view and reports no viewport size, so it frames as square.
+const framed = (id, neighbours) => {
+  const {position} = cameraMoves.at(-1), centre = at(id);
+  const length = apart(position, centre);
+  const direction = Object.fromEntries(['x', 'y', 'z'].map(axis => [axis, (position[axis] - centre[axis]) / length]));
+  return Math.max(100, ...neighbours.map(other => {
+    const offset = Object.fromEntries(['x', 'y', 'z'].map(axis => [axis, at(other)[axis] - centre[axis]]));
+    const depth = offset.x * direction.x + offset.y * direction.y + offset.z * direction.z;
+    const sideways = Math.hypot(...['x', 'y', 'z'].map(axis => offset[axis] - depth * direction[axis]));
+    return depth + 1.2 * (sideways + 4) / Math.tan(25 * Math.PI / 180);
+  }));
+};
+await search('b'); await settle(2);
+await chooseRow('b'); await settle(4); await untilCameraSettles();
+assert.ok(Math.abs(apart(cameraMoves.at(-1).position, at('b')) - framed('b', ['a', 'c'])) < 1e-6,
+  'a chosen track is seen from where both its neighbours fit (#267)');
+await pickNode('c'); await settle(4);
+assert.deepEqual(cameraMoves.at(-1).target, at('c'));
+assert.ok(Math.abs(apart(cameraMoves.at(-1).position, at('c')) - framed('c', ['b'])) < 1e-6,
+  'a picked track is seen from where its one neighbour fits (#267)');
 """)
 
     def test_the_selected_track_and_its_neighbours_are_labelled_with_title_and_artist(self):

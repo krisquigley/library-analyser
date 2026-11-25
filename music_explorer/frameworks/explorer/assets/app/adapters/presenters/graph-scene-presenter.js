@@ -93,6 +93,12 @@ export function graphNeighbourFocus(visible, selectedTrackId) {
   return neighbourFocus({trackIds: visible.nodes.map(node => node.id), links: visible.links.map(linkEnds)}, selectedTrackId);
 }
 
+// Where the shown tracks linked to a track are placed (#267), so the camera can keep them all in view.
+export function graphNeighbourPositions(visible, trackId) {
+  const {neighbourIds} = graphNeighbourFocus(visible, trackId);
+  return visible.nodes.filter(node => neighbourIds.has(node.id)).map(node => ({x: node.fx, y: node.fy, z: node.fz}));
+}
+
 export function focusedNodeColor(focus) {
   return node => (isFocusedTrack(focus, node.id) ? node.color : DIMMED_NODE_COLOR);
 }

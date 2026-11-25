@@ -25,14 +25,14 @@ function watchSpy() {
   return {observed, observe: graph => observed.push(graph)};
 }
 
-test('the camera keeps its offset and moves at once to the picked node, after settling pending input', () => {
+test('without neighbours the camera keeps its offset and moves at once to the picked node, after settling pending input', () => {
   const scene = vendoredGraphScene(vendor);
   scene.controls.target.set(10, 20, 30);
   scene.camera.position.set(110, 20, 30);
   UNFLUSHED_INPUT.wheel(scene.controls);
   const offset = scene.camera.position.clone().sub(scene.controls.target);
   const watch = watchSpy();
-  assert.equal(jumpCameraToPickedNode(scene.graph, shown('a', 100, -50, 7), watch), 'moved');
+  assert.equal(jumpCameraToPickedNode(scene.graph, shown('a', 100, -50, 7), {controlsWatch: watch}), 'moved');
   assert.deepEqual([...scene.controls.target.toArray()], [100, -50, 7]);
   assert.ok(scene.camera.position.clone().sub(scene.controls.target).distanceTo(offset) < 1e-9);
   assert.equal(scene.state.tweenGroup.getAll().length, 0, 'no vendor tween to overwrite it later');
@@ -48,7 +48,7 @@ test('a node the camera cannot reach reliably leaves the camera where it is', ()
   const before = scene.camera.position.clone();
   const watch = watchSpy();
   for (const node of [shown('a', NaN, 0, 0), shown('b', 0, 0, 1e200)]) {
-    assert.equal(jumpCameraToPickedNode(scene.graph, node, watch), 'skipped');
+    assert.equal(jumpCameraToPickedNode(scene.graph, node, {controlsWatch: watch}), 'skipped');
   }
   assert.deepEqual([scene.camera.position.distanceTo(before), watch.observed], [0, []]);
 });
@@ -56,7 +56,20 @@ test('a node the camera cannot reach reliably leaves the camera where it is', ()
 test('a camera that fails, or a graph without controls, is reported rather than thrown', () => {
   const scene = vendoredGraphScene(vendor);
   scene.graph.cameraPosition = position => { if (position) throw new Error('camera failed'); return {x: 0, y: 0, z: 100}; };
-  assert.equal(jumpCameraToPickedNode(scene.graph, shown('a', 1, 2, 3), watchSpy()), 'failed');
+  assert.equal(jumpCameraToPickedNode(scene.graph, shown('a', 1, 2, 3), {controlsWatch: watchSpy()}), 'failed');
   const noControls = {cameraPosition: () => ({x: 0, y: 0, z: 100})};
-  assert.equal(jumpCameraToPickedNode(noControls, shown('a', 1, 2, 3), watchSpy()), 'failed');
+  assert.equal(jumpCameraToPickedNode(noControls, shown('a', 1, 2, 3), {controlsWatch: watchSpy()}), 'failed');
+});
+
+test("with neighbours, the camera moves along its offset to the distance that keeps them all in view (#267)", () => {
+  const scene = vendoredGraphScene(vendor);
+  Object.assign(scene.graph, {width: () => 800, height: () => 800});
+  scene.camera.fov = 60;
+  scene.controls.target.set(0, 0, 0);
+  scene.camera.position.set(0, 0, 500);
+  const neighbours = [{x: 0, y: 100, z: 0}];
+  assert.equal(jumpCameraToPickedNode(scene.graph, shown('a', 0, 0, 0), {controlsWatch: watchSpy(), neighbours}), 'moved');
+  const expected = 1.2 * 104 / Math.tan(Math.PI / 6);
+  assert.ok(Math.abs(scene.camera.position.z - expected) < 1e-6, String(scene.camera.position.z));
+  assert.equal(scene.camera.position.x, 0);
 });

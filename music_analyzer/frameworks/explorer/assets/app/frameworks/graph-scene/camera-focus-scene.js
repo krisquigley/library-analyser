@@ -2,6 +2,7 @@
 // tweens have no public cancellation, so every pose is written at once and the arc's timeline is owned outside.
 
 import {cameraArcPose, cameraFocusArc, focusProgress} from '../../domain/camera-arc.js';
+import {neighbourhoodCameraDistance} from '../../domain/camera-frame.js';
 
 const TRACKBALL_SETTINGS = Object.freeze(['staticMoving', 'dynamicDampingFactor', 'rotateSpeed', 'zoomSpeed', 'panSpeed',
   'noZoom', 'noPan', 'noRotate', 'minDistance', 'maxDistance']);
@@ -14,6 +15,19 @@ const DRAINING_POSE = Object.freeze({position: Object.freeze({x: 0, y: 0, z: 100
 
 // With the controls disabled, the bundled setter looks at the point but leaves the orbit target stale; the
 // target is kept in step for the next update and for re-enabling.
+// #267: for a direction to look from, the distance that keeps a selection's neighbours in this graph's viewport,
+// or undefined to keep the default.
+export function neighbourhoodFocusDistance(graph, centre, neighbours) {
+  const size = {width: graphDimension(graph.width), height: graphDimension(graph.height)};
+  const fieldOfView = graph.camera?.()?.fov;
+  return direction => neighbourhoodCameraDistance(centre, neighbours, {direction, size, fieldOfView}) ?? undefined;
+}
+
+function graphDimension(read) {
+  const value = typeof read === 'function' ? read() : null;
+  return typeof value === 'number' ? value : 0;
+}
+
 export function setCameraFocusPose(graph, position, target) {
   const controls = graph.controls?.();
   if (controls?.target) Object.assign(controls.target, target);
