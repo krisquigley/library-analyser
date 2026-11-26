@@ -12,6 +12,7 @@ const nodes = [{id: 'a', x: 100, y: 200, z: 0}, {id: 'b', x: 900, y: 50, z: 0}];
 const labelText = label => label.children.find(part => part.className === 'graph-track-label-text').textContent;
 const playButton = label => label.children.find(part => part.className === 'graph-track-label-play');
 const addButton = label => label.children.find(part => part.className === 'graph-track-label-add');
+const seekSlider = label => label.children.find(part => part.className === 'graph-track-label-seek');
 const shown = [{trackId: 'a', text: 'Alpha — Synthetic', selected: true}, {trackId: 'b', text: 'Beta — Synthetic', selected: false}];
 const idle = {text: '▶', verb: 'Play', pressed: false};
 const playingA = {activeTrackId: 'a', activeButton: {text: '❚❚', verb: 'Pause', pressed: true}, idleButton: idle};
@@ -91,4 +92,44 @@ test('#278: a neighbour already in the playlist shows a tick, and labels shown l
   assert.deepEqual([addButton(host.children[0]).textContent, addButton(host.children[1])], ['✓', undefined]);
   labels.showPlaylist([]);
   assert.equal(addButton(host.children[0]).textContent, '+');
+});
+
+test("#283: the playing track's label has a seek slider that follows its progress and moves it when let go", () => {
+  const seeks = [];
+  const labels = createTrackLabels({onPlayRequested: () => {}, onAddRequested: () => {},
+    onSeekRequested: (trackId, seconds) => seeks.push([trackId, seconds])});
+  const host = viewport();
+  labels.show(host, shown);
+  assert.deepEqual(host.children.map(seekSlider), [undefined, undefined], 'no slider before anything plays');
+  labels.showPlayback({...playingA, playerShown: true});
+  const slider = seekSlider(host.children[0]);
+  assert.equal(seekSlider(host.children[1]), undefined);
+  assert.deepEqual([slider.tagName, slider.type, slider.min, slider.step, slider.getAttribute('aria-label')],
+    ['INPUT', 'range', '0', 'any', 'Seek in Alpha — Synthetic']);
+  labels.showProgress({trackId: 'a', position: 65, duration: 293, text: '1:05 / 4:53'});
+  assert.deepEqual([slider.max, slider.value, slider.getAttribute('aria-valuetext')], ['293', '65', '1:05 / 4:53']);
+  labels.showProgress({trackId: 'b', position: 9, duration: 9, text: '0:09 / 0:09'});
+  assert.equal(slider.value, '65', "another track's progress is not this one's");
+  slider.onpointerdown();
+  slider.value = '120';
+  labels.showProgress({trackId: 'a', position: 66, duration: 293, text: '1:06 / 4:53'});
+  assert.equal(slider.value, '120', 'progress does not pull the slider from under the listener');
+  slider.onchange();
+  slider.onpointerup();
+  assert.deepEqual(seeks, [['a', 120]]);
+  labels.showProgress({trackId: 'a', position: 121, duration: 293, text: '2:01 / 4:53'});
+  assert.equal(slider.value, '121');
+});
+
+test('#283: the slider goes when the track stops, and labels shown later carry it with the last progress', () => {
+  const labels = createTrackLabels({onPlayRequested: () => {}, onAddRequested: () => {}, onSeekRequested: () => {}});
+  const host = viewport();
+  labels.show(host, shown);
+  labels.showPlayback({...playingA, playerShown: true});
+  labels.showProgress({trackId: 'a', position: 30, duration: 200, text: '0:30 / 3:20'});
+  labels.show(host, [...shown].reverse());
+  const slider = seekSlider(host.children[1]);
+  assert.deepEqual([slider.max, slider.value], ['200', '30']);
+  labels.showPlayback({activeTrackId: null, activeButton: idle, idleButton: idle, playerShown: false});
+  assert.deepEqual(host.children.map(seekSlider), [undefined, undefined]);
 });

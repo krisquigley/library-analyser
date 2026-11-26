@@ -1,5 +1,5 @@
-// The track player over an HTML audio element (#258). The element's own controls are the seek bar; what the element
-// does is reported for the track it was given, and nothing is reported once it is stopped.
+// The track player over an HTML audio element (#258). What the element does is reported for the track it was given,
+// including its progress (#283), and nothing is reported once it is stopped.
 
 const UNPLAYABLE = 'the file is missing or in a format this browser cannot play';
 
@@ -12,6 +12,13 @@ export function htmlAudioTrackPlayer({audio, audioUrl, onReport}) {
   audio.onpause = () => { if (!audio.ended) report('paused'); };
   audio.onended = () => report('ended');
   audio.onerror = () => report('failed', UNPLAYABLE);
+  audio.ontimeupdate = audio.ondurationchange = () => reportProgress();
+
+  function reportProgress() {
+    if (trackId === null) return;
+    onReport({kind: 'progressed', trackId, position: audio.currentTime,
+      duration: Number.isFinite(audio.duration) ? audio.duration : null});
+  }
 
   function play() {
     const playing = trackId;
@@ -34,5 +41,5 @@ export function htmlAudioTrackPlayer({audio, audioUrl, onReport}) {
     audio.load();
   }
 
-  return Object.freeze({load, pause: () => audio.pause(), resume: play, stop});
+  return Object.freeze({load, pause: () => audio.pause(), resume: play, stop, seek: seconds => { audio.currentTime = seconds; }});
 }

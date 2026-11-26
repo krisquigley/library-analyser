@@ -1,5 +1,7 @@
 // What the playlist preview's play buttons and its player show for each playback event (#258). The track playing,
-// loading or paused has the active button; every other track offers Play.
+// loading or paused has the active button; every other track offers Play. Its progress drives a seek slider (#283).
+
+import {displayDuration} from '../../domain/display-duration.js';
 
 const PLAY_BUTTON = Object.freeze({text: '▶', verb: 'Play', pressed: false});
 const PAUSE_BUTTON = Object.freeze({text: '❚❚', verb: 'Pause', pressed: true});
@@ -26,4 +28,10 @@ export function presentTrackPlaybackEvent(event) {
 function playbackView(activeTrackId, button, status) {
   return {activeTrackId, activeButton: {...button}, idleButton: {...PLAY_BUTTON}, status: {text: status, urgent: false},
     playerShown: true};
+}
+
+export function presentTrackPlaybackProgress({trackId, position, duration}) {
+  const length = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  const at = displayDuration(position) || '0:00';
+  return {trackId, position, duration: length, text: length ? `${at} / ${displayDuration(length)}` : at};
 }

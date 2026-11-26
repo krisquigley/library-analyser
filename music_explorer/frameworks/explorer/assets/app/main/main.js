@@ -6,9 +6,9 @@ import {playlistPreviewController} from '../adapters/controllers/playlist-previe
 import {playlistPreviewViewModel, playlistReadinessViewModel, presentPlaylistPreviewEvent} from '../adapters/presenters/playlist-preview-presenter.js';
 import {playlistPreviewView} from '../frameworks/views/playlist-preview-view.js';
 import {createTrackPlayback} from '../application/listen-to-track/listen-to-track.js';
-import {TRACK_PLAYBACK_EVENT_TYPES} from '../application/listen-to-track/track-playback-events.js';
+import {TRACK_PLAYBACK_EVENT_TYPES, TRACK_PLAYBACK_STATE_EVENT_TYPES} from '../application/listen-to-track/track-playback-events.js';
 import {trackAudioUrl} from '../adapters/gateways/track-audio-url.js';
-import {presentTrackPlaybackEvent} from '../adapters/presenters/track-playback-presenter.js';
+import {presentTrackPlaybackEvent, presentTrackPlaybackProgress} from '../adapters/presenters/track-playback-presenter.js';
 import {htmlAudioTrackPlayer} from '../frameworks/html-audio-track-player.js';
 import {EMPTY_PLAYLIST_DRAFT} from '../domain/playlist-draft.js';
 import {createPlaylistRecipeExport} from '../application/export-playlist-recipe/export-playlist-recipe.js';
@@ -100,7 +100,7 @@ const playlistEvents=createInMemoryEventBus();
 const explorerApi=fetchExplorerApi((path,options)=>fetch(path,options));
 const labelEvents=createInMemoryEventBus();
 const neighbourhoodLabels=createNeighbourhoodLabels({explorerApi,eventBus:labelEvents});
-const trackLabels=createTrackLabels({onPlayRequested:trackId=>trackPlayback.toggle(trackId),onAddRequested:trackId=>handBuiltPlaylist.add({selectedTrackId:currentTrackId(),neighbourId:trackId}).catch(()=>{})});
+const trackLabels=createTrackLabels({onPlayRequested:trackId=>trackPlayback.toggle(trackId),onSeekRequested:(trackId,seconds)=>trackPlayback.seek(trackId,seconds),onAddRequested:trackId=>handBuiltPlaylist.add({selectedTrackId:currentTrackId(),neighbourId:trackId}).catch(()=>{})});
 // #278: the playlist built by hand from the labels' + buttons, kept in this browser and shown in the strip over the graph.
 const handBuiltEvents=createInMemoryEventBus();
 const handBuiltPlaylist=createHandBuiltPlaylist({store:browserHandBuiltPlaylistStore(browserLocalStorage()),explorerApi,playlistFile:browserPlaylistFile(),eventBus:handBuiltEvents});
@@ -126,7 +126,8 @@ const playbackEvents=createInMemoryEventBus();
 const trackPlayerElement=typeof document!=='undefined'?document.createElement('audio'):{play(){},pause(){},load(){},removeAttribute(){}};
 const trackPlayback=createTrackPlayback({trackPlayer:htmlAudioTrackPlayer({audio:trackPlayerElement,audioUrl:trackAudioUrl,onReport:report=>trackPlayback.heard(report)}),eventBus:playbackEvents});
 const playlistPreviewPanel=playlistPreviewView({onPreviewRequested:()=>playlistPreviewControls.previewRequested(),onPlayRequested:trackId=>trackPlayback.toggle(trackId),player:trackPlayerElement});
-for(const type of TRACK_PLAYBACK_EVENT_TYPES) playbackEvents.subscribe(type,event=>{const update=presentTrackPlaybackEvent(event); playlistPreviewPanel.showPlayback(update); trackLabels.showPlayback(update);});
+playbackEvents.subscribe('track-playback-progressed',event=>trackLabels.showProgress(presentTrackPlaybackProgress(event)));
+for(const type of TRACK_PLAYBACK_STATE_EVENT_TYPES) playbackEvents.subscribe(type,event=>{const update=presentTrackPlaybackEvent(event); playlistPreviewPanel.showPlayback(update); trackLabels.showPlayback(update);});
 for(const type of PLAYLIST_PREVIEW_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistPreviewPanel.show(presentPlaylistPreviewEvent(event)));
 // #234: Preview waits, saying why, until the recipe is complete; checked on every draft edit and change of track.
 function showPlaylistReadiness(){const readiness=playlistReadinessViewModel(playlistPreview.gaps(currentTrackId())); playlistPreviewPanel.show(readiness); playlistControlsView.show(readiness);}

@@ -21,3 +21,16 @@ export function nextTrackPlayerState(state, action) {
   if (!trackPlayerAllows(state, action)) throw new TrackPlayerTransitionError(`A track cannot ${action} while ${state}`);
   return TRACK_PLAYER_TRANSITIONS[state][action];
 }
+
+// #283: the listener may move a playing or paused track to another point, kept within the track's length when it is known.
+const SEEKABLE_STATES = Object.freeze(['playing', 'paused']);
+
+export function trackPlayerSeeks(state) {
+  return SEEKABLE_STATES.includes(state);
+}
+
+export function seekPosition(requested, duration) {
+  if (typeof requested !== 'number' || !Number.isFinite(requested)) return null;
+  const longest = Number.isFinite(duration) ? duration : Infinity;
+  return Math.min(Math.max(requested, 0), longest);
+}
