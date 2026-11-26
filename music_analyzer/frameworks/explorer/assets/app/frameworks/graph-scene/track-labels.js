@@ -1,8 +1,8 @@
 // The labels above the selected track and its neighbours on the screen (#243). Like the axis labels they are placed each
 // drawn frame over their nodes. Only their buttons take pointer input (#276), so picking nodes elsewhere is unaffected.
 // A neighbour's label also has + (#278), to add it to the hand-built playlist, or a tick once it is in it. The playing or
-// paused track's label has a seek slider (#283): it follows the progress, except while the listener holds it, and asks
-// for the point chosen once let go.
+// paused track's name has a seek slider over it (#283, #286), translucent so the name stays readable, with the part
+// played filled in: it follows the progress, except while the listener holds it, and asks for the point chosen once let go.
 // The view keeps the labels it last showed, and the playback, progress and playlist last shown so new labels match them.
 
 const IDLE_PLAY_BUTTON = Object.freeze({text: '▶', verb: 'Play', pressed: false});
@@ -92,7 +92,7 @@ function trackLabel({trackId, text, selected}, {onPlayRequested, onAddRequested}
   label.append(play, name);
   const add = selected ? null : trackLabelButton('graph-track-label-add', () => onAddRequested(trackId));
   if (add) label.append(add);
-  return Object.assign(label, {trackId, trackText: text, playButton: play, addButton: add});
+  return Object.assign(label, {trackId, trackText: text, nameText: name, playButton: play, addButton: add});
 }
 
 function seekSlider(label, onSeekRequested) {
@@ -101,8 +101,9 @@ function seekSlider(label, onSeekRequested) {
   slider.setAttribute('aria-label', `Seek in ${label.trackText}`);
   slider.onpointerdown = () => { slider.held = true; };
   slider.onpointerup = slider.onpointercancel = () => { slider.held = false; };
+  slider.oninput = () => fillPlayedPart(slider);
   slider.onchange = () => onSeekRequested(label.trackId, Number(slider.value));
-  label.append(slider);
+  label.nameText.append(slider);
   return slider;
 }
 
@@ -111,6 +112,13 @@ function showSeekPosition(slider, {position, duration, text}) {
   if (slider.held) return;
   slider.max = String(duration);
   slider.value = String(position);
+  fillPlayedPart(slider);
+}
+
+function fillPlayedPart(slider) {
+  const length = Number(slider.max);
+  const played = length > 0 ? Math.min(100, Math.max(0, Number(slider.value) / length * 100)) : 0;
+  slider.style.backgroundSize = `${Math.round(played * 10) / 10}% 100%`;
 }
 
 function trackLabelButton(className, onclick) {

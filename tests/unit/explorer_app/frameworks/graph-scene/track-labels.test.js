@@ -12,7 +12,8 @@ const nodes = [{id: 'a', x: 100, y: 200, z: 0}, {id: 'b', x: 900, y: 50, z: 0}];
 const labelText = label => label.children.find(part => part.className === 'graph-track-label-text').textContent;
 const playButton = label => label.children.find(part => part.className === 'graph-track-label-play');
 const addButton = label => label.children.find(part => part.className === 'graph-track-label-add');
-const seekSlider = label => label.children.find(part => part.className === 'graph-track-label-seek');
+const nameOf = label => label.children.find(part => part.className === 'graph-track-label-text');
+const seekSlider = label => nameOf(label).children.find(part => part.className === 'graph-track-label-seek');
 const shown = [{trackId: 'a', text: 'Alpha — Synthetic', selected: true}, {trackId: 'b', text: 'Beta — Synthetic', selected: false}];
 const idle = {text: '▶', verb: 'Play', pressed: false};
 const playingA = {activeTrackId: 'a', activeButton: {text: '❚❚', verb: 'Pause', pressed: true}, idleButton: idle};
@@ -94,7 +95,7 @@ test('#278: a neighbour already in the playlist shows a tick, and labels shown l
   assert.equal(addButton(host.children[0]).textContent, '+');
 });
 
-test("#283: the playing track's label has a seek slider that follows its progress and moves it when let go", () => {
+test("#283, #286: the playing track's name has a seek slider over it that follows its progress and moves it when let go", () => {
   const seeks = [];
   const labels = createTrackLabels({onPlayRequested: () => {}, onAddRequested: () => {},
     onSeekRequested: (trackId, seconds) => seeks.push([trackId, seconds])});
@@ -108,6 +109,8 @@ test("#283: the playing track's label has a seek slider that follows its progres
     ['INPUT', 'range', '0', 'any', 'Seek in Alpha — Synthetic']);
   labels.showProgress({trackId: 'a', position: 65, duration: 293, text: '1:05 / 4:53'});
   assert.deepEqual([slider.max, slider.value, slider.getAttribute('aria-valuetext')], ['293', '65', '1:05 / 4:53']);
+  assert.equal(slider.style.backgroundSize, '22.2% 100%', '#286: the part played is filled in, under the name');
+  assert.equal(nameOf(host.children[0]).textContent, 'Alpha — Synthetic', '#286: the slider lies over the name, which stays');
   labels.showProgress({trackId: 'b', position: 9, duration: 9, text: '0:09 / 0:09'});
   assert.equal(slider.value, '65', "another track's progress is not this one's");
   slider.onpointerdown();

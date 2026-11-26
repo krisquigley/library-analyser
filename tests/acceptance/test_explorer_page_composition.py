@@ -340,7 +340,7 @@ player.dispatch('playing'); await settle(1);
 assert.deepEqual(heard.filter(type => type.startsWith('track-playback-')), ['track-playback-loading', 'track-playback-playing']);
 assert.deepEqual([play('c').textContent, play('c').getAttribute('aria-pressed'), play('a').textContent], ['❚❚', 'true', '▶']);
 const seek = id => byId('graph3d').children.find(node => node.trackId === id).children
-  .find(part => part.className === 'graph-track-label-seek');
+  .find(part => part.className === 'graph-track-label-text').children.find(part => part.className === 'graph-track-label-seek');
 assert.deepEqual([seek('a'), seek('c').getAttribute('aria-label')], [undefined, 'Seek in Track c — Public synthetic'],
   'only the playing track has a seek slider (#283)');
 player.currentTime = 65; player.duration = 293; player.dispatch('timeupdate'); await settle(1);
