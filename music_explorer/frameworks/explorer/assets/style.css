@@ -71,9 +71,15 @@ a{color:var(--accent)}
 /* #243: title and artist above the selected track and its neighbours; never intercept node picking. */
 .graph-track-label{position:absolute;left:0;top:0;z-index:2;pointer-events:none;white-space:nowrap;padding:var(--space-1) var(--space-2);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--scrim);color:var(--text);font:500 var(--text-xs)/1.2 var(--font)}
 .graph-track-label.selected{z-index:3;border-color:var(--accent);background:var(--surface-raised);font-weight:600}
-.graph-track-label{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1)}
-/* #283: the playing track's seek slider runs under its name. */
-.graph-track-label-seek{pointer-events:auto;flex:1 1 100%;width:100%;min-width:10rem;margin:var(--space-1) 0 0;cursor:pointer}
+.graph-track-label{display:flex;align-items:center;gap:var(--space-1)}
+/* #283, #286: the playing track's seek slider lies over its name, translucent: a faint fill for the part played, a thin bar to drag. */
+.graph-track-label-text{position:relative}
+.graph-track-label-seek{-webkit-appearance:none;appearance:none;position:absolute;inset:calc(-1 * var(--space-1)) 0;width:100%;height:auto;margin:0;padding:0;border-radius:var(--radius-s);background:linear-gradient(var(--accent-soft),var(--accent-soft)) no-repeat;background-size:0% 100%;cursor:pointer;pointer-events:auto}
+.graph-track-label-seek::-webkit-slider-runnable-track{height:100%;background:transparent;border:0}
+.graph-track-label-seek::-moz-range-track{height:100%;background:transparent;border:0}
+.graph-track-label-seek::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:3px;height:100%;border:0;border-radius:1px;background:var(--accent);opacity:.85}
+.graph-track-label-seek::-moz-range-thumb{width:3px;height:100%;border:0;border-radius:1px;background:var(--accent);opacity:.85}
+.graph-track-label-seek:focus-visible{outline:none;box-shadow:0 0 0 1px var(--accent)}
 /* #282: the BPM difference over each of the selection's links; never intercepts node picking. */
 .graph-link-label{position:absolute;left:0;top:0;z-index:2;pointer-events:none;white-space:nowrap;padding:0 var(--space-1);border-radius:var(--radius-s);background:var(--scrim);color:var(--text-muted);font:600 var(--text-xs)/1.3 var(--font);font-variant-numeric:tabular-nums}
 .graph-track-label-play{pointer-events:auto;min-width:1.6em;padding:0 var(--space-1);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface-raised);color:var(--text);font:inherit;line-height:1.4;cursor:pointer}
