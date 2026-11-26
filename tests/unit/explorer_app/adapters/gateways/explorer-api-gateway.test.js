@@ -284,3 +284,23 @@ test('a hand-built playlist downloads with a JSON POST of its tracks in order, a
     await assert.rejects(gatewayAnswering(answer).api.downloadHandBuiltPlaylist(['a']), {message});
   }
 });
+
+test('a hand-built playlist is previewed with a JSON POST, checked as a recipe preview is, and a refusal says why (#287)', async () => {
+  const body = {tracks: [{track_id: 'b', title: 'Beta', artist: 'Synthetic', bpm: 120, key: 'C major', camelot: '8B', arousal: 4.5,
+    energy_target: null, duration_seconds: 200}], transitions: [], complete: false,
+    warning: '1 of its tracks is no longer playable from the library; remove it to download it'};
+  const {api, requests} = gatewayAnswering(response({body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}}));
+  assert.deepEqual(await api.previewHandBuiltPlaylist(['b', 'gone']), {tracks: [{trackId: 'b', title: 'Beta', artist: 'Synthetic',
+    bpm: 120, key: 'C major', camelot: '8B', arousal: 4.5, energyTarget: null, durationSeconds: 200}], transitions: [],
+    complete: false, warning: body.warning});
+  assert.deepEqual(requests, [['/api/playlists/hand-built/preview', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: '{"track_ids":["b","gone"]}'}]]);
+  const wrong = gatewayAnswering(response({body: JSON.stringify({...body, tracks: 'none'}), headers: {'Content-Type': 'application/json'}}));
+  await assert.rejects(wrong.api.previewHandBuiltPlaylist(['b']), {message: 'Invalid playlist preview: tracks must be a list'});
+  for (const [answer, message] of [
+    [response({ok: false, body: '{"error": "The playlist names a track more than once"}', headers: {'Content-Type': 'application/json'}}),
+      'The playlist names a track more than once'],
+    [response({ok: false, body: ''}), 'Playlist preview failed']]) {
+    await assert.rejects(gatewayAnswering(answer).api.previewHandBuiltPlaylist(['a']), {message});
+  }
+});

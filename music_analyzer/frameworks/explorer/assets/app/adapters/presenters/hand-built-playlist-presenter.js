@@ -1,7 +1,13 @@
 // What the strip over the graph shows of the hand-built playlist (#278): its tracks in order, each removable, and how
-// its download is going. A track not yet labelled is named by its place.
+// its download is going. #287: the tracks are a table like the playlist preview's, read from the playlist's last
+// preview, which may be of an earlier list: a track it has not seen waits, one it left out is no longer playable, and
+// a step is shown only when the preview took that same step.
 
-import {trackLabelText} from './track-label-presenter.js';
+import {previewTrackRow, previewedLength} from './playlist-preview-presenter.js';
+
+const NOT_PREVIEWED = '…';
+const LEFT_OUT_BLANK = '—';
+const NO_LONGER_PLAYABLE = 'No longer playable from the library';
 
 const DOWNLOAD_STATUSES = Object.freeze({
   'hand-built-playlist-download-started': () => ({text: 'Preparing the M3U…', urgent: false}),
@@ -9,18 +15,18 @@ const DOWNLOAD_STATUSES = Object.freeze({
   'hand-built-playlist-download-failed': event => ({text: `Could not download the playlist: ${event.message}`, urgent: true}),
 });
 
-export function handBuiltPlaylistViewModel({trackIds, labels, notice}) {
-  const named = new Map(labels.map(label => [label.trackId, trackLabelText(label)]));
+export function handBuiltPlaylistViewModel({trackIds, notice, previewed}) {
+  const tracks = new Map((previewed?.tracks || []).map(track => [track.trackId, track]));
+  const asked = new Set(previewed?.trackIds || []);
+  const steps = new Map((previewed?.transitions || []).map(step => [stepKey(step.fromTrackId, step.toTrackId), step]));
   const empty = trackIds.length === 0;
   return {
     hidden: empty && !notice,
-    heading: `Your playlist · ${trackIds.length} ${trackIds.length === 1 ? 'track' : 'tracks'}`,
+    heading: stripHeading(trackIds, tracks),
     downloadDisabled: empty, clearDisabled: empty,
-    rows: trackIds.map((trackId, index) => {
-      const place = index + 1;
-      const name = named.get(trackId);
-      return {trackId, text: `${place}. ${name || `Track ${place}`}`,
-        removeLabel: `Remove ${name || `track ${place}`} from your playlist`};
+    rows: trackIds.map((trackId, place) => {
+      if (tracks.has(trackId)) return playableRow(tracks.get(trackId), place, steps.get(stepKey(trackIds[place - 1], trackId)));
+      return unseenRow(trackId, place, asked.has(trackId) ? LEFT_OUT_BLANK : NOT_PREVIEWED);
     }),
     notice: {text: notice, urgent: Boolean(notice)},
   };
@@ -28,4 +34,28 @@ export function handBuiltPlaylistViewModel({trackIds, labels, notice}) {
 
 export function presentHandBuiltPlaylistDownload(event) {
   return DOWNLOAD_STATUSES[event.type](event);
+}
+
+function stripHeading(trackIds, tracks) {
+  const count = `Your playlist · ${trackIds.length} ${trackIds.length === 1 ? 'track' : 'tracks'}`;
+  const known = trackIds.filter(trackId => tracks.has(trackId)).map(trackId => tracks.get(trackId));
+  const length = previewedLength(known);
+  return known.length && length !== 'length unknown' ? `${count} · ${length}` : count;
+}
+
+function playableRow(track, place, step) {
+  const {target: _arcTarget, ...row} = previewTrackRow(track, place, step);
+  return {...row, playable: true, removeLabel: `Remove ${row.track} from your playlist`};
+}
+
+// A track the last preview has not seen, or one it left out because the library can no longer play it.
+function unseenRow(trackId, place, blank) {
+  const leftOut = blank === LEFT_OUT_BLANK;
+  return {trackId, place: String(place + 1), track: leftOut ? NO_LONGER_PLAYABLE : `Track ${place + 1}`,
+    length: blank, bpm: blank, key: blank, energy: blank, transition: blank, playable: !leftOut,
+    removeLabel: `Remove track ${place + 1} from your playlist`};
+}
+
+function stepKey(fromTrackId, toTrackId) {
+  return `${fromTrackId}\u0000${toTrackId}`;
 }

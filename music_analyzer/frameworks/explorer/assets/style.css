@@ -259,12 +259,18 @@ tbody tr:hover{background:var(--surface-hover)}
 .panel-actions button{min-height:0;padding:var(--space-1) var(--space-2);font-size:var(--text-xs)}
 
 /* Hand-built playlist strip (#278) */
-.playlist-strip{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-3);width:min(740px,100%);max-height:min(160px,24dvh);padding:var(--space-2) var(--space-4)}
+.playlist-strip{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-3);width:min(860px,100%);padding:var(--space-2) var(--space-4)}
 .playlist-strip[hidden]{display:none}
 .playlist-strip h2{flex:1 1 auto;font-size:var(--text-s);margin:0;color:var(--text-muted)}
 .hand-built-playlist-actions{flex:none;display:flex;gap:var(--space-2)}
-.playlist-strip .hand-built-playlist-tracks{order:1;flex:1 1 100%;min-width:0;display:flex;gap:var(--space-2);margin:0;padding:0 0 var(--space-1);list-style:none;overflow-x:auto;scrollbar-width:thin}
-.playlist-strip .hand-built-playlist-tracks li{margin:0;display:flex;align-items:center;gap:var(--space-1);flex:none;padding:var(--space-1) var(--space-2);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface-raised);font-size:var(--text-xs);white-space:nowrap}
+/* #287: the hand-built playlist is a table like the preview's, scrolling within the strip with its headings kept in view. */
+.playlist-strip .hand-built-playlist-tracks{order:1;flex:1 1 100%;min-width:0;max-height:min(220px,30dvh);overflow:auto;scrollbar-width:thin}
+.hand-built-playlist-table{width:100%;border-collapse:collapse}
+.hand-built-playlist-table thead th{position:sticky;top:0;background:var(--surface-solid);text-align:left;color:var(--text-muted);font-weight:600}
+.hand-built-playlist-table th,.hand-built-playlist-table td{white-space:nowrap}
+.hand-built-playlist-table td:nth-child(3){white-space:normal;min-width:12rem}
+.hand-built-playlist-table td.hand-built-playlist-remove-cell{width:2rem;text-align:center}
+.hand-built-playlist-table .track-play:disabled{opacity:.4;cursor:not-allowed}
 .hand-built-playlist-remove{padding:0 var(--space-1);border:0;background:none;color:var(--text-muted);font:inherit;cursor:pointer}
 .hand-built-playlist-remove:hover{color:var(--text)}
 #hand-built-playlist-status{order:2;flex:1 1 100%;margin:0;font-size:var(--text-xs)}

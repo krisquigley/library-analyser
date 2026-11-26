@@ -26,11 +26,13 @@ export const TAG_WRITES = Object.freeze({name: 'ExplorerApi', operations: Object
 export const TRACK_LABELS = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['labelTracks'])});
 export const HAND_BUILT_PLAYLIST_DOWNLOADS = Object.freeze({name: 'ExplorerApi',
   operations: Object.freeze(['downloadHandBuiltPlaylist'])});
+export const HAND_BUILT_PLAYLIST_PREVIEWS = Object.freeze({name: 'ExplorerApi',
+  operations: Object.freeze(['previewHandBuiltPlaylist'])});
 export const MOOD_GRAPHS = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['loadMoodGraph'])});
 export const TRACK_SEARCHES = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['searchTracks'])});
 export const LIBRARY_STATES = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['loadLibraryState'])});
 export const SELECTIONS = Object.freeze({name: 'ExplorerApi',
   operations: Object.freeze(['chooseCurrentTrack', 'applyHistory', 'loadTrackDetail', 'loadLibraryState'])});
 export const EXPLORER_API = Object.freeze({name: 'ExplorerApi',
-  operations: Object.freeze([...PLAYLIST_DOWNLOADS.operations, ...PLAYLIST_PREVIEWS.operations, ...SAVED_PLAYLIST_RECIPES.operations, ...TAG_WRITES.operations, ...TRACK_LABELS.operations, ...HAND_BUILT_PLAYLIST_DOWNLOADS.operations, ...MOOD_GRAPHS.operations, ...TRACK_SEARCHES.operations,
+  operations: Object.freeze([...PLAYLIST_DOWNLOADS.operations, ...PLAYLIST_PREVIEWS.operations, ...SAVED_PLAYLIST_RECIPES.operations, ...TAG_WRITES.operations, ...TRACK_LABELS.operations, ...HAND_BUILT_PLAYLIST_DOWNLOADS.operations, ...HAND_BUILT_PLAYLIST_PREVIEWS.operations, ...MOOD_GRAPHS.operations, ...TRACK_SEARCHES.operations,
     ...SELECTIONS.operations])});

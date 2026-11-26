@@ -1,4 +1,4 @@
-"""What a playlist preview shows (#138): its response models."""
+"""What a playlist preview shows (#138): the response models of a recipe's preview and a hand-built playlist's (#287)."""
 from dataclasses import dataclass
 
 

@@ -5,11 +5,11 @@ tracks as the M3U download of the same recipe. Arousal is always read, so every
 preview can show the energy actually placed, in the graph's numbers (#265).
 """
 from music_explorer.application.dto.playlists import PlaylistRecipe
-from music_explorer.application.use_cases.preview_playlist.playlist_preview import (
-    PlaylistPreview, PreviewTrack, PreviewTransition)
-from music_explorer.domain.harmonic_mixing import HarmonicMixing, MusicalKey, camelot_code, keys_compatible
+from music_explorer.application.dto.playlist_preview import PlaylistPreview, PreviewTrack, PreviewTransition
+from music_explorer.domain.harmonic_mixing import HarmonicMixing, MusicalKey, camelot_code
 from music_explorer.domain.playlist_candidates import usable_energy_and_mood
 from music_explorer.domain.playlist_generation import PlaylistRules, generate_walk
+from music_explorer.domain.playlist_steps import playlist_step
 
 # The related-track edges the Explorer graph shows (its sparse_k).
 GRAPH_SPARSE_K = 10
@@ -52,9 +52,6 @@ def _preview_track(track, arousal, target):
 
 
 def _transition(before, after, mixing):
-    known_keys = before.key is not None and after.key is not None
-    smooth = mixing.bpm_step_smooth(before.bpm, after.bpm)
-    return PreviewTransition(
-        from_track_id=before.track_id, to_track_id=after.track_id,
-        key_compatible=keys_compatible(before.key, after.key) if known_keys else None,
-        bpm_step_smooth=smooth, bpm_change=float(after.bpm - before.bpm) if smooth is not None else None)
+    step = playlist_step(before, after, mixing)
+    return PreviewTransition(from_track_id=before.track_id, to_track_id=after.track_id, key_compatible=step.key_compatible,
+                             bpm_step_smooth=step.bpm_step_smooth, bpm_change=step.bpm_change)
