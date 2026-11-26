@@ -1,7 +1,7 @@
 // Issue #258: what the preview's play buttons and the player show for each playback event.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {presentTrackPlaybackEvent, trackPlaybackViewModel}
+import {presentTrackPlaybackEvent, presentTrackPlaybackProgress, trackPlaybackViewModel}
   from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/track-playback-presenter.js';
 
 const PLAY = {text: '▶', verb: 'Play', pressed: false};
@@ -26,4 +26,11 @@ test('a stop hides the player; a failure says so urgently', () => {
   assert.deepEqual(presentTrackPlaybackEvent({type: 'track-playback-stopped', trackId: 'a'}), trackPlaybackViewModel());
   assert.deepEqual(presentTrackPlaybackEvent({type: 'track-playback-failed', trackId: 'a', message: 'no file'}), {activeTrackId: 'a',
     activeButton: PLAY, idleButton: PLAY, status: {text: 'Could not play the track: no file', urgent: true}, playerShown: false});
+});
+
+test('#283: progress reads as position and length, and an unknown length leaves the slider without a range', () => {
+  assert.deepEqual(presentTrackPlaybackProgress({type: 'track-playback-progressed', trackId: 'a', position: 65.4, duration: 293}),
+    {trackId: 'a', position: 65.4, duration: 293, text: '1:05 / 4:53'});
+  assert.deepEqual(presentTrackPlaybackProgress({type: 'track-playback-progressed', trackId: 'a', position: 0, duration: null}),
+    {trackId: 'a', position: 0, duration: 0, text: '0:00'});
 });

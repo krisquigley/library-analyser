@@ -5,7 +5,7 @@ import {htmlAudioTrackPlayer} from '../../../../music_explorer/frameworks/explor
 
 function audioElement({refuse} = {}) {
   const calls = [];
-  const audio = {src: '', ended: false, calls,
+  const audio = {src: '', ended: false, currentTime: 0, duration: NaN, calls,
     play() { calls.push('play'); return refuse ? Promise.reject(refuse) : Promise.resolve(); },
     pause() { calls.push('pause'); }, load() { calls.push('load'); }, removeAttribute(name) { calls.push(`remove ${name}`); }};
   return audio;
@@ -56,4 +56,18 @@ test('an element error or a refused play is a failure the listener can read; an 
   quiet.port.load('b');
   await Promise.resolve();
   assert.deepEqual(quiet.reports, []);
+});
+
+test("#283: the element's progress is reported for its track, and a seek moves it", () => {
+  const audio = audioElement();
+  const {port, reports} = player(audio);
+  audio.ontimeupdate();
+  port.load('a');
+  audio.ondurationchange();
+  Object.assign(audio, {currentTime: 61.5, duration: 200});
+  audio.ontimeupdate();
+  port.seek(90);
+  assert.equal(audio.currentTime, 90);
+  assert.deepEqual(reports, [{kind: 'progressed', trackId: 'a', position: 0, duration: null},
+    {kind: 'progressed', trackId: 'a', position: 61.5, duration: 200}], 'an unknown length is null; nothing is reported before a load');
 });

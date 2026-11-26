@@ -339,8 +339,20 @@ assert.deepEqual([player.src, player.plays], ['/api/track-audio?track=c', 1]);
 player.dispatch('playing'); await settle(1);
 assert.deepEqual(heard.filter(type => type.startsWith('track-playback-')), ['track-playback-loading', 'track-playback-playing']);
 assert.deepEqual([play('c').textContent, play('c').getAttribute('aria-pressed'), play('a').textContent], ['❚❚', 'true', '▶']);
+const seek = id => byId('graph3d').children.find(node => node.trackId === id).children
+  .find(part => part.className === 'graph-track-label-seek');
+assert.deepEqual([seek('a'), seek('c').getAttribute('aria-label')], [undefined, 'Seek in Track c — Public synthetic'],
+  'only the playing track has a seek slider (#283)');
+player.currentTime = 65; player.duration = 293; player.dispatch('timeupdate'); await settle(1);
+assert.deepEqual([seek('c').max, seek('c').value, seek('c').getAttribute('aria-valuetext')], ['293', '65', '1:05 / 4:53']);
+seek('c').value = '120'; seek('c').dispatch('change'); await settle(1);
+assert.equal(player.currentTime, 120, 'letting go of the slider moves the track there');
 play('c').click(); await settle(1);
 assert.equal(player.pauses, 1, 'pressing it again pauses the track');
+player.dispatch('pause'); await settle(1);
+assert.ok(seek('c'), 'a paused track keeps its slider');
+player.ended = true; player.dispatch('ended'); await settle(1);
+assert.equal(seek('c'), undefined, 'the slider goes when the track ends');
 """)
 
     def test_preview_waits_with_its_reason_until_the_playlist_recipe_is_complete(self):

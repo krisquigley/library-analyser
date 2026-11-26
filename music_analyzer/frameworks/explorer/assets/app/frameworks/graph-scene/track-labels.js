@@ -1,13 +1,16 @@
 // The labels above the selected track and its neighbours on the screen (#243). Like the axis labels they are placed each
 // drawn frame over their nodes. Only their buttons take pointer input (#276), so picking nodes elsewhere is unaffected.
-// A neighbour's label also has + (#278), to add it to the hand-built playlist, or a tick once it is in it.
-// The view keeps the labels it last showed, and the playback and playlist last shown so new labels' buttons match them.
+// A neighbour's label also has + (#278), to add it to the hand-built playlist, or a tick once it is in it. The playing or
+// paused track's label has a seek slider (#283): it follows the progress, except while the listener holds it, and asks
+// for the point chosen once let go.
+// The view keeps the labels it last showed, and the playback, progress and playlist last shown so new labels match them.
 
 const IDLE_PLAY_BUTTON = Object.freeze({text: '▶', verb: 'Play', pressed: false});
 
-export function createTrackLabels({onPlayRequested, onAddRequested}) {
+export function createTrackLabels({onPlayRequested, onAddRequested, onSeekRequested}) {
   let shown = [];
   let playback = null;
+  let progress = null;
   let playlist = new Set();
 
   function show(host, viewModels) {
@@ -16,6 +19,7 @@ export function createTrackLabels({onPlayRequested, onAddRequested}) {
     host.append(...shown);
     showPlayButtons();
     showAddButtons();
+    showSeekSliders();
   }
 
   function showPlaylist(trackIds) {
@@ -36,6 +40,24 @@ export function createTrackLabels({onPlayRequested, onAddRequested}) {
   function showPlayback(update) {
     playback = update;
     showPlayButtons();
+    showSeekSliders();
+  }
+
+  function showProgress(update) {
+    progress = update;
+    showSeekSliders();
+  }
+
+  function showSeekSliders() {
+    for (const label of shown) {
+      const playing = Boolean(playback?.playerShown) && label.trackId === playback.activeTrackId;
+      if (playing && !label.seekSlider) label.seekSlider = seekSlider(label, onSeekRequested);
+      if (!playing && label.seekSlider) {
+        label.seekSlider.remove();
+        label.seekSlider = null;
+      }
+      if (label.seekSlider && progress?.trackId === label.trackId) showSeekPosition(label.seekSlider, progress);
+    }
   }
 
   function showPlayButtons() {
@@ -57,7 +79,7 @@ export function createTrackLabels({onPlayRequested, onAddRequested}) {
     }
   }
 
-  return Object.freeze({show, showPlayback, showPlaylist, place});
+  return Object.freeze({show, showPlayback, showProgress, showPlaylist, place});
 }
 
 function trackLabel({trackId, text, selected}, {onPlayRequested, onAddRequested}) {
@@ -71,6 +93,24 @@ function trackLabel({trackId, text, selected}, {onPlayRequested, onAddRequested}
   const add = selected ? null : trackLabelButton('graph-track-label-add', () => onAddRequested(trackId));
   if (add) label.append(add);
   return Object.assign(label, {trackId, trackText: text, playButton: play, addButton: add});
+}
+
+function seekSlider(label, onSeekRequested) {
+  const slider = document.createElement('input');
+  Object.assign(slider, {type: 'range', className: 'graph-track-label-seek', min: '0', max: '0', step: 'any', value: '0'});
+  slider.setAttribute('aria-label', `Seek in ${label.trackText}`);
+  slider.onpointerdown = () => { slider.held = true; };
+  slider.onpointerup = slider.onpointercancel = () => { slider.held = false; };
+  slider.onchange = () => onSeekRequested(label.trackId, Number(slider.value));
+  label.append(slider);
+  return slider;
+}
+
+function showSeekPosition(slider, {position, duration, text}) {
+  slider.setAttribute('aria-valuetext', text);
+  if (slider.held) return;
+  slider.max = String(duration);
+  slider.value = String(position);
 }
 
 function trackLabelButton(className, onclick) {

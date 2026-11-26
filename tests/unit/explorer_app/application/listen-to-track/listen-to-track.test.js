@@ -3,12 +3,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createTrackPlayback} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/listen-to-track/listen-to-track.js';
-import {TRACK_PLAYBACK_EVENT_TYPES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/listen-to-track/track-playback-events.js';
+import {TRACK_PLAYBACK_EVENT_TYPES, TRACK_PLAYBACK_STATE_EVENT_TYPES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/listen-to-track/track-playback-events.js';
 
 function playback() {
   const asked = [];
   const published = [];
-  const trackPlayer = Object.fromEntries(['load', 'pause', 'resume', 'stop'].map(operation =>
+  const trackPlayer = Object.fromEntries(['load', 'pause', 'resume', 'stop', 'seek'].map(operation =>
     [operation, (...args) => asked.push([operation, ...args])]));
   const eventBus = {publish: event => published.push(event), subscribe() {}};
   return {use: createTrackPlayback({trackPlayer, eventBus}), asked, published};
@@ -67,7 +67,39 @@ test('a report the playback cannot take, such as playing after a stop, is ignore
   assert.deepEqual([published, use.state()], [[], 'stopped']);
 });
 
-test('every playback event is declared', () => {
-  assert.deepEqual(TRACK_PLAYBACK_EVENT_TYPES, ['track-playback-loading', 'track-playback-playing', 'track-playback-paused',
+test('every playback event is declared, the ones that change its state apart from its progress (#283)', () => {
+  assert.deepEqual(TRACK_PLAYBACK_STATE_EVENT_TYPES, ['track-playback-loading', 'track-playback-playing', 'track-playback-paused',
     'track-playback-stopped', 'track-playback-failed']);
+  assert.deepEqual(TRACK_PLAYBACK_EVENT_TYPES, [...TRACK_PLAYBACK_STATE_EVENT_TYPES, 'track-playback-progressed']);
+});
+
+test("#283: the player's progress through the track asked for is published, and nothing else's", () => {
+  const {use, published} = playback();
+  use.heard({kind: 'progressed', trackId: 'a', position: 3, duration: 200});
+  use.toggle('a');
+  use.heard({kind: 'progressed', trackId: 'a', position: 0, duration: null});
+  use.heard({kind: 'playing', trackId: 'a'});
+  use.heard({kind: 'progressed', trackId: 'a', position: 12.5, duration: 200});
+  use.heard({kind: 'progressed', trackId: 'b', position: 1, duration: 9});
+  assert.deepEqual(published.filter(event => event.type === 'track-playback-progressed'), [
+    {type: 'track-playback-progressed', trackId: 'a', position: 0, duration: null},
+    {type: 'track-playback-progressed', trackId: 'a', position: 12.5, duration: 200}]);
+  assert.equal(use.state(), 'playing', 'progress moves no state');
+});
+
+test('#283: a seek moves the playing or paused track, within its length; any other seek is ignored', () => {
+  const {use, asked} = playback();
+  use.seek('a', 10);
+  use.toggle('a');
+  use.seek('a', 10);
+  use.heard({kind: 'playing', trackId: 'a'});
+  use.heard({kind: 'progressed', trackId: 'a', position: 1, duration: 200});
+  use.seek('a', 30);
+  use.seek('a', 900);
+  use.seek('b', 30);
+  use.seek('a', Number('x'));
+  use.toggle('a');
+  use.heard({kind: 'paused', trackId: 'a'});
+  use.seek('a', 0);
+  assert.deepEqual(asked.filter(([operation]) => operation === 'seek'), [['seek', 30], ['seek', 200], ['seek', 0]]);
 });
