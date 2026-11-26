@@ -89,11 +89,24 @@ test("#273: a selected track's link runs blue to red as the neighbour's valence 
       'rgba(179,128,163,0.9)']);
 });
 
-test('#273: the further apart in arousal and BPM, the more vivid the link', async () => {
+test('#282: the further apart in arousal, the more vivid the link; BPM plays no part', async () => {
   const {neighbourDifferenceColor} = await presenter();
-  assert.deepEqual([[0.25, 0.25], [-0.25, 0.25], [0.5, -1], [0.25, 0]].map(([arousal, bpm]) =>
+  assert.deepEqual([[0.25, 0], [-0.25, 1], [0.5, 0], [0.125, 0], [0, 1]].map(([arousal, bpm]) =>
     neighbourDifferenceColor({valence: 0.25, arousal, bpm})),
-  ['rgba(255,51,51,0.9)', 'rgba(255,51,51,0.9)', 'rgba(255,51,51,0.9)', 'rgba(217,89,89,0.9)']);
+  ['rgba(255,51,51,0.9)', 'rgba(255,51,51,0.9)', 'rgba(255,51,51,0.9)', 'rgba(217,89,89,0.9)', 'rgba(179,128,128,0.9)']);
+});
+
+test("#282: each of the selection's links is labelled with the neighbour's BPM less the selected track's", async () => {
+  const {graphNeighbourFocus, selectionLinkLabels} = await presenter();
+  const placed = (id, bpm) => ({id, axis: {x: {raw: 0}, y: {raw: 0}, z: {raw: bpm}}});
+  const nodes = [placed('a', 120), placed('b', 123.46), placed('c', 118), placed('d', 120.04), placed('e', null)];
+  const links = [{source: nodes[1], target: nodes[0]}, {source: 'a', target: 'c'}, {source: 'a', target: 'd'},
+    {source: 'a', target: 'e'}, {source: 'b', target: 'c'}];
+  const focus = graphNeighbourFocus({nodes, links}, 'a');
+  assert.deepEqual(selectionLinkLabels(focus, nodes, links), [
+    {sourceId: 'b', targetId: 'a', text: '+3.5 BPM'}, {sourceId: 'a', targetId: 'c', text: '−2 BPM'},
+    {sourceId: 'a', targetId: 'd', text: '0 BPM'}]);
+  assert.deepEqual(selectionLinkLabels(graphNeighbourFocus({nodes, links}, null), nodes, links), []);
 });
 
 test("#273: the selection's links compare each neighbour with the selected track across the library's spans", async () => {

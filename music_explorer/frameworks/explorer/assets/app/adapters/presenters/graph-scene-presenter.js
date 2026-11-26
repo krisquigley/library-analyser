@@ -109,7 +109,8 @@ export function focusedNodeColor(focus) {
 
 // #273: the selection's links show how each neighbour differs from it. The hue runs blue, through purple, to red as the
 // neighbour's valence is lower or higher, as the track colours do; the link is more vivid the further apart the two are in
-// arousal and BPM, never so pale its hue is lost; and it is as thick as the tracks are related.
+// arousal (#282: BPM no longer, it has its own label), never so pale its hue is lost; and it is as thick as the tracks are
+// related.
 const FULL_DIFFERENCE = 0.25;
 const LOWER_VALENCE_HUE = 220;
 const SAME_VALENCE_HUE = 290;
@@ -132,10 +133,10 @@ export function focusedLinkColor(focus, libraryNodes) {
   };
 }
 
-export function neighbourDifferenceColor({valence, arousal, bpm}) {
+export function neighbourDifferenceColor({valence, arousal}) {
   const towardsHigher = Math.max(-1, Math.min(1, valence / FULL_DIFFERENCE));
   const hue = SAME_VALENCE_HUE + (SAME_VALENCE_HUE - LOWER_VALENCE_HUE) * towardsHigher;
-  const apart = Math.min(1, (Math.abs(arousal) + Math.abs(bpm)) / 2 / FULL_DIFFERENCE);
+  const apart = Math.min(1, Math.abs(arousal) / FULL_DIFFERENCE);
   const [red, green, blue] = hslChannels(hue, PALEST + (1 - PALEST) * apart, SELECTED_LINK_LIGHTNESS);
   return `rgba(${red},${green},${blue},${SELECTED_LINK_ALPHA})`;
 }
@@ -156,6 +157,24 @@ function hslChannels(hue, saturation, lightness) {
     return Math.round((lightness - chroma / 2 * Math.max(-1, Math.min(turn - 3, 9 - turn, 1))) * 255);
   };
   return [channel(0), channel(8), channel(4)];
+}
+
+// #282: each of the selection's links names the neighbour's BPM less the selected track's, to a tenth of a beat.
+export function selectionLinkLabels(focus, libraryNodes, links) {
+  if (!focus.active) return [];
+  const bpms = new Map(libraryNodes.map(node => [node.id, differenceTrack(node).bpm]));
+  const selectedBpm = bpms.get(focus.selectedTrackId);
+  return links.map(linkEnds).filter(ends => isFocusedLink(focus, ends)).flatMap(({source, target}) => {
+    const neighbourBpm = bpms.get(source === focus.selectedTrackId ? target : source);
+    if (!Number.isFinite(selectedBpm) || !Number.isFinite(neighbourBpm)) return [];
+    return [{sourceId: source, targetId: target, text: bpmDifferenceText(neighbourBpm - selectedBpm)}];
+  });
+}
+
+function bpmDifferenceText(difference) {
+  const tenths = Math.round(difference * 10);
+  if (tenths === 0) return '0 BPM';
+  return `${tenths > 0 ? '+' : '−'}${Math.abs(tenths) / 10} BPM`;
 }
 
 function differenceTrack(node) {

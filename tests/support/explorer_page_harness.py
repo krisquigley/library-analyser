@@ -229,7 +229,7 @@ function track(id, x = 0.25, y = -0.4, z = 0.6) { return {id, title: 'Track ' + 
 function graphBody(tracks, {links = [], mood = 'calm'} = {}) {
   return {dto_version: 'mood-axis-graph-indexed-v1', selected_mood: mood, available_moods: [mood],
     axis: [{key: 'x', label: 'Valence', scale: 'unit'}, {key: 'y', label: 'Arousal', scale: 'unit'}, {key: 'z', label: 'BPM', scale: 'bpm'}],
-    nodes: tracks.map(t => [t.id, t.title, t.x, t.x, t.y, t.y, 120, t.z, null, 0.5, [], []]),
+    nodes: tracks.map(t => [t.id, t.title, t.x, t.x, t.y, t.y, t.bpm ?? 120, t.z, null, 0.5, [], []]),
     links, unpositioned: [], genre_labels: [], reason_text: [], explanation_table: [], provenance_table: [],
     metadata: {graph_status: {state: 'ready'}}};
 }
