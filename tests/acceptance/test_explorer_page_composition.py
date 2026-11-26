@@ -304,12 +304,39 @@ assert.deepEqual(labels(), [], 'no labels before a selection');
 await search('b'); await settle(2);
 await chooseRow('b'); await settle(4); await untilCameraSettles();
 assert.deepEqual(request('/api/track-labels').url.searchParams.getAll('track'), ['b', 'a', 'c'], 'the selected track first, then its neighbours');
-assert.deepEqual(labels().map(label => [label.className, label.textContent]), [
+const labelText = label => label.children.find(part => part.className === 'graph-track-label-text').textContent;
+assert.deepEqual(labels().map(label => [label.className, labelText(label)]), [
   ['graph-track-label selected', '<i>Track b</i> — Public synthetic'],
   ['graph-track-label', '<i>Track a</i> — Public synthetic'], ['graph-track-label', '<i>Track c</i> — Public synthetic']]);
 assert.equal(requests.filter(r => r.path === '/api/track-labels').length, 1, 'asked once per selection');
 await press('reset'); await settle(4);
 assert.deepEqual(labels(), [], 'clearing the selection removes the labels');
+""")
+
+    def test_a_labelled_track_plays_from_its_label(self):
+        """#276: a label's play button plays its track in the one player and follows the playback."""
+        self.run_scenario(r"""
+library.push(track('c', 0.5, 0.1, 0.3));
+routes['/api/mood-axis-graph'] = r => r.respond(graphBody(library, {links: [[0, 1, 0.9], [1, 2, 0.8]]}));
+routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
+routes['/api/track-labels'] = r => r.respond({labels: r.url.searchParams.getAll('track').map(id => ({track_id: id, title: 'Track ' + id, artist: 'Public synthetic'}))});
+await settle(6);
+await press('reload-graph'); await settle(6);
+await search('b'); await settle(2);
+await chooseRow('b'); await settle(4); await untilCameraSettles();
+const play = id => byId('graph3d').children.find(node => node.trackId === id).children
+  .find(part => part.className === 'graph-track-label-play');
+assert.deepEqual(['b', 'a', 'c'].map(id => play(id).getAttribute('aria-label')),
+  ['Play Track b — Public synthetic', 'Play Track a — Public synthetic', 'Play Track c — Public synthetic']);
+heard.length = 0;
+play('c').click(); await settle(1);
+const player = byId('playlist-track-player');
+assert.deepEqual([player.src, player.plays], ['/api/track-audio?track=c', 1]);
+player.dispatch('playing'); await settle(1);
+assert.deepEqual(heard.filter(type => type.startsWith('track-playback-')), ['track-playback-loading', 'track-playback-playing']);
+assert.deepEqual([play('c').textContent, play('c').getAttribute('aria-pressed'), play('a').textContent], ['❚❚', 'true', '▶']);
+play('c').click(); await settle(1);
+assert.equal(player.pauses, 1, 'pressing it again pauses the track');
 """)
 
     def test_preview_waits_with_its_reason_until_the_playlist_recipe_is_complete(self):

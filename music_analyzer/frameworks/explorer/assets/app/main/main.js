@@ -94,7 +94,7 @@ const playlistEvents=createInMemoryEventBus();
 const explorerApi=fetchExplorerApi((path,options)=>fetch(path,options));
 const labelEvents=createInMemoryEventBus();
 const neighbourhoodLabels=createNeighbourhoodLabels({explorerApi,eventBus:labelEvents});
-const trackLabels=createTrackLabels();
+const trackLabels=createTrackLabels({onPlayRequested:trackId=>trackPlayback.toggle(trackId)});
 function showTrackLabels(viewModels){const host=typeof document!=='undefined'&&document.getElementById('graph3d'); if(host) trackLabels.show(host,viewModels);}
 labelEvents.subscribe('neighbourhood-labelled',event=>{showTrackLabels(trackLabelViewModels(event)); graphRendering.wake();});
 for(const type of ['neighbourhood-labelling','neighbourhood-labels-failed','neighbourhood-labels-cleared']) labelEvents.subscribe(type,()=>showTrackLabels([]));
@@ -110,7 +110,7 @@ const playbackEvents=createInMemoryEventBus();
 const trackPlayerElement=typeof document!=='undefined'?document.createElement('audio'):{play(){},pause(){},load(){},removeAttribute(){}};
 const trackPlayback=createTrackPlayback({trackPlayer:htmlAudioTrackPlayer({audio:trackPlayerElement,audioUrl:trackAudioUrl,onReport:report=>trackPlayback.heard(report)}),eventBus:playbackEvents});
 const playlistPreviewPanel=playlistPreviewView({onPreviewRequested:()=>playlistPreviewControls.previewRequested(),onPlayRequested:trackId=>trackPlayback.toggle(trackId),player:trackPlayerElement});
-for(const type of TRACK_PLAYBACK_EVENT_TYPES) playbackEvents.subscribe(type,event=>playlistPreviewPanel.showPlayback(presentTrackPlaybackEvent(event)));
+for(const type of TRACK_PLAYBACK_EVENT_TYPES) playbackEvents.subscribe(type,event=>{const update=presentTrackPlaybackEvent(event); playlistPreviewPanel.showPlayback(update); trackLabels.showPlayback(update);});
 for(const type of PLAYLIST_PREVIEW_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistPreviewPanel.show(presentPlaylistPreviewEvent(event)));
 // #234: Preview waits, saying why, until the recipe is complete; checked on every draft edit and change of track.
 function showPlaylistReadiness(){const readiness=playlistReadinessViewModel(playlistPreview.gaps(currentTrackId())); playlistPreviewPanel.show(readiness); playlistControlsView.show(readiness);}
