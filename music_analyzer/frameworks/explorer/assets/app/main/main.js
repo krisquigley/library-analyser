@@ -40,6 +40,7 @@ import {playlistDownloadController} from '../adapters/controllers/playlist-downl
 import {fetchExplorerApi} from '../adapters/gateways/explorer-api-gateway.js';
 import {libraryArousalRangeViewModel,playlistControlsViewModel, presentLoadedPlaylistDraft, presentPlaylistDownloadEvent, presentRejectedPlaylistInput} from '../adapters/presenters/playlist-download-presenter.js';
 import {browserPlaylistFile} from '../frameworks/browser-playlist-file.js';
+import {createLinkLabels} from '../frameworks/graph-scene/link-labels.js';
 import {browserHandBuiltPlaylistStore} from '../frameworks/browser-hand-built-playlist-store.js';
 import {handBuiltPlaylistView} from '../frameworks/views/hand-built-playlist-view.js';
 import {createHandBuiltPlaylist} from '../application/build-playlist/build-playlist.js';
@@ -74,7 +75,7 @@ import {createTrackSelection} from '../application/select-track/select-track.js'
 import {moodStripMarks} from '../domain/mood-strip.js';
 import {moodStripViewModel} from '../adapters/presenters/mood-strip-presenter.js';
 import {moodStripView} from '../frameworks/views/mood-strip-view.js';
-import {graphNeighbourPositions,focusedLinkColor,focusedLinkWidth,relatednessLinkWidth, focusedNodeColor, graphAxisSpec, graphNeighbourFocus, linkLabel, nodeLabel, relatednessLinkColor} from '../adapters/presenters/graph-scene-presenter.js';
+import {selectionLinkLabels,graphNeighbourPositions,focusedLinkColor,focusedLinkWidth,relatednessLinkWidth, focusedNodeColor, graphAxisSpec, graphNeighbourFocus, linkLabel, nodeLabel, relatednessLinkColor} from '../adapters/presenters/graph-scene-presenter.js';
 import {cameraViewDirection, selectionFocusPose} from '../domain/camera-arc.js';
 import {createCameraFocus} from '../application/focus-camera/focus-camera.js';
 import {CAMERA_FOCUS_EVENT_TYPES} from '../application/focus-camera/camera-focus-events.js';
@@ -108,6 +109,8 @@ handBuiltEvents.subscribe('hand-built-playlist-changed',event=>{handBuiltStrip.s
 handBuiltEvents.subscribe('hand-built-playlist-track-chosen',event=>selectGraphNode({id:event.trackId}));
 for(const type of ['hand-built-playlist-download-started','hand-built-playlist-downloaded','hand-built-playlist-download-failed']) handBuiltEvents.subscribe(type,event=>handBuiltStrip.showDownload(presentHandBuiltPlaylistDownload(event)));
 function browserLocalStorage(){try{return globalThis.localStorage??null;}catch{return null;}}
+const linkLabels=createLinkLabels();
+function showLinkLabels(viewModels){const host=typeof document!=='undefined'&&document.getElementById('graph3d'); if(host) linkLabels.show(host,viewModels);}
 function showTrackLabels(viewModels){const host=typeof document!=='undefined'&&document.getElementById('graph3d'); if(host) trackLabels.show(host,viewModels);}
 labelEvents.subscribe('neighbourhood-labelled',event=>{showTrackLabels(trackLabelViewModels(event)); graphRendering.wake();});
 for(const type of ['neighbourhood-labelling','neighbourhood-labels-failed','neighbourhood-labels-cleared']) labelEvents.subscribe(type,()=>showTrackLabels([]));
@@ -237,14 +240,14 @@ function buildMoodGraphModel(graph){return moodGraphModel(normalizeMoodAxisGraph
 function fitGraph(elem){const size=fitGraphToElement(graphStage.current(),elem); graphRendering.wake(); return size;}
 
 // #243: once per selection or new graph data, never per frame.
-function focusNeighbourhood(graph){const focus=graphNeighbourFocus(graphState().visible,currentTrackId()); graph.nodeColor(focusedNodeColor(focus)).linkColor(focusedLinkColor(focus,graphState().model?.nodes||[])).linkWidth(focusedLinkWidth(focus)); neighbourhoodLabels.label(focus).catch(()=>{});}
+function focusNeighbourhood(graph){const focus=graphNeighbourFocus(graphState().visible,currentTrackId()); graph.nodeColor(focusedNodeColor(focus)).linkColor(focusedLinkColor(focus,graphState().model?.nodes||[])).linkWidth(focusedLinkWidth(focus)); showLinkLabels(selectionLinkLabels(focus,graphState().model?.nodes||[],graphState().visible.links)); neighbourhoodLabels.label(focus).catch(()=>{});}
 function syncSelectedNodeHalo(graph,data){return nodeHalo.sync(graph,(data&&data.nodes)||graphState().visible.nodes,currentTrackId());}
 function animateGraphAxes(timestamp){
   const graph=graphStage.current();
   if(graph){
     graphRendering.viewObserved(graphViewPose(graph));
     if(graphRendering.drawing()){
-      const viewport=document.getElementById('graph3d'); graphAxes.sync(graph,graphStage.axisSpec(),viewport); graphAxes.placeLabels(graph,viewport); trackLabels.place(graph,viewport,graphState().visible.nodes); syncSelectedNodeHalo(graph,graphState().visible);
+      const viewport=document.getElementById('graph3d'); graphAxes.sync(graph,graphStage.axisSpec(),viewport); graphAxes.placeLabels(graph,viewport); trackLabels.place(graph,viewport,graphState().visible.nodes); linkLabels.place(graph,viewport,graphState().visible.nodes); syncSelectedNodeHalo(graph,graphState().visible);
       graphRendering.frameDrawn(Number.isFinite(timestamp)?timestamp:performance.now());
     }
   }
