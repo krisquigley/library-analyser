@@ -2,6 +2,8 @@
 // #258: each track has a Play button, and one audio player, with its own seek bar, plays the track asked for.
 // It keeps only the elements it last mounted, and the playback last shown so new rows' buttons match it.
 
+import {showTrackPlayButton, trackPlayButton} from './track-play-buttons.js';
+
 const TARGET_LINE = Object.freeze({color: '#8dd6ff', dash: Object.freeze([4, 3])});
 const LEVEL_LINE = Object.freeze({color: '#ffcf70', dash: Object.freeze([])});
 const PREVIEW_COLUMNS = Object.freeze([
@@ -91,9 +93,7 @@ function drawLine(context, segments, {color, dash}) {
 }
 
 function previewRow(row, onPlayRequested) {
-  const play = element('button', {type: 'button', className: 'track-play'});
-  Object.assign(play.dataset, {trackId: row.trackId, trackName: row.track});
-  play.onclick = () => onPlayRequested(row.trackId);
+  const play = trackPlayButton({trackId: row.trackId, trackName: row.track}, onPlayRequested);
   const playCell = element('td', {className: 'track-play-cell'});
   playCell.append(play);
   const line = element('tr', {});
@@ -103,13 +103,7 @@ function previewRow(row, onPlayRequested) {
 
 function showPlayButtons(body, playback) {
   if (!playback) return;
-  for (const line of body.children) {
-    const play = line.children[0].children[0];
-    const look = play.dataset.trackId === playback.activeTrackId ? playback.activeButton : playback.idleButton;
-    play.textContent = look.text;
-    play.setAttribute('aria-label', `${look.verb} ${play.dataset.trackName}`);
-    play.setAttribute('aria-pressed', String(look.pressed));
-  }
+  for (const line of body.children) showTrackPlayButton(line.children[0].children[0], playback);
 }
 
 function showStatus(status, {text, urgent}) {

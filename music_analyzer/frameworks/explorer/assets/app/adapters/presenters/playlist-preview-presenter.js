@@ -80,7 +80,7 @@ function previewSummary({tracks, warning}) {
 }
 
 // The playlist's length (#257): the known lengths added up, saying how many tracks' lengths are unknown.
-function previewedLength(tracks) {
+export function previewedLength(tracks) {
   const known = tracks.map(track => track.durationSeconds).filter(seconds => displayDuration(seconds) !== null);
   if (!known.length) return 'length unknown';
   const total = displayDuration(known.reduce((sum, seconds) => sum + seconds, 0));
@@ -90,7 +90,12 @@ function previewedLength(tracks) {
 
 function previewRows({tracks, transitions}) {
   const stepInto = new Map(transitions.map(step => [step.toTrackId, step]));
-  return tracks.map((track, place) => ({
+  return tracks.map((track, place) => previewTrackRow(track, place, stepInto.get(track.trackId)));
+}
+
+// One previewed track as a row (#138), also of a hand-built playlist (#287): the first starts it; a step not known is unknown.
+export function previewTrackRow(track, place, step) {
+  return {
     trackId: track.trackId,
     place: String(place + 1),
     track: trackName(track),
@@ -99,8 +104,8 @@ function previewRows({tracks, transitions}) {
     key: track.key ?? UNKNOWN,
     energy: shownNumber(track.arousal),
     target: shownNumber(track.energyTarget),
-    transition: place === 0 ? 'Start' : stepText(stepInto.get(track.trackId)),
-  }));
+    transition: place === 0 ? 'Start' : stepText(step),
+  };
 }
 
 function trackName({artist, title}) {

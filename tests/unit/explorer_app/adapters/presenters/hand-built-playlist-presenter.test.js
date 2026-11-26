@@ -1,30 +1,46 @@
 // Issue #278: what the strip over the graph shows of the hand-built playlist and its download.
+// Issue #287: the strip is a table like the playlist preview's, from the playlist's last preview.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
   handBuiltPlaylistViewModel, presentHandBuiltPlaylistDownload,
 } from '../../../../../music_explorer/frameworks/explorer/assets/app/adapters/presenters/hand-built-playlist-presenter.js';
 
-const labelled = (trackId, title) => ({trackId, title, artist: 'Synthetic'});
+const track = (trackId, fields = {}) => ({trackId, title: 'Title ' + trackId, artist: 'Synthetic', bpm: 120, key: 'C major',
+  camelot: '8B', arousal: 4.25, energyTarget: null, durationSeconds: 200, ...fields});
+const step = (fromTrackId, toTrackId, fields = {}) => ({fromTrackId, toTrackId, keyCompatible: true, bpmStepSmooth: true,
+  bpmChange: 4, ...fields});
 
-test('the strip lists the tracks in order, each named and removable, with a count', () => {
-  const long = 'A very long synthetic title that goes on and on';
-  assert.deepEqual(handBuiltPlaylistViewModel({trackIds: ['a', 'b', 'c'], labels: [labelled('a', 'Alpha'), labelled('c', long)],
-    notice: ''}), {
-    hidden: false, heading: 'Your playlist · 3 tracks', downloadDisabled: false, clearDisabled: false,
+test('each track is a row like the playlist preview’s, in the listener’s order, with the step into it', () => {
+  const previewed = {trackIds: ['a', 'b'], tracks: [track('a'), track('b', {bpm: 124, key: null, arousal: null, durationSeconds: 95})],
+    transitions: [step('a', 'b')]};
+  const model = handBuiltPlaylistViewModel({trackIds: ['a', 'b'], notice: '', previewed});
+  assert.deepEqual(model, {
+    hidden: false, heading: 'Your playlist · 2 tracks · 4:55', downloadDisabled: false, clearDisabled: false,
     rows: [
-      {trackId: 'a', text: '1. Alpha — Synthetic', removeLabel: 'Remove Alpha — Synthetic from your playlist'},
-      {trackId: 'b', text: '2. Track 2', removeLabel: 'Remove track 2 from your playlist'},
-      {trackId: 'c', text: '3. A very long synthetic title th… — Synthetic',
-        removeLabel: 'Remove A very long synthetic title th… — Synthetic from your playlist'}],
+      {trackId: 'a', place: '1', track: 'Synthetic – Title a', length: '3:20', bpm: '120.0', key: 'C major', energy: '4.3',
+        transition: 'Start', playable: true, removeLabel: 'Remove Synthetic – Title a from your playlist'},
+      {trackId: 'b', place: '2', track: 'Synthetic – Title b', length: '1:35', bpm: '124.0', key: '—', energy: '—',
+        transition: 'Key compatible, +4.0 BPM', playable: true, removeLabel: 'Remove Synthetic – Title b from your playlist'}],
     notice: {text: '', urgent: false}});
 });
 
+test('a track not yet previewed waits, one no longer playable says so, and a step not previewed is unknown', () => {
+  const previewed = {trackIds: ['a', 'gone', 'b'], tracks: [track('a'), track('b')], transitions: [step('a', 'b')]};
+  const model = handBuiltPlaylistViewModel({trackIds: ['b', 'gone', 'a', 'new'], notice: '', previewed});
+  assert.equal(model.heading, 'Your playlist · 4 tracks · 6:40');
+  assert.deepEqual(model.rows.map(row => [row.place, row.track, row.length, row.transition, row.playable, row.removeLabel]), [
+    ['1', 'Synthetic – Title b', '3:20', 'Start', true, 'Remove Synthetic – Title b from your playlist'],
+    ['2', 'No longer playable from the library', '—', '—', false, 'Remove track 2 from your playlist'],
+    ['3', 'Synthetic – Title a', '3:20', '—', true, 'Remove Synthetic – Title a from your playlist'],
+    ['4', 'Track 4', '…', '…', true, 'Remove track 4 from your playlist']]);
+});
+
 test('one track is counted as one, and an empty playlist hides the strip unless there is something to say', () => {
-  assert.equal(handBuiltPlaylistViewModel({trackIds: ['a'], labels: [], notice: ''}).heading, 'Your playlist · 1 track');
-  const empty = handBuiltPlaylistViewModel({trackIds: [], labels: [], notice: ''});
+  assert.equal(handBuiltPlaylistViewModel({trackIds: ['a'], notice: '', previewed: null}).heading, 'Your playlist · 1 track');
+  const empty = handBuiltPlaylistViewModel({trackIds: [], notice: '', previewed: null});
   assert.deepEqual([empty.hidden, empty.downloadDisabled, empty.clearDisabled, empty.rows], [true, true, true, []]);
-  const told = handBuiltPlaylistViewModel({trackIds: [], labels: [], notice: 'The playlist kept in this browser could not be read'});
+  const told = handBuiltPlaylistViewModel({trackIds: [], notice: 'The playlist kept in this browser could not be read', previewed: null});
   assert.deepEqual([told.hidden, told.notice], [false, {text: 'The playlist kept in this browser could not be read', urgent: true}]);
 });
 

@@ -3,8 +3,9 @@ import unittest
 
 from music_explorer.application.dto.playlists import PlayableTrackCandidate
 from music_explorer.application.use_cases.download_hand_built_playlist.download_hand_built_playlist import (
-    MAXIMUM_HAND_BUILT_TRACKS, DownloadHandBuiltPlaylist, DownloadHandBuiltPlaylistRequest, HandBuiltPlaylistRequestError,
+    DownloadHandBuiltPlaylist, DownloadHandBuiltPlaylistRequest,
 )
+from music_explorer.domain.hand_built_playlist import HandBuiltPlaylistError
 
 
 def candidate(track_id, **flags):
@@ -34,24 +35,16 @@ class DownloadHandBuiltPlaylistTest(unittest.TestCase):
         self.assertEqual(playlist.track_ids, ('c', 'a', 'b'))
         self.assertIsNone(playlist.warning)
 
-    def test_a_playlist_names_one_to_the_most_tracks_each_once(self):
-        for track_ids, message in (((), 'Add at least one track to the playlist'),
-                                   (('a', 'b', 'a'), 'The playlist names a track more than once'),
-                                   (('a', ''), 'A track ID must be text of 1 to 256 characters'),
-                                   (('a', 7), 'A track ID must be text of 1 to 256 characters'),
-                                   (('x' * 257,), 'A track ID must be text of 1 to 256 characters')):
-            with self.subTest(track_ids=track_ids), self.assertRaisesRegex(HandBuiltPlaylistRequestError, f'^{message}$'):
+    def test_the_list_must_keep_the_hand_built_playlist_rules(self):
+        # The rules themselves are the domain's (tests/unit/music_explorer/domain/test_hand_built_playlist.py).
+        for track_ids in ((), ('a', 'b', 'a')):
+            with self.subTest(track_ids=track_ids), self.assertRaises(HandBuiltPlaylistError):
                 download(*track_ids)
-        many = tuple(f't{number}' for number in range(MAXIMUM_HAND_BUILT_TRACKS + 1))
-        tracks = FakePlaylistTracks(*(candidate(track_id) for track_id in many))
-        self.assertEqual(len(download(*many[:-1], tracks=tracks).track_ids), MAXIMUM_HAND_BUILT_TRACKS)
-        with self.assertRaisesRegex(HandBuiltPlaylistRequestError, f'^A playlist holds at most {MAXIMUM_HAND_BUILT_TRACKS} tracks$'):
-            download(*many, tracks=tracks)
 
     def test_a_track_that_cannot_be_played_from_the_library_is_refused_by_name_of_its_place(self):
         for missing in ('unknown', 'gone', 'retired', 'uncatalogued'):
             with self.subTest(missing=missing), self.assertRaisesRegex(
-                    HandBuiltPlaylistRequestError, '^Track 2 of the playlist is no longer playable from the library; remove it and try again$'):
+                    HandBuiltPlaylistError, '^Track 2 of the playlist is no longer playable from the library; remove it and try again$'):
                 download('a', missing, 'b')
 
 

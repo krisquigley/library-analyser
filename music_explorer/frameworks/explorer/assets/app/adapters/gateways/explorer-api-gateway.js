@@ -26,6 +26,11 @@ export function fetchExplorerApi(fetchResource) {
       return m3uFile(await fetchResource('/api/playlists/hand-built',
         {method: 'POST', headers: {'Content-Type': 'application/json'}, body}), HAND_BUILT_PLAYLIST_FILENAME);
     },
+    async previewHandBuiltPlaylist(trackIds) {
+      const body = JSON.stringify({track_ids: trackIds});
+      return playlistPreviewFrom(await answer(await fetchResource('/api/playlists/hand-built/preview',
+        {method: 'POST', headers: {'Content-Type': 'application/json'}, body}), 'Playlist preview failed'));
+    },
     async previewPlaylist(recipe) {
       return playlistPreviewFrom(await answer(await fetchResource(playlistPreviewQuery(recipe)), 'Playlist preview failed'));
     },

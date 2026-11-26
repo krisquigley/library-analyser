@@ -1,4 +1,5 @@
-"""#277: POST /api/playlists/hand-built downloads the listener's own list of tracks as an M3U, in their order."""
+"""#277: POST /api/playlists/hand-built downloads the listener's own list of tracks as an M3U, in their order.
+#287: POST /api/playlists/hand-built/preview previews it as the recipe preview does."""
 import json
 import tempfile
 import threading
@@ -7,9 +8,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from music_explorer.application.use_cases.download_hand_built_playlist.download_hand_built_playlist import (
-    MAXIMUM_HAND_BUILT_TRACKS,
-)
+from music_explorer.domain.hand_built_playlist import MAXIMUM_HAND_BUILT_TRACKS
 from music_explorer.frameworks.explorer.server import MAX_BODY, create_server
 from tests.acceptance.test_explorer_m3u_playlist_http_red import _create_playlist_http_db, _table_counts
 
@@ -31,11 +30,16 @@ class HandBuiltPlaylistHTTPTests(unittest.TestCase):
         self.base = f'http://127.0.0.1:{self.server.server_port}'
 
     def download(self, body, origin='SELF'):
+        return self.post('/api/playlists/hand-built', body, origin)
+
+    def preview(self, body, origin='SELF'):
+        return self.post('/api/playlists/hand-built/preview', body, origin)
+
+    def post(self, path, body, origin):
         headers = {'Content-Type': 'application/json'}
         if origin is not None:
             headers['Origin'] = self.base if origin == 'SELF' else origin
-        request = Request(f'{self.base}/api/playlists/hand-built', data=json.dumps(body).encode('utf-8'), headers=headers,
-                          method='POST')
+        request = Request(f'{self.base}{path}', data=json.dumps(body).encode('utf-8'), headers=headers, method='POST')
         try:
             with urlopen(request, timeout=5) as response:
                 return response.status, response.headers, response.read().decode('utf-8')
@@ -71,6 +75,36 @@ class HandBuiltPlaylistHTTPTests(unittest.TestCase):
                                   'Track 2 of the playlist is no longer playable from the library; remove it and try again')):
             with self.subTest(request=request):
                 status, _, body = self.download(request)
+                self.assertEqual((status, json.loads(body)), (400, {'error': message}))
+
+    def test_287_the_preview_lists_the_tracks_in_the_listeners_order_and_nothing_is_written(self):
+        before = (_table_counts(self.db_path), self.db_path.read_bytes())
+        status, headers, body = self.preview({'track_ids': [self.second, self.first]})
+        preview = json.loads(body)
+        self.assertEqual((status, headers['Content-Type']), (200, 'application/json; charset=utf-8'))
+        self.assertEqual([track['track_id'] for track in preview['tracks']], [self.second, self.first])
+        self.assertEqual([(step['from_track_id'], step['to_track_id']) for step in preview['transitions']],
+                         [(self.second, self.first)])
+        self.assertEqual((preview['complete'], preview['warning']), (True, None))
+        self.assertTrue(all(track['energy_target'] is None for track in preview['tracks']), 'a hand-built list has no arc')
+        self.assertEqual((_table_counts(self.db_path), self.db_path.read_bytes()), before)
+
+    def test_287_a_track_no_longer_playable_is_left_out_of_the_preview_and_said_so(self):
+        status, _, body = self.preview({'track_ids': [self.first, 'sha256:' + '9' * 64]})
+        preview = json.loads(body)
+        self.assertEqual((status, [track['track_id'] for track in preview['tracks']], preview['complete']),
+                         (200, [self.first], False))
+        self.assertEqual(preview['warning'], '1 of its tracks is no longer playable from the library; remove it to download it')
+
+    def test_287_only_the_explorers_own_page_may_preview_and_the_schema_holds(self):
+        for origin in (None, 'http://example.invalid'):
+            with self.subTest(origin=origin):
+                status, _, body = self.preview({'track_ids': [self.first]}, origin=origin)
+                self.assertEqual((status, json.loads(body)), (403, {'error': 'Only the Explorer page can preview this playlist'}))
+        for request, message in (({'track_ids': self.first}, 'Send the playlist as {"track_ids": [...]}'),
+                                 ({'track_ids': [self.first, self.first]}, 'The playlist names a track more than once')):
+            with self.subTest(request=request):
+                status, _, body = self.preview(request)
                 self.assertEqual((status, json.loads(body)), (400, {'error': message}))
 
 

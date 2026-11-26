@@ -104,7 +104,7 @@ const trackLabels=createTrackLabels({onPlayRequested:trackId=>trackPlayback.togg
 // #278: the playlist built by hand from the labels' + buttons, kept in this browser and shown in the strip over the graph.
 const handBuiltEvents=createInMemoryEventBus();
 const handBuiltPlaylist=createHandBuiltPlaylist({store:browserHandBuiltPlaylistStore(browserLocalStorage()),explorerApi,playlistFile:browserPlaylistFile(),eventBus:handBuiltEvents});
-const handBuiltStrip=handBuiltPlaylistView({onRemoveRequested:trackId=>handBuiltPlaylist.remove(trackId).catch(()=>{}),onClearRequested:()=>handBuiltPlaylist.clear().catch(()=>{}),onDownloadRequested:()=>handBuiltPlaylist.download()});
+const handBuiltStrip=handBuiltPlaylistView({onRemoveRequested:trackId=>handBuiltPlaylist.remove(trackId).catch(()=>{}),onClearRequested:()=>handBuiltPlaylist.clear().catch(()=>{}),onDownloadRequested:()=>handBuiltPlaylist.download(),onPlayRequested:trackId=>trackPlayback.toggle(trackId)});
 handBuiltEvents.subscribe('hand-built-playlist-changed',event=>{handBuiltStrip.show(handBuiltPlaylistViewModel(event)); trackLabels.showPlaylist(event.trackIds);});
 handBuiltEvents.subscribe('hand-built-playlist-track-chosen',event=>selectGraphNode({id:event.trackId}));
 for(const type of ['hand-built-playlist-download-started','hand-built-playlist-downloaded','hand-built-playlist-download-failed']) handBuiltEvents.subscribe(type,event=>handBuiltStrip.showDownload(presentHandBuiltPlaylistDownload(event)));
@@ -127,7 +127,7 @@ const trackPlayerElement=typeof document!=='undefined'?document.createElement('a
 const trackPlayback=createTrackPlayback({trackPlayer:htmlAudioTrackPlayer({audio:trackPlayerElement,audioUrl:trackAudioUrl,onReport:report=>trackPlayback.heard(report)}),eventBus:playbackEvents});
 const playlistPreviewPanel=playlistPreviewView({onPreviewRequested:()=>playlistPreviewControls.previewRequested(),onPlayRequested:trackId=>trackPlayback.toggle(trackId),player:trackPlayerElement});
 playbackEvents.subscribe('track-playback-progressed',event=>trackLabels.showProgress(presentTrackPlaybackProgress(event)));
-for(const type of TRACK_PLAYBACK_STATE_EVENT_TYPES) playbackEvents.subscribe(type,event=>{const update=presentTrackPlaybackEvent(event); playlistPreviewPanel.showPlayback(update); trackLabels.showPlayback(update);});
+for(const type of TRACK_PLAYBACK_STATE_EVENT_TYPES) playbackEvents.subscribe(type,event=>{const update=presentTrackPlaybackEvent(event); playlistPreviewPanel.showPlayback(update); handBuiltStrip.showPlayback(update); trackLabels.showPlayback(update);});
 for(const type of PLAYLIST_PREVIEW_EVENT_TYPES) playlistEvents.subscribe(type,event=>playlistPreviewPanel.show(presentPlaylistPreviewEvent(event)));
 // #234: Preview waits, saying why, until the recipe is complete; checked on every draft edit and change of track.
 function showPlaylistReadiness(){const readiness=playlistReadinessViewModel(playlistPreview.gaps(currentTrackId())); playlistPreviewPanel.show(readiness); playlistControlsView.show(readiness);}

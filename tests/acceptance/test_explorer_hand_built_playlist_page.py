@@ -1,5 +1,6 @@
 """#278: the Explorer page builds a playlist by hand from the graph labels' + buttons, shows it in the strip over the
-graph, keeps it in this browser, and downloads it. The real page, booted as in a browser (see the page harness)."""
+graph, keeps it in this browser, and downloads it. #287: the strip is a table like the playlist preview's, from the
+server's preview of the list. The real page, booted as in a browser (see the page harness)."""
 import unittest
 
 from tests.support.explorer_page_harness import ASSETS, PAGE
@@ -13,11 +14,21 @@ routes['/api/tracks/summary'] = r => r.respond(summaryBody(library.filter(t => t
 routes['/api/tracks/<id>'] = r => r.respond(detailBody(r.path.split('/').pop()));
 routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
 routes['/api/track-labels'] = r => r.respond({labels: r.url.searchParams.getAll('track').map(id => ({track_id: id, title: 'Track ' + id, artist: 'Public synthetic'}))});
+// The server's preview of a hand-built list: 'gone' is no longer playable, so it is left out.
+routes['/api/playlists/hand-built/preview'] = r => {
+  const tracks = r.body.track_ids.filter(id => id !== 'gone').map(id => ({track_id: id, title: 'Track ' + id, artist: 'Public synthetic',
+    bpm: 120, key: 'C major', camelot: '8B', arousal: 4.5, energy_target: null, duration_seconds: 200}));
+  const transitions = tracks.slice(1).map((track, place) => ({from_track_id: tracks[place].track_id, to_track_id: track.track_id,
+    key_compatible: true, bpm_step_smooth: true, bpm_change: 0}));
+  r.respond({tracks, transitions, complete: tracks.length === r.body.track_ids.length, warning: null});
+};
 const KEY = 'music-explorer.hand-built-playlist.v1';
 const label = id => byId('graph3d').children.find(node => node.trackId === id);
 const part = (id, className) => label(id)?.children.find(node => node.className === className);
 const strip = () => byId('hand-built-playlist');
-const stripRows = () => byId('hand-built-playlist-tracks').children.map(row => row.children[0].textContent);
+const stripLines = () => byId('hand-built-playlist-tracks').children;
+const stripRows = () => stripLines().map(line => line.children.slice(1, 8).map(cell => cell.textContent).join(' | '));
+const stripButton = (place, column) => stripLines()[place].children[column].children[0];
 '''
 
 
@@ -46,15 +57,23 @@ part('b', 'graph-track-label-add').click(); await settle(4); await untilCameraSe
 assert.equal(seam.snapshot().currentTrackId, 'b', 'the added track becomes the selected one');
 assert.equal(kept.get(KEY), '["a","b"]');
 assert.equal(strip().hidden, false);
-assert.equal(byId('hand-built-playlist-heading').textContent, 'Your playlist · 2 tracks');
-assert.deepEqual(stripRows(), ['1. Track a — Public synthetic', '2. Track b — Public synthetic']);
+assert.equal(byId('hand-built-playlist-heading').textContent, 'Your playlist · 2 tracks · 6:40');
+assert.deepEqual(stripRows(), ['1 | Public synthetic – Track a | 3:20 | 120.0 | C major | 4.5 | Start',
+  '2 | Public synthetic – Track b | 3:20 | 120.0 | C major | 4.5 | Key compatible, 0.0 BPM']);
+assert.deepEqual(request('/api/playlists/hand-built/preview').body, {track_ids: ['a', 'b']});
 assert.deepEqual([part('a', 'graph-track-label-add').textContent, part('c', 'graph-track-label-add').textContent], ['✓', '+'],
   "around b, a is already in the playlist and c is not");
 part('c', 'graph-track-label-add').click(); await settle(4); await untilCameraSettles();
 assert.equal(seam.snapshot().currentTrackId, 'c');
 assert.equal(kept.get(KEY), '["a","b","c"]');
-byId('hand-built-playlist-tracks').children[1].children[1].click(); await settle(2);
-assert.deepEqual(stripRows(), ['1. Track a — Public synthetic', '2. Track c — Public synthetic']);
+stripButton(1, 8).click(); await settle(2);
+assert.deepEqual(stripRows(), ['1 | Public synthetic – Track a | 3:20 | 120.0 | C major | 4.5 | Start',
+  '2 | Public synthetic – Track c | 3:20 | 120.0 | C major | 4.5 | Key compatible, 0.0 BPM']);
+const player = byId('playlist-track-player');
+stripButton(1, 0).click(); await settle(2);
+assert.equal(player.plays, 1, '▶ in the strip plays its track');
+player.dispatch('playing'); await settle(1);
+assert.deepEqual([stripButton(1, 0).textContent, stripButton(1, 0).getAttribute('aria-label')], ['❚❚', 'Pause Public synthetic – Track c']);
 assert.equal(kept.get(KEY), '["a","c"]');
 routes['/api/playlists/hand-built'] = r => r.respond('#EXTM3U\n');
 await press('hand-built-playlist-download'); await settle(2);
@@ -70,8 +89,20 @@ kept.set(KEY, '["c","a"]');
 boot();
 await settle(6);
 assert.equal(strip().hidden, false);
-assert.deepEqual(request('/api/track-labels').url.searchParams.getAll('track'), ['c', 'a']);
-assert.deepEqual(stripRows(), ['1. Track c — Public synthetic', '2. Track a — Public synthetic']);
+assert.deepEqual(request('/api/playlists/hand-built/preview').body, {track_ids: ['c', 'a']});
+assert.deepEqual(stripRows(), ['1 | Public synthetic – Track c | 3:20 | 120.0 | C major | 4.5 | Start',
+  '2 | Public synthetic – Track a | 3:20 | 120.0 | C major | 4.5 | Key compatible, 0.0 BPM']);
+
+""")
+
+    def test_287_a_track_no_longer_playable_says_so_and_cannot_be_played(self):
+        self.run_scenario(r"""
+kept.set(KEY, '["a","gone"]');
+boot();
+await settle(6);
+assert.deepEqual(stripRows(), ['1 | Public synthetic – Track a | 3:20 | 120.0 | C major | 4.5 | Start',
+  '2 | No longer playable from the library | — | — | — | — | —']);
+assert.equal(stripButton(1, 0).disabled, true);
 """)
 
 

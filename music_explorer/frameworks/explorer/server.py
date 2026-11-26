@@ -13,8 +13,12 @@ from importlib import resources
 from urllib.parse import parse_qs, unquote, urlparse
 
 from music_explorer.application.use_cases.download_hand_built_playlist.download_hand_built_playlist import (
-    DownloadHandBuiltPlaylist, HandBuiltPlaylistRequestError,
+    DownloadHandBuiltPlaylist, DownloadHandBuiltPlaylistRequest,
 )
+from music_explorer.application.use_cases.preview_hand_built_playlist.preview_hand_built_playlist import (
+    PreviewHandBuiltPlaylist, PreviewHandBuiltPlaylistRequest,
+)
+from music_explorer.domain.hand_built_playlist import HandBuiltPlaylistError
 from music_explorer.application.use_cases.label_tracks.label_tracks import LabelTracks, TrackLabelRequestError
 from music_explorer.application.use_cases.listen_to_track.listen_to_track import (
     ListenToTrack, TrackAudioRequestError, TrackAudioUnavailableError)
@@ -26,7 +30,7 @@ from music_explorer.application.use_cases.preview_playlist.preview_playlist impo
 from music_explorer.application.use_cases.list_saved_playlist_recipes import ListSavedPlaylistRecipes
 from music_explorer.application.use_cases.load_saved_playlist_recipe import LoadSavedPlaylistRecipe
 from music_explorer.domain.saved_playlist_recipe import saved_playlist_recipe_name
-from music_explorer.interface_adapters.hand_built_playlist_http import HAND_BUILT_PLAYLIST_FILENAME, hand_built_playlist_request
+from music_explorer.interface_adapters.hand_built_playlist_http import HAND_BUILT_PLAYLIST_FILENAME, hand_built_track_ids_from_body
 from music_explorer.interface_adapters.mood_axis_graph_http import to_compact_mood_axis_graph_http, to_indexed_mood_axis_graph_http
 from music_explorer.interface_adapters.playlist_recipe_query import playlist_recipe_from_query
 from music_explorer.application.use_cases.projection_artifacts import BuildLiveProjection, ProjectionArtifactError
@@ -93,6 +97,7 @@ _POLICY_VALIDATION_PATHS = frozenset({'/api/candidates', '/api/mood-axis-graph',
                                       '/api/tag-write/preview'})
 _FOREIGN_TAG_WRITE = 'Tags can only be written from the Explorer page'
 _FOREIGN_PLAYLIST_DOWNLOAD = 'Only the Explorer page can download this playlist'
+_FOREIGN_PLAYLIST_PREVIEW = 'Only the Explorer page can preview this playlist'
 
 
 def _request_integer(value):
@@ -235,7 +240,7 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
             if isinstance(error, (json.JSONDecodeError, UnicodeDecodeError)):
                 return self._json({'error': 'Invalid explorer request'}, HTTPStatus.BAD_REQUEST)
-            if isinstance(error, HandBuiltPlaylistRequestError):
+            if isinstance(error, HandBuiltPlaylistError):
                 return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
             if isinstance(error, TrackLabelRequestError):
                 return self._json({'error': message}, HTTPStatus.BAD_REQUEST)
@@ -340,6 +345,8 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
                 return self._apply_tag_write()
             if parsed.path == '/api/playlists/hand-built':
                 return self._hand_built_playlist()
+            if parsed.path == '/api/playlists/hand-built/preview':
+                return self._hand_built_playlist_preview()
             if parsed.path not in {'/api/current', '/api/undo', '/api/reset'}:
                 return self._json({'error': 'Not found'}, HTTPStatus.NOT_FOUND)
             data = self._body()
@@ -377,9 +384,15 @@ def create_server(database_path: str, host: str = '127.0.0.1', port: int = 8765)
         def _hand_built_playlist(self):
             if not self._from_explorer_page():
                 return self._json({'error': _FOREIGN_PLAYLIST_DOWNLOAD}, HTTPStatus.FORBIDDEN)
-            request = hand_built_playlist_request(self._json_value())
+            request = DownloadHandBuiltPlaylistRequest(hand_built_track_ids_from_body(self._json_value()))
             playlist = DownloadHandBuiltPlaylist(repository).execute(request)
             return self._m3u(playlist.content, filename=HAND_BUILT_PLAYLIST_FILENAME)
+
+        def _hand_built_playlist_preview(self):
+            if not self._from_explorer_page():
+                return self._json({'error': _FOREIGN_PLAYLIST_PREVIEW}, HTTPStatus.FORBIDDEN)
+            request = PreviewHandBuiltPlaylistRequest(hand_built_track_ids_from_body(self._json_value()))
+            return self._json(_to_json(PreviewHandBuiltPlaylist(repository, repository).execute(request)))
 
         def _from_explorer_page(self):
             # CSRF protection for a localhost server: only the Explorer's own page may approve a write.

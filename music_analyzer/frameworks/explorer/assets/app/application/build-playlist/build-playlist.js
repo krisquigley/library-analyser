@@ -1,13 +1,14 @@
 // Building a playlist by hand from the graph's labels (#278). + adds a neighbour and chooses it as the next selection;
-// every change is kept in this browser and published with the labels known so far, then again once the new tracks are
-// labelled. A notice says what went wrong last, until the next change. The playlist downloads as an M3U (#277).
+// every change is kept in this browser and published with the last preview, then previewed (#287) and published again
+// with its own. An answer overtaken by a later change is dropped. A notice says what went wrong last, until the next
+// change. The playlist downloads as an M3U (#277).
 
 import {
   EMPTY_HAND_BUILT_PLAYLIST, HandBuiltPlaylistError, addNeighbour, handBuiltPlaylistOf, removeTrack,
 } from '../../domain/hand-built-playlist.js';
 import {nextPlaylistDownloadState} from '../../domain/playlist-download.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
-import {HAND_BUILT_PLAYLIST_DOWNLOADS, TRACK_LABELS} from '../ports/explorer-api.js';
+import {HAND_BUILT_PLAYLIST_DOWNLOADS, HAND_BUILT_PLAYLIST_PREVIEWS} from '../ports/explorer-api.js';
 import {HAND_BUILT_PLAYLIST_STORE} from '../ports/hand-built-playlist-store.js';
 import {PLAYLIST_FILE} from '../ports/playlist-file.js';
 import {requirePort} from '../ports/port.js';
@@ -16,37 +17,38 @@ import {
   handBuiltPlaylistTrackChosen,
 } from './hand-built-playlist-events.js';
 
-const MOST_TRACKS_LABELLED_AT_ONCE = 100;
 const NOT_KEPT = 'This browser could not keep the playlist; it will be lost when the page reloads';
 
 export function createHandBuiltPlaylist({store, explorerApi, playlistFile, eventBus}) {
   requirePort(HAND_BUILT_PLAYLIST_STORE, store);
   requirePort(HAND_BUILT_PLAYLIST_DOWNLOADS, explorerApi);
-  requirePort(TRACK_LABELS, explorerApi);
+  requirePort(HAND_BUILT_PLAYLIST_PREVIEWS, explorerApi);
   requirePort(PLAYLIST_FILE, playlistFile);
   requirePort(EVENT_BUS, eventBus);
   let trackIds = EMPTY_HAND_BUILT_PLAYLIST;
   let notice = '';
   let downloadState = 'idle';
-  const labels = new Map();
-  const askedForLabels = new Set();
+  let previewed = null;
+  let previewsAsked = 0;
 
   function publishChange() {
-    eventBus.publish(handBuiltPlaylistChanged({trackIds, notice,
-      labels: trackIds.filter(trackId => labels.has(trackId)).map(trackId => labels.get(trackId))}));
+    eventBus.publish(handBuiltPlaylistChanged({trackIds, notice, previewed}));
   }
 
-  async function labelNewTracks() {
-    const unlabelled = trackIds.filter(trackId => !askedForLabels.has(trackId));
-    if (!unlabelled.length) return;
-    for (const trackId of unlabelled) askedForLabels.add(trackId);
-    for (let first = 0; first < unlabelled.length; first += MOST_TRACKS_LABELLED_AT_ONCE) {
-      try {
-        const answered = await explorerApi.labelTracks(unlabelled.slice(first, first + MOST_TRACKS_LABELLED_AT_ONCE));
-        for (const answer of answered) labels.set(answer.trackId, answer);
-      } catch {
-        // A track left unlabelled still plays its part in the playlist; the strip names it by its place.
-      }
+  async function previewChange() {
+    const asking = ++previewsAsked;
+    const asked = trackIds;
+    if (!asked.length) {
+      previewed = null;
+      return;
+    }
+    try {
+      const preview = await explorerApi.previewHandBuiltPlaylist(asked);
+      if (asking !== previewsAsked) return;
+      previewed = {trackIds: asked, tracks: preview.tracks, transitions: preview.transitions};
+    } catch (error) {
+      if (asking !== previewsAsked) return;
+      notice = `Could not show the playlist's details: ${error?.message || String(error)}`;
     }
     publishChange();
   }
@@ -54,8 +56,9 @@ export function createHandBuiltPlaylist({store, explorerApi, playlistFile, event
   async function change(edited) {
     trackIds = edited;
     notice = keep(edited);
+    if (!edited.length) previewed = null;
     publishChange();
-    await labelNewTracks();
+    await previewChange();
   }
 
   function keep(edited) {
@@ -76,7 +79,7 @@ export function createHandBuiltPlaylist({store, explorerApi, playlistFile, event
       notice = error instanceof HandBuiltPlaylistError ? error.message : NOT_KEPT;
     }
     publishChange();
-    await labelNewTracks();
+    await previewChange();
   }
 
   async function add(choice) {
@@ -94,7 +97,7 @@ export function createHandBuiltPlaylist({store, explorerApi, playlistFile, event
     notice = keep(edited);
     publishChange();
     eventBus.publish(handBuiltPlaylistTrackChosen(choice.neighbourId));
-    await labelNewTracks();
+    await previewChange();
   }
 
   async function download() {
