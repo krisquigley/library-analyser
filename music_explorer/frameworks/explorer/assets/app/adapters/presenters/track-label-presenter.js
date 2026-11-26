@@ -3,8 +3,11 @@
 const LONGEST_LABEL_PART = 30;
 
 export function trackLabelViewModels({selectedTrackId, labels}) {
-  return labels.map(({trackId, title, artist}) => ({trackId, text: `${shortLabelPart(title)} — ${shortLabelPart(artist)}`,
-    selected: trackId === selectedTrackId}));
+  return labels.map(label => ({trackId: label.trackId, text: trackLabelText(label), selected: label.trackId === selectedTrackId}));
+}
+
+export function trackLabelText({title, artist}) {
+  return `${shortLabelPart(title)} — ${shortLabelPart(artist)}`;
 }
 
 function shortLabelPart(text) {

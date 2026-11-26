@@ -1,18 +1,36 @@
 // The labels above the selected track and its neighbours on the screen (#243). Like the axis labels they are placed each
 // drawn frame over their nodes. Only their buttons take pointer input (#276), so picking nodes elsewhere is unaffected.
-// The view keeps the labels it last showed, and the playback last shown so new labels' buttons match it.
+// A neighbour's label also has + (#278), to add it to the hand-built playlist, or a tick once it is in it.
+// The view keeps the labels it last showed, and the playback and playlist last shown so new labels' buttons match them.
 
 const IDLE_PLAY_BUTTON = Object.freeze({text: '▶', verb: 'Play', pressed: false});
 
-export function createTrackLabels({onPlayRequested}) {
+export function createTrackLabels({onPlayRequested, onAddRequested}) {
   let shown = [];
   let playback = null;
+  let playlist = new Set();
 
   function show(host, viewModels) {
     for (const label of shown) label.remove();
-    shown = viewModels.map(viewModel => trackLabel(viewModel, onPlayRequested));
+    shown = viewModels.map(viewModel => trackLabel(viewModel, {onPlayRequested, onAddRequested}));
     host.append(...shown);
     showPlayButtons();
+    showAddButtons();
+  }
+
+  function showPlaylist(trackIds) {
+    playlist = new Set(trackIds);
+    showAddButtons();
+  }
+
+  function showAddButtons() {
+    for (const label of shown) {
+      if (!label.addButton) continue;
+      const inPlaylist = playlist.has(label.trackId);
+      label.addButton.textContent = inPlaylist ? '✓' : '+';
+      label.addButton.setAttribute('aria-label', inPlaylist ? `Go to ${label.trackText}, already in your playlist`
+        : `Add ${label.trackText} to your playlist`);
+    }
   }
 
   function showPlayback(update) {
@@ -39,21 +57,28 @@ export function createTrackLabels({onPlayRequested}) {
     }
   }
 
-  return Object.freeze({show, showPlayback, place});
+  return Object.freeze({show, showPlayback, showPlaylist, place});
 }
 
-function trackLabel({trackId, text, selected}, onPlayRequested) {
+function trackLabel({trackId, text, selected}, {onPlayRequested, onAddRequested}) {
   const label = document.createElement('span');
   label.className = selected ? 'graph-track-label selected' : 'graph-track-label';
-  const play = document.createElement('button');
-  play.type = 'button';
-  play.className = 'graph-track-label-play';
-  play.onclick = () => onPlayRequested(trackId);
+  const play = trackLabelButton('graph-track-label-play', () => onPlayRequested(trackId));
   const name = document.createElement('span');
   name.className = 'graph-track-label-text';
   name.textContent = text;
   label.append(play, name);
-  return Object.assign(label, {trackId, trackText: text, playButton: play});
+  const add = selected ? null : trackLabelButton('graph-track-label-add', () => onAddRequested(trackId));
+  if (add) label.append(add);
+  return Object.assign(label, {trackId, trackText: text, playButton: play, addButton: add});
+}
+
+function trackLabelButton(className, onclick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.onclick = onclick;
+  return button;
 }
 
 function showPlayButton(button, look, trackText) {

@@ -15,6 +15,7 @@
 //   each change {file, field, current, proposed, replaces}, each skipped track {trackId, reason};
 //   applyTagWrite(token) resolves to {outcomes, notice}, each outcome {file, status, detail} (#132).
 // labelTracks(trackIds) resolves to [{trackId, title, artist}] for the active tracks among those named (#243).
+// downloadHandBuiltPlaylist(trackIds) resolves to {filename, contents, contentType}, the tracks in that order (#277).
 // All reject with an Error whose message the listener can read.
 
 export const PLAYLIST_DOWNLOADS = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['downloadPlaylist'])});
@@ -23,11 +24,13 @@ export const SAVED_PLAYLIST_RECIPES = Object.freeze({name: 'ExplorerApi',
   operations: Object.freeze(['listSavedPlaylistRecipes', 'loadSavedPlaylistRecipe'])});
 export const TAG_WRITES = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['previewTagWrite', 'applyTagWrite'])});
 export const TRACK_LABELS = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['labelTracks'])});
+export const HAND_BUILT_PLAYLIST_DOWNLOADS = Object.freeze({name: 'ExplorerApi',
+  operations: Object.freeze(['downloadHandBuiltPlaylist'])});
 export const MOOD_GRAPHS = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['loadMoodGraph'])});
 export const TRACK_SEARCHES = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['searchTracks'])});
 export const LIBRARY_STATES = Object.freeze({name: 'ExplorerApi', operations: Object.freeze(['loadLibraryState'])});
 export const SELECTIONS = Object.freeze({name: 'ExplorerApi',
   operations: Object.freeze(['chooseCurrentTrack', 'applyHistory', 'loadTrackDetail', 'loadLibraryState'])});
 export const EXPLORER_API = Object.freeze({name: 'ExplorerApi',
-  operations: Object.freeze([...PLAYLIST_DOWNLOADS.operations, ...PLAYLIST_PREVIEWS.operations, ...SAVED_PLAYLIST_RECIPES.operations, ...TAG_WRITES.operations, ...TRACK_LABELS.operations, ...MOOD_GRAPHS.operations, ...TRACK_SEARCHES.operations,
+  operations: Object.freeze([...PLAYLIST_DOWNLOADS.operations, ...PLAYLIST_PREVIEWS.operations, ...SAVED_PLAYLIST_RECIPES.operations, ...TAG_WRITES.operations, ...TRACK_LABELS.operations, ...HAND_BUILT_PLAYLIST_DOWNLOADS.operations, ...MOOD_GRAPHS.operations, ...TRACK_SEARCHES.operations,
     ...SELECTIONS.operations])});

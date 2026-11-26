@@ -103,7 +103,7 @@ main.overlay{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidde
 .app-tools button{margin:0;background:transparent;border-color:transparent;color:var(--text-muted)}
 .app-tools button:hover:not(:disabled){background:var(--surface-hover);border-color:transparent;color:var(--text)}
 .app-tools button[aria-expanded=true]{background:var(--accent-soft);color:var(--accent-hover)}
-.bottom-dock{position:absolute;pointer-events:none;display:flex;justify-content:center;min-width:0;bottom:max(var(--gutter),env(safe-area-inset-bottom));left:calc(var(--gutter) + var(--drawer-width) + var(--space-2));right:calc(var(--gutter) + var(--side-card-width) + var(--space-2))}
+.bottom-dock{position:absolute;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:var(--space-2);min-width:0;bottom:max(var(--gutter),env(safe-area-inset-bottom));left:calc(var(--gutter) + var(--drawer-width) + var(--space-2));right:calc(var(--gutter) + var(--side-card-width) + var(--space-2))}
 
 /* Panels */
 .panel{padding:0 var(--space-4) var(--space-3);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
@@ -247,6 +247,20 @@ tbody tr:hover{background:var(--surface-hover)}
 /* #236: the selected track's actions sit in its header. */
 .panel-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--space-1)}
 .panel-actions button{min-height:0;padding:var(--space-1) var(--space-2);font-size:var(--text-xs)}
+
+/* Hand-built playlist strip (#278) */
+.playlist-strip{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-3);width:min(740px,100%);max-height:min(160px,24dvh);padding:var(--space-2) var(--space-4)}
+.playlist-strip[hidden]{display:none}
+.playlist-strip h2{flex:1 1 auto;font-size:var(--text-s);margin:0;color:var(--text-muted)}
+.hand-built-playlist-actions{flex:none;display:flex;gap:var(--space-2)}
+.playlist-strip .hand-built-playlist-tracks{order:1;flex:1 1 100%;min-width:0;display:flex;gap:var(--space-2);margin:0;padding:0 0 var(--space-1);list-style:none;overflow-x:auto;scrollbar-width:thin}
+.playlist-strip .hand-built-playlist-tracks li{margin:0;display:flex;align-items:center;gap:var(--space-1);flex:none;padding:var(--space-1) var(--space-2);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface-raised);font-size:var(--text-xs);white-space:nowrap}
+.hand-built-playlist-remove{padding:0 var(--space-1);border:0;background:none;color:var(--text-muted);font:inherit;cursor:pointer}
+.hand-built-playlist-remove:hover{color:var(--text)}
+#hand-built-playlist-status{order:2;flex:1 1 100%;margin:0;font-size:var(--text-xs)}
+#hand-built-playlist-status:empty{display:none}
+.graph-track-label-add{pointer-events:auto;min-width:1.6em;padding:0 var(--space-1);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface-raised);color:var(--text);font:inherit;line-height:1.4;cursor:pointer}
+.graph-track-label-add:hover{border-color:var(--accent);color:var(--accent)}
 
 /* Mood strip */
 .mood-strip{width:min(740px,100%);max-height:min(180px,30dvh);padding:var(--space-2) var(--space-4)}

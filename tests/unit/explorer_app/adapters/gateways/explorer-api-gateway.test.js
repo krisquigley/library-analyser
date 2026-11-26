@@ -266,3 +266,21 @@ test('labels for the named tracks are asked for by ID and checked (#243)', async
   const wrong = gatewayAnswering(response({body: JSON.stringify({labels: [{}]}), headers: {'Content-Type': 'application/json'}}));
   await assert.rejects(wrong.api.labelTracks(['a']), /Invalid track labels: label 1 track_id must be text/);
 });
+
+test('a hand-built playlist downloads with a JSON POST of its tracks in order, and a refusal says why (#278)', async () => {
+  const {api, requests} = gatewayAnswering(response({body: '#EXTM3U\n/b.flac\n/a.flac\n', headers: {
+    'Content-Disposition': 'attachment; filename="hand-built-playlist.m3u"', 'Content-Type': 'audio/x-mpegurl; charset=utf-8'}}));
+  assert.deepEqual(await api.downloadHandBuiltPlaylist(['b', 'a']), {filename: 'hand-built-playlist.m3u',
+    contents: '#EXTM3U\n/b.flac\n/a.flac\n', contentType: 'audio/x-mpegurl; charset=utf-8'});
+  assert.deepEqual(requests, [['/api/playlists/hand-built', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: '{"track_ids":["b","a"]}'}]]);
+  const bare = gatewayAnswering(response({body: '#EXTM3U\n'}));
+  assert.deepEqual(await bare.api.downloadHandBuiltPlaylist(['a']),
+    {filename: 'hand-built-playlist.m3u', contents: '#EXTM3U\n', contentType: 'audio/x-mpegurl;charset=utf-8'});
+  for (const [answer, message] of [
+    [response({ok: false, body: '{"error": "Add at least one track to the playlist"}', headers: {'Content-Type': 'application/json'}}),
+      'Add at least one track to the playlist'],
+    [response({ok: false, body: ''}), 'M3U download failed']]) {
+    await assert.rejects(gatewayAnswering(answer).api.downloadHandBuiltPlaylist(['a']), {message});
+  }
+});
