@@ -1,4 +1,4 @@
-// Issue #243: the labels float above their tracks' nodes on the screen and never take pointer input.
+// Issue #243: the labels float above their tracks' nodes on the screen; only their buttons take pointer input (#276).
 import {test, beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {createTrackLabels} from '../../../../../music_explorer/frameworks/explorer/assets/app/frameworks/graph-scene/track-labels.js';
@@ -9,12 +9,17 @@ beforeEach(() => { installFakeDocument([]); });
 const viewport = () => Object.assign(fakeElement('div'), {clientWidth: 800, clientHeight: 600});
 const graph = {graph2ScreenCoords: (x, y) => ({x, y})};
 const nodes = [{id: 'a', x: 100, y: 200, z: 0}, {id: 'b', x: 900, y: 50, z: 0}];
+const labelText = label => label.children.find(part => part.className === 'graph-track-label-text').textContent;
+const playButton = label => label.children.find(part => part.className === 'graph-track-label-play');
+const shown = [{trackId: 'a', text: 'Alpha — Synthetic', selected: true}, {trackId: 'b', text: 'Beta — Synthetic', selected: false}];
+const idle = {text: '▶', verb: 'Play', pressed: false};
+const playingA = {activeTrackId: 'a', activeButton: {text: '❚❚', verb: 'Pause', pressed: true}, idleButton: idle};
 
 test('labels are text above their nodes, hidden off screen, and replaced by the next set', () => {
-  const labels = createTrackLabels();
+  const labels = createTrackLabels({onPlayRequested: () => {}});
   const host = viewport();
   labels.show(host, [{trackId: 'a', text: '<b>Alpha</b> — Synthetic', selected: true}, {trackId: 'b', text: 'Beta — Synthetic', selected: false}]);
-  assert.deepEqual(host.children.map(label => [label.className, label.textContent]),
+  assert.deepEqual(host.children.map(label => [label.className, labelText(label)]),
     [['graph-track-label selected', '<b>Alpha</b> — Synthetic'], ['graph-track-label', 'Beta — Synthetic']]);
   labels.place(graph, host, nodes);
   assert.equal(host.children[0].style.transform, 'translate(100px,200px) translate(-50%,calc(-100% - 10px))');
@@ -24,9 +29,34 @@ test('labels are text above their nodes, hidden off screen, and replaced by the 
 });
 
 test('a label whose track the graph no longer shows is hidden', () => {
-  const labels = createTrackLabels();
+  const labels = createTrackLabels({onPlayRequested: () => {}});
   const host = viewport();
   labels.show(host, [{trackId: 'gone', text: 'Gone', selected: false}]);
   labels.place(graph, host, nodes);
   assert.equal(host.children[0].style.display, 'none');
+});
+
+test('#276: every label has a play button that asks for its own track', () => {
+  const asked = [];
+  const labels = createTrackLabels({onPlayRequested: trackId => asked.push(trackId)});
+  const host = viewport();
+  labels.show(host, shown);
+  const buttons = host.children.map(playButton);
+  assert.deepEqual(buttons.map(button => [button.tagName, button.type, button.textContent, button.getAttribute('aria-label')]),
+    [['BUTTON', 'button', '▶', 'Play Alpha — Synthetic'], ['BUTTON', 'button', '▶', 'Play Beta — Synthetic']]);
+  buttons[1].onclick();
+  buttons[0].onclick();
+  assert.deepEqual(asked, ['b', 'a']);
+});
+
+test("#276: the playing track's button offers pause; labels shown later match the playback", () => {
+  const labels = createTrackLabels({onPlayRequested: () => {}});
+  const host = viewport();
+  labels.show(host, shown);
+  labels.showPlayback(playingA);
+  const looks = () => host.children.map(label => [playButton(label).textContent, playButton(label).getAttribute('aria-label'),
+    playButton(label).getAttribute('aria-pressed')]);
+  assert.deepEqual(looks(), [['❚❚', 'Pause Alpha — Synthetic', 'true'], ['▶', 'Play Beta — Synthetic', 'false']]);
+  labels.show(host, [...shown].reverse());
+  assert.deepEqual(looks(), [['▶', 'Play Beta — Synthetic', 'false'], ['❚❚', 'Pause Alpha — Synthetic', 'true']]);
 });
