@@ -118,7 +118,7 @@ const body = element('body');
 for (const [id, tag] of [['tracks', 'table'], ['track-search', 'input'], ['undo', 'button'], ['reset', 'button'], ['detail-write-tags', 'button'],
   ['controls', 'div'], ['playlist-controls', 'div'], ['detail', 'section'], ['graph-load-status', 'div'],
   ['loading-surface', 'div'], ['loading-status', 'div'], ['loading-error', 'div'], ['loading-retry', 'button'],
-  ['graph3d', 'div'], ['map', 'canvas'], ['mood-strip', 'canvas'], ['mood-strip-picker', 'input'], ['mood-strip-value', 'output'], ['tag-write', 'div'],
+  ['graph3d', 'div'], ['map', 'canvas'], ['hand-built-playlist', 'section'], ['mood-strip', 'canvas'], ['mood-strip-picker', 'input'], ['mood-strip-value', 'output'], ['tag-write', 'div'],
   ...['library', 'filters', 'playlist', 'tag-write'].flatMap(tool => [[`open-${tool}`, 'button'], [`${tool}-panel`, 'dialog'], [`close-${tool}`, 'button']])]) {
   const node = element(tag); node.id = id; body.append(node);
 }
@@ -240,10 +240,11 @@ const accepted = (id, {epoch = 1, history = []} = {}) => ({current_track_id: id,
 const detailBody = id => ({handle: id, metadata: {common: [['title', 'Track ' + id]], tags: []}, fields: {}});
 
 // --- The page, booted at ?diagnostics. ------------------------------------------------------------
-const storage = new Map();
-const context = vm.createContext({console, URL, URLSearchParams, Event: class { constructor(type) { this.type = type; } },
+const storage = new Map(), kept = new Map();
+const context = vm.createContext({console, URL, URLSearchParams, Blob, Event: class { constructor(type) { this.type = type; } },
   document, location: {search: '?diagnostics', href: 'http://127.0.0.1/?diagnostics'},
   sessionStorage: {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value))},
+  localStorage: {getItem: key => kept.get(key) ?? null, setItem: (key, value) => kept.set(key, String(value))},
   requestAnimationFrame: callback => { frames.push(callback); return frames.length; }, cancelAnimationFrame() {},
   setTimeout: (callback, delay = 0) => { const id = ++timerId; timers.set(id, {callback, at: clock + delay}); return id; },
   clearTimeout: id => timers.delete(id), performance: {now: () => clock},

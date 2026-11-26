@@ -7,6 +7,7 @@ import {tagWritePreviewFrom, tagWriteReportFrom} from './tag-write-dto.js';
 import {trackLabelsFrom} from './track-labels-dto.js';
 
 const DEFAULT_PLAYLIST_FILENAME = 'library-graph-playlist.m3u';
+const HAND_BUILT_PLAYLIST_FILENAME = 'hand-built-playlist.m3u';
 const DEFAULT_PLAYLIST_TYPE = 'audio/x-mpegurl;charset=utf-8';
 const MOOD_GRAPH_CONTRACT = 'v3';
 // The track list shows 100 rows a page: an owner decision (UI100).
@@ -17,14 +18,13 @@ export function fetchExplorerApi(fetchResource) {
   return Object.freeze({
     async downloadPlaylist(recipe) {
       const response = await fetchResource(playlistDownloadQuery(recipe));
-      const body = response.text ? await response.text() : '';
-      if (!response.ok) throw new Error(refusalMessage(response, body, 'M3U download failed'));
-      return {
-        filename: filenameOf(header(response, 'content-disposition')) || DEFAULT_PLAYLIST_FILENAME,
-        contents: body,
-        contentType: header(response, 'content-type') || DEFAULT_PLAYLIST_TYPE,
-        warning: header(response, 'X-Music-Explorer-Playlist-Warning') || '',
-      };
+      const file = await m3uFile(response, DEFAULT_PLAYLIST_FILENAME);
+      return {...file, warning: header(response, 'X-Music-Explorer-Playlist-Warning') || ''};
+    },
+    async downloadHandBuiltPlaylist(trackIds) {
+      const body = JSON.stringify({track_ids: trackIds});
+      return m3uFile(await fetchResource('/api/playlists/hand-built',
+        {method: 'POST', headers: {'Content-Type': 'application/json'}, body}), HAND_BUILT_PLAYLIST_FILENAME);
     },
     async previewPlaylist(recipe) {
       return playlistPreviewFrom(await answer(await fetchResource(playlistPreviewQuery(recipe)), 'Playlist preview failed'));
@@ -78,6 +78,13 @@ export function fetchExplorerApi(fetchResource) {
       return answer(await fetchResource('/api/state'), 'Library state request failed');
     },
   });
+}
+
+async function m3uFile(response, defaultFilename) {
+  const contents = response.text ? await response.text() : '';
+  if (!response.ok) throw new Error(refusalMessage(response, contents, 'M3U download failed'));
+  return {filename: filenameOf(header(response, 'content-disposition')) || defaultFilename, contents,
+    contentType: header(response, 'content-type') || DEFAULT_PLAYLIST_TYPE};
 }
 
 async function answer(response, fallback) {

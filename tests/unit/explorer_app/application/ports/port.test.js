@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {requirePort} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/port.js';
-import {EXPLORER_API, MOOD_GRAPHS, PLAYLIST_DOWNLOADS, PLAYLIST_PREVIEWS, SELECTIONS, TRACK_SEARCHES, TAG_WRITES, TRACK_LABELS} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/explorer-api.js';
+import {EXPLORER_API, HAND_BUILT_PLAYLIST_DOWNLOADS, MOOD_GRAPHS, PLAYLIST_DOWNLOADS, PLAYLIST_PREVIEWS, SELECTIONS, TRACK_SEARCHES, TAG_WRITES, TRACK_LABELS} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/explorer-api.js';
 import {EVENT_BUS} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/event-bus.js';
 import {PLAYLIST_DRAFT_SESSION} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/playlist-draft-session.js';
 import {PLAYLIST_FILE} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/playlist-file.js';
@@ -10,11 +10,14 @@ import {GRAPH_SESSION} from '../../../../../music_explorer/frameworks/explorer/a
 import {TRACK_SEARCH_SESSION} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/track-search-session.js';
 import {CLOCK, DELAYS, FRAMES} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/clock.js';
 import {GRAPH_RENDERER} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/graph-renderer.js';
+import {HAND_BUILT_PLAYLIST_STORE} from '../../../../../music_explorer/frameworks/explorer/assets/app/application/ports/hand-built-playlist-store.js';
 
 test('the ports name the operations their adapters provide', () => {
-  assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'previewPlaylist', 'listSavedPlaylistRecipes', 'loadSavedPlaylistRecipe', 'previewTagWrite', 'applyTagWrite', 'labelTracks', 'loadMoodGraph', 'searchTracks', 'chooseCurrentTrack', 'applyHistory',
+  assert.deepEqual(EXPLORER_API.operations, ['downloadPlaylist', 'previewPlaylist', 'listSavedPlaylistRecipes', 'loadSavedPlaylistRecipe', 'previewTagWrite', 'applyTagWrite', 'labelTracks', 'downloadHandBuiltPlaylist', 'loadMoodGraph', 'searchTracks', 'chooseCurrentTrack', 'applyHistory',
     'loadTrackDetail', 'loadLibraryState']);
   assert.deepEqual([TRACK_LABELS.name, TRACK_LABELS.operations], ['ExplorerApi', ['labelTracks']]);
+  assert.deepEqual([HAND_BUILT_PLAYLIST_DOWNLOADS.name, HAND_BUILT_PLAYLIST_DOWNLOADS.operations], ['ExplorerApi', ['downloadHandBuiltPlaylist']]);
+  assert.deepEqual([HAND_BUILT_PLAYLIST_STORE.name, HAND_BUILT_PLAYLIST_STORE.operations], ['HandBuiltPlaylistStore', ['load', 'save']]);
   assert.deepEqual(SELECTIONS.operations, ['chooseCurrentTrack', 'applyHistory', 'loadTrackDetail', 'loadLibraryState']);
   assert.deepEqual([TRACK_SEARCHES.name, TRACK_SEARCHES.operations], ['ExplorerApi', ['searchTracks']]);
   assert.deepEqual([PLAYLIST_DOWNLOADS.name, PLAYLIST_DOWNLOADS.operations], ['ExplorerApi', ['downloadPlaylist']]);
