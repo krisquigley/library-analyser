@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  trackOfPlaylist,
+  moveTrack, trackOfPlaylist,
   EMPTY_HAND_BUILT_PLAYLIST, HandBuiltPlaylistError, MOST_HAND_BUILT_TRACKS, addNeighbour, handBuiltPlaylistOf, removeTrack,
 } from '../../../../music_explorer/frameworks/explorer/assets/app/domain/hand-built-playlist.js';
 
@@ -53,4 +53,13 @@ test('a kept playlist is read only when it is a list of distinct track IDs withi
 test('#292: a track of the playlist can be chosen; any other is refused', () => {
   assert.equal(trackOfPlaylist(['a', 'b'], 'b'), 'b');
   assert.throws(() => trackOfPlaylist(['a', 'b'], 'c'), HandBuiltPlaylistError);
+});
+
+test('#293: a track moves one place earlier or later; past either end, by another step or out of the list it cannot', () => {
+  assert.deepEqual(moveTrack(['a', 'b', 'c'], 'c', -1), ['a', 'c', 'b']);
+  assert.deepEqual(moveTrack(['a', 'b', 'c'], 'a', 1), ['b', 'a', 'c']);
+  assert.equal(Object.isFrozen(moveTrack(['a', 'b'], 'a', 1)), true);
+  for (const [trackId, places] of [['a', -1], ['c', 1], ['b', 2], ['b', 0], ['z', 1]]) {
+    assert.throws(() => moveTrack(['a', 'b', 'c'], trackId, places), HandBuiltPlaylistError, `${trackId} ${places}`);
+  }
 });

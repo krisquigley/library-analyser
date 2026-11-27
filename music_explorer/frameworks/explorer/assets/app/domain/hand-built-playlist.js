@@ -25,6 +25,18 @@ export function trackOfPlaylist(playlist, trackId) {
   return trackId;
 }
 
+// #293: the listener reorders the playlist one place at a time, earlier (-1) or later (1).
+export function moveTrack(playlist, trackId, places) {
+  if (places !== -1 && places !== 1) throw new HandBuiltPlaylistError('A track moves one place earlier or later');
+  const from = playlist.indexOf(trackOfPlaylist(playlist, trackId));
+  const to = from + places;
+  if (to < 0) throw new HandBuiltPlaylistError('That track is already first');
+  if (to >= playlist.length) throw new HandBuiltPlaylistError('That track is already last');
+  const moved = [...playlist];
+  [moved[from], moved[to]] = [moved[to], moved[from]];
+  return Object.freeze(moved);
+}
+
 export function removeTrack(playlist, trackId) {
   return Object.freeze(playlist.filter(kept => kept !== trackId));
 }

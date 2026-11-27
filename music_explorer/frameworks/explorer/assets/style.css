@@ -277,14 +277,19 @@ tbody tr:hover{background:var(--surface-hover)}
 .hand-built-playlist-table{width:100%;border-collapse:collapse}
 .hand-built-playlist-table thead th{position:sticky;top:0;background:var(--surface-solid);text-align:left;color:var(--text-muted);font-weight:600}
 .hand-built-playlist-table th,.hand-built-playlist-table td{white-space:nowrap}
-.hand-built-playlist-table td:nth-child(3){white-space:normal;min-width:12rem}
+.hand-built-playlist-table td:nth-child(3){white-space:normal;min-width:9rem}
 .hand-built-playlist-table td.hand-built-playlist-remove-cell{width:2rem;text-align:center}
 .hand-built-playlist-table .track-play:disabled{opacity:.4;cursor:not-allowed}
 .hand-built-playlist-remove{padding:0 var(--space-1);border:0;background:none;color:var(--text-muted);font:inherit;cursor:pointer}
 .hand-built-playlist-remove:hover{color:var(--text)}
+/* #293: ↑ and ↓ move a track a place earlier or later. */
+.hand-built-playlist-table td.hand-built-playlist-move-cell{width:3.5rem;text-align:center}
+.hand-built-playlist-move{min-height:0;margin:0;padding:0 var(--space-1);border:0;background:none;color:var(--text-muted);font:600 var(--text-s)/1 var(--font);cursor:pointer}
+.hand-built-playlist-move:hover:not(:disabled){background:none;color:var(--text)}
+.hand-built-playlist-move:disabled{opacity:.3;cursor:default}
 /* #292: a track's name selects it in the graph. */
-.hand-built-playlist-choose{padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
-.hand-built-playlist-choose:hover:not(:disabled){color:var(--accent-hover);text-decoration:underline}
+.hand-built-playlist-choose{display:inline;min-height:0;margin:0;vertical-align:top;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.hand-built-playlist-choose:hover:not(:disabled){background:none;color:var(--accent-hover);text-decoration:underline}
 .hand-built-playlist-choose:disabled{color:var(--text-muted);cursor:default}
 #hand-built-playlist-status{order:2;flex:1 1 100%;margin:0;font-size:var(--text-xs)}
 #hand-built-playlist-status:empty{display:none}

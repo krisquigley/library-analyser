@@ -66,7 +66,7 @@ assert.deepEqual([part('a', 'graph-track-label-add').textContent, part('c', 'gra
 part('c', 'graph-track-label-add').click(); await settle(4); await untilCameraSettles();
 assert.equal(seam.snapshot().currentTrackId, 'c');
 assert.equal(kept.get(KEY), '["a","b","c"]');
-stripButton(1, 8).click(); await settle(2);
+stripButton(1, 9).click(); await settle(2);
 assert.deepEqual(stripRows(), ['1 | Public synthetic – Track a | 3:20 | 120.0 | C major | 4.5 | Start',
   '2 | Public synthetic – Track c | 3:20 | 120.0 | C major | 4.5 | Key compatible, 0.0 BPM']);
 const player = byId('playlist-track-player');
@@ -117,6 +117,25 @@ assert.equal(seam.snapshot().currentTrackId, 'c', 'the track chosen in the strip
 assert.equal(request('/api/current').body.track_id, 'c');
 assert.ok(byId('detail').innerText.includes('Track c'), 'and its detail is shown');
 assert.equal(kept.get(KEY), '["c","a"]', 'the playlist is unchanged');
+""")
+
+    def test_293_moving_a_track_reorders_the_playlist_kept_previewed_and_downloaded(self):
+        self.run_scenario(r"""
+kept.set(KEY, '["a","b","c"]');
+boot();
+await settle(6);
+const move = (place, arrow) => stripLines()[place].children[8].children.find(button => button.textContent === arrow);
+assert.deepEqual([move(0, '↑').disabled, move(2, '↓').disabled], [true, true], 'nothing moves past either end');
+move(2, '↑').click(); await settle(2);
+assert.equal(kept.get(KEY), '["a","c","b"]');
+assert.deepEqual(requests.filter(r => r.path === '/api/playlists/hand-built/preview').at(-1).body, {track_ids: ['a', 'c', 'b']});
+assert.deepEqual(stripRows().map(row => row.split(' | ').slice(0, 2).join(' ')),
+  ['1 Public synthetic – Track a', '2 Public synthetic – Track c', '3 Public synthetic – Track b']);
+move(0, '↓').click(); await settle(2);
+assert.equal(kept.get(KEY), '["c","a","b"]');
+routes['/api/playlists/hand-built'] = r => r.respond('#EXTM3U\n');
+await press('hand-built-playlist-download'); await settle(2);
+assert.deepEqual(request('/api/playlists/hand-built').body, {track_ids: ['c', 'a', 'b']});
 """)
 
 

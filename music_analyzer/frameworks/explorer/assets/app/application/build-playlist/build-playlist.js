@@ -1,11 +1,11 @@
 // Building a playlist by hand from the graph's labels (#278). + adds a neighbour and chooses it as the next selection,
-// and a track of the playlist can be chosen again from its table (#292);
+// a track of the playlist can be chosen again from its table (#292) or moved a place earlier or later (#293);
 // every change is kept in this browser and published with the last preview, then previewed (#287) and published again
 // with its own. An answer overtaken by a later change is dropped. A notice says what went wrong last, until the next
 // change. The playlist downloads as an M3U (#277).
 
 import {
-  EMPTY_HAND_BUILT_PLAYLIST, HandBuiltPlaylistError, addNeighbour, handBuiltPlaylistOf, removeTrack, trackOfPlaylist,
+  EMPTY_HAND_BUILT_PLAYLIST, HandBuiltPlaylistError, addNeighbour, handBuiltPlaylistOf, moveTrack, removeTrack, trackOfPlaylist,
 } from '../../domain/hand-built-playlist.js';
 import {nextPlaylistDownloadState} from '../../domain/playlist-download.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
@@ -101,6 +101,18 @@ export function createHandBuiltPlaylist({store, explorerApi, playlistFile, event
     await previewChange();
   }
 
+  async function move(trackId, places) {
+    let edited;
+    try {
+      edited = moveTrack(trackIds, trackId, places);
+    } catch (error) {
+      if (!(error instanceof HandBuiltPlaylistError)) throw error;
+      notice = error.message;
+      return publishChange();
+    }
+    await change(edited);
+  }
+
   async function download() {
     downloadState = nextPlaylistDownloadState(downloadState, 'start');
     eventBus.publish(handBuiltPlaylistDownloadStarted());
@@ -115,7 +127,7 @@ export function createHandBuiltPlaylist({store, explorerApi, playlistFile, event
   }
 
   return Object.freeze({
-    restore, add, download,
+    restore, add, move, download,
     choose: trackId => eventBus.publish(handBuiltPlaylistTrackChosen(trackOfPlaylist(trackIds, trackId))),
     remove: trackId => change(removeTrack(trackIds, trackId)),
     clear: () => change(EMPTY_HAND_BUILT_PLAYLIST),

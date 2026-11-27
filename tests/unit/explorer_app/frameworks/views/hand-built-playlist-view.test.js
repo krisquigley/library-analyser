@@ -10,7 +10,8 @@ beforeEach(() => { roots = installFakeDocument(['hand-built-playlist']); });
 
 const row = (trackId, place, track, fields = {}) => ({trackId, place, track, length: '3:20', bpm: '120.0', key: 'C major',
   energy: '4.3', transition: place === '1' ? 'Start' : 'Key compatible, +4.0 BPM', playable: true,
-  removeLabel: `Remove ${track} from your playlist`, ...fields});
+  removeLabel: `Remove ${track} from your playlist`, earlierLabel: `Move ${track} earlier`, laterLabel: `Move ${track} later`,
+  first: place === '1', last: place === '2', ...fields});
 const VIEW_MODEL = {hidden: false, heading: 'Your playlist · 2 tracks · 6:40', downloadDisabled: false, clearDisabled: false,
   rows: [row('a', '1', 'Synthetic – Alpha'),
     row('gone', '2', 'No longer playable from the library', {playable: false, removeLabel: 'Remove track 2 from your playlist'})],
@@ -21,7 +22,8 @@ function watching() {
   const heard = [];
   const view = handBuiltPlaylistView({onRemoveRequested: trackId => heard.push(['remove', trackId]),
     onClearRequested: () => heard.push(['clear']), onDownloadRequested: () => heard.push(['download']),
-    onPlayRequested: trackId => heard.push(['play', trackId]), onChooseRequested: trackId => heard.push(['choose', trackId])});
+    onPlayRequested: trackId => heard.push(['play', trackId]), onChooseRequested: trackId => heard.push(['choose', trackId]),
+    onMoveRequested: (trackId, places) => heard.push(['move', trackId, places])});
   return {view, heard, strip: roots['hand-built-playlist']};
 }
 
@@ -36,16 +38,16 @@ test('the strip is a table of the tracks in order, like the playlist preview, ea
   const table = byTag(strip, 'table')[0];
   assert.equal(table.className, 'playlist-preview-table hand-built-playlist-table');
   assert.deepEqual(byTag(table, 'th').map(heading => heading.textContent),
-    ['Play', '#', 'Track', 'Length', 'BPM', 'Key', 'Energy', 'Transition', 'Remove']);
+    ['Play', '#', 'Track', 'Length', 'BPM', 'Key', 'Energy', 'Transition', 'Move', 'Remove']);
   const lines = byId(strip, 'hand-built-playlist-tracks').children;
   assert.deepEqual(lines.map(line => cells(line).slice(1, 8).map(cell => cell.textContent)), [
     ['1', 'Synthetic – Alpha', '3:20', '120.0', 'C major', '4.3', 'Start'],
     ['2', 'No longer playable from the library', '3:20', '120.0', 'C major', '4.3', 'Key compatible, +4.0 BPM']]);
-  const [play, remove] = [cells(lines[0])[0], cells(lines[0])[8]];
+  const [play, remove] = [cells(lines[0])[0], cells(lines[0])[9]];
   assert.deepEqual([play.textContent, play.getAttribute('aria-label'), play.disabled], ['▶', 'Play Synthetic – Alpha', false]);
   assert.equal(cells(lines[1])[0].disabled, true, 'a track no longer playable cannot be played');
   assert.equal(remove.getAttribute('aria-label'), 'Remove Synthetic – Alpha from your playlist');
-  play.onclick(); cells(lines[1])[8].onclick();
+  play.onclick(); cells(lines[1])[9].onclick();
   assert.deepEqual(heard, [['play', 'a'], ['remove', 'gone']]);
 });
 
@@ -102,4 +104,18 @@ test("#292: a track's name is a button that selects it in the graph; one no long
   assert.equal(gone.disabled, true);
   alpha.onclick();
   assert.deepEqual(heard, [['choose', 'a']]);
+});
+
+test('#293: each track has buttons to move it a place earlier or later, disabled where it cannot go', () => {
+  const {view, heard, strip} = watching();
+  view.show(VIEW_MODEL);
+  const moves = byId(strip, 'hand-built-playlist-tracks').children.map(line => line.children[8].children);
+  assert.deepEqual(moves.map(buttons => buttons.map(button => [button.tagName, button.className, button.textContent,
+    button.getAttribute('aria-label'), button.disabled])), [
+    [['BUTTON', 'hand-built-playlist-move', '↑', 'Move Synthetic – Alpha earlier', true],
+      ['BUTTON', 'hand-built-playlist-move', '↓', 'Move Synthetic – Alpha later', false]],
+    [['BUTTON', 'hand-built-playlist-move', '↑', 'Move No longer playable from the library earlier', false],
+      ['BUTTON', 'hand-built-playlist-move', '↓', 'Move No longer playable from the library later', true]]]);
+  moves[0][1].onclick(); moves[1][0].onclick();
+  assert.deepEqual(heard, [['move', 'a', 1], ['move', 'gone', -1]]);
 });
