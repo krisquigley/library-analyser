@@ -81,6 +81,7 @@ def to_indexed_mood_axis_graph_http(graph: MoodAxisGraph) -> dict[str, Any]:
     reason_text = _Table()
     explanation_table = _Table()
     provenance_table = _Table(_freeze_mapping)
+    key_table = _Table()
 
     links: list[list[Any]] = []
     for edge in graph.edges:
@@ -115,6 +116,7 @@ def to_indexed_mood_axis_graph_http(graph: MoodAxisGraph) -> dict[str, Any]:
             [[genre_labels.index(label), _finite(score, 'genre score')] for label, score in node.genres],
             [reason_text.index(reason) for reason in node.reasons],
             _finite(node.genre_threshold, 'genre threshold'),
+            key_table.index(node.key) if node.key is not None else None,
         ])
 
     unpositioned = [
@@ -133,6 +135,7 @@ def to_indexed_mood_axis_graph_http(graph: MoodAxisGraph) -> dict[str, Any]:
         'provenance_table': provenance_table.values,
         'explanation_table': explanation_table.values,
         'link_defaults': _link_defaults(explanation_table, provenance_table),
+        'key_table': key_table.values,
         'nodes': nodes,
         'unpositioned': unpositioned,
         'links': links,

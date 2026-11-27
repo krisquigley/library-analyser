@@ -129,8 +129,8 @@ class ExplorerInteractionMeasurementContractTests(unittest.TestCase):
             'axis': [{'key': k, 'label': k, 'scale': 'synthetic'} for k in 'xyz'],
             'metadata': {}, 'selected_mood': None, 'available_moods': [],
             'genre_labels': [], 'reason_text': [], 'provenance_table': [],
-            'explanation_table': [], 'link_defaults': {},
-            'nodes': [['synthetic-a', '楽しい', 0, 0, 0, 0, 0, 0, None, None, [], [], 0]],
+            'explanation_table': [], 'link_defaults': {}, 'key_table': [],
+            'nodes': [['synthetic-a', '楽しい', 0, 0, 0, 0, 0, 0, None, None, [], [], 0, None]],
             'links': [], 'unpositioned': [],
         }
         return json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')

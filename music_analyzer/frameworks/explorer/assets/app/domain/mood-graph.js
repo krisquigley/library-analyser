@@ -45,7 +45,7 @@ function moodGraphNode(track, colorRanges, genreThresholdApplies) {
     id: track.track_id, label, name: label,
     fx: at(track.x), fy: at(track.y), fz: at(track.z), x: at(track.x), y: at(track.y), z: at(track.z),
     axis: {x: track.x, y: track.y, z: track.z},
-    moodScore: track.mood_score || null, bpm: track.bpm, genres: track.genres || [],
+    moodScore: track.mood_score || null, bpm: track.bpm, key: track.key || null, genres: track.genres || [],
     genreThreshold: track.genre_threshold == null ? DEFAULT_GENRE_THRESHOLD : track.genre_threshold,
     genreThresholdApplies, reasons: track.reasons || [],
   };

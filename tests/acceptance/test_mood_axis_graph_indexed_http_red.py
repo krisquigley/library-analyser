@@ -64,7 +64,7 @@ class IndexedMoodAxisGraphHttpContractRedTests(unittest.TestCase):
             self.assertEqual(compact['dto_version'], 'mood-axis-graph-compact-v1')
             self.assertEqual(indexed['dto_version'], 'mood-axis-graph-indexed-v1')
             self.assertEqual(indexed['selected_mood'], 'relaxing')
-            self.assertEqual(set(indexed), {'dto_version', 'selected_mood', 'available_moods', 'metadata', 'axis', 'genre_labels', 'reason_text', 'provenance_table', 'explanation_table', 'link_defaults', 'nodes', 'unpositioned', 'links'})
+            self.assertEqual(set(indexed), {'dto_version', 'selected_mood', 'available_moods', 'metadata', 'axis', 'genre_labels', 'reason_text', 'provenance_table', 'explanation_table', 'link_defaults', 'key_table', 'nodes', 'unpositioned', 'links'})
             self.assertNotIn('positioned', indexed)
             self.assertNotIn('edges', indexed)
             self.assertEqual({node[0] for node in indexed['nodes']}, set(ids[:2]))

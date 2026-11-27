@@ -43,12 +43,16 @@ test('link opacity follows the clamped relatedness score', () => {
   assert.match(graphRelatednessLegend(), /higher-score links are more opaque/);
 });
 
-test('hover labels escape text and give each axis its raw value and scale', () => {
+test('#291: the hover card gives the track, its BPM and key, and its mood values, escaped', () => {
   const hovered = {label: '<b>Song</b>', axis: {x: axis(0.25, 'v'), y: axis(0.5, 'a'), z: {raw: 120, scale: 'bpm', label: 'BPM'}},
-    moodScore: {label: 'calm', raw: 0.6}};
-  assert.equal(nodeLabel(hovered),
-    '&lt;b&gt;Song&lt;/b&gt;<br>valence 0.3 (v)<br>arousal 0.5 (a)<br>BPM 120.0 (bpm)<br>calm 0.6 / 1');
-  assert.match(nodeLabel({...hovered, moodScore: null}), /Selected mood score unavailable$/);
+    moodScore: {label: 'calm', raw: 0.6}, key: 'A minor'};
+  assert.equal(nodeLabel(hovered), '<div class="node-hover"><strong class="node-hover-title">&lt;b&gt;Song&lt;/b&gt;</strong>'
+    + '<span class="node-hover-facts"><span>120.0 BPM</span><span>Key A minor</span></span>'
+    + '<span class="node-hover-moods"><span>Valence <b>0.3</b></span><span>Arousal <b>0.5</b></span><span>calm <b>0.6</b></span></span></div>');
+  const unknown = nodeLabel({...hovered, moodScore: null, key: '<i>D</i>'});
+  assert.match(unknown, /<span>Key &lt;i&gt;D&lt;\/i&gt;<\/span>/, 'a key the listener typed is escaped');
+  assert.match(unknown, /<span>Arousal <b>0.5<\/b><\/span><\/span><\/div>$/, 'no mood score, no mood value');
+  assert.match(nodeLabel({...hovered, key: null}), /<span>Key unknown<\/span>/);
   assert.equal(linkLabel({score: 0.5, explanation: 'tempo & key'}), 'score 0.5; tempo &amp; key; groups 0');
 });
 

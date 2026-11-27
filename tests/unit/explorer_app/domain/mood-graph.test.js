@@ -111,3 +111,8 @@ test("the library's arousal range is the lowest and highest the graph places, as
   assert.deepEqual(libraryArousalRange({colorRanges: {arousal: [3.12, 6.84]}}), {low: 3.12, high: 6.84});
   assert.equal(libraryArousalRange({colorRanges: {arousal: null}}), null);
 });
+
+test("#291: a node carries its track's key, or none", () => {
+  const keyed = {...GRAPH, positioned: [{...GRAPH.positioned[0], key: 'A minor'}, GRAPH.positioned[1]]};
+  assert.deepEqual(moodGraphModel(keyed).nodes.map(node => node.key), ['A minor', null]);
+});

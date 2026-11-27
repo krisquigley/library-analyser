@@ -35,7 +35,7 @@ function indexedTableValue(table,index,label){
 function normalizeIndexedMoodAxisGraphDto(graph){
   const axisByKey=Object.fromEntries((graph.axis||[]).map(a=>[a.key,a]));
   const axis=(key,raw,normalized)=>({label:(axisByKey[key]&&axisByKey[key].label)||key,raw,normalized,scale:axisByKey[key]&&axisByKey[key].scale});
-  const genres=graph.genre_labels||[], reasons=graph.reason_text||[], explanations=graph.explanation_table||[], provenance=graph.provenance_table||[];
+  const genres=graph.genre_labels||[], keys=graph.key_table||[], reasons=graph.reason_text||[], explanations=graph.explanation_table||[], provenance=graph.provenance_table||[];
   const normalized={selected_mood:graph.selected_mood||'',available_moods:graph.available_moods||[],metadata:graph.metadata||{},unpositioned:[],positioned:[],edges:[]};
   normalized.positioned=(graph.nodes||[]).map((row,index)=>{
     if(!Array.isArray(row)||row.length<12) throw new Error(`Invalid indexed graph node row at ${index}`);
@@ -47,6 +47,7 @@ function normalizeIndexedMoodAxisGraphDto(graph){
     const moodNormalized=row[9];
     const node={track_id:row[0],display_label:row[1],x:axis('x',row[2],row[3]),y:axis('y',row[4],row[5]),z:axis('z',row[6],row[7]),mood_score:moodNormalized==null?null:{label:graph.selected_mood||'',raw:moodRaw,normalized:moodNormalized,scale:'sigmoid_mean_score_0_1'},bpm,genres:genreRows.map(([i,score])=>[indexedTableValue(genres,i,'genre'),score]),reasons:reasonRows.map(i=>indexedTableValue(reasons,i,'reason'))};
     if(row[12]!=null) node.genre_threshold=row[12];
+    node.key=row[13]==null?null:indexedTableValue(keys,row[13],'key');
     return node;
   });
   normalized.unpositioned=(graph.unpositioned||[]).map((row,index)=>{

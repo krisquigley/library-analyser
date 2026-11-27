@@ -90,6 +90,7 @@ def literal_graph(selected):
             'mood_score': None if selected == '00-outside' or overridden else {
                 'label': 'dream-pop', 'raw': 0.625, 'normalized': 0.625,
                 'scale': 'sigmoid-score-[0,1]', 'provenance': MOOD_PROVENANCE},
+            'key': None,
         }
     return {
         'metadata': {

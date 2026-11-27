@@ -366,6 +366,7 @@ def _axis_node(record, detail, selected_mood):
         detail.reasons,
         _genre_threshold(record),
         mood_score,
+        _track_key(record),
     ), ()
 
 
@@ -453,6 +454,17 @@ def _bpm(record):
         if key == 'bpm' and _finite_number(value) and float(value) > 0:
             return float(value)
     return None
+
+
+def _track_key(record):
+    """The track's key (#291): the listener's override, else the analysed tonic and scale."""
+    override = dict(record.overrides).get('key')
+    if override is not None:
+        return override
+    stage = _stage(record, 'key')
+    values = dict(stage.values) if stage is not None else {}
+    tonic, scale = values.get('key'), values.get('scale')
+    return f'{tonic} {scale}' if isinstance(tonic, str) and tonic and isinstance(scale, str) and scale else None
 
 
 def _finite_number(value):

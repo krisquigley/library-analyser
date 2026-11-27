@@ -315,9 +315,10 @@ class WarmGraphReadSafetyControls(unittest.TestCase):
             # Public synthetic golden independently characterized at 0421f946;
             # protects against simultaneous reader/mapper drift, not just parity.
             # Re-characterized for schema v11 (#139) and v12 (#223): only the body's schema_version changed.
-            self.assertEqual(len(expected_body), 1647)
+            # Re-characterized for #291: only the empty key_table and each node's null key index were added.
+            self.assertEqual(len(expected_body), 1676)
             self.assertEqual(hashlib.sha256(expected_body).hexdigest(),
-                             'e8869875b0d8c96a9821c83403090dcb1bcdaefa243c5a5b8e9a84e10c07ae98')
+                             'd17060f95a41d49aea47c9a68e698ac88f23783d515c68fbd26bc4f0188ca946')
             before = path.read_bytes()
             for module, builder in MIRRORS:
                 with self.subTest(reader=module.__name__):
