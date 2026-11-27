@@ -201,19 +201,18 @@ assert.deepEqual(heard.filter(type => type.startsWith('tool-panel')), ['tool-pan
   'tool-panel-closed', 'tool-panel-opened', 'tool-panel-closed', 'tool-panel-opened', 'tool-panel-closed', 'tool-panel-closed']);
 """)
 
-    def test_290_the_header_mood_button_hides_and_shows_the_mood_strip_which_is_drawn_again(self):
+    def test_290_300_the_mood_strip_starts_hidden_and_the_header_mood_button_shows_it_drawn(self):
         self.run_scenario(r"""
 await settle(6);
-assert.deepEqual([byId('mood-panel').hidden, byId('open-mood').getAttribute('aria-expanded')], [false, 'true'],
-  'the mood strip starts shown');
-assert.ok(byId('mood-strip-value').textContent, 'and drawn');
-await press('open-mood');
-assert.deepEqual([byId('mood-panel').hidden, byId('open-mood').getAttribute('aria-expanded')], [true, 'false']);
-assert.equal(byId('library-panel').open, true, 'the Library stays open');
+assert.deepEqual([byId('mood-panel').hidden, byId('open-mood').getAttribute('aria-expanded')], [true, 'false'],
+  '#300: the mood strip starts hidden');
 byId('mood-strip-value').textContent = '';
 await press('open-mood');
 assert.deepEqual([byId('mood-panel').hidden, byId('open-mood').getAttribute('aria-expanded')], [false, 'true']);
-assert.ok(byId('mood-strip-value').textContent, 'it is drawn again when it comes back');
+assert.ok(byId('mood-strip-value').textContent, 'it is drawn when it is shown');
+assert.equal(byId('library-panel').open, true, 'the Library stays open');
+await press('open-mood');
+assert.deepEqual([byId('mood-panel').hidden, byId('open-mood').getAttribute('aria-expanded')], [true, 'false']);
 """)
 
     def test_filters_take_the_drawer_and_the_playlist_generator_is_a_series_of_steps(self):
