@@ -163,3 +163,13 @@ test('the playlist downloads as an M3U file, and a refusal is published with its
     message: 'Track 1 of the playlist is no longer playable from the library; remove it and try again'});
   assert.equal(playlist.downloadState(), 'failed');
 });
+
+test('#292: choosing a track in the playlist selects it in the graph; a track not in it is refused', async () => {
+  const {playlist, published, saved, asked} = harness({kept: ['a', 'b']});
+  await playlist.restore();
+  published.length = 0; saved.length = 0; asked.length = 0;
+  playlist.choose('b');
+  assert.deepEqual(published, [{type: 'hand-built-playlist-track-chosen', trackId: 'b'}]);
+  assert.throws(() => playlist.choose('elsewhere'), /not in your playlist/);
+  assert.deepEqual([published.length, saved, asked], [1, [], []], 'nothing else is published, kept or asked');
+});

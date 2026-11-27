@@ -1,10 +1,11 @@
-// Building a playlist by hand from the graph's labels (#278). + adds a neighbour and chooses it as the next selection;
+// Building a playlist by hand from the graph's labels (#278). + adds a neighbour and chooses it as the next selection,
+// and a track of the playlist can be chosen again from its table (#292);
 // every change is kept in this browser and published with the last preview, then previewed (#287) and published again
 // with its own. An answer overtaken by a later change is dropped. A notice says what went wrong last, until the next
 // change. The playlist downloads as an M3U (#277).
 
 import {
-  EMPTY_HAND_BUILT_PLAYLIST, HandBuiltPlaylistError, addNeighbour, handBuiltPlaylistOf, removeTrack,
+  EMPTY_HAND_BUILT_PLAYLIST, HandBuiltPlaylistError, addNeighbour, handBuiltPlaylistOf, removeTrack, trackOfPlaylist,
 } from '../../domain/hand-built-playlist.js';
 import {nextPlaylistDownloadState} from '../../domain/playlist-download.js';
 import {EVENT_BUS} from '../ports/event-bus.js';
@@ -115,6 +116,7 @@ export function createHandBuiltPlaylist({store, explorerApi, playlistFile, event
 
   return Object.freeze({
     restore, add, download,
+    choose: trackId => eventBus.publish(handBuiltPlaylistTrackChosen(trackOfPlaylist(trackIds, trackId))),
     remove: trackId => change(removeTrack(trackIds, trackId)),
     clear: () => change(EMPTY_HAND_BUILT_PLAYLIST),
     trackIds: () => trackIds,

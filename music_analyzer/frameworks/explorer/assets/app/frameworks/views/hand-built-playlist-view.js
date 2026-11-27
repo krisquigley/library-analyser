@@ -1,5 +1,6 @@
 // The strip over the graph that lists the hand-built playlist (#278), as a table like the playlist preview's (#287):
-// each track with ▶ to play it and a button to remove it, then Clear and Download M3U. It renders view models and
+// each track with ▶ to play it, its name to select it in the graph (#292) and a button to remove it, then Clear and
+// Download M3U. It renders view models and
 // reports the listener's input; it keeps only the elements it built, to update them in place, and the playback last
 // shown so new rows' buttons match it.
 
@@ -9,7 +10,7 @@ const STRIP_COLUMNS = Object.freeze([
   ['place', '#'], ['track', 'Track'], ['length', 'Length'], ['bpm', 'BPM'], ['key', 'Key'], ['energy', 'Energy'],
   ['transition', 'Transition']]);
 
-export function handBuiltPlaylistView({onRemoveRequested, onClearRequested, onDownloadRequested, onPlayRequested}) {
+export function handBuiltPlaylistView({onRemoveRequested, onClearRequested, onDownloadRequested, onPlayRequested, onChooseRequested}) {
   let built = null;
   let playback = null;
 
@@ -24,7 +25,7 @@ export function handBuiltPlaylistView({onRemoveRequested, onClearRequested, onDo
     if (!parts) return;
     parts.host.hidden = viewModel.hidden;
     parts.heading.textContent = viewModel.heading;
-    parts.tracks.replaceChildren(...viewModel.rows.map(row => stripTrackRow(row, {onRemoveRequested, onPlayRequested})));
+    parts.tracks.replaceChildren(...viewModel.rows.map(row => stripTrackRow(row, {onRemoveRequested, onPlayRequested, onChooseRequested})));
     showStripPlayback(parts.tracks, playback);
     parts.clear.disabled = viewModel.clearDisabled;
     parts.download.disabled = viewModel.downloadDisabled;
@@ -68,16 +69,25 @@ function buildStrip(host, {onClearRequested, onDownloadRequested}) {
   return {host, heading, tracks, clear, download, status};
 }
 
-function stripTrackRow(row, {onRemoveRequested, onPlayRequested}) {
+function stripTrackRow(row, {onRemoveRequested, onPlayRequested, onChooseRequested}) {
   const play = trackPlayButton({trackId: row.trackId, trackName: row.track}, onPlayRequested);
   play.disabled = !row.playable;
   const remove = stripElement('button', {type: 'button', className: 'hand-built-playlist-remove', textContent: '×'});
   remove.setAttribute('aria-label', row.removeLabel);
   remove.onclick = () => onRemoveRequested(row.trackId);
   const line = stripElement('tr', {});
-  line.append(stripCell(play, 'track-play-cell'), ...STRIP_COLUMNS.map(([field]) => stripElement('td', {textContent: row[field]})),
-    stripCell(remove, 'hand-built-playlist-remove-cell'));
+  line.append(stripCell(play, 'track-play-cell'), ...STRIP_COLUMNS.map(([field]) => (field === 'track'
+    ? stripCell(chooseButton(row, onChooseRequested), 'hand-built-playlist-track-cell')
+    : stripElement('td', {textContent: row[field]}))), stripCell(remove, 'hand-built-playlist-remove-cell'));
   return line;
+}
+
+function chooseButton(row, onChooseRequested) {
+  const choose = stripElement('button', {type: 'button', className: 'hand-built-playlist-choose', textContent: row.track,
+    disabled: !row.playable});
+  choose.setAttribute('aria-label', `Select ${row.track} in the graph`);
+  choose.onclick = () => onChooseRequested(row.trackId);
+  return choose;
 }
 
 function stripCell(content, className) {
