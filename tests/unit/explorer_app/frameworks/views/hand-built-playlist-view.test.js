@@ -21,7 +21,7 @@ function watching() {
   const heard = [];
   const view = handBuiltPlaylistView({onRemoveRequested: trackId => heard.push(['remove', trackId]),
     onClearRequested: () => heard.push(['clear']), onDownloadRequested: () => heard.push(['download']),
-    onPlayRequested: trackId => heard.push(['play', trackId])});
+    onPlayRequested: trackId => heard.push(['play', trackId]), onChooseRequested: trackId => heard.push(['choose', trackId])});
   return {view, heard, strip: roots['hand-built-playlist']};
 }
 
@@ -91,4 +91,15 @@ test('a page without the strip shows nothing and does not fail', () => {
   view.show(VIEW_MODEL);
   view.showDownload({text: 'M3U downloaded', urgent: false});
   view.showPlayback({activeTrackId: null, activeButton: idle, idleButton: idle});
+});
+
+test("#292: a track's name is a button that selects it in the graph; one no longer playable cannot be chosen", () => {
+  const {view, heard, strip} = watching();
+  view.show(VIEW_MODEL);
+  const [alpha, gone] = byId(strip, 'hand-built-playlist-tracks').children.map(line => cells(line)[2]);
+  assert.deepEqual([alpha.tagName, alpha.type, alpha.className, alpha.textContent, alpha.getAttribute('aria-label'), alpha.disabled],
+    ['BUTTON', 'button', 'hand-built-playlist-choose', 'Synthetic – Alpha', 'Select Synthetic – Alpha in the graph', false]);
+  assert.equal(gone.disabled, true);
+  alpha.onclick();
+  assert.deepEqual(heard, [['choose', 'a']]);
 });

@@ -104,7 +104,7 @@ const trackLabels=createTrackLabels({onPlayRequested:trackId=>trackPlayback.togg
 // #278: the playlist built by hand from the labels' + buttons, kept in this browser and shown in the strip over the graph.
 const handBuiltEvents=createInMemoryEventBus();
 const handBuiltPlaylist=createHandBuiltPlaylist({store:browserHandBuiltPlaylistStore(browserLocalStorage()),explorerApi,playlistFile:browserPlaylistFile(),eventBus:handBuiltEvents});
-const handBuiltStrip=handBuiltPlaylistView({onRemoveRequested:trackId=>handBuiltPlaylist.remove(trackId).catch(()=>{}),onClearRequested:()=>handBuiltPlaylist.clear().catch(()=>{}),onDownloadRequested:()=>handBuiltPlaylist.download(),onPlayRequested:trackId=>trackPlayback.toggle(trackId)});
+const handBuiltStrip=handBuiltPlaylistView({onRemoveRequested:trackId=>handBuiltPlaylist.remove(trackId).catch(()=>{}),onClearRequested:()=>handBuiltPlaylist.clear().catch(()=>{}),onDownloadRequested:()=>handBuiltPlaylist.download(),onPlayRequested:trackId=>trackPlayback.toggle(trackId),onChooseRequested:trackId=>handBuiltPlaylist.choose(trackId)});
 handBuiltEvents.subscribe('hand-built-playlist-changed',event=>{handBuiltStrip.show(handBuiltPlaylistViewModel(event)); trackLabels.showPlaylist(event.trackIds);});
 handBuiltEvents.subscribe('hand-built-playlist-track-chosen',event=>selectGraphNode({id:event.trackId}));
 for(const type of ['hand-built-playlist-download-started','hand-built-playlist-downloaded','hand-built-playlist-download-failed']) handBuiltEvents.subscribe(type,event=>handBuiltStrip.showDownload(presentHandBuiltPlaylistDownload(event)));

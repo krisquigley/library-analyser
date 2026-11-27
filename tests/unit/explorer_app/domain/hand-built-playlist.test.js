@@ -2,6 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  trackOfPlaylist,
   EMPTY_HAND_BUILT_PLAYLIST, HandBuiltPlaylistError, MOST_HAND_BUILT_TRACKS, addNeighbour, handBuiltPlaylistOf, removeTrack,
 } from '../../../../music_explorer/frameworks/explorer/assets/app/domain/hand-built-playlist.js';
 
@@ -47,4 +48,9 @@ test('a kept playlist is read only when it is a list of distinct track IDs withi
   for (const kept of ['a', {trackIds: []}, ['a', 'a'], ['a', ''], ['a', 7], ['x'.repeat(257)], tooMany]) {
     assert.throws(() => handBuiltPlaylistOf(kept), new HandBuiltPlaylistError('The playlist kept in this browser could not be read'));
   }
+});
+
+test('#292: a track of the playlist can be chosen; any other is refused', () => {
+  assert.equal(trackOfPlaylist(['a', 'b'], 'b'), 'b');
+  assert.throws(() => trackOfPlaylist(['a', 'b'], 'c'), HandBuiltPlaylistError);
 });

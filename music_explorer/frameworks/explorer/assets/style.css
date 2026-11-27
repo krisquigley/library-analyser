@@ -282,6 +282,10 @@ tbody tr:hover{background:var(--surface-hover)}
 .hand-built-playlist-table .track-play:disabled{opacity:.4;cursor:not-allowed}
 .hand-built-playlist-remove{padding:0 var(--space-1);border:0;background:none;color:var(--text-muted);font:inherit;cursor:pointer}
 .hand-built-playlist-remove:hover{color:var(--text)}
+/* #292: a track's name selects it in the graph. */
+.hand-built-playlist-choose{padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.hand-built-playlist-choose:hover:not(:disabled){color:var(--accent-hover);text-decoration:underline}
+.hand-built-playlist-choose:disabled{color:var(--text-muted);cursor:default}
 #hand-built-playlist-status{order:2;flex:1 1 100%;margin:0;font-size:var(--text-xs)}
 #hand-built-playlist-status:empty{display:none}
 .graph-track-label-add{pointer-events:auto;min-width:1.6em;padding:0 var(--space-1);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface-raised);color:var(--text);font:inherit;line-height:1.4;cursor:pointer}

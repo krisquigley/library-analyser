@@ -19,6 +19,12 @@ export function addNeighbour(playlist, {selectedTrackId, neighbourId}) {
   return Object.freeze([...playlist, ...added]);
 }
 
+// #292: the listener can choose only a track their playlist holds.
+export function trackOfPlaylist(playlist, trackId) {
+  if (!playlist.includes(trackId)) throw new HandBuiltPlaylistError('That track is not in your playlist');
+  return trackId;
+}
+
 export function removeTrack(playlist, trackId) {
   return Object.freeze(playlist.filter(kept => kept !== trackId));
 }

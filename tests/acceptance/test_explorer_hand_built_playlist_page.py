@@ -105,6 +105,20 @@ assert.deepEqual(stripRows(), ['1 | Public synthetic – Track a | 3:20 | 120.0 
 assert.equal(stripButton(1, 0).disabled, true);
 """)
 
+    def test_292_a_tracks_name_in_the_strip_selects_it_in_the_graph(self):
+        self.run_scenario(r"""
+kept.set(KEY, '["c","a"]');
+const seam = boot();
+await settle(6);
+assert.equal(seam.snapshot().currentTrackId, null);
+assert.equal(stripButton(0, 2).getAttribute('aria-label'), 'Select Public synthetic – Track c in the graph');
+stripButton(0, 2).click(); await settle(4); await untilCameraSettles();
+assert.equal(seam.snapshot().currentTrackId, 'c', 'the track chosen in the strip is the selected one');
+assert.equal(request('/api/current').body.track_id, 'c');
+assert.ok(byId('detail').innerText.includes('Track c'), 'and its detail is shown');
+assert.equal(kept.get(KEY), '["c","a"]', 'the playlist is unchanged');
+""")
+
 
 if __name__ == '__main__':
     unittest.main()
