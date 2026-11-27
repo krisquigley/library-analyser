@@ -280,6 +280,7 @@ tbody tr:hover{background:var(--surface-hover)}
 
 /* Mood strip */
 .mood-strip{width:min(740px,100%);max-height:min(180px,30dvh);padding:var(--space-2) var(--space-4)}
+.mood-strip[hidden]{display:none}
 .mood-strip h2{font-size:var(--text-s);margin:0;color:var(--text-muted)}
 .mood-strip-axis{display:flex;justify-content:space-between;padding:0 14px;font-size:var(--text-xs);color:var(--text-faint)}
 #mood-strip{display:block;width:100%;height:70px;cursor:crosshair}

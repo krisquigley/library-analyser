@@ -1,5 +1,6 @@
 // The tools the header opens over the graph (#233): the Library and the graph filters (#234) as drawers beside it, and
-// the playlist generator and Write tags as centred modals. Each panel is closed or open; one drawer and one modal at most.
+// the playlist generator and Write tags as centred modals, and the mood strip under the graph (#290). Each panel is
+// closed or open; one drawer and one modal at most.
 
 const TOOL_PANEL_TRANSITIONS = Object.freeze({
   closed: Object.freeze({open: 'open'}),
@@ -8,7 +9,7 @@ const TOOL_PANEL_TRANSITIONS = Object.freeze({
 
 export const TOOL_PANEL_STATES = Object.freeze(Object.keys(TOOL_PANEL_TRANSITIONS));
 
-export const TOOL_PANELS = Object.freeze({library: 'drawer', filters: 'drawer', playlist: 'modal', 'tag-write': 'modal'});
+export const TOOL_PANELS = Object.freeze({library: 'drawer', filters: 'drawer', playlist: 'modal', 'tag-write': 'modal', mood: 'strip'});
 
 export class ToolPanelTransitionError extends Error {}
 

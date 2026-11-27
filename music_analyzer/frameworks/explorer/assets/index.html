@@ -12,6 +12,7 @@
       <button id="open-filters" type="button" aria-controls="filters-panel">Filters</button>
       <button id="open-playlist" type="button" aria-controls="playlist-panel">Playlist</button>
       <button id="open-tag-write" type="button" aria-controls="tag-write-panel">Write tags</button>
+      <button id="open-mood" type="button" aria-controls="mood-panel">Mood</button>
     </nav>
   </header>
   <dialog id="library-panel" class="panel drawer" aria-labelledby="library-title">
@@ -49,7 +50,7 @@
   </dialog>
   <div class="bottom-dock">
     <section id="hand-built-playlist" class="panel playlist-strip" aria-labelledby="hand-built-playlist-heading" hidden></section>
-    <section class="panel mood-strip"><h2>Selected mood strength</h2><div class="mood-strip-axis"><span>0</span><span>0.5</span><span>1</span></div><canvas id="mood-strip" height="70" aria-label="Selected mood score distribution from zero to one"></canvas><label for="mood-strip-picker">Inspect sorted visible track</label><input id="mood-strip-picker" type="range" min="0" max="0" value="0"><output id="mood-strip-value" for="mood-strip-picker" aria-live="polite"></output></section>
+    <section id="mood-panel" class="panel mood-strip" hidden><h2>Selected mood strength</h2><div class="mood-strip-axis"><span>0</span><span>0.5</span><span>1</span></div><canvas id="mood-strip" height="70" aria-label="Selected mood score distribution from zero to one"></canvas><label for="mood-strip-picker">Inspect sorted visible track</label><input id="mood-strip-picker" type="range" min="0" max="0" value="0"><output id="mood-strip-value" for="mood-strip-picker" aria-live="polite"></output></section>
   </div>
 </main>
 <script src="/vendor/3d-force-graph/3d-force-graph.min.js"></script>

@@ -1,6 +1,7 @@
 // The header's tool buttons and the tool panels over the graph (#233). Each tool has a header button
 // (open-<tool>), a <dialog> (<tool>-panel) and optionally a close button (close-<tool>). Esc, the close button and
-// a click on a modal's backdrop only ask to close: the panel closes when the use case says so.
+// a click on a modal's backdrop only ask to close: the panel closes when the use case says so. A panel that is no
+// <dialog>, the mood strip (#290), is hidden in place.
 
 import {TOOL_PANELS} from '../../domain/tool-panels.js';
 
@@ -42,7 +43,9 @@ export function toolPanelsView({onToggleRequested, onCloseRequested, onOpenReque
 }
 
 function showToolPanel(panel, {open, modal}) {
-  if (!open) {
+  if (panel.tagName !== 'DIALOG') {
+    panel.hidden = !open;
+  } else if (!open) {
     if (panel.open) panel.close();
   } else if (!panel.open) {
     if (modal) panel.showModal();
