@@ -57,12 +57,13 @@ export function relatednessLinkColor(link) {
   return `rgba(240,240,240,${relatednessLinkAlpha(link)})`;
 }
 
+// #291: the hover card: the track, its BPM and key, then its mood values.
 export function nodeLabel(node) {
   const {x, y, z} = node.axis;
-  const mood = node.moodScore ? `${escapeHtml(node.moodScore.label)} ${displayNumber(node.moodScore.raw)} / 1` : 'Selected mood score unavailable';
-  return `${escapeHtml(node.label)}<br>valence ${displayNumber(x.raw)} (${escapeHtml(x.scale)})`
-    + `<br>arousal ${displayNumber(y.raw)} (${escapeHtml(y.scale)})`
-    + `<br>${escapeHtml(z.label)} ${displayNumber(z.raw)} (${escapeHtml(z.scale)})<br>${mood}`;
+  const moods = [['Valence', x.raw], ['Arousal', y.raw], ...(node.moodScore ? [[node.moodScore.label, node.moodScore.raw]] : [])];
+  return `<div class="node-hover"><strong class="node-hover-title">${escapeHtml(node.label)}</strong>`
+    + `<span class="node-hover-facts"><span>${displayNumber(z.raw)} BPM</span><span>${escapeHtml(node.key ? `Key ${node.key}` : 'Key unknown')}</span></span>`
+    + `<span class="node-hover-moods">${moods.map(([label, value]) => `<span>${escapeHtml(label)} <b>${displayNumber(value)}</b></span>`).join('')}</span></div>`;
 }
 
 export function linkLabel(link) {

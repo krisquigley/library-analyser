@@ -50,14 +50,14 @@ def _v3_counts(payload):
     if not isinstance(payload, dict) or payload.get('dto_version') != INDEXED_DTO_VERSION:
         raise ValueError('Not an indexed v3 response')
     arrays = ('axis', 'available_moods', 'genre_labels', 'reason_text',
-              'provenance_table', 'explanation_table', 'nodes', 'links', 'unpositioned')
+              'provenance_table', 'explanation_table', 'key_table', 'nodes', 'links', 'unpositioned')
     if any(not isinstance(payload.get(key), list) for key in arrays):
         raise ValueError('Missing indexed array')
     if not isinstance(payload.get('metadata'), dict) or not isinstance(payload.get('link_defaults'), dict):
         raise ValueError('Missing indexed mapping')
     if payload.get('selected_mood') is not None and not isinstance(payload['selected_mood'], str):
         raise ValueError('Invalid selected mood')
-    for key in ('available_moods', 'genre_labels', 'reason_text', 'explanation_table'):
+    for key in ('available_moods', 'genre_labels', 'reason_text', 'explanation_table', 'key_table'):
         if any(not isinstance(value, str) for value in payload[key]):
             raise ValueError('Invalid string table')
     if len(payload['axis']) != 3 or any(
@@ -74,7 +74,7 @@ def _v3_counts(payload):
         raise ValueError('Invalid provenance table')
     identities = set()
     for node in payload['nodes']:
-        if not isinstance(node, list) or len(node) != 13:
+        if not isinstance(node, list) or len(node) != 14:
             raise ValueError('Invalid indexed node')
         if not all(isinstance(node[i], str) for i in (0, 1)) or node[0] in identities:
             raise ValueError('Invalid node identity')
@@ -91,6 +91,8 @@ def _v3_counts(payload):
             raise ValueError('Invalid genres')
         if not isinstance(node[11], list) or any(not _index(i, payload['reason_text']) for i in node[11]):
             raise ValueError('Invalid reasons')
+        if node[13] is not None and not _index(node[13], payload['key_table']):
+            raise ValueError('Invalid key')
     for track in payload['unpositioned']:
         if not isinstance(track, list) or len(track) != 3 or not all(isinstance(track[i], str) for i in (0, 1)):
             raise ValueError('Invalid unpositioned track')

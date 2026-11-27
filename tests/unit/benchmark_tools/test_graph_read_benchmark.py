@@ -124,8 +124,9 @@ class GraphReadMeasurementContractTests(unittest.TestCase):
 
     def test_malformed_json_and_non_v3_json_are_rejected_with_matching_hash(self):
         missing_table = {key: value for key, value in self.payload.items() if key != 'provenance_table'}
+        unknown_key = dict(self.payload, nodes=[[*self.payload['nodes'][0][:13], 0], *self.payload['nodes'][1:]])  # #291
         for body in (b'{broken', _encode(dict(self.payload, dto_version='mood-axis-graph-compact-v1')),
-                     _encode(dict(self.payload, nodes='not-an-array')), _encode(missing_table)):
+                     _encode(dict(self.payload, nodes='not-an-array')), _encode(missing_table), _encode(unknown_key)):
             with self.subTest(body=body[:40]):
                 self.expected['sha256'] = hashlib.sha256(body).hexdigest()
                 report = self.measure([lambda: FakeResponse(body)])

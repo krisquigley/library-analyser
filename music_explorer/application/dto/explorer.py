@@ -188,6 +188,7 @@ class MoodAxisNode:
     reasons: tuple[str, ...] = ()
     genre_threshold: float = 0.5
     mood_score: AxisValue | None = None
+    key: str | None = None
 
 
 @dataclass(frozen=True)

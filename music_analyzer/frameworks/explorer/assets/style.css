@@ -80,6 +80,15 @@ a{color:var(--accent)}
 .graph-track-label-seek::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:3px;height:100%;border:0;border-radius:1px;background:var(--accent);opacity:.85}
 .graph-track-label-seek::-moz-range-thumb{width:3px;height:100%;border:0;border-radius:1px;background:var(--accent);opacity:.85}
 .graph-track-label-seek:focus-visible{outline:none;box-shadow:0 0 0 1px var(--accent)}
+/* #291: the hover card lies over every track label: the track, its BPM and key, then its mood values. */
+#graph3d .float-tooltip-kap{z-index:10;max-width:min(320px,80vw);padding:var(--space-2) var(--space-3);border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--surface-solid);color:var(--text);box-shadow:var(--shadow);font:400 var(--text-xs)/1.35 var(--font)}
+.node-hover{display:grid;gap:var(--space-1)}
+.node-hover-title{font-size:var(--text-s);font-weight:600}
+.node-hover-facts{display:flex;flex-wrap:wrap;gap:var(--space-1)}
+.node-hover-facts span{padding:1px var(--space-1);border-radius:var(--radius-s);background:var(--surface-sunken);font-variant-numeric:tabular-nums}
+.node-hover-moods{display:flex;flex-wrap:wrap;column-gap:var(--space-3);color:var(--text-muted)}
+.node-hover-moods span::first-letter{text-transform:uppercase}
+.node-hover-moods b{font-weight:500;color:var(--text);font-variant-numeric:tabular-nums}
 /* #282: the BPM difference over each of the selection's links; never intercepts node picking. */
 .graph-link-label{position:absolute;left:0;top:0;z-index:2;pointer-events:none;white-space:nowrap;padding:0 var(--space-1);border-radius:var(--radius-s);background:var(--scrim);color:var(--text-muted);font:600 var(--text-xs)/1.3 var(--font);font-variant-numeric:tabular-nums}
 .graph-track-label-play{pointer-events:auto;min-width:1.6em;padding:0 var(--space-1);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface-raised);color:var(--text);font:inherit;line-height:1.4;cursor:pointer}

@@ -34,8 +34,8 @@ const INDEXED = {
   dto_version: 'mood-axis-graph-indexed-v1', selected_mood: 'happy',
   axis: [{key: 'x', label: 'valence', scale: 's'}, {key: 'y', label: 'arousal', scale: 's'}, {key: 'z', label: 'mood', scale: 's'}],
   genre_labels: ['rock'], reason_text: ['no mood'], explanation_table: ['near'], provenance_table: ['p'],
-  link_defaults: {explanation: 0, provenance: 0},
-  nodes: [['t1', 'One', 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 120, 0.7, [[0, 0.8]], [0], 0.25],
+  link_defaults: {explanation: 0, provenance: 0}, key_table: ['A minor'],
+  nodes: [['t1', 'One', 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 120, 0.7, [[0, 0.8]], [0], 0.25, 0],
     ['t2', 'Two', 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, null, null, [], []]],
   links: [[0, 1, 0.9, 3]],
   unpositioned: [['u1', 'U', [0]]],
@@ -50,6 +50,7 @@ test('an indexed graph resolves its rows through its tables', () => {
   assert.deepEqual([one.bpm, one.genres, one.reasons, one.genre_threshold], [120, [['rock', 0.8]], ['no mood'], 0.25]);
   assert.deepEqual(one.mood_score, {label: 'happy', raw: 0.7, normalized: 0.7, scale: 'sigmoid_mean_score_0_1'});
   assert.deepEqual([two.bpm, two.mood_score], [0.5, null]);
+  assert.deepEqual([one.key, two.key], ['A minor', null], '#291: the key comes through its table');
   assert.deepEqual(graph.edges, [{a: 't1', b: 't2', score: 0.9, explanation: 'near', provenance: 'p', supported_group_count: 3}]);
   assert.deepEqual(graph.unpositioned, [{track_id: 'u1', display_label: 'U', reasons: ['no mood']}]);
 });
@@ -59,6 +60,7 @@ test('a malformed indexed graph is refused, not half-read', () => {
     [{nodes: [['t1', 'One']]}, /Invalid indexed graph node row at 0/],
     [{nodes: [['t1', 'One', 0, 0, 0, 0, 0, 0, 1, 1, [[5, 0.8]], []]]}, /Invalid indexed graph genre reference: 5/],
     [{links: [[0, 7, 0.9]]}, /Invalid indexed graph link endpoint at 0/],
+    [{key_table: []}, /Invalid indexed graph key reference: 0/],
     [{links: [[0, 1]]}, /Invalid indexed graph link row at 0/],
     [{unpositioned: [['u1']]}, /Invalid indexed graph unpositioned row at 0/],
   ];

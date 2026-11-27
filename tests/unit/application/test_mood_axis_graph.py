@@ -64,6 +64,17 @@ class MoodAxisGraphTests(unittest.TestCase):
         self.assertEqual(graph.metadata['coordinate_policy'], 'fixed-valence-arousal-bpm-v1')
         self.assertIn('relaxing', graph.available_moods)
 
+    def test_291_each_node_carries_its_key_the_listeners_override_first_as_the_explorer_mirror_does(self):
+        def keyed(suffix, values, overrides=()):
+            record = track(suffix, overrides=overrides)
+            stages = record.run.stages + ((StageResult('key', (('engine', 'test-key'),), '', values),) if values else ())
+            return replace(record, run=replace(record.run, stages=stages))
+        records = [keyed('a', (('key', 'A'), ('scale', 'minor'))), keyed('b', None), keyed('c', (('key', 'A'),)),
+                   keyed('d', (('key', 'C'), ('scale', 'major')), overrides=(('key', 'D minor'),))]
+        graph = BuildMoodAxisGraph(FakeRepo(records)).execute('relaxing')
+        self.assertEqual({node.track_id[7]: node.key for node in graph.positioned},
+                         {'a': 'A minor', 'b': None, 'c': None, 'd': 'D minor'})
+
     def test_missing_required_axis_data_is_unpositioned_without_zero_fallback(self):
         graph = BuildMoodAxisGraph(FakeRepo([track('a', energy=None), track('b', bpm=None)])).execute('relaxing')
         self.assertEqual(graph.positioned, ())
