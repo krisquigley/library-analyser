@@ -119,9 +119,11 @@ for (const [id, tag] of [['tracks', 'table'], ['track-search', 'input'], ['undo'
   ['controls', 'div'], ['playlist-controls', 'div'], ['detail', 'section'], ['graph-load-status', 'div'],
   ['loading-surface', 'div'], ['loading-status', 'div'], ['loading-error', 'div'], ['loading-retry', 'button'],
   ['graph3d', 'div'], ['map', 'canvas'], ['hand-built-playlist', 'section'], ['mood-strip', 'canvas'], ['mood-strip-picker', 'input'], ['mood-strip-value', 'output'], ['tag-write', 'div'],
+  ['open-mood', 'button'], ['mood-panel', 'section'],
   ...['library', 'filters', 'playlist', 'tag-write'].flatMap(tool => [[`open-${tool}`, 'button'], [`${tool}-panel`, 'dialog'], [`close-${tool}`, 'button']])]) {
   const node = element(tag); node.id = id; body.append(node);
 }
+body.querySelector('#mood-panel').hidden = true;
 body.querySelector('#tracks').append(element('tbody'));
 const documentListeners = {};
 const document = {body, createElement: element, createTextNode: textNode,

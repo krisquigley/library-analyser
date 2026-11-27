@@ -6,9 +6,9 @@ import {installFakeDocument} from '../fake-document.js';
 
 let roots;
 beforeEach(() => {
-  roots = installFakeDocument(['open-library', 'library-panel', 'open-playlist', 'playlist-panel', 'close-playlist', 'detail-write-tags']);
+  roots = installFakeDocument(['open-library', 'library-panel', 'open-playlist', 'playlist-panel', 'close-playlist', 'detail-write-tags', 'open-mood', 'mood-panel']);
   for (const id of ['library-panel', 'playlist-panel']) {
-    Object.assign(roots[id], {open: false, shown: [],
+    Object.assign(roots[id], {tagName: 'DIALOG', open: false, shown: [],
       show() { this.open = true; this.shown.push('show'); },
       showModal() { this.open = true; this.shown.push('showModal'); },
       close() { this.open = false; this.shown.push('close'); }});
@@ -67,4 +67,16 @@ test('the selected track card\'s Write tags button opens the tag-write dialog (#
   const {heard} = mounted();
   roots['detail-write-tags'].onclick();
   assert.deepEqual(heard, [['open', 'tag-write']]);
+});
+
+test('#290: the mood strip is no dialog: it is hidden and shown in place, and its header button says which', () => {
+  const {view, heard} = mounted();
+  roots['open-mood'].onclick();
+  assert.deepEqual(heard, [['toggle', 'mood']]);
+  view.show({tool: 'mood', open: false, modal: false});
+  assert.equal(roots['mood-panel'].hidden, true);
+  assert.equal(roots['open-mood'].getAttribute('aria-expanded'), 'false');
+  view.show({tool: 'mood', open: true, modal: false});
+  assert.equal(roots['mood-panel'].hidden, false);
+  assert.equal(roots['open-mood'].getAttribute('aria-expanded'), 'true');
 });

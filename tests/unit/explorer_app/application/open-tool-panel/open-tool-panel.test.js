@@ -56,3 +56,14 @@ test('a panel asked open stays open, and opening it again changes nothing (#236)
   assert.equal(toolPanels.isOpen('tag-write'), true);
   assert.deepEqual(published, [{type: 'tool-panel-opened', tool: 'tag-write', presentation: 'modal'}]);
 });
+
+test('#290: the mood strip opens and closes on its own, leaving the drawer and the modal as they are', () => {
+  const {toolPanels, published} = harness();
+  toolPanels.toggle('library');
+  toolPanels.toggle('playlist');
+  toolPanels.toggle('mood');
+  toolPanels.toggle('mood');
+  assert.deepEqual(published.slice(2), [{type: 'tool-panel-opened', tool: 'mood', presentation: 'strip'},
+    {type: 'tool-panel-closed', tool: 'mood'}]);
+  assert.deepEqual([toolPanels.isOpen('library'), toolPanels.isOpen('playlist')], [true, true]);
+});

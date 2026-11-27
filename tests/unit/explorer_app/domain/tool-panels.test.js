@@ -12,7 +12,7 @@ test('a panel opens only when closed and closes only when open', () => {
 });
 
 test('the Library and the graph filters are drawers beside the graph; the playlist generator and Write tags are modals', () => {
-  assert.deepEqual(TOOL_PANELS, {library: 'drawer', filters: 'drawer', playlist: 'modal', 'tag-write': 'modal'});
+  assert.deepEqual(TOOL_PANELS, {library: 'drawer', filters: 'drawer', playlist: 'modal', 'tag-write': 'modal', mood: 'strip'});
   assert.equal(isToolPanel('playlist'), true);
   assert.equal(isToolPanel('constructor'), false);
   assert.equal(isToolPanel('settings'), false);
@@ -23,4 +23,9 @@ test('one drawer and one modal at a time: opening a panel displaces the open pan
   assert.deepEqual(panelsDisplacedBy('playlist', ['library']), []);
   assert.deepEqual(panelsDisplacedBy('filters', ['library', 'playlist']), ['library']);
   assert.deepEqual(panelsDisplacedBy('library', ['playlist']), []);
+});
+
+test('#290: the mood strip is a tool of its own kind and displaces nothing', () => {
+  assert.deepEqual(panelsDisplacedBy('mood', ['library', 'playlist']), []);
+  assert.deepEqual(panelsDisplacedBy('library', ['mood']), []);
 });
