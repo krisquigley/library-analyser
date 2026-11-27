@@ -17,7 +17,7 @@ routes['/api/track-labels'] = r => r.respond({labels: r.url.searchParams.getAll(
 // The server's preview of a hand-built list: 'gone' is no longer playable, so it is left out.
 routes['/api/playlists/hand-built/preview'] = r => {
   const tracks = r.body.track_ids.filter(id => id !== 'gone').map(id => ({track_id: id, title: 'Track ' + id, artist: 'Public synthetic',
-    bpm: 120, key: 'C major', camelot: '8B', arousal: 4.5, energy_target: null, duration_seconds: 200}));
+    bpm: 120, key: 'C major', camelot: '8B', arousal: 4.5, valence: null, energy_target: null, duration_seconds: 200}));
   const transitions = tracks.slice(1).map((track, place) => ({from_track_id: tracks[place].track_id, to_track_id: track.track_id,
     key_compatible: true, bpm_step_smooth: true, bpm_change: 0}));
   r.respond({tracks, transitions, complete: tracks.length === r.body.track_ids.length, warning: null});
@@ -136,6 +136,30 @@ assert.equal(kept.get(KEY), '["c","a","b"]');
 routes['/api/playlists/hand-built'] = r => r.respond('#EXTM3U\n');
 await press('hand-built-playlist-download'); await settle(2);
 assert.deepEqual(request('/api/playlists/hand-built').body, {track_ids: ['c', 'a', 'b']});
+""")
+
+    def test_294_the_journey_chart_follows_the_playlist_with_a_lane_per_measure(self):
+        self.run_scenario(r"""
+kept.set(KEY, '["a","b"]');
+routes['/api/playlists/hand-built/preview'] = r => {
+  const tracks = r.body.track_ids.map((id, place) => ({track_id: id, title: 'Track ' + id, artist: 'Public synthetic',
+    bpm: 120 + 4 * place, key: 'C major', camelot: '8B', arousal: 4.5, valence: 5 + place, energy_target: null, duration_seconds: 200}));
+  r.respond({tracks, transitions: tracks.slice(1).map((track, place) => ({from_track_id: tracks[place].track_id,
+    to_track_id: track.track_id, key_compatible: true, bpm_step_smooth: true, bpm_change: 4})), complete: true, warning: null});
+};
+boot();
+await settle(6);
+const journey = byId('playlist-journey');
+assert.equal(journey.hidden, false);
+assert.equal(byId('playlist-journey-caption').textContent, 'Your playlist over 6:40');
+const labels = walk(journey).filter(node => node.tagName === 'LABEL').map(node => node.textContent);
+assert.deepEqual(labels, ['BPM 120.0–124.0', 'Key (Camelot) 1–12', 'Arousal 3.5–5.5', 'Valence 5.0–6.0']);
+const chart = byId('playlist-journey-chart');
+chart.onpointermove({clientX: 790});
+assert.equal(byId('playlist-journey-readout').textContent,
+  'Public synthetic – Track b · 3:20–6:40 · 124.0 BPM · Key C major (8B) · Arousal 4.5 · Valence 6.0');
+stripButton(1, 9).click(); await settle(2);
+assert.equal(journey.hidden, true, 'one track is no journey');
 """)
 
 

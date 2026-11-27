@@ -7,7 +7,7 @@ preview can show the energy actually placed, in the graph's numbers (#265).
 from music_explorer.application.dto.playlists import PlaylistRecipe
 from music_explorer.application.dto.playlist_preview import PlaylistPreview, PreviewTrack, PreviewTransition
 from music_explorer.domain.harmonic_mixing import HarmonicMixing, MusicalKey, camelot_code
-from music_explorer.domain.playlist_candidates import usable_energy_and_mood
+from music_explorer.domain.playlist_candidates import usable_energy_and_mood, usable_valence
 from music_explorer.domain.playlist_generation import PlaylistRules, generate_walk
 from music_explorer.domain.playlist_steps import playlist_step
 
@@ -28,9 +28,10 @@ class PreviewPlaylist:
         evidence = self.repository.playlist_mood_evidence(rules.mood_hold)
         generated = generate_walk(rules, tracks, self._related_track_edges(), evidence)
         arousal, _mood = usable_energy_and_mood(generated.candidates, evidence)
+        moods = {'arousal': arousal, 'valence': usable_valence(generated.candidates, evidence)}
         walk = tuple(generated.walk_tracks[track_id] for track_id in generated.track_ids)
         targets = generated.plan.targets_along(walk) if generated.plan else (None,) * len(walk)
-        placed = tuple(_preview_track(generated.candidates[track.track_id], arousal, target)
+        placed = tuple(_preview_track(generated.candidates[track.track_id], moods, target)
                        for track, target in zip(walk, targets))
         mixing = rules.harmonic_mixing or HarmonicMixing()
         transitions = tuple(_transition(before, after, mixing) for before, after in zip(walk, walk[1:]))
@@ -42,13 +43,13 @@ class PreviewPlaylist:
         return edges if status is not None and status.get('state') == 'ready' else ()
 
 
-def _preview_track(track, arousal, target):
+def _preview_track(track, moods, target):
     key = MusicalKey.parse(getattr(track, 'key', None), getattr(track, 'scale', None))
     return PreviewTrack(
         track_id=track.track_id, title=getattr(track, 'title', '') or '', artist=getattr(track, 'artist', '') or '',
         bpm=track.bpm, key=f'{track.key} {key.scale}' if key else None, camelot=camelot_code(key) if key else None,
-        arousal=arousal.get(track.track_id), energy_target=target,
-        duration_seconds=getattr(track, 'duration_seconds', None))
+        arousal=moods['arousal'].get(track.track_id), energy_target=target,
+        duration_seconds=getattr(track, 'duration_seconds', None), valence=moods['valence'].get(track.track_id))
 
 
 def _transition(before, after, mixing):

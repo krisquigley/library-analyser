@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class PreviewTrack:
-    """A placed track. Its arousal and the arc's target are raw arousal, as the graph shows it (#265); None where unknown.
-    The duration is the audio file's, in seconds (#257); None where unknown."""
+    """A placed track. Its arousal and the arc's target are raw arousal, as the graph shows it (#265), and its valence
+    raw valence (#294); None where unknown. The duration is the audio file's, in seconds (#257); None where unknown."""
     track_id: str
     title: str
     artist: str
@@ -15,6 +15,7 @@ class PreviewTrack:
     arousal: float | None
     energy_target: float | None
     duration_seconds: float | None = None
+    valence: float | None = None
 
 
 @dataclass(frozen=True)

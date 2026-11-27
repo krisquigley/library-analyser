@@ -383,6 +383,7 @@ class M3UPlaylistReadOnlyRepositoryRedTests(unittest.TestCase):
 
             self.assertEqual((6.25, 0.8), (evidence[compatible].arousal, evidence[compatible].mood_score))
             self.assertEqual((None, None), (evidence[other].arousal, evidence[other].mood_score))
+            self.assertEqual((4.5, None), (evidence[compatible].valence, evidence[other].valence), '#294: valence too')
 
     def test_mood_evidence_without_a_mood_reads_only_arousal(self):
         from tests.support.explorer_synthetic_fixture_contract import public_fixture

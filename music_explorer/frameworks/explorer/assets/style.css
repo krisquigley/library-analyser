@@ -292,6 +292,17 @@ tbody tr:hover{background:var(--surface-hover)}
 .hand-built-playlist-choose:hover:not(:disabled){background:none;color:var(--accent-hover);text-decoration:underline}
 .hand-built-playlist-choose:disabled{color:var(--text-muted);cursor:default}
 #hand-built-playlist-status{order:2;flex:1 1 100%;margin:0;font-size:var(--text-xs)}
+/* #294: the hand-built playlist's journey: a lane per measure on a shared time axis, each toggled from its legend. */
+.playlist-journey{pointer-events:auto;width:min(860px,100%);padding:var(--space-2) var(--space-4)}
+.playlist-journey[hidden]{display:none}
+.playlist-journey h2{display:inline;margin:0 var(--space-2) 0 0;font-size:var(--text-s)}
+#playlist-journey-caption{display:inline;margin:0;font-size:var(--text-xs)}
+.playlist-journey-lanes{display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);margin:var(--space-1) 0;font-size:var(--text-xs)}
+.playlist-journey-lanes input{margin:0 calc(-1 * var(--space-2)) 0 0;accent-color:var(--accent)}
+.playlist-journey-lanes label{display:inline-flex;align-items:center;gap:var(--space-1);color:var(--text-muted);font-variant-numeric:tabular-nums}
+.playlist-journey-lanes label::before{content:"";width:12px;height:2px;border-radius:1px;background:var(--lane-color)}
+#playlist-journey-chart{display:block;width:100%;color:var(--text-muted);cursor:crosshair}
+#playlist-journey-readout{display:block;min-height:1.3em;font-size:var(--text-xs)}
 #hand-built-playlist-status:empty{display:none}
 .graph-track-label-add{pointer-events:auto;min-width:1.6em;padding:0 var(--space-1);border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface-raised);color:var(--text);font:inherit;line-height:1.4;cursor:pointer}
 .graph-track-label-add:hover{border-color:var(--accent);color:var(--accent)}

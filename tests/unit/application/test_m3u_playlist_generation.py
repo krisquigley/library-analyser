@@ -23,6 +23,7 @@ class _PlayableTrack:
     key_strength: float | None = None
     arousal: float | None = None
     mood_scores: tuple[tuple[str, float], ...] = ()
+    valence: float | None = None
 
 
 class _FakePlaylistRepository:
@@ -38,7 +39,8 @@ class _FakePlaylistRepository:
     def playlist_mood_evidence(self, mood):
         from music_explorer.application.dto.playlists import PlaylistMoodEvidence
         self.mood_evidence_reads.append(mood)
-        return {track.track_id: PlaylistMoodEvidence(track.arousal, dict(track.mood_scores).get(mood) if mood else None)
+        return {track.track_id: PlaylistMoodEvidence(track.arousal, dict(track.mood_scores).get(mood) if mood else None,
+                                                     track.valence)
                 for track in self._tracks}
 
     def related_track_edges(self, sparse_k):
