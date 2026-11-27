@@ -5,7 +5,7 @@ const TRACK_FIELDS = Object.freeze([
   ['track_id', 'trackId', 'text'], ['title', 'title', 'text'], ['artist', 'artist', 'text'], ['bpm', 'bpm', 'number'],
   ['key', 'key', 'optionalText'], ['camelot', 'camelot', 'optionalText'], ['arousal', 'arousal', 'optionalNumber'],
   ['energy_target', 'energyTarget', 'optionalNumber'],
-  ['duration_seconds', 'durationSeconds', 'optionalNumber'],
+  ['duration_seconds', 'durationSeconds', 'optionalNumber'], ['valence', 'valence', 'optionalNumber'],
 ]);
 const TRANSITION_FIELDS = Object.freeze([
   ['from_track_id', 'fromTrackId', 'text'], ['to_track_id', 'toTrackId', 'text'],

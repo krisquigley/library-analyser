@@ -26,6 +26,13 @@ def usable_energy_and_mood(candidates, evidence):
     return arousal, mood
 
 
+def usable_valence(candidates, evidence):
+    """Each candidate's valence (#294), where energy detection is not overridden; unknown ones are left out."""
+    return {track_id: evidence[track_id].valence for track_id, track in candidates.items()
+            if track_id in evidence and evidence[track_id].valence is not None
+            and 'energy' not in getattr(track, 'manual_overrides', ())}
+
+
 def _key(track, harmonic_mixing):
     if harmonic_mixing is None or 'key' in getattr(track, 'manual_overrides', ()):
         return None

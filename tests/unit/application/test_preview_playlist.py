@@ -44,6 +44,10 @@ class PreviewPlaylistTests(unittest.TestCase):
         self.assertEqual([2.0, 5.0, 8.0], [track.arousal for track in tracks], 'raw arousal, as the graph shows it (#265)')
         self.assertEqual([None, None, None], [track.energy_target for track in tracks], 'no arc, no target')
 
+    def test_294_each_track_shows_its_valence_where_known(self):
+        tracks = PreviewPlaylist(_library({'a': {'valence': 6.5}, 'b': {'valence': 3.0}})).execute(_recipe()).tracks
+        self.assertEqual([6.5, 3.0, None], [track.valence for track in tracks])
+
     def test_each_track_shows_its_length_where_the_audio_file_gave_one(self):
         # Issue #257.
         tracks = PreviewPlaylist(_library({'b': {'duration_seconds': 241.5}, 'c': {'duration_seconds': None}})).execute(_recipe()).tracks

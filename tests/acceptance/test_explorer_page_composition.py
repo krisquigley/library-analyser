@@ -70,9 +70,9 @@ routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
 routes['/api/playlists/preview'] = r => r.respond({
   tracks: [
     {track_id: 'b', title: 'Track b', artist: 'Public synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
-      energy_target: null, duration_seconds: 241.5},
+      valence: null, energy_target: null, duration_seconds: 241.5},
     {track_id: 'a', title: 'Track a', artist: 'Public synthetic', bpm: 121, key: null, camelot: null, arousal: null,
-      energy_target: null, duration_seconds: null},
+      valence: null, energy_target: null, duration_seconds: null},
   ],
   transitions: [{from_track_id: 'b', to_track_id: 'a', key_compatible: null, bpm_step_smooth: true, bpm_change: 1}],
   complete: false, warning: 'Only 2 of 10 tracks fit'});
@@ -108,9 +108,9 @@ routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
 routes['/api/playlists/preview'] = r => r.respond({
   tracks: [
     {track_id: 'b', title: 'Track b', artist: 'Public synthetic', bpm: 120, key: null, camelot: null, arousal: null,
-      energy_target: null, duration_seconds: 180},
+      valence: null, energy_target: null, duration_seconds: 180},
     {track_id: 'a', title: 'Track a', artist: 'Public synthetic', bpm: 121, key: null, camelot: null, arousal: null,
-      energy_target: null, duration_seconds: 200}],
+      valence: null, energy_target: null, duration_seconds: 200}],
   transitions: [{from_track_id: 'b', to_track_id: 'a', key_compatible: null, bpm_step_smooth: true, bpm_change: 1}],
   complete: true, warning: null});
 await settle(6);
@@ -475,9 +475,9 @@ routes['/api/current'] = r => r.respond(accepted(r.body.track_id));
 routes['/api/playlists/preview'] = r => r.respond({
   tracks: [
     {track_id: 'b', title: 'Track b', artist: 'Public synthetic', bpm: 120, key: null, camelot: null, arousal: null,
-      energy_target: null, duration_seconds: 180},
+      valence: null, energy_target: null, duration_seconds: 180},
     {track_id: 'a', title: 'Track a', artist: 'Public synthetic', bpm: 121, key: null, camelot: null, arousal: null,
-      energy_target: null, duration_seconds: 200}],
+      valence: null, energy_target: null, duration_seconds: 200}],
   transitions: [{from_track_id: 'b', to_track_id: 'a', key_compatible: null, bpm_step_smooth: true, bpm_change: 1}],
   complete: true, warning: null});
 routes['/api/tag-write/preview'] = r => r.respond({token: 'approval-2', skipped: [], changes: [

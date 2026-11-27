@@ -69,13 +69,17 @@ def _bpm_from_stage_payload(payload):
 
 
 def _arousal(summary_values_json, provenance_json):
+    return _energy_value(summary_values_json, provenance_json, 'arousal')
+
+
+def _energy_value(summary_values_json, provenance_json, label):
     try:
         if not has_provenance_model(_pairs(provenance_json), AROUSAL_VALENCE_MODEL):
             return None
-        arousal = dict(_pairs(summary_values_json)).get('arousal')
+        value = dict(_pairs(summary_values_json)).get(label)
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
-    return float(arousal) if _finite_number(arousal) and not isinstance(arousal, bool) else None
+    return float(value) if _finite_number(value) and not isinstance(value, bool) else None
 
 
 def _mood_score(score, provenance_json):
@@ -393,7 +397,8 @@ class ReadOnlyExplorerSQLiteRepository:
                 WHERE g.is_current=1
             ''', (mood,)).fetchall()
         return {track_id: PlaylistMoodEvidence(_arousal(energy_values, energy_provenance),
-                                               _mood_score(mood_score, mood_provenance) if mood else None)
+                                               _mood_score(mood_score, mood_provenance) if mood else None,
+                                               _energy_value(energy_values, energy_provenance, 'valence'))
                 for track_id, energy_values, energy_provenance, mood_score, mood_provenance in rows}
 
     def related_track_edges(self, sparse_k: int):

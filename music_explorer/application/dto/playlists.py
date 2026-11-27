@@ -23,9 +23,10 @@ class PlayableTrackCandidate:
 
 @dataclass(frozen=True)
 class PlaylistMoodEvidence:
-    """Model-compatible arousal and selected-mood score; None when unusable."""
+    """Model-compatible arousal, selected-mood score and valence (#294); None when unusable."""
     arousal: float | None = None
     mood_score: float | None = None
+    valence: float | None = None
 
 
 @dataclass(frozen=True)

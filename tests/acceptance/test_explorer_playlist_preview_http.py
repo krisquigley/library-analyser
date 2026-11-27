@@ -54,7 +54,7 @@ class ExplorerPlaylistPreviewHTTPTests(unittest.TestCase):
         preview = self._preview(self._query(('length', '2')))
 
         self.assertEqual({'track_id', 'title', 'artist', 'bpm', 'key', 'camelot', 'arousal', 'energy_target',
-                          'duration_seconds'},
+                          'duration_seconds', 'valence'},
                          set(preview['tracks'][0]))
         self.assertEqual([(self.first, self.second)],
                          [(step['from_track_id'], step['to_track_id']) for step in preview['transitions']])

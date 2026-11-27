@@ -141,9 +141,9 @@ test('refused selection, history, detail and state requests fail with the server
 const PREVIEW_BODY = {
   tracks: [
     {track_id: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
-      energy_target: 0.2, duration_seconds: 241.5},
+      valence: 5.5, energy_target: 0.2, duration_seconds: 241.5},
     {track_id: 'b', title: 'Lift', artist: 'Synthetic', bpm: 122.5, key: null, camelot: null, arousal: null,
-      energy_target: 0.6, duration_seconds: null},
+      valence: null, energy_target: 0.6, duration_seconds: null},
   ],
   transitions: [{from_track_id: 'a', to_track_id: 'b', key_compatible: null, bpm_step_smooth: true, bpm_change: 2.5}],
   complete: false, warning: 'Only 2 of 10 tracks fit',
@@ -157,9 +157,9 @@ test('a playlist preview asks the preview endpoint and reads the walk the server
   assert.deepEqual(preview, {
     tracks: [
       {trackId: 'a', title: 'Opening', artist: 'Synthetic', bpm: 120, key: 'A minor', camelot: '8A', arousal: 0.4,
-        energyTarget: 0.2, durationSeconds: 241.5},
+        energyTarget: 0.2, durationSeconds: 241.5, valence: 5.5},
       {trackId: 'b', title: 'Lift', artist: 'Synthetic', bpm: 122.5, key: null, camelot: null, arousal: null,
-        energyTarget: 0.6, durationSeconds: null},
+        energyTarget: 0.6, durationSeconds: null, valence: null},
     ],
     transitions: [{fromTrackId: 'a', toTrackId: 'b', keyCompatible: null, bpmStepSmooth: true, bpmChange: 2.5}],
     complete: false, warning: 'Only 2 of 10 tracks fit',
@@ -174,6 +174,7 @@ test('a preview the server shaped wrongly is refused whole, never half-read (#13
     [{...PREVIEW_BODY, tracks: [{...track, title: null}]}, 'Invalid playlist preview: track 1 title must be text'],
     [{...PREVIEW_BODY, tracks: [{...track, energy_target: 'high'}]},
       'Invalid playlist preview: track 1 energy_target must be a number or null'],
+    [{...PREVIEW_BODY, tracks: [{...track, valence: 'calm'}]}, 'Invalid playlist preview: track 1 valence must be a number or null'],
     [{...PREVIEW_BODY, tracks: [{...track, duration_seconds: '4:01'}]},
       'Invalid playlist preview: track 1 duration_seconds must be a number or null'],
     [{...PREVIEW_BODY, transitions: [{...PREVIEW_BODY.transitions[0], key_compatible: 'yes'}]},
@@ -287,11 +288,11 @@ test('a hand-built playlist downloads with a JSON POST of its tracks in order, a
 
 test('a hand-built playlist is previewed with a JSON POST, checked as a recipe preview is, and a refusal says why (#287)', async () => {
   const body = {tracks: [{track_id: 'b', title: 'Beta', artist: 'Synthetic', bpm: 120, key: 'C major', camelot: '8B', arousal: 4.5,
-    energy_target: null, duration_seconds: 200}], transitions: [], complete: false,
+    valence: null, energy_target: null, duration_seconds: 200}], transitions: [], complete: false,
     warning: '1 of its tracks is no longer playable from the library; remove it to download it'};
   const {api, requests} = gatewayAnswering(response({body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}}));
   assert.deepEqual(await api.previewHandBuiltPlaylist(['b', 'gone']), {tracks: [{trackId: 'b', title: 'Beta', artist: 'Synthetic',
-    bpm: 120, key: 'C major', camelot: '8B', arousal: 4.5, energyTarget: null, durationSeconds: 200}], transitions: [],
+    bpm: 120, key: 'C major', camelot: '8B', arousal: 4.5, energyTarget: null, durationSeconds: 200, valence: null}], transitions: [],
     complete: false, warning: body.warning});
   assert.deepEqual(requests, [['/api/playlists/hand-built/preview', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: '{"track_ids":["b","gone"]}'}]]);

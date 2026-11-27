@@ -87,6 +87,7 @@ class HandBuiltPlaylistHTTPTests(unittest.TestCase):
                          [(self.second, self.first)])
         self.assertEqual((preview['complete'], preview['warning']), (True, None))
         self.assertTrue(all(track['energy_target'] is None for track in preview['tracks']), 'a hand-built list has no arc')
+        self.assertTrue(all('valence' in track for track in preview['tracks']), '#294: each track says its valence')
         self.assertEqual((_table_counts(self.db_path), self.db_path.read_bytes()), before)
 
     def test_287_a_track_no_longer_playable_is_left_out_of_the_preview_and_said_so(self):

@@ -31,7 +31,7 @@ LIBRARY = FakeLibrary(
      candidate('c', 100.0, title='Late', key='F#', scale='major', key_strength=0.9, manual_overrides=('energy',)),
      candidate('weak', 120.0, key='D', scale='minor', key_strength=0.1),
      candidate('gone', exists=False), candidate('retired', active=False)),
-    {'a': PlaylistMoodEvidence(arousal=4.5), 'c': PlaylistMoodEvidence(arousal=7.0)})
+    {'a': PlaylistMoodEvidence(arousal=4.5, valence=5.25), 'c': PlaylistMoodEvidence(arousal=7.0, valence=3.0)})
 
 
 def preview(*track_ids, library=LIBRARY):
@@ -42,7 +42,7 @@ class PreviewHandBuiltPlaylistTest(unittest.TestCase):
     def test_each_track_in_the_listeners_order_with_each_step_between(self):
         self.assertEqual(preview('b', 'a', 'c'), PlaylistPreview(
             tracks=(PreviewTrack('b', 'Middle', 'Second', 124.0, 'G major', '9B', None, None),
-                    PreviewTrack('a', 'Opening', 'First', 120.0, 'C major', '8B', 4.5, None, 200.0),
+                    PreviewTrack('a', 'Opening', 'First', 120.0, 'C major', '8B', 4.5, None, 200.0, valence=5.25),
                     PreviewTrack('c', 'Late', '', 100.0, 'F# major', '2B', None, None)),
             transitions=(PreviewTransition('b', 'a', True, True, -4.0), PreviewTransition('a', 'c', False, False, -20.0)),
             complete=True, warning=None))
