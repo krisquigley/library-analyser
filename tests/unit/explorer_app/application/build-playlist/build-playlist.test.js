@@ -173,3 +173,16 @@ test('#292: choosing a track in the playlist selects it in the graph; a track no
   assert.throws(() => playlist.choose('elsewhere'), /not in your playlist/);
   assert.deepEqual([published.length, saved, asked], [1, [], []], 'nothing else is published, kept or asked');
 });
+
+test('#293: moving a track keeps the new order, publishes it, and previews it; a move it cannot make says why', async () => {
+  const {playlist, saved, asked, changes, last} = harness({kept: ['a', 'b', 'c']});
+  await playlist.restore();
+  saved.length = 0; asked.length = 0;
+  await playlist.move('c', -1);
+  assert.deepEqual([saved, asked, playlist.trackIds()], [[['a', 'c', 'b']], [['a', 'c', 'b']], ['a', 'c', 'b']]);
+  assert.deepEqual(last(), {type: 'hand-built-playlist-changed', trackIds: ['a', 'c', 'b'], notice: '',
+    previewed: previewed(['a', 'c', 'b'])});
+  const before = changes().length;
+  await playlist.move('a', -1);
+  assert.deepEqual([playlist.trackIds(), last().notice, changes().length], [['a', 'c', 'b'], 'That track is already first', before + 1]);
+});

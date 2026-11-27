@@ -24,10 +24,9 @@ export function handBuiltPlaylistViewModel({trackIds, notice, previewed}) {
     hidden: empty && !notice,
     heading: stripHeading(trackIds, tracks),
     downloadDisabled: empty, clearDisabled: empty,
-    rows: trackIds.map((trackId, place) => {
-      if (tracks.has(trackId)) return playableRow(tracks.get(trackId), place, steps.get(stepKey(trackIds[place - 1], trackId)));
-      return unseenRow(trackId, place, asked.has(trackId) ? LEFT_OUT_BLANK : NOT_PREVIEWED);
-    }),
+    rows: trackIds.map((trackId, place) => movableRow(tracks.has(trackId)
+      ? playableRow(tracks.get(trackId), place, steps.get(stepKey(trackIds[place - 1], trackId)))
+      : unseenRow(trackId, place, asked.has(trackId) ? LEFT_OUT_BLANK : NOT_PREVIEWED), place, trackIds.length)),
     notice: {text: notice, urgent: Boolean(notice)},
   };
 }
@@ -45,7 +44,13 @@ function stripHeading(trackIds, tracks) {
 
 function playableRow(track, place, step) {
   const {target: _arcTarget, ...row} = previewTrackRow(track, place, step);
-  return {...row, playable: true, removeLabel: `Remove ${row.track} from your playlist`};
+  return {...row, playable: true, removeLabel: `Remove ${row.track} from your playlist`, name: row.track};
+}
+
+// #293: each row can move a place earlier or later, except past either end.
+function movableRow({name, ...row}, place, count) {
+  return {...row, earlierLabel: `Move ${name} earlier`, laterLabel: `Move ${name} later`, first: place === 0,
+    last: place === count - 1};
 }
 
 // A track the last preview has not seen, or one it left out because the library can no longer play it.
@@ -53,7 +58,7 @@ function unseenRow(trackId, place, blank) {
   const leftOut = blank === LEFT_OUT_BLANK;
   return {trackId, place: String(place + 1), track: leftOut ? NO_LONGER_PLAYABLE : `Track ${place + 1}`,
     length: blank, bpm: blank, key: blank, energy: blank, transition: blank, playable: !leftOut,
-    removeLabel: `Remove track ${place + 1} from your playlist`};
+    removeLabel: `Remove track ${place + 1} from your playlist`, name: `track ${place + 1}`};
 }
 
 function stepKey(fromTrackId, toTrackId) {
